@@ -146,7 +146,7 @@ The server's limits and retention policy do not change.
 Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.
 Review and Ticket titles use the approved web base of 26 points and semibold (600).
 Completion text remains medium. Proposal decisions use medium, while message actions and
-message prose remain regular. Feedback text and notification labels use medium. Ideas capture and configuration headings use medium;
+message prose remain regular. Feedback text and notification labels use medium. Configuration headings use medium;
 artifact filenames remain regular. Section headings follow their web surface:
 regular for navigation and VPS, medium for configuration and Usage.
 
@@ -319,7 +319,7 @@ rate, delivery through APNs, or every navigation route.
 | `Panels/Features/Orchestrator` | Orchestrator worker (server calls it manager) |
 | `Panels/Features/Chief` | Chief of Staff worker |
 | `Panels/Features/Artifacts` | Artifact list and viewer worker |
-| `Panels/Features/More` | More worker; separate Ideas, Feedback, Usage, VPS, Settings folders |
+| `Panels/Features/More` | More worker; separate Feedback, Usage, VPS, Settings folders |
 | `PanelsTests` | Focused contract verification; coordinate shared fixture changes |
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
@@ -345,12 +345,6 @@ on return to the foreground, after a recovered connection and on pull-to-refresh
 the web's capture button instruction because native global feedback capture is
 not yet implemented. Feedback writes are exercised only with an injected stub
 or URLProtocol interception.
-
-Ideas reads the live idea list and project catalogue, expands captured detail,
-and captures a title with optional detail and project assignment. Return in the
-title field captures; project chips assign the new idea, matching the web. Failed
-captures keep the draft. The capture POST lives behind `IdeasServing`; its tests
-use a stub transport, and simulator verification never submits a live capture.
 
 Orchestrator and Chief pages show expandable recaps and grouped workers, with
 working and unread marks from the server. Active groups start open; Backlogged
@@ -385,7 +379,7 @@ Haptic helpers offer light, success, error and selection. By the owner’s
 give a light impact, including Workspace navigation. Disclosures and read retries
 are silent; pull refresh and context menus retain system feedback. Selection also
 acknowledges a changed control value.
-Ideas and Feedback use light feedback when submitting and success or error on
+Feedback uses light feedback when submitting and success or error on
 the result; page context actions and edits acknowledge the result only. Copy and
 local Settings saves acknowledge completion. Background updates never buzz.
 Native pushes retain system motion; shared disclosures use the same bounce-free
@@ -443,20 +437,6 @@ For this delivery, all simulator testing and Gemini motion review were deferred.
 unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
 motion, or physical haptic behavior is claimed as verified.
 
-## Ideas verification
-
-`IdeasTests` covers three distinct gaps: blank submissions and failed writes must
-preserve a draft without accidental requests; acknowledged captures must display
-the server record and reset their draft; and the API adapter must send the exact
-POST payload (`project_id`, omitted blank optional fields) and decode the response.
-These are fast unit tests using an actor stub and URLProtocol, with no backend or
-browser host. The read-only simulator walkthrough is an external capture harness,
-not an added UI suite. Haptics still need physical-device verification.
-
-After Feedback and the system screens were integrated, Ideas was rebased while
-preserving every More destination. Verification was compile-only
-plus the existing host tests for that integration; no simulator was used for the
-rebase checks.
 ## Workspace home
 
 Workspace follows the web rail's current section precedence, card layout and compact rows.
@@ -649,8 +629,7 @@ camera capture and server read-marker writes remain outside this proof.
 Chief and Orchestrator headers use the already loaded Workspace identity during
 the initial detail read. Ticket navigation uses its cached title. Activity marks
 reserve their width so arriving unread/working indicators do not rewrap titles.
-Expanded recaps stay expanded during refresh. Ideas disclosures clip their
-shrinking content to address the reviewed collapse overlap. System list headers
+Expanded recaps stay expanded during refresh. System list headers
 preserve mixed case; static group labels use title case.
 
 The polish revision was compiled with the generic iOS Simulator SDK and four

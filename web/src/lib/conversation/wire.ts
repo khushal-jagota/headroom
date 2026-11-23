@@ -1,3 +1,4 @@
+import { clientFetch } from "../clientIdentity";
 import type { BackendScopeRequest } from "./modelResolutionWire";
 import type { ProviderOptionDescriptor } from "../usage/contracts/model";
 export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
@@ -569,7 +570,7 @@ export async function mutateCredentialRequest(
 ): Promise<import('./view/contracts').CredentialRequestRowBody> {
   let response: Response;
   try {
-    response = await fetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
+    response = await clientFetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
       method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     });
   } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
@@ -591,7 +592,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   let response: Response;
   try {
-    response = await fetch(`${CONVERSATION_BASE}${path}`, init);
+    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init);
   } catch {
     throw new ConversationWireError("The server could not be reached.", 0);
   }

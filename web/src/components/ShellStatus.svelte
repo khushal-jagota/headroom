@@ -9,16 +9,21 @@
   import { updateCard, type UpdateCardState } from "../lib/updates/logic/presentation";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  let { connectionState, navigationHealth = null, status, presentation, now }: {
-    connectionState: ConnectionStatus; navigationHealth?: NavigationHealth;
+  let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation, now }: {
+    connectionState: ConnectionStatus; navigationHealth?: NavigationHealth; showsSavedSession?: boolean;
     status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
   } = $props();
+  // The desktop app opens with the last session's data. Until the server replaces it on
+  // screen, the line says so. A navigation warning, when there is one, says more.
+  const SAVED_SESSION = { state: "saved_session" } as const;
+  type ShownHealth = NavigationHealth | typeof SAVED_SESSION;
   // An update restarts Panels, which drops navigation for a moment. That is part of the
   // one "Updating…" wait, not a second thing to report.
-  const shownHealth = $derived(presentation === "updating" ? null : navigationHealth);
+  const shownHealth = $derived<ShownHealth>(presentation === "updating" ? null
+    : navigationHealth ?? (showsSavedSession ? SAVED_SESSION : null));
   const statusKey = $derived(presentation ?? (shownHealth ? "navigation" : null));
   let displayedWord = $state<UpdateCardState | "navigation" | null>(null);
-  let displayedHealth = $state.raw<NavigationHealth>(null);
+  let displayedHealth = $state.raw<ShownHealth>(null);
   let textOut = $state(false);
   let actions = $state<UpdateActions | null>(null);
   // The card follows the displayed word, so its text changes with the crossfade.
@@ -188,7 +193,7 @@
         {#if displayedHealth}
           <span class="navigation-health" data-navigation-health={displayedHealth.state} data-state={"changing"}>
             <span class="status-mark" aria-hidden="true"></span>
-            <span class="navigation-health-text"><span>Navigation {displayedHealth.state}</span>
+            <span class="navigation-health-text"><span>{displayedHealth.state === "saved_session" ? "Showing your last session" : `Navigation ${displayedHealth.state}`}</span>
             </span>
           </span>
         {/if}

@@ -191,6 +191,12 @@ export class UpdateService {
     }
     return this.ready;
   }
+  ready_screens_root(): string | null {
+    const release = this.ready_release();
+    return release === null
+      ? null
+      : staged_app_path(this.options.current_root, release.manifest.app_sha);
+  }
   refresh_available(options: { force?: boolean } = {}): void {
     if (
       !this.running ||

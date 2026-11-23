@@ -3,14 +3,18 @@ import type { ScopedNavigationOwnerState } from './owner';
 import { createScopedNavigationOwner } from './views/owner';
 import { navigationConfiguration } from './configuration';
 import { createNavigationPresentationCache } from './presentation';
+import { noteNavigationView, savedNavigationView } from '../savedSession';
 
 const applicationContext = Symbol('navigation application');
 
 /** One bounded view belongs to the application, above every route and conversation pane. */
 export function provideNavigationApplication() {
-  const owner = createScopedNavigationOwner();
+  const owner = createScopedNavigationOwner({ saved: savedNavigationView() });
   let state = $state.raw<ScopedNavigationOwnerState>(owner.getState());
-  const unsubscribe = owner.subscribe((next) => { state = next; });
+  const unsubscribe = owner.subscribe((next) => {
+    state = next;
+    noteNavigationView(next.publication, next.effective?.runtimeCurrent === true);
+  });
   const selectors = {
     get publication(){return state.publication ?? null;},
     get records(){return state.publication?.records ?? [];},

@@ -1,3 +1,4 @@
+import { clientFetch } from "../clientIdentity";
 /** Speaking into the composer, from the first tap to the words landing in the draft.
  *
  * The whole voice flow is one small machine with four resting places — idle, recording,
@@ -42,7 +43,7 @@ export async function postVoiceTranscription(
   const headers = await mutationHeaders({ "Content-Type": "application/json" });
   let response: Response;
   try {
-    response = await fetch(
+    response = await clientFetch(
       `${CONVERSATION_BASE}/voice-transcriptions`,
       {
         method: "POST",

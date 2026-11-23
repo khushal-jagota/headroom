@@ -12,6 +12,8 @@ export interface EnvironmentRuntime {
   /** Startup and bounded retry probe; holds the installer lock during orphan recovery. */
   recover_update_barrier?(): void;
   update_attempt_id?(): string;
+  /** Only an admitted waiting release can supply a prefetched screen snapshot. */
+  waiting_screens_root?(): string | null;
   reopen_update_work?(attempt_id: string): void;
   readonly areas: readonly Area[];
   readonly resourceProviders: readonly ResourceProvider[];

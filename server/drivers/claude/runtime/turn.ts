@@ -27,6 +27,10 @@ export class TurnInFlight {
   cancel_requested = false;
   command_replies: string[] = [];
   readonly owned_steer_uuids = new Set<string>();
+  // The id the prompt was sent with. Null for a native command or automatic compaction.
+  prompt_uuid: string | null = null;
+  // Every user message id this turn sent: its prompt and its steers.
+  readonly sent_user_message_uuids = new Set<string>();
   held_result: ClaudeSdkMessage | null = null;
   steer_settlement_watch: { cancelled: Deferred<void>; task: Promise<void> } | null = null;
   readonly ended = new Deferred<void>();

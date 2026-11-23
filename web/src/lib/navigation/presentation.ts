@@ -60,7 +60,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
         const proposal:import('../types').NavigationReviewProposalItem={review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
           title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision};
-        reviewTickets.set(record.id,{review_item_type:'ticket',ticket_id:record.id,title:row.title,waiting_since:proposal.waiting_since,proposal,messages:[]});
+        reviewTickets.set(record.id,{review_item_type:'ticket',ticket_id:record.id,title:row.title,waiting_since:proposal.waiting_since,proposal,messages:[],ask:null});
       }
     }
     if(record.kind==='ticket') rawTicketsById.set(record.id,record);
@@ -188,7 +188,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(address.owner_kind==='ticket') {
       let card=reviewTickets.get(address.owner_id);
       if(!card) {
-        card={review_item_type:'ticket',ticket_id:address.owner_id,title:message.title,waiting_since:message.waiting_since,proposal:null,messages:[]};
+        card={review_item_type:'ticket',ticket_id:address.owner_id,title:message.title,waiting_since:message.waiting_since,proposal:null,messages:[],ask:null};
         reviewTickets.set(address.owner_id,card);
       }
       card.messages.push(message);
@@ -197,6 +197,28 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       card.waiting_since=Math.min(card.waiting_since,message.waiting_since);
     } else reviewItems.push(message);
   }
+  // An ask waits on the owner while its running turn is stopped on it. Only the owner's current
+  // conversation can be running, so only that one is read. A Ticket's ask joins its card.
+  const addAsk=(kind:'ticket'|'manager'|'chief',id:string,conversationId:string|null,title:string,live:boolean,recap:string,recap_reference:ViewContentReference|null):void=>{
+    if(conversationId===null || !live || value(view.conversations.get(conversationId)?.awaiting_answer)!==true)return;
+    const at=conversationsById.get(conversationId)?.latest_ask_at;
+    const addressId=kind==='ticket' ? null : [...(addressesByConversation.get(conversationId) ?? [])].sort((a,b)=>Number(b.value.current)-Number(a.value.current) || compareIdentity(a.id,b.id))[0]?.id;
+    if(addressId===undefined)return;
+    const ask:import('../types').ReviewAskItem={review_item_type:'ask',conversation_id:conversationId,address_id:addressId,owner_kind:kind,owner_id:id,title,
+      waiting_since:typeof at==='number' ? at : Number.MAX_SAFE_INTEGER,recap,recap_reference};
+    if(kind!=='ticket') {reviewItems.push(ask);return;}
+    const card=reviewTickets.get(id) ?? {review_item_type:'ticket' as const,ticket_id:id,title,waiting_since:ask.waiting_since,proposal:null,messages:[],ask:null};
+    card.ask=ask;card.waiting_since=Math.min(card.waiting_since,ask.waiting_since);
+    reviewTickets.set(id,card);
+  };
+  for(const record of rawTicketsById.values()) {
+    const row=record.value;
+    if('integrity_error' in row)continue;
+    addAsk('ticket',record.id,row.conversation_id,row.title,row.stage!=='done' && !row.is_backlogged,row.recap,'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null);
+  }
+  for(const record of managerRecords)
+    addAsk('manager',record.id,record.value.conversation_id,record.value.title,true,record.value.recap,'recap_reference' in record.value ? record.value.recap_reference as ViewContentReference|null : null);
+  if(chiefRecord?.kind==='chief')addAsk('chief','chief',chiefRecord.value.conversation_id,chiefRecord.value.label,true,'',null);
   reviewItems.push(...reviewTickets.values());
   const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
   const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
@@ -232,8 +254,8 @@ type NavigationReviewPresentation = {
 function finishReviewPresentation(view:EffectiveNavigationView,items:import('../types').NavigationReviewItem[],pointers:Set<string>,exactOutClaimCount:number):NavigationReviewPresentation {
   items.sort((a,b) => a.waiting_since-b.waiting_since
     || compareIdentity(a.review_item_type,b.review_item_type)
-    || compareIdentity(a.review_item_type==='message' ? a.conversation_id : a.ticket_id,
-      b.review_item_type==='message' ? b.conversation_id : b.ticket_id));
+    || compareIdentity(a.review_item_type==='ticket' ? a.ticket_id : a.conversation_id,
+      b.review_item_type==='ticket' ? b.ticket_id : b.conversation_id));
   const counts=view.publication.view?.counts;
   if(counts)exactOutClaimCount=counts.out_claims;
   return {items,runningConversationCount:navigationWorkingAgentCount(view),exactOutClaimCount,currentConversationIds:pointers};

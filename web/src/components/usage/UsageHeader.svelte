@@ -5,7 +5,7 @@
   import { usageSourceLabel } from "../../lib/usage/usageProviders";
   import type { DriverPresentation } from "../../lib/drivers/contracts";
   const USAGE_PERIODS = [{ days: 1, label: "24h" }, { days: 7, label: "7d" }, { days: 30, label: "30d" }, { days: 90, label: "90d" }] as const;
-  const TAB_LABEL: Record<string, string> = { tokens: "Tokens", cost: "Cost", limits: "Limits", config: "Config" };
+  const TAB_LABEL: Record<string, string> = { tokens: "Tokens", cost: "Cost", limits: "Limits" };
   import type { UsageTab } from "../../lib/usageAddress";
   import type { UtilityHref } from "../../lib/utilityAddress";
   let { tab, href, days, providerKeys, selectedProviders, busy, drivers, onDays, onProviders, onRefresh }: {
@@ -21,9 +21,8 @@
 <header class="usage-header">
   <ManagerHeader>
     {#snippet title()}Usage{/snippet}
-    {#snippet eyebrow()}{#if tab !== "limits" && tab !== "config"}<span>Local CLI sources</span>{/if}{/snippet}
+    {#snippet eyebrow()}{#if tab !== "limits"}<span>Local CLI sources</span>{/if}{/snippet}
     {#snippet actions()}
-      {#if tab !== "config"}
         <details class="provider-filter">
           <summary>{selectedProviders.length === providerKeys.length ? "All providers" : `${selectedProviders.length} providers`} <span aria-hidden="true">⌄</span></summary>
           <div class="provider-popup">
@@ -34,22 +33,19 @@
           </div>
         </details>
         <Button variant="ghost" aria-label="Refresh usage and allowances" aria-busy={busy} disabled={busy} onclick={onRefresh} data-backends-refresh title="Refresh local usage and allowances">{busy ? "…" : "↻"}</Button>
-      {/if}
     {/snippet}
   </ManagerHeader>
   <div class="toolbar">
     <nav class="segmented metrics" aria-label="Usage tabs">
-      {#each ["tokens", "cost", "limits", "config"] as value}
+      {#each ["tokens", "cost", "limits"] as value}
         <a class="segmented-option" href={href([value])} aria-current={tab === value ? "page" : undefined}>{TAB_LABEL[value]}</a>
       {/each}
     </nav>
-    {#if tab !== "config"}
       <div class="segmented periods" role="group" aria-label="Usage period">
         {#each USAGE_PERIODS as period}
           <button class="segmented-option" aria-pressed={days === period.days} disabled={tab === "limits"} onclick={() => onDays(period.days)}>{period.label}</button>
         {/each}
       </div>
-    {/if}
   </div>
 </header>
 <style>

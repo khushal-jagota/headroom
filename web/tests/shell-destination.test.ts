@@ -3,9 +3,11 @@ import { parseShellDestination } from "../src/lib/shellDestination";
 
 describe("persistent shell addresses", () => {
   it.each([
-    ["#/config/chief-of-staff", "#/settings/config/chief-of-staff", "settings", { section: "config", roleKind: "agent", id: "chief_of_staff" }],
-    ["#/settings/backends", "#/settings/backends", "settings", { section: "backends", roleKind: "index" }],
-    ["#/vps", "#/settings/vps", "settings", { section: "vps", roleKind: "index" }],
+    ["#/config/chief-of-staff", "#/settings/agents/chief-of-staff", "settings", { section: "agents", detail: "chief-of-staff", chosen: "true" }],
+    ["#/settings/backends", "#/settings/backends", "settings", { section: "backends", chosen: "true" }],
+    ["#/settings", "#/settings", "settings", { section: "general" }],
+    ["#/vps", "#/settings/diagnostics", "settings", { section: "diagnostics", chosen: "true" }],
+    ["#/backends/cost", "#/backends/cost", "backends", { tab: "cost" }],
     ["#/workspace/goals", "#/goals", "goals", {}],
   ])("normalizes %s without losing its selection", (input, hash, name, params) => {
     const destination = parseShellDestination(input);
@@ -13,17 +15,10 @@ describe("persistent shell addresses", () => {
     expect(parseShellDestination(destination.hash)).toEqual(destination);
   });
 
-  it("retains existing utility aliases and their view and encoded detail state", () => {
-    const hash = "#/workspace/utility/settings/config/workers/type%2Fwith%20space?view=managers";
-    expect(parseShellDestination(hash)).toMatchObject({ name: "workspace", hash, workspace: {
-      view: "managers", selection: { kind: "utility", utility: "settings", path: ["config", "workers", "type%2Fwith%20space"] }
-    } });
-  });
-
   it("retains Usage's mount key across tabs, and changes Settings detail keys", () => {
     expect(parseShellDestination("#/backends/tokens").key).toBe(parseShellDestination("#/backends/cost").key);
-    expect(parseShellDestination("#/settings/config/chief-of-staff").key)
-      .not.toBe(parseShellDestination("#/settings/config/workers/coding").key);
+    expect(parseShellDestination("#/settings/agents/chief-of-staff").key)
+      .not.toBe(parseShellDestination("#/settings/workers/coding").key);
   });
 
   it("preserves preview and workspace open-file query state", () => {
@@ -33,7 +28,7 @@ describe("persistent shell addresses", () => {
     expect(parseShellDestination(input)).toMatchObject({ name: "workspace", hash: input, workspace: { openFile: { kind: "ticket-file", ticketId: "t_1", path: "artifacts/report.html" } } });
   });
 
-  it.each(["#/settings/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint", "#/feedback", "#/workspace/utility/feedback", "#/dev", "#/dev/goal-components", "#/dev/conversation", "#/dev/file-preview-gallery", "#/dev/goal-components/unknown"])("keeps an unavailable destination explicit: %s", hash => {
+  it.each(["#/settings/unknown", "#/settings/config/unknown", "#/backends/config/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint", "#/feedback", "#/workspace/utility/feedback", "#/dev", "#/dev/goal-components", "#/dev/conversation", "#/dev/file-preview-gallery", "#/dev/goal-components/unknown"])("keeps an unavailable destination explicit: %s", hash => {
     expect(parseShellDestination(hash).name).toBe("unknown");
   });
 });

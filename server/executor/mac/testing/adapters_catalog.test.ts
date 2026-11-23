@@ -268,7 +268,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   environment.executables.set('claude', '/synthetic/claude');
   environment.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), {
     exit_code: 0,
-    standard_output: '2.1.219',
+    standard_output: '2.1.259',
     standard_error: '',
   });
   const notify = vi.fn();

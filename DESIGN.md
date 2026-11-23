@@ -84,7 +84,7 @@ bubble-less assistant, recessed composer).
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
     and a long soft shadow, with the accent Approve glowing beneath.
     Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
-    (the ticket stage spine, manager and idea rows) and at the conversation rail edge; blocks are
+    (the ticket stage spine, manager rows) and at the conversation rail edge; blocks are
     otherwise separated by space, not lines.
 
 ## Applied so far

@@ -618,7 +618,7 @@ it('refuses a running CLI whose handshake reports a version below the floor', as
     }),
   );
   await expect(client.connect()).rejects.toThrow(
-    'Claude 2.1.100 at /synthetic/claude is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.',
+    'Claude 2.1.100 at /synthetic/claude is too old. Update Claude to at least 2.1.259. Panels requires the prompt ids that each result names.',
   );
   expect(close).toHaveBeenCalled();
   await pumping();

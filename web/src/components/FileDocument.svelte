@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { clientFetch } from "../lib/clientIdentity";
   import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import ManagedHtmlDocument from "./ManagedHtmlDocument.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
@@ -52,7 +53,7 @@
     if (!mounted || current.kind !== "markdown") return;
 
     const controller = new AbortController();
-    fetch(current.href, {
+    clientFetch(current.href, {
       signal: controller.signal,
       cache: currentReloadSignal > 0 ? "no-store" : "default"
     })

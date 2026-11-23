@@ -24,7 +24,8 @@ The workspace has these pieces:
 - An **manager** holds shared intent, Workers, artifacts, and a conversation.
 - **Chief** is a special manager and an explicit Worker assignment destination.
 - A **Worker** is one Ticket with one coherent job and a registered lifecycle.
-- An **idea** is a possibility that is not committed work.
+- An **idea** is a possibility that is not committed work. The Chief keeps ideas as
+  Markdown files in `ideas/` in its home folder. Panels does not store them.
 
 Ordinary Managers keep their former Manager IDs and supervisor conversations.
 Workers name Chief or an ordinary manager explicitly. Assignment, Project, approval

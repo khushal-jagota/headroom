@@ -64,7 +64,6 @@ import { routes as workerSettings } from './worker_settings/routes.ts';
 import type { Area } from './core/authority/register.ts';
 import type { Database, CommitStep } from './core/database/index.ts';
 import { routes as projects } from './projects/routes.ts';
-import { routes as ideas } from './ideas/routes.ts';
 import { createRoutes as createResourceRoutes } from './resource_versions/routes.ts';
 import { providers as resourceProviders } from './resource_versions/registry.ts';
 import type { ResourceProvider } from './resource_versions/contracts.ts';
@@ -222,7 +221,6 @@ export function createAreasRuntime(
         { prefix: '/api', routes: conversation_routes },
         { prefix: '/api', routes: membership },
         { prefix: '/api', routes: projects },
-        { prefix: '/api', routes: ideas },
         { prefix: '/api', routes: workerSettings },
         {
           prefix: '/api',

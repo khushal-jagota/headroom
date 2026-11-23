@@ -184,7 +184,7 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
   if (!Array.isArray(names) || names.some((name) => typeof name !== 'string'))
     return 'invalid retirement scratch snapshot';
   if (!(await (options.prune_ticket_scratch ?? prune_ticket_scratch)(record.ticket_id, names)))
-    return 'Worker scratch path is not an owned real directory';
+    return 'Worker scratch is busy or not an owned real directory';
   return cleanup_ticket_folder(path, {
     signal: options.signal,
     admit_path: options.admit_path,
