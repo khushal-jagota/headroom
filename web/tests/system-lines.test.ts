@@ -4,7 +4,10 @@ import UserMessage from "../src/components/conversation/UserMessage.svelte";
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
 import TranscriptStatusRow from "../src/components/conversation/TranscriptStatusRow.svelte";
 import { promptOutcomeStatus, statusReason, turnEndingStatus, turnFailureSentence, TURN_STOPPED_STATUS, type TranscriptRow } from "../src/lib/conversation/transcript";
-import { placeHoverRow } from "../src/lib/conversation/hoverRowPlacement";
+import { SvelteSet } from "svelte/reactivity";
+import ProjectedTranscript from "../src/components/conversation/view/ProjectedTranscript.svelte";
+import type { ConversationViewItem, ConversationViewStatus } from "../src/lib/conversation/view/contracts";
+import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 
 // Every system and lifecycle line is the one SystemLine, no line is a card, and a message
 // that was not delivered says so inside its own bubble.
@@ -146,31 +149,36 @@ describe("a message's system lines", () => {
   });
 });
 
-// The hover row needs 4 + 24 px. It sits in the gap that follows, goes under a
-// following system line when the gap is smaller, and is not drawn over anything else.
-describe("where a message's hover row stands", () => {
-  // A message whose bottom is at 100, in a 760 px column, with 22 px lines whose words draw
-  // 16 px tall; its last line is centred at 89.
-  const line = (top: number, right: number) => ({ left: 0, right, top: top + 3, bottom: top + 19 });
-  const slot = { left: 760 - 80 - 16, right: 760 };
-  it("in the gap under the message when the gap holds it with room to spare", () => {
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 132, lines: [], drawn: [], slot })).toEqual({ kind: "below" });
-    expect(placeHoverRow({ messageBottom: 100, nextTop: null, lines: [], drawn: [], slot })).toEqual({ kind: "below" });
+// The hover row (time and Copy) always stands 4 px under its message and is 24 px tall, so
+// whatever follows a message stands at least a turn's gap (32) below it: the row never
+// covers the next item, whatever that item is.
+describe("the room under a message for its hover row", () => {
+  const message = (key: string, sequence: number, sender: string | null): ConversationViewItem => ({
+    kind: "row", key, row_kind: sender ? "prompt" : "agent_message", sender_message_id: sender, source_sequence: sequence,
+    order: { sequence, slot: 0 }, changed_through_sequence: sequence, created_at: 1, turn_key: null, work_group_key: null,
+    fold_rule: "never", body: sender
+      ? { kind: "inline", value: { kind: "prompt", content: [{ piece: "text", text: key }], sender_label: "owner", mode: "steer" } }
+      : { kind: "inline", value: { kind: "agent_message", content: [{ piece: "text", text: key }], to_owner: true } }
+  } as ConversationViewItem);
+  function rhythms(items: ConversationViewItem[], status: Partial<ConversationViewStatus> = {}) {
+    const reader = {
+      id: "c", lens: "full", coverage: 9, entryPhase: "ready", restorationAnchor: null, restorationAttempt: 0,
+      pages: [{ conversation_id: "c", protocol_version: 1, projection_version: 1, lens: "full", scope: { kind: "timeline", key: null }, items, older: null, newer: null, body_bytes: 0 }],
+      status: { turn_key: null, pending_permission: null, pending_user_input: null, ...status }, discardedBodies: 0, openTools: new SvelteSet<string>(),
+      isExpanded: () => false, expand: async () => {}, load: async () => {}, textBodyReady: () => {}, failTextRestoration: () => {}, body: async () => "", receipts: async () => ({ receipts: [] })
+    } as unknown as ConversationViewReader;
+    const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner", livenessPulse: 0 } }).body;
+    return { html, gaps: [...html.matchAll(/data-conversation-view-key="([^"]+)"[^>]*data-rhythm="([^"]+)"/g)].map(([, key, rhythm]) => `${key}:${rhythm}`) };
+  }
+  it("puts a turn's gap after every message, also between two agent messages", () => {
+    const { gaps, html } = rhythms([message("e1", 1, "m1"), message("e2", 2, null), message("e3", 3, null), message("e4", 4, "m4")]);
+    expect(gaps).toEqual(["e1:first", "e2:turn", "e3:turn", "e4:turn"]);
+    // The live edge drawn after the transcript reads that it ends with a message.
+    expect(html).toContain("data-conversation-ends-with-message");
   });
-  it("level with the last line, never under or touching what follows, when the gap is short", () => {
-    const lines = [line(56, 700), line(78, 300)];
-    // A system line 16 px under the message (the failed turn, the stopped bubble).
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 116, lines, drawn: lines, slot })).toEqual({ kind: "beside", top: 77 });
-    // 28 px holds the row only by touching what follows.
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 128, lines, drawn: lines, slot })).toEqual({ kind: "beside", top: 77 });
-  });
-  it("never over words: a last line that runs into the slot sends the row up to a clear line", () => {
-    const lines = [line(12, 400), line(34, 750), line(56, 690), line(78, 740)];
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 116, lines, drawn: lines, slot })).toEqual({ kind: "beside", top: 11 });
-    const code = { left: 0, right: 760, top: 0, bottom: 100 };
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 116, lines, drawn: [...lines, code], slot })).toBeNull();
-  });
-  it("nowhere when the column leaves no slot beside the words", () => {
-    expect(placeHoverRow({ messageBottom: 100, nextTop: 116, lines: [line(78, 300)], drawn: [], slot: null })).toBeNull();
+  it("gives the line drawn after the last message the same gap", () => {
+    const { html } = rhythms([message("e1", 1, "m1")], { stopped_without_ending: true });
+    expect(html).toMatch(/data-conversation-row="turn_stopped"[^>]*data-rhythm="turn"|data-rhythm="turn"[^>]*data-conversation-row="turn_stopped"/);
+    expect(html).not.toContain("data-conversation-ends-with-message");
   });
 });

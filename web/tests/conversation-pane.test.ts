@@ -157,12 +157,12 @@ describe("queued messages in the pane", () => {
     expect(body).toContain('data-conversation-held-promote="send_now"');
   });
 
-  it("go back to the composer on Edit: out of the queue first, then the words after any draft", () => {
+  it("go back to the composer on Edit: out of the queue first, then the words after any draft, still in Queue", () => {
     // Edit is a click and the tests run without a DOM; the wiring is read from the source.
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
     expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?await onDiscardHeldPrompt\(heldPromptId, true\);[\s\S]*?if \(heldPromptRows\.some\(\(row\) => row\.heldPromptId === heldPromptId\)\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
     expect(pane).toContain("bind:this={composerHandle}");
-    expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
+    expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*deliveryMode = "queue";\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
   });
 });
