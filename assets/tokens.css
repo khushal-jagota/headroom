@@ -653,15 +653,15 @@
    *    The thread's scroll box reaches one gutter left of the text so a hung mark is not
    *    clipped. User bubbles and their captions keep the right edge.
    *  Vertical: every gap is a margin on the item below it, in steps of 4 8 12 16 24 32 only.
-   *    turn     32  the end of one turn to the next message, and between waiting messages
+   *    turn     32  the end of one turn to the next message, between waiting messages, and
+   *                 under every message (room for its hover row, below)
    *    meta      8  a system line ("Worked for") to the content under it
    *    block    16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
-   *                 end-of-turn system line, two agent messages in a row
+   *                 end-of-turn system line
    *    row       0  tool rows stack with no gap; each is its own 32px line
-   *    hover   4 + 24  the hover row (time, copy) is 24 tall and sits 4 under its message,
-   *                 inside the gap that follows, when 4 still stay clear under it. It adds no
-   *                 space; where the gap is shorter it stands level with the message's last
-   *                 line, at the column's right end or just left of the person's bubble.
+   *    hover   4 + 24  the hover row (time, copy) is 24 tall and always sits 4 under its
+   *                 message, as in chat apps. So whatever follows a message stands at least a
+   *                 turn's gap (32) below it, and the row never covers anything.
    *  The thread pads 28 over its first line (room for that line's hover row) and 32 under its
    *  newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is that value). */
   --cv-gap-turn: 32px;

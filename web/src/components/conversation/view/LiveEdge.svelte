@@ -20,7 +20,7 @@
 
 {#if shown && turn !== null}
   <div class="c2-live-edge" data-conversation-live-edge>
-    <TurnAnchor {activityUncertain} settled={false} stopped={false} startedAtUnixMilliseconds={turn.started_at_unix_milliseconds} isLatest={true} {waiting} {livenessPulse}/>
+    <TurnAnchor {activityUncertain} settled={false} stopped={false} startedAtUnixMilliseconds={turn.started_at_unix_milliseconds} {waiting} {livenessPulse}/>
   </div>
 {/if}
 

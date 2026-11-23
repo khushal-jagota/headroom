@@ -49,6 +49,10 @@
     background:linear-gradient(to bottom, transparent, var(--cv-canvas)); pointer-events:none; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--cv-s3);
     min-width:0; min-height:40px; }
+  /* With an unread message under it, the row holds "Open" (32) with 2 to spare, so the
+     preview starts 8 under the status words, and ends 8 over the composer. */
+  .c2-rest:has(> .c2-rest-preview) { gap:0; }
+  .c2-rest:has(> .c2-rest-preview) .c2-rest-status { min-height:36px; }
   /* The line and "Open" share one centre: the line drops its start alignment here. */
   .c2-rest-status > :global(.cv-system-line) { align-self:center; }
   /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
