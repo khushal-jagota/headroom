@@ -15,6 +15,7 @@ import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
+import { WORKER_LAUNCHER_MODE } from '../../platform_runtime/darwin/launchd/configuration.ts';
 import { has_worker_job_marker } from '../../platform_runtime/darwin/launchd/logic/process_arguments.ts';
 import type {
   MarkedWorkerProcess,
@@ -771,7 +772,7 @@ function plist(value: Record<string, PlistValue>): string {
 /**
  * The launcher app is the same for every account, so a release can sign it once.
  * It reads the account's home from the user database, never from the environment,
- * so the signed requester cannot be pointed at another Node.
+ * for executor and console commands. Worker mode retains its release's Node.
  */
 export function mac_launcher_bundle() {
   const info = plist({
@@ -791,9 +792,15 @@ export function mac_launcher_bundle() {
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 extern char **environ;
 int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], ${JSON.stringify(WORKER_LAUNCHER_MODE)}) == 0) {
+    if (argc < 4 || argv[2][0] != '/') { fputs("Panels: invalid Worker command\\n", stderr); return 1; }
+    execve(argv[2], argv + 2, environ);
+    perror("Panels: Worker Node runtime"); return 1;
+  }
   unsetenv("NODE_OPTIONS"); unsetenv("NODE_PATH");
   struct passwd *account = getpwuid(getuid());
   if (!account || !account->pw_dir || account->pw_dir[0] != '/') {

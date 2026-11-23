@@ -11,6 +11,14 @@ The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode
 Mac Worker supervision records one launchd job per launch in `run/worker-processes`.
 The private record retains the executor's login domain and a unique job label before bootstrap.
 New jobs use those identities for stop and restart, rather than recorded process numbers.
+The proxy selects the fixed signed app when its executable contains the Worker mode marker.
+That mode executes the selected release Node and Worker entrypoint with the original environment.
+Missing, old, or unusable launchers retain the bare Node route with one warning per launch.
+Entry waits for explicit proxy admission before provider spawn. An unsuccessful app attempt
+must stop under the record lock before one bare Node attempt with fresh transport.
+There is no fallback after provider admission. The app attempt uses two seconds from the
+existing five-second startup budget; fallback retains the remaining budget.
+The app is separate from runtime updates. Its owner update procedure preserves bundle and signing identity.
 Provider input and output cross a private local bridge because launchd does not return child pipes.
 Plist generation omits environment entries with XML-forbidden control characters and logs only their names.
 The job does not restart a crashed Worker automatically. Recovery removes its retained job before a new launch.

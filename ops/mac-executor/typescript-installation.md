@@ -44,7 +44,11 @@ The supervisor puts the runtime's own `bin` first.
 ## The launcher and its signature
 
 The launcher app is the same for every account. It reads the account's home from the user database, not from `HOME`.
-It runs the fixed Node and bootstrap below that home with the original arguments.
+For executor and console commands, it runs the fixed Node and bootstrap below that home with the original arguments.
+Worker jobs use its `--panels-worker-exec-v1` mode, which executes the selected release's Node and entrypoint with the original environment.
+New runtimes inspect that mode marker without executing old launchers.
+If the app is missing, lacks the mode, or fails before provider admission, the Worker uses bare Node and logs one warning.
+A failed app job must be absent before fallback. No provider starts before the proxy grants admission.
 The supervisor keeps its own Node across runtime updates and launches the selected versioned runtime as a child.
 
 The release workflow builds the launcher on its Apple Silicon runner with `server/executor/mac/packaging/launcher_main.ts`.
@@ -70,6 +74,18 @@ If startup fails, retain the state and logs. Use the recovery procedure below wh
 
 An installation from the earlier manual procedure keeps its own launcher, which the owner's Apple Development identity signed.
 Runtime updates do not change the launcher, so that installation keeps working.
+
+To enable the app route on an existing installation, the owner prepares a signed candidate from
+`server/executor/mac/packaging/launcher_main.ts`. The build holds no account path.
+Keep the installed bundle identifier, signing identity, and designated requirement.
+Compare `codesign -dv --verbose=4` and `codesign -d -r-` between the installed app and candidate, then verify the candidate with `codesign --verify --strict`.
+Do not switch an existing Apple Development installation to Developer ID as part of this update.
+Do not add entitlements or clear macOS consent records.
+The owner supplies signing and installation when Keychain access can produce a prompt.
+Before replacement, run a harmless candidate Worker job and record its responsible process, exact release Node, environment, and job absence after stop.
+Use only private Ticket and temporary folders. Do not request consent or inspect protected folders.
+An ad hoc candidate proves the launch route and cleanup only. It does not prove the installed identity or consent retention.
+The owner replaces the app after those checks. Existing Workers keep their jobs. New Workers select the updated app.
 
 ## Preserve a failed first initialization
 
