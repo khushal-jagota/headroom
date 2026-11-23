@@ -60,8 +60,11 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
   const picker = surface.locator('input[type=file]');
   await expect(picker).toHaveCount(1);
   expect([null, '']).toContain(await picker.getAttribute('accept'));
+  const control = surface.locator('[data-conversation-add], [data-review-attach]');
+  await expect(control).toHaveCount(1);
+  await expect(control).toBeVisible();
+  await expect(control).toBeEnabled();
   // The control is inside the composer: its bubbled event must reach the shared surface once.
-  const control = surface.locator('button').first();
   await control.evaluate((node, attachment) => {
     const transfer = new DataTransfer();
     const bytes = Uint8Array.from(atob(attachment.base64), (character) => character.charCodeAt(0));

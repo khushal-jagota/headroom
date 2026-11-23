@@ -1209,6 +1209,7 @@
       class:is-voice={voiceState.phase !== "idle"}
       class:is-compact={compact}
       class:has-ask={panelTakesTheBox}
+      class:question-forbids-attachments={questionForbidsAttachments}
       class:has-key-request={credentialInTheBox}
       data-conversation-box
       data-conversation-box-shape={compact ? "line" : "grown"}
@@ -1359,9 +1360,9 @@
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
-          <!-- v14 (2): an ask has no Stop of its own. Its bottom row is the answer well only (pen,
-               draft, microphone, send); while a turn is open the header's "..." menu leads
-               with "Stop the agent". -->
+          <!-- An ask has no Stop of its own. Its bottom row shares the draft and attachment
+               controls; while a turn is open the header's "..." menu leads with
+               "Stop the agent". -->
           <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
             disabled={inputDisabled || questionForbidsAttachments} fileCount={pendingFiles.length + pendingVideos.length + pendingImages.length}
             onFile={() => fileInput?.click()} onCommand={() => void startWritingACommand()}
@@ -1597,8 +1598,8 @@
 
   /* An ask is the composer while it waits: the same object, grown upward. The ask's header,
      question and tiles stand in the frame on a 16px inset, and the composer's own line is its
-     last row: a pen, the draft, the microphone and the ask's send in the send slot. No add, no
-     model, no mode chip and no Stop under it. */
+     last row: the draft, microphone and the ask's send. Add follows the same attachment
+     capability as drop and paste. Model and mode controls stay hidden under asks. */
   .chat-box.has-ask, .chat-box.has-ask.is-compact { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
   .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
   /* The ask fills a row only in the compact, wrapping layout. In the grown column its
@@ -1611,7 +1612,8 @@
   .chat-box:not(.is-compact) > :global(.chat-attachments) { flex-shrink: 0; }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
-  .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
+  .chat-box.has-ask > .chat-foot :global([data-conversation-model-picker]) { display: none; }
+  .chat-box.question-forbids-attachments > .chat-foot :global(.chat-add) { display: none; }
   /* The ask's own-answer line is one well (#141414, radius 20, at least 40 high) that reads as
      an input: the draft, the microphone and the round send share its fill, joined edge to
      edge, each drawing its share of the well's 1px edge and the last piece closing it. The send
