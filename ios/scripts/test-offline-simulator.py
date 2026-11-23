@@ -1819,6 +1819,15 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/skills":
+                # Settings' Config section reads the managed skills, as the server's
+                # read_skills_home returns them.
+                value = {
+                    "skills": [
+                        {"name": "panels-manager", "description": "Supervise one Manager.", "markdown_body": ""},
+                        {"name": "panels-worker", "description": "Working a Panels ticket.", "markdown_body": ""},
+                    ]
+                }
             elif path == "/api/managers/review-manager/workspace-content":
                 manager = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
                 value = {"goal": manager["goal"], "recap": manager["recap"]}

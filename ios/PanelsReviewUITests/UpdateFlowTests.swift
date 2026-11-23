@@ -69,6 +69,11 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertNotNil(writes[0]["client_identity"] as? String)
 
         // A screen revisit can refresh facts, but it must not replay the refused write.
+        // The Sidebar button is on root pages only, so go back from Updates to Settings first.
+        let back = app.backButton
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        XCTAssertTrue(app.buttons["settings.updates"].waitForExistence(timeout: 10))
         app.openDestination("sidebar-review")
         openSettings()
         writes = try await updateWrites()

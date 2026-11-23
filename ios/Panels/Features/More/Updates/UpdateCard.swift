@@ -49,7 +49,8 @@ struct UpdateCard: View {
             .padding(.vertical, PanelsTheme.Space.xs)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("updates.card")
-            .buttonStyle(.borderless)
+            // The rebuilt app's in-list action buttons, as ScreenRetryButton. Each stays its own target in the row.
+            .buttonStyle(.bordered)
         }
         .sheet(item: $offer) { captured in
             UpdateOfferSheet(captured: captured,
