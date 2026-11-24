@@ -116,6 +116,24 @@ function coreMessage(message: Record<string, unknown>): boolean {
     send({ method: 'remoteControl/status/changed', params: {} });
   } else if (message.method === 'initialized') {
     /* one-way handshake */
+  } else if (message.method === 'model/list') {
+    answer({
+      data: [
+        {
+          model: 'TEST',
+          displayName: 'Test',
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
+          defaultReasoningEffort: 'low',
+          isDefault: true,
+        },
+      ],
+      nextCursor: null,
+    });
+  } else if (message.method === 'account/rateLimits/read') {
+    answer({
+      rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 2000000000 } },
+    });
   } else if (message.method === 'thread/start') {
     answer({ thread: { id: nativeThread, ephemeral: false } });
     unconsumedNotifications('thread/started');

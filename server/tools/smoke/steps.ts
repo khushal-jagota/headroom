@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { public_event } from '../../conversation/http/record.ts';
+import { recorded_failure_detail } from '../../conversation/logic/backend_events.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
@@ -239,7 +240,21 @@ export async function smoke_file_turn(
         sender_label: 'Owner',
         sender_message_id: 'smoke-send',
       });
-      assert.equal(sent.fate, 'started');
+      if (sent.fate !== 'started') {
+        const replay = await api<{ events: Event[] }>(conversation + '/events');
+        const refusal = replay.events.findLast((event) => event.kind === 'prompt_delivery_refused');
+        const detail = refusal?.payload.refusal_detail;
+        throw new Error(
+          'Smoke send ' +
+            conversation_id +
+            ': ' +
+            JSON.stringify({
+              fate: sent.fate,
+              reason: sent.refusal_reason,
+              detail: typeof detail === 'string' ? recorded_failure_detail(detail) : null,
+            }),
+        );
+      }
       await live_reply;
       const completed = await poll(
         async () => {
