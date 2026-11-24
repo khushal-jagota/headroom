@@ -12,7 +12,6 @@ export interface ProductionEnvironmentDependencies {
   /** Null is genuine absence, valid only when config.executor_id is null. */
   readonly executor: ExecutorUpdateBindings | null;
   readonly application_root: string;
-  readonly node_executable: string;
 }
 /** Production requires this explicit adapter. There is no successful missing adapter. */
 export type ProductionEnvironmentFactory = (
