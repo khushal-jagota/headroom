@@ -1,5 +1,5 @@
 /** Human wording only. Ticket status values remain unchanged on the wire. */
-export const WORKER_STATUS_LABEL = 'With the Worker';
+export const WORKER_STATUS_LABEL = 'Agent owned';
 
 export function ticketStatusLabel(status: string): string {
   if (status === 'agent') return WORKER_STATUS_LABEL;

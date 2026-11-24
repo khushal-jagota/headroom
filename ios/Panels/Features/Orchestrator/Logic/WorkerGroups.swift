@@ -30,7 +30,7 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         case .answer: "Needs Your Answer"
         case .yours: "Yours"
         case .errored: "Errored"
-        case .agent: "With the Worker"
+        case .agent: "Agent owned"
         case .agentApproval: "Awaiting an Agent’s Approval"
         case .empty: "Empty"
         case .blocked: "Blocked"
