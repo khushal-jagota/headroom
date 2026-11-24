@@ -101,6 +101,7 @@
   </article>
 {/snippet}
 
+<div data-review-outgoing-replies>
 {#each attempts.filter(attempt => !queueAttempt(attempt)) as attempt (attempt.message.messageId)}
   {@render outgoingReply(attempt)}
 {/each}
@@ -117,8 +118,10 @@
     {/each}
   </HeldPromptStack>
 {/if}
+</div>
 
 <style>
+  [data-review-outgoing-replies] { display: contents; }
   .review-outgoing-reply {
     --cv-bubble: var(--surface-raised);
     --cv-ink: var(--text-default);

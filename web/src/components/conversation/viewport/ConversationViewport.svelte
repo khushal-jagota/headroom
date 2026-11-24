@@ -1252,7 +1252,9 @@
     />
     {/if}
     {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
-    {@render afterTranscript?.()}
+    {#if afterTranscript}
+      <div class="held-queue-slot">{@render afterTranscript()}</div>
+    {/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1293,6 +1295,9 @@
   }
   /* An empty conversation takes the whole view, so its one line stands in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
+  /* Keep a short transcript at the top and its held messages against the composer. */
+  .chat-thread-content:has(> .held-queue-slot) { flex-grow: 1; }
+  .chat-thread-content > .held-queue-slot { margin-block-start: auto; }
   /* Answer room is not content and never shrinks to make room for content. The browser keeps
      the reader's place when history arrives above them; nothing here competes with it. */
   .c2-reserved { flex: none; overflow-anchor: none; }

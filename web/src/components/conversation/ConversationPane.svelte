@@ -674,16 +674,14 @@
     style:visibility={!hasNewOutgoing && (!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase)) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   {#snippet waitingMessages()}
-    {#if queuedMessages.length}
-      <HeldPromptStack>
-        {#each queuedMessages as message (message.messageId)}
-          <UserMessage local={message} conversationId={conversationId ?? ""} {ownSenderLabel}/>
-        {/each}
-      </HeldPromptStack>
-    {/if}
+    <HeldPromptStack>
+      {#each queuedMessages as message (message.messageId)}
+        <UserMessage local={message} conversationId={conversationId ?? ""} {ownSenderLabel}/>
+      {/each}
+    </HeldPromptStack>
   {/snippet}
   <ConversationViewport
-    afterTranscript={readOnly ? undefined : waitingMessages}
+    afterTranscript={!readOnly && queuedMessages.length ? waitingMessages : undefined}
     bind:placementReady
     bind:entryPresentationPending
     {ownerReadThroughSequence}
