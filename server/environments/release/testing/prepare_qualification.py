@@ -3,6 +3,7 @@
 The installed previous client reads a local catalog with the normal release schema. Only the
 catalog IDs and test repository are synthetic. Both revisions' archives stay byte-for-byte intact.
 """
+import base64
 import hashlib
 import json
 import os
@@ -16,7 +17,8 @@ from pathlib import Path
 ROOT = Path(os.environ["FIRST_INSTALL_ROOT"])
 FEED = ROOT / "feed"
 REPO = os.environ["GITHUB_REPOSITORY"]
-SHA = os.environ["GITHUB_SHA"]
+PUBLISH_WORKFLOW = ".github/workflows/publish-typescript-release.yml"
+SERVER_ASSET = "mac-home.zip" if sys.platform == "darwin" else "app.zip"
 MAC = sys.platform == "darwin"
 MACHINE_MEMBER = "panels-mac-runtime.tar.gz" if MAC else "panels-linux-executor.tar.gz"
 MACHINE_RECEIPT = "mac-runtime-publication.json" if MAC else "linux-executor-publication.json"
@@ -45,10 +47,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def main():
-    FEED.mkdir(parents=True)
-    for part in ["server", "machine"]:
-        (ROOT / "build" / part).mkdir(parents=True)
+def public_predecessor():
     releases = []
     page = 1
     while True:
@@ -62,9 +61,9 @@ def main():
     ids = {item["name"]: item["id"] for item in predecessor["assets"]}
     receipt = github(f"releases/assets/{ids['publication.json']}")
     old_sha = receipt["source_run"]["source_sha"]
-    if old_sha == SHA or predecessor["target_commitish"] != old_sha:
+    if predecessor["target_commitish"] != old_sha:
         raise ValueError("Expected distinct predecessor and candidate revisions")
-    server_asset = "mac-home.zip" if MAC else "app.zip"
+    server_asset = SERVER_ASSET
     machine_asset = "mac.zip" if MAC else "linux-executor.zip"
     old_home = receipt["mac_home"] if MAC else receipt
     old_machine = receipt["mac" if MAC else "linux_executor"]
@@ -89,30 +88,96 @@ def main():
     github(f"releases/assets/{ids['mac-home-build.zip' if MAC else 'build.zip']}", old_build_zip)
     extract(old_build_zip, metadata_name, ROOT / "build/server" / metadata_name)
     old_build_zip.unlink()
-    old_script = ROOT / "predecessor-install.py"
-    with old_script.open("xb") as stream:
-        subprocess.run(["git", "show", old_sha + ":scripts/panels_install.py"], stdout=stream, check=True)
+    return old_sha
 
-    # The GitHub artifact IDs come from this workflow's build outputs (not a search by branch).
-    github("actions/artifacts/" + os.environ["HOME_ARTIFACT_ID"] + "/zip", FEED / server_asset)
-    github("actions/artifacts/" + os.environ["MACHINE_ARTIFACT_ID"] + "/zip", FEED / "machine.zip")
-    meta = ROOT / "candidate-build.zip"
-    github("actions/artifacts/" + os.environ["HOME_BUILD_ARTIFACT_ID"] + "/zip", meta)
-    extract(meta, metadata_name, ROOT / metadata_name)
-    extract(meta, "boot-proof.json", ROOT / "boot-proof.json")
-    boot = json.loads((ROOT / "boot-proof.json").read_text())
-    build = json.loads((ROOT / metadata_name).read_text())
-    manifest = build["manifest"]
-    if manifest["app_sha"] != SHA:
-        raise ValueError("Candidate build differs from workflow commit")
+
+def run_artifacts(run_id):
+    if not re.fullmatch(r"[1-9][0-9]*", run_id):
+        raise ValueError("A native release workflow run ID is required")
+    run = github(f"actions/runs/{run_id}")
+    if (run["path"] != PUBLISH_WORKFLOW or run["head_repository"]["full_name"] != REPO
+            or run["event"] not in ("pull_request", "push")):
+        raise ValueError("Manual replay requires a build from this repository's release workflow")
+    artifacts = github(f"actions/runs/{run_id}/artifacts?per_page=100")["artifacts"]
+    names = (["panels-mac-home", "panels-mac-home-build", "panels-mac-runtime"]
+             if MAC else ["panels-app", "panels-publication-build", "panels-linux-executor"])
+    found = {a["name"]: a for a in artifacts if not a["expired"]}
+    # The native boot receipts are emitted before their immutable ZIP IDs.
+    return [str(found[name]["id"]) for name in names], run
+
+
+def actions_build(ids, dest):
+    metadata_name = "mac-home-build.json" if MAC else "linux-publication-build.json"
+    for asset, artifact_id in zip([SERVER_ASSET, "metadata.zip", "machine.zip"], ids, strict=True):
+        github(f"actions/artifacts/{artifact_id}/zip", dest / asset)
+    extract(dest / "metadata.zip", metadata_name, dest / metadata_name)
+    extract(dest / "metadata.zip", "boot-proof.json", dest / "boot-proof.json")
+    extract(dest / "machine.zip", MACHINE_RECEIPT, dest / MACHINE_RECEIPT)
+    build = json.loads((dest / metadata_name).read_bytes())
+    machine = json.loads((dest / MACHINE_RECEIPT).read_bytes())
+    boot = json.loads((dest / "boot-proof.json").read_bytes())
     home_digest = build["archive_sha256"] if MAC else build["archive"]["sha256"]
-    extract(FEED / "machine.zip", MACHINE_RECEIPT, ROOT / MACHINE_RECEIPT)
-    machine = json.loads((ROOT / MACHINE_RECEIPT).read_text())
-    if boot["requested_sha"] != SHA or boot["archive_sha256"] != home_digest or machine["application_revision"] != SHA:
+    if (boot["requested_sha"] != build["manifest"]["app_sha"] or boot["archive_sha256"] != home_digest
+            or machine["application_revision"] != boot["requested_sha"] or not boot["health"]["ready"]):
         raise ValueError("Native boot and machine receipts must match the target")
+    return build["manifest"], home_digest, machine, boot
+
+
+def verify_run_commit(run, sha):
+    commit = github(f"git/commits/{sha}")
+    if sha != run["head_sha"] and not (run["event"] == "pull_request" and
+            len(commit["parents"]) == 2 and commit["parents"][1]["sha"] == run["head_sha"]):
+        raise ValueError("Native artifact revision is not the recorded run's tested merge")
+
+
+def main():
+    FEED.mkdir(parents=True)
+    for part in ["server", "machine"]:
+        (ROOT / "build" / part).mkdir(parents=True)
+    manual = os.environ.get("REPLAY_FROM") or os.environ.get("REPLAY_TO")
+    if manual:
+        if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+            raise ValueError("Only an explicit manual rehearsal can reuse another starting release")
+        baseline = ROOT / "baseline"
+        baseline.mkdir()
+        prior_ids, prior = run_artifacts(os.environ["REPLAY_FROM"])
+        manifest, home_digest, machine, _ = actions_build(prior_ids, baseline)
+        old_sha = manifest["app_sha"]
+        verify_run_commit(prior, old_sha)
+        for archive, part, member, expected in [
+                (SERVER_ASSET, "server", "panels-app.tar.gz", home_digest),
+                ("machine.zip", "machine", MACHINE_MEMBER, machine["archive_sha256"])]:
+            dest = ROOT / "build" / part / member
+            extract(baseline / archive, member, dest)
+            if digest(dest) != expected:
+                raise ValueError("Historical package differs from its native receipt")
+            (baseline / archive).unlink()
+        metadata = "mac-home-build.json" if MAC else "linux-publication-build.json"
+        (baseline / metadata).rename(ROOT / "build/server" / metadata)
+        (baseline / MACHINE_RECEIPT).rename(ROOT / "build/machine" / MACHINE_RECEIPT)
+        ids, candidate_run = run_artifacts(os.environ["REPLAY_TO"])
+    else:
+        old_sha = public_predecessor()
+        ids = [os.environ[name] for name in ["HOME_ARTIFACT_ID", "HOME_BUILD_ARTIFACT_ID", "MACHINE_ARTIFACT_ID"]]
+    manifest, home_digest, machine, boot = actions_build(ids, FEED)
+    sha = manifest["app_sha"]
+    if manual:
+        verify_run_commit(candidate_run, sha)
+        # The policy and browser harness below must come from the candidate tree.
+        if github(f"git/commits/{sha}")["tree"]["sha"] != github(f"git/commits/{os.environ['GITHUB_SHA']}")["tree"]["sha"]:
+            raise ValueError("Dispatch this replay from the exact candidate tree")
+    elif sha != os.environ["GITHUB_SHA"]:
+        raise ValueError("Candidate build differs from workflow commit")
+    if sha == old_sha:
+        raise ValueError("Distinct installed revisions are required")
+    script = github(f"contents/scripts/panels_install.py?ref={old_sha}")
+    (ROOT / "predecessor-install.py").write_bytes(base64.b64decode(script["content"]))
+    server_asset = SERVER_ASSET
+    machine_asset = "mac.zip" if MAC else "linux-executor.zip"
     app = {"manifest": manifest, "archive_sha256": home_digest, "artifact_id": 2,
            "artifact_source": "github-release"}
-    source = {**receipt["source_run"], "repository": "qualification/panels", "source_sha": SHA,
+    source = {"workflow_path": PUBLISH_WORKFLOW, "event": "push", "ref": "refs/heads/main",
+              "repository": "qualification/panels", "source_sha": sha,
               "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"]}
     source["workflow_ref"] = "qualification/panels/" + source["workflow_path"] + "@refs/heads/main"
     policy = json.loads(subprocess.check_output([
@@ -123,7 +188,7 @@ def main():
     ]))
     target = {**app, **policy, "publication_run_id": int(source["run_id"]), "expires_at": None,
               "source_run": source,
-              "parts": {"server": {"app_sha": SHA, "artifact_digest": manifest["artifact_digest"]},
+              "parts": {"server": {"app_sha": sha, "artifact_digest": manifest["artifact_digest"]},
                         "screens": {"sha256": boot["screens_sha256"]},
                         "machines": {PLATFORM: {"archive_sha256": machine["archive_sha256"],
                                                 "build_id": machine["build_id"]}}},
@@ -134,12 +199,13 @@ def main():
     if MAC:
         assets.append({"name": "mac-home.zip", "id": 4})
         target["mac_home"] = {**app, "artifact_id": 4}
-    tag = f'server-{SHA}-{source["run_id"]}-{source["run_attempt"]}'
-    (FEED / "releases.json").write_text(json.dumps([{"tag_name": tag, "target_commitish": SHA,
+    tag = f'server-{sha}-{source["run_id"]}-{source["run_attempt"]}'
+    (FEED / "releases.json").write_text(json.dumps([{"tag_name": tag, "target_commitish": sha,
         "published_at": "2026-01-01T00:00:00Z", "draft": False, "prerelease": False, "assets": assets}]))
     (FEED / "publication.json").write_text(json.dumps(target))
     (ROOT / "predecessor.sha").write_text(old_sha)
-    print(f"Predecessor {old_sha}, candidate {SHA}, home {home_digest}, machine {machine['archive_sha256']}")
+    (ROOT / "candidate.sha").write_text(sha)
+    print(f"Predecessor {old_sha}, candidate {sha}, home {home_digest}, machine {machine['archive_sha256']}")
 
 
 if __name__ == "__main__":

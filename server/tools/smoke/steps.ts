@@ -106,7 +106,7 @@ async function review_gate(base: string, ticket_id: string): Promise<void> {
     (attention) => attention.rows.some((row) => row.id === ticket_id),
   );
 }
-export async function verify_smoke_attachment(
+async function verify_smoke_attachment(
   base: string,
   conversation: string,
   file: string,
@@ -280,11 +280,9 @@ export async function smoke_file_turn(
   return { conversation_id, stored_file_id, events };
 }
 
-export async function smoke_after_restart(
+export async function verify_smoke_history(
   base: string,
-  state: SmokeState,
-  environment: NodeJS.ProcessEnv,
-  step: Step = log,
+  state: Pick<SmokeState, 'conversation_id' | 'stored_file_id' | 'events' | 'model'>,
 ): Promise<void> {
   const api = client(base);
   const conversation = `/api/conversation/conversations/${state.conversation_id}`;
@@ -293,8 +291,18 @@ export async function smoke_after_restart(
   assert.equal(persisted.is_running, false);
   const replay = await api<{ events: Event[] }>(conversation + '/events');
   assert.deepEqual(replay.events.slice(0, state.events.length), state.events);
-  step('08 restart preserves conversation, prompt and completed turn');
   await verify_smoke_attachment(base, state.conversation_id, state.stored_file_id);
+}
+
+export async function smoke_after_restart(
+  base: string,
+  state: SmokeState,
+  environment: NodeJS.ProcessEnv,
+  step: Step = log,
+): Promise<void> {
+  const api = client(base);
+  await verify_smoke_history(base, state);
+  step('08 restart preserves conversation, prompt and completed turn');
   const goal = await api(`/api/goals/${state.goal_id}`);
   assert.equal(goal.id, state.goal_id);
   assert.equal(goal.title, 'Production smoke goal');

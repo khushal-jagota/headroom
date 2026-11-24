@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { smoke_file_turn, verify_smoke_attachment } from '../../../tools/smoke/steps.ts';
+import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
 import { credential_path } from '../../../executor/credential_file.ts';
 
@@ -20,18 +20,18 @@ interface Options {
   predecessor: string;
 }
 
-async function wait_for(read: () => Promise<boolean>, description: string, seconds = 600) {
-  const until = performance.now() + seconds * 1000;
+async function wait_for(read: () => Promise<boolean>, description: string, poll_ms = 500) {
+  const until = performance.now() + 600_000;
   while (performance.now() < until) {
     if (await read()) return;
-    await delay(500);
+    await delay(poll_ms);
   }
   throw new Error('Timed out ' + description);
 }
 
 export async function qualify_installed_upgrade(o: Options): Promise<void> {
   const url = `http://127.0.0.1:${o.port}`;
-  const candidate = process.env.GITHUB_SHA!;
+  const candidate = (await readFile(join(o.base, 'candidate.sha'), 'utf8')).trim();
   assert.notEqual(candidate, o.predecessor);
   const credential = await readFile(credential_path(o.joined_state));
   const read_status = async () => {
@@ -112,12 +112,17 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
             fault.listen(o.port, '127.0.0.1');
           }),
         'injecting failure on candidate bind',
+        20,
       );
       const journal = join(o.base, 'installed/data/update-attempt.json');
-      await wait_for(async () => {
-        const attempt = JSON.parse(await readFile(journal, 'utf8'));
-        return attempt.to_sha === candidate && Boolean(attempt.steps?.rollback_service_stopped);
-      }, 'waiting for the installer to stop the failed candidate');
+      await wait_for(
+        async () => {
+          const attempt = JSON.parse(await readFile(journal, 'utf8'));
+          return attempt.to_sha === candidate && Boolean(attempt.steps?.rollback_service_stopped);
+        },
+        'waiting for the installer to stop the failed candidate',
+        20,
+      );
     } finally {
       if (fault.listening) await new Promise<void>((done) => fault.close(() => done()));
     }
@@ -126,6 +131,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       return status?.attempt?.state === 'failed' && status.app_sha === o.predecessor;
     }, 'waiting for previous version after rollback');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
+    const preserved = { ...before, model: 'TEST' };
+    await verify_smoke_history(url, preserved);
     await turn();
     const expectedBuild = JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8'))
       .parts.machines[process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'].build_id;
@@ -155,7 +162,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const after = await turn();
     assert.notEqual(before.conversation_id, after.conversation_id);
-    await verify_smoke_attachment(url, before.conversation_id, before.stored_file_id);
+    await verify_smoke_history(url, preserved);
     await page.reload();
     await page.getByText('Up to date', { exact: true }).first().waitFor();
     await page.screenshot({ path: join(o.base, 'evidence/update-complete.png') });

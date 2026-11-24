@@ -425,6 +425,11 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify the publisher refuses red, canceled and stale proofs
+        run: python3 server/environments/release/testing/check_promotion_test.py
       - name: Bind the successful qualification to the tested merge tree
         if: github.event_name == 'pull_request'
         env:

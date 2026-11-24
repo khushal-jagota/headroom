@@ -3,6 +3,9 @@ name: First server and machine installation
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      replay_from: {description: "Earlier native release build run ID (optional)", type: string}
+      replay_to: {description: "Candidate native release build run ID (optional)", type: string}
   pull_request:
     paths:
       - "server/installation/**"
@@ -19,7 +22,20 @@ permissions:
   contents: read
 
 jobs:
+  replay:
+    if: github.event_name == 'workflow_dispatch' && (inputs.replay_from != '' || inputs.replay_to != '')
+    permissions: {contents: read, actions: read}
+    strategy:
+      fail-fast: false
+      matrix: {system: [linux, darwin]}
+    uses: ./.github/workflows/installed-release-upgrade.yml
+    with:
+      system: ${{ matrix.system }}
+      replay_from: ${{ inputs.replay_from }}
+      replay_to: ${{ inputs.replay_to }}
+
   install:
+    if: github.event_name != 'workflow_dispatch' || (inputs.replay_from == '' && inputs.replay_to == '')
     name: Full bootstrap and second machine (${{ matrix.runner }})
     strategy:
       fail-fast: false
