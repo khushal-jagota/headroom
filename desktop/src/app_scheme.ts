@@ -98,6 +98,9 @@ function screensFile(pathname: string): string | null {
 function serverUpdateFile(pathname: string): string | null {
   if (pathname === '/' || pathname === '/index.html') return 'server_update_page/index.html';
   if (pathname === '/server-update.js') return 'server_update_page/server-update.js';
+  if (pathname === '/server-update.css') return 'server_update_page/server-update.css';
+  if (pathname === '/assets/tokens.css' || pathname === '/assets/app.css'
+    || pathname === '/assets/fonts/InterVariable.woff2' || pathname === '/static/icon-192.png') return pathname.slice(1);
   return null;
 }
 

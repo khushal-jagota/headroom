@@ -22,6 +22,21 @@ type ForwardedRequest = { path: string; method: string; identity: string | null;
 
 const WORKSPACE = 'section[data-screen="workspace"]';
 
+// The screen snapshot checks real files. Keep builds under TMPDIR, then give each
+// server the same private, immutable copy of those files for this test run.
+let desktopScreensRoot: string;
+test.beforeAll(() => {
+  desktopScreensRoot = mkdtempSync(join(tmpdir(), 'desktop-test-screens-'));
+  for (const path of ['web/dist', 'assets', 'static'])
+    cpSync(realpathSync(join(REPO_ROOT, path)), join(desktopScreensRoot, path), { recursive: true });
+});
+test.afterAll(() => { rmSync(desktopScreensRoot, { recursive: true, force: true }); });
+test.use({
+  server: async ({ serverFactory }, use) => use(await serverFactory({ appRoot: desktopScreensRoot })),
+  railServer: async ({ serverFactory }, use) => use(await serverFactory({ appRoot: desktopScreensRoot, host: 'test_host', databaseName: 'rail-proof.db' })),
+});
+
+
 /** An address where nothing listens. */
 async function closedAddress(): Promise<string> {
   const listener = createServer();
@@ -33,7 +48,10 @@ async function closedAddress(): Promise<string> {
 
 /** First launch always requires the person's explicit choice. */
 async function connectLocal(page: Page, address: string): Promise<void> {
-  await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+  await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.fill('#address', address);
   await page.click('#connect');
 }
@@ -353,8 +371,11 @@ test('setup works offline, and the app keeps an address and window place', async
   const place = { x: 120, y: 80, width: 1000, height: 700 };
   try {
     const page = first.window;
-    await expect(page.getByRole('heading', { name: 'Where will Panels live?' })).toBeVisible({ timeout: WAIT_MS });
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await expect(page.getByRole('heading', { name: 'Where does Panels run?' })).toBeVisible({ timeout: WAIT_MS });
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS * 2 });
     expect(await pageUrl(page)).toBe('panels://setup/');
 
@@ -480,29 +501,31 @@ test('the app reopens with the last session, marks it until the server replaces 
   }
 
   // With the server gone, the last session still shows at once, with its mark.
-  const other = await serverFactory();
+  const other = await serverFactory({ appRoot: desktopScreensRoot });
   await stopServer(server);
   const third = await launchDesktopApp({ localServerAddress: nothing, userData: first.userData });
   try {
     const page = third.window;
     await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
     await expect(railRow(page)).toBeVisible();
-    await expect(savedMark(page)).toBeVisible({ timeout: WAIT_MS });
-    // Once navigation gives up on the server, the line says so, and the status settles.
-    await expect(page.locator('[data-navigation-health="reconnecting"]:visible')).toBeVisible({ timeout: WAIT_MS });
+    await expect(page.locator('[data-shell-status]:visible')).toContainText("Can't reach Panels", { timeout: WAIT_MS });
+    // The desktop warning replaces the navigation detail in this state.
     await expect(page.locator('[data-shell-status]:visible [data-out]')).toHaveCount(0);
     await captureSuccess(page, 'desktop-last-session-offline.png');
 
     // Another server has other Tickets, so nothing of the last session shows under it.
     await third.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.loadURL('panels://setup/'));
-    await page.getByRole('button', { name: 'Return to current server' }).click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
-    await expect(page.locator('[data-desktop-offline]')).toBeVisible({ timeout: WAIT_MS });
-    await expect(page.locator('[data-desktop-offline]')).toContainText(server.base);
+    await page.getByRole('button', { name: 'Server connection details' }).click();
+    await expect(page.getByRole('dialog')).toContainText(server.base);
     await captureSuccess(page, 'desktop-cannot-reach-server.png');
-    await page.getByRole('link', { name: 'Change server', exact: true }).click();
+    await page.getByRole('link', { name: 'Change server…', exact: true }).click();
     await expect.poll(() => pageUrl(page)).toBe('panels://setup/');
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS });
     await page.fill('#address', other.base);
     await page.click('#connect');

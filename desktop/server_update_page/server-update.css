@@ -1,0 +1,26 @@
+body { container-type: size; }
+.window-top-row { position: fixed; inset: 0 0 auto; height: var(--window-top-row); -webkit-app-region: drag; }
+.server-update { position: absolute; inset: var(--window-top-row) 0 0; overflow: auto; }
+.update-column { width: min(var(--desktop-update-width), calc(100% - 2 * var(--space-6))); margin: 0 auto; padding: var(--desktop-update-top) 0 var(--space-6); }
+.app-icon { display: block; width: var(--desktop-icon-size); height: var(--desktop-icon-size); border-radius: var(--desktop-icon-radius); box-shadow: var(--desktop-icon-ring), var(--desktop-icon-shadow); margin-bottom: var(--space-5); }
+.server-address { color: var(--tone-tertiary); font-size: var(--type-small); font-weight: var(--weight-small); margin: 0 0 var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+h1 { color: var(--tone-strong); font-size: var(--type-page-title); font-weight: var(--weight-page-title); line-height: 1.25; margin: 0; }
+.lead { color: var(--tone-secondary); margin: var(--space-2) 0 0; }
+.update-state { margin-top: var(--space-6); min-height: var(--desktop-update-state-height); }
+.update-state > * { animation: fade var(--motion-base) var(--motion-ease); }
+.update-line { display: flex; align-items: center; gap: var(--space-2); color: var(--tone-strong); font-weight: var(--weight-needs-you); }
+.update-line.quiet { color: var(--tone-secondary); font-weight: var(--weight-body); }
+.update-line.bad, .problem { color: var(--accent-error); }
+.update-line svg, .problem svg { width: var(--button-icon); height: var(--button-icon); flex: none; }
+.update-note { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-tertiary); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.update-actions { display: flex; gap: var(--space-2); margin-top: var(--space-5); }
+.problem { display: flex; align-items: start; gap: var(--space-2); font-size: var(--type-small); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
+.track { height: var(--desktop-update-track-height); border-radius: calc(var(--radius-sm) / 2); background: var(--surface-input); overflow: hidden; margin-top: var(--space-5); }
+.track i { display: block; height: 100%; width: 30%; background: var(--tone-secondary); border-radius: inherit; animation: slide var(--desktop-update-track-duration) var(--motion-move) infinite; }
+.spin { display: inline-block; width: var(--button-icon); height: var(--button-icon); border: var(--border-strong) solid currentColor; border-right-color: transparent; border-radius: var(--radius-pill); animation: spin var(--motion-loop-spin) linear infinite; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .update-state > *, .spin, .track i { animation: none; } }
+
+.button--main { height: var(--button-main-height); }

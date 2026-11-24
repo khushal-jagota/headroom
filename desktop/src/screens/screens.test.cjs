@@ -131,17 +131,36 @@ test('a late network result cannot activate after a server change; offline first
   assert.equal(offline.store.root, offline.store.baseline);
 });
 // The shell page must use ordinary owner HTTP actions with the server release guard.
-// Execute its real script in a small DOM adapter; no native bridge or browser is needed.
+// Execute its real script in a small DOM adapter with the passive address read; no browser is needed.
 test('the old-server page retries discovery and posts the server API update with its release guard', async () => {
   const { runInNewContext } = require('node:vm');
-  const elements = new Map(['status', 'update', 'retry'].map(id => [id, { disabled: false, textContent: '', handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } }]));
+  // Only tree/text/event operations are needed. The browser proof owns layout.
+  function element() {
+    return {
+      children: [], disabled: false, handlers: {}, className: '', id: '',
+      get textContent() { return this.children.map(child => typeof child === 'string' ? child : child.textContent).join(''); },
+      set textContent(value) { this.children = [value]; },
+      set innerHTML(_value) { this.children = []; },
+      get firstElementChild() { return this.children.find(child => typeof child !== 'string'); },
+      append(...children) { for (const child of children) { this.children.push(child); if (typeof child !== 'string') child.parent = this; } },
+      replaceChildren(...children) { this.children = []; this.append(...children); },
+      setAttribute() {},
+      addEventListener(type, handler) { this.handlers[type] = handler; },
+      querySelector(selector) { return this.children.filter(child => typeof child !== 'string').map(child =>
+        (selector.startsWith('#') ? child.id === selector.slice(1) : child.className.split(' ').includes(selector.slice(1))) ? child : child.querySelector(selector)).find(Boolean) ?? null; },
+      remove() { this.parent.children = this.parent.children.filter(child => child !== this); },
+    };
+  }
+  const status = element(), address = element();
+  const find = id => id === 'status' ? status : id === 'server-address' ? address : status.querySelector(`#${id}`);
   const calls = [];
   let available = false;
   let refused = false;
   let failedAttempt = false;
   const script = readFileSync(join(__dirname, '../../server_update_page/server-update.js'), 'utf8');
-  runInNewContext(script, {
-    document: { getElementById: id => elements.get(id) },
+  const refreshPage = runInNewContext(`${script}\nrefresh;`, {
+    document: { getElementById: find, createElement: element, createTextNode: text => text },
+    window: { panels: { storedServerAddress: async () => 'https://panels.example.ts.net' } },
     fetch: async (path, options) => {
       calls.push({ path, options });
       if (options?.method === 'POST') return { ok: !refused, status: 409, json: async () => ({ detail: 'Release changed' }) };
@@ -150,25 +169,28 @@ test('the old-server page retries discovery and posts the server API update with
   });
   const settle = () => new Promise(resolve => setImmediate(resolve));
   await settle();
-  assert.equal(elements.get('update').disabled, true);
+  assert.equal(find('update'), null);
+  assert.match(status.textContent, /No server update is ready yet/);
+  assert.equal(address.textContent, 'https://panels.example.ts.net');
   available = true;
-  elements.get('retry').handlers.click(); await settle();
-  assert.equal(elements.get('update').disabled, false);
+  find('retry').handlers.click(); await settle();
+  assert.equal(find('update').disabled, false);
   refused = true;
-  await elements.get('update').handlers.click();
-  assert.equal(elements.get('status').textContent, 'Release changed');
-  assert.equal(elements.get('update').disabled, false);
+  find('update').handlers.click(); await settle();
+  assert.equal(status.querySelector('.problem').textContent, 'Release changed');
+  assert.equal(find('update').disabled, false);
   refused = false;
-  await elements.get('update').handlers.click();
+  find('update').handlers.click(); await settle();
   const post = calls.find(call => call.options?.method === 'POST');
   assert.equal(post.path, '/api/updates/install');
   assert.equal(post.options.headers['X-Panels-App-SHA'], 'running-server');
   assert.deepEqual(JSON.parse(post.options.body), { app_sha: 'next-server' });
-  assert.match(elements.get('status').textContent, /updating/);
+  assert.match(status.textContent, /Updating the server…/);
   failedAttempt = true; available = false;
-  elements.get('retry').handlers.click(); await settle();
-  assert.equal(elements.get('update').textContent, 'Try again');
-  await elements.get('update').handlers.click();
+  // Reload the page after the accepted update to discover a failed attempt.
+  await refreshPage();
+  assert.equal(find('update').textContent, 'Try again');
+  find('update').handlers.click(); await settle();
   const retry = calls.at(-1);
   assert.equal(retry.path, '/api/updates/attempts/failed-attempt/retry');
   assert.equal(retry.options.headers['X-Panels-App-SHA'], 'running-server');
