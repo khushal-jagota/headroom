@@ -1,3 +1,4 @@
+import type { Database } from '../core/database/contracts.ts';
 import { seed_machine_lease } from '../machines/testing/lease.ts';
 import { MacPresenceService } from '../executor/vps_presence.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
@@ -91,8 +92,15 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
         ],
       );
     });
-    const write = vi.fn(database.write);
-    const backend_database = { read: database.read, write, close: database.close };
+    const write = vi.fn();
+    const backend_database: Database = {
+      read: database.read,
+      close: database.close,
+      write(work, options) {
+        write();
+        return database.write(work, options);
+      },
+    };
     const state = new BackendStateStore(backend_database);
     state.keep_successful_usage(usage(91));
     state.keep_successful_usage(usage(17), machine_id);
