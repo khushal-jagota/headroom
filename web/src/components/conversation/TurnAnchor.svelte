@@ -102,7 +102,6 @@
            activity has no mark, because nothing is known to be running. -->
       <SystemLine
         mark={activityUncertain ? null : "spinner"}
-        hangMark={false}
         role="status"
         data-conversation-alive=""
       >
