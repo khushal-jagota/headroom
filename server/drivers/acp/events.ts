@@ -14,6 +14,8 @@ import {
   AgentMessageCompleted,
   AgentMessageDelta,
   BackendPermissionAsk,
+  BackgroundTaskStarted,
+  BackgroundTaskEnded,
   ComposerCatalogReported,
   ModelThinkingHappened,
   PermissionAskRaised,
@@ -58,12 +60,15 @@ export interface AcpTurn {
   readonly parked_asks: Map<string, ParkedPermissionAsk>;
   /** Tool calls started in this turn and not yet finished. A tool call cannot outlive its turn. */
   readonly open_tool_calls: Set<string>;
+  readonly background_candidates: Map<string, string>;
   /** Resolves with the failure text once the agent has been silent too long. */
   readonly silence: Deferred<string>;
   silence_timer: ReturnType<typeof setTimeout> | null;
   /** Silence limits passed, since the agent was last heard, while only an open tool call held the clock. */
   limits_held_by_tool_calls: number;
   readonly outcome_watch: AcpPromptOutcomeWatch | null;
+  /** ACP has no prompt response for an unsolicited turn. Only explicit termination settles it. */
+  readonly agent_outcome: Deferred<PromptResponse> | null;
 }
 /** How the ending reporter reads and changes the child's state. */
 export interface AcpEndingFacts {
@@ -85,6 +90,7 @@ export class AcpEvents {
   available_commands: readonly AvailableCommand[] | null = null;
   readonly first_commands = new Deferred<void>();
   private asks_raised = 0;
+  private readonly background_tasks = new Set<string>();
   private readonly sink: BackendEventSink;
   private readonly messages: AcpMessages;
   private readonly flavor: AcpFlavor;
@@ -99,6 +105,23 @@ export class AcpEvents {
     this.messages = messages;
     this.flavor = flavor;
     this.log = log;
+  }
+  /** Background completion is a session fact, not evidence that the agent began another turn. */
+  async take_background_update(update: SessionNotification['update']): Promise<boolean> {
+    if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update')
+      return false;
+    if (!this.background_tasks.has(update.toolCallId)) return false;
+    if (update.status === 'completed' || update.status === 'failed') {
+      this.background_tasks.delete(update.toolCallId);
+      await this.sink.report(
+        null,
+        new BackgroundTaskEnded({
+          task_id: update.toolCallId,
+          task_status: update.status,
+        }),
+      );
+    }
+    return true;
   }
   async session_update(params: SessionNotification): Promise<void> {
     const update = params.update;
@@ -125,6 +148,12 @@ export class AcpEvents {
     const turn = this.turn;
     if (!turn) return;
     this.heard_from_agent(turn);
+    if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+      const description = this.flavor.background_task_description?.(update);
+      if (description) turn.background_candidates.set(update.toolCallId, description);
+      if (update.status === 'completed' || update.status === 'failed')
+        turn.background_candidates.delete(update.toolCallId);
+    }
     switch (update.sessionUpdate) {
       case 'agent_thought_chunk':
         await this.sink.report(turn.token, new ModelThinkingHappened());
@@ -282,6 +311,7 @@ export class AcpEvents {
     token: TurnToken,
     request: AcpRequest<PromptResponse>,
     outcome_watch: AcpPromptOutcomeWatch | null,
+    agent_outcome: Deferred<PromptResponse> | null = null,
   ): AcpTurn {
     const turn: AcpTurn = {
       token,
@@ -292,10 +322,12 @@ export class AcpEvents {
       message_id: null,
       parked_asks: new Map(),
       open_tool_calls: new Set(),
+      background_candidates: new Map(),
       silence: new Deferred<string>(),
       silence_timer: null,
       limits_held_by_tool_calls: 0,
       outcome_watch,
+      agent_outcome,
     };
     this.turn = turn;
     this.heard_from_agent(turn);
@@ -406,6 +438,13 @@ export class AcpEvents {
     if (this.turn !== turn) return;
     this.turn = null;
     await this.flush(turn);
+    if (ending === ConversationTurnEnding.completed && turn.agent_outcome === null) {
+      for (const [task_id, task_description] of turn.background_candidates) {
+        if (!turn.open_tool_calls.has(task_id)) continue;
+        this.background_tasks.add(task_id);
+        await this.sink.report(null, new BackgroundTaskStarted({ task_id, task_description }));
+      }
+    }
     await this.finish_open_tool_calls(
       turn,
       ending === ConversationTurnEnding.completed

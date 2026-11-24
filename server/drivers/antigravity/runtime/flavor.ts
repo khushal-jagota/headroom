@@ -9,6 +9,7 @@ import { acp_child_environment } from '../../acp/environment.ts';
 import { antigravity_driver } from '../driver.ts';
 import { PROMPT_INACTIVITY_TIMEOUT_MS } from './configuration.ts';
 import { watch_antigravity_prompt_outcome } from './turn_outcome.ts';
+import { antigravity_background_task_description } from './background_work.ts';
 
 export const ANTIGRAVITY_SIGN_IN_REQUIRED =
   'Antigravity is not signed in. Sign in to Antigravity from Panels.';
@@ -55,6 +56,7 @@ export function create_antigravity_flavor(
   const launch = antigravity_acp_launch(options);
   return {
     label: 'Antigravity',
+    background_task_description: antigravity_background_task_description,
     async launch(start) {
       // As Codex and Claude do before each launch. The card's read normally left a verdict.
       await ensure_cli_compatible(antigravity_driver.driver_kind, options.executable, {
