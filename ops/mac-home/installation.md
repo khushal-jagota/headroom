@@ -48,7 +48,7 @@ The machine state stays under `machine/data` in the installation root.
 Its runtime snapshot stays under `machine/runtime`, separate from the server app and data.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
-Updates copy their installer and bundled Node outside the app that they replace. No manual Node step is required.
+The installer runs with the bundled Node from the retained release. Its service can restore that release if the new home fails its trial.
 
 For an already downloaded, trusted publication, use the same command with local files:
 
