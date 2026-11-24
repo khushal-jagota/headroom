@@ -218,6 +218,7 @@ export class PromptDeliveryUncertain {
   declare private readonly _PromptDeliveryUncertain: void;
 }
 export class HeldPrompt {
+  readonly requested_mode: PromptDeliveryMode;
   readonly held_prompt_id: string;
   readonly content: MessageContent;
   readonly sender_label: string;
@@ -228,6 +229,7 @@ export class HeldPrompt {
   readonly queue_reason: PromptQueueReason;
   readonly delivery_uncertain: boolean;
   constructor(values: {
+    requested_mode?: PromptDeliveryMode;
     held_prompt_id: string;
     content: MessageContent;
     sender_label: string;
@@ -238,6 +240,7 @@ export class HeldPrompt {
     queue_reason?: PromptQueueReason;
     delivery_uncertain?: boolean;
   }) {
+    this.requested_mode = values.requested_mode ?? PromptDeliveryMode.queue;
     this.held_prompt_id = values.held_prompt_id;
     this.content = values.content;
     this.sender_label = values.sender_label;

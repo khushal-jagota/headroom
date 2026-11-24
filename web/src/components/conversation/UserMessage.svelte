@@ -89,8 +89,8 @@
     if (!local || !actions || busy) return;
     busy = true;
     try {
-      if (editing) await actions.editUpload(local.messageId);
-      else await actions.retryUpload(local.messageId);
+      if (editing) await actions.editUpload?.(local.messageId);
+      else await actions.retryUpload?.(local.messageId);
     } finally {
       busy = false;
     }

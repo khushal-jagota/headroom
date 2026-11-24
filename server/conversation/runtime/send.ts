@@ -99,6 +99,7 @@ async function send_owned(
     return options.sender?.kind === 'owner' ? state.record.latest_sequence : null;
   });
   const message: Message = {
+    requested_mode: mode,
     held_prompt_id: '',
     content,
     sender_label: options.sender_label,

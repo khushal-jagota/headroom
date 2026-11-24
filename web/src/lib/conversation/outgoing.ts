@@ -43,6 +43,7 @@ export type OutgoingMessage = {
   failureNote?: string;
   settledConversationId?: string;
   attachmentNames?: readonly string[];
+  queueWhilePending?: boolean;
   /** The mounted transcript's view of an upload or a server-held prompt. */
   presentation?: PendingMessagePresentation;
   /** What this browser called the message. It rides out with the send and comes back on
@@ -842,6 +843,7 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     ...(typeof held.settledConversationId === "string" ? {settledConversationId: held.settledConversationId} : {}),
     ...(Array.isArray(held.attachmentNames) && held.attachmentNames.every(name => typeof name === "string")
       ? { attachmentNames: held.attachmentNames as string[] } : {}),
+    ...(held.queueWhilePending === true ? { queueWhilePending: true } : {}),
     ...(typeof held.failureNote === "string" ? { failureNote: held.failureNote } : {}),
     ...(sendTarget ? { sendTarget } : {}),
     ...(held.accepted === true ? { accepted: true } : {}),

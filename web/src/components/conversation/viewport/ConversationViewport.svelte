@@ -46,6 +46,7 @@
     activityUncertain = false,
     conversationState,
     emptyState,
+    afterTranscript,
     reader = null,
     viewAnchor = $bindable(null),
     jump = $bindable(null)
@@ -69,6 +70,7 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
+    afterTranscript?: Snippet;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
     jump?: ConversationJump | null;
@@ -1250,6 +1252,7 @@
     />
     {/if}
     {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
+    {@render afterTranscript?.()}
     </div>
     {#if reservedSpacePixels > 0}
       <div

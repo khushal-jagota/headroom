@@ -806,6 +806,7 @@ export async function await_late_steer(
     state,
     not_delivered,
     {
+      requested_mode: payload.mode,
       held_prompt_id: '',
       content: payload.content,
       sender_label: payload.sender_label,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { transcriptOutgoing } from '../src/lib/conversation/transcriptOutgoing';
+import { belongsInHeldQueue, transcriptOutgoing } from '../src/lib/conversation/transcriptOutgoing';
 import { reconcileDisplaySlots } from '../src/lib/conversation/displaySlots';
 import { outgoingReceiptBatches, retainOutgoingPresentations, type OutgoingMessage } from '../src/lib/conversation/outgoing';
 import type { ConversationViewRow } from '../src/lib/conversation/view/contracts';
@@ -56,9 +56,16 @@ describe('mounted message presentation',()=>{
      content:unresolved.content,sentAtUnixMilliseconds:1,state:'held' as const,queueReason:null};
    const initial = transcriptOutgoing([unresolved], [], [], 'owner', new Set());
    expect(initial).toEqual([unresolved]);
+   expect(belongsInHeldQueue(initial[0])).toBe(false);
+   const queue = {...unresolved,mode:'queue' as const};
+   expect(belongsInHeldQueue(queue)).toBe(false);
+   expect(belongsInHeldQueue({...queue,queueWhilePending:true})).toBe(true);
    const queued = transcriptOutgoing(initial, [], [held], 'owner', new Set());
    expect(queued).toHaveLength(1);
    expect(queued[0]).toMatchObject({messageId:'send',knownFate:'waiting_for_the_agent',presentation:{kind:'held'}});
+   expect(belongsInHeldQueue(queued[0])).toBe(false);
+   expect(belongsInHeldQueue(transcriptOutgoing([], [], [{...held,mode:'queue'}], 'owner', new Set())[0])).toBe(true);
+   expect(belongsInHeldQueue(transcriptOutgoing([], [], [{...held,mode:'steer'}], 'owner', new Set())[0])).toBe(false);
    expect(transcriptOutgoing([local], [], [held], 'owner', new Set())).toEqual([local]);
    const unconfirmed = {...unresolved,knownFate:'agent_unconfirmed' as const};
    expect(transcriptOutgoing([unconfirmed], [], [held], 'owner', new Set())).toEqual([unconfirmed]);

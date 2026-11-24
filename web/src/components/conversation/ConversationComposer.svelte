@@ -650,6 +650,7 @@
       pending = {
         context: capturedRetryContext ?? {
           messageId,
+          queueWhilePending: capturedMode === "queue" && running,
           expectedConversationId: conversationId,
           destination: uploadDestination ? {...uploadDestination} : undefined
         },

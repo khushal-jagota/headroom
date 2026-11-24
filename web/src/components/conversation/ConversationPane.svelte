@@ -12,7 +12,9 @@
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import SystemLine from "./SystemLine.svelte";
-  import { transcriptOutgoing, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from "../../lib/conversation/transcriptOutgoing";
+  import UserMessage from "./UserMessage.svelte";
+  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
+  import { belongsInHeldQueue, heldQueuePosition, transcriptOutgoing, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from "../../lib/conversation/transcriptOutgoing";
   import type { PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import { askShape, DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
@@ -344,11 +346,15 @@
    *  composer (after anything already written there). */
   let composerHandle = $state<ReturnType<typeof ConversationComposer> | null>(null);
   let pendingSends = $state.raw<readonly PendingComposerSend[]>([]);
-  const transcriptMessages = $derived(transcriptOutgoing(
+  const outgoing = $derived(transcriptOutgoing(
     outgoingMessages, readOnly ? [] : pendingSends, readOnly ? [] : heldPromptRows,
     ownSenderLabel ?? "owner", acknowledgedMessageIds
   ));
-  const hasNewOutgoing = $derived(transcriptMessages.some(message => !message.restored));
+  const transcriptMessages = $derived(outgoing.filter(message => !belongsInHeldQueue(message)));
+  const queuedMessages = $derived(outgoing.filter(message =>
+    belongsInHeldQueue(message) && !acknowledgedMessageIds.has(message.messageId)).sort((left, right) =>
+    heldQueuePosition(left) - heldQueuePosition(right)));
+  const hasNewOutgoing = $derived(outgoing.some(message => !message.restored));
   setContext<TranscriptSendActions>(TRANSCRIPT_SEND_ACTIONS, {
     running: () => running,
     canSteer: () => supportsSteer && ask === null && userInput === null,
@@ -667,7 +673,17 @@
     data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null || credentialWaiting) ? true : undefined}
     style:visibility={!hasNewOutgoing && (!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase)) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
+  {#snippet waitingMessages()}
+    {#if queuedMessages.length}
+      <HeldPromptStack>
+        {#each queuedMessages as message (message.messageId)}
+          <UserMessage local={message} conversationId={conversationId ?? ""} {ownSenderLabel}/>
+        {/each}
+      </HeldPromptStack>
+    {/if}
+  {/snippet}
   <ConversationViewport
+    afterTranscript={readOnly ? undefined : waitingMessages}
     bind:placementReady
     bind:entryPresentationPending
     {ownerReadThroughSequence}
