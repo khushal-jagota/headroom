@@ -543,7 +543,7 @@ export async function install_home(
   try {
     const service = (attempt.service = await deps.service(request, deps));
     await service.preflight(deps.execution);
-    await require_absent_command(command_link);
+    if (!request.skip_command_link) await require_absent_command(command_link);
     await check_home_port(request.port);
     assert_release_execution(deps.execution);
     const temporary = (attempt.temporary = await admission_directory(files, root_path));
@@ -566,7 +566,8 @@ export async function install_home(
     // The private secrets folder is created 0700 with the file.
     await files.file(join(root_path, HOME_UPDATE_TOKEN_FILE), update_token + '\n', 0o600);
     await write_service_files(service, files, deps);
-    await files.file(command_link, home_command_wrapper(root_path), 0o755);
+    if (!request.skip_command_link)
+      await files.file(command_link, home_command_wrapper(root_path), 0o755);
     current_directory(root);
     const data = files.directory(join(root_path, 'data'));
     await deps.initialize_database(

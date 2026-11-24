@@ -38,7 +38,7 @@ The home uses one platform contract for service identity, app-child launch, proc
 
 An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
 
-A home does not link skills in the provider account folders. Machine code links them. At startup, an installed home removes only its own old links from those folders, and it keeps every other entry.
+A home does not link skills in the provider account folders. Machine code links them. A disposable home can use private provider folders and omit the shared account command through the installer. At startup, an installed home removes only its own old links from those folders, and it keeps every other entry.
 
 The home links workspace skills and removes its old account links on an awaited worker thread, so file removal does not block the event loop. Startup waits for this work before normal work starts.
 
