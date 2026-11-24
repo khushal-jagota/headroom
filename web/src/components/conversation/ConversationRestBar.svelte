@@ -57,9 +57,9 @@
   /* The line and "Open" share one centre: the line drops its start alignment here. */
   .c2-rest-status > :global(.cv-system-line) { align-self:center; }
   /* The mark's 16 px slot is centred over the composer's "+" (18 px in from the column edge),
-     and the words start where the composer's text does (46 px in): 18 + 16 + 12. */
+     and the words start where the composer's text does (50 px in, past the textarea's 4 px inset): 18 + 16 + 16. */
   .c2-rest-status > :global(.cv-system-line) { padding-inline-start:18px; }
-  .c2-rest-status :global(.cv-system-line-row) { column-gap:12px; }
+  .c2-rest-status :global(.cv-system-line-row) { column-gap:16px; }
   /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
   .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px;
     border:0; border-radius:999px; background:transparent; color:#d0d0d0; font-weight:var(--cv-weight-label);
