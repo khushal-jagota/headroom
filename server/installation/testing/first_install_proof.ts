@@ -431,6 +431,31 @@ try {
     deadline: performance.now() / 1000 + 240,
   };
   try {
+    if (failed && qualifying && system === 'linux') {
+      await run_release_command(
+        [
+          'journalctl',
+          '--user',
+          '--unit',
+          service + '.service',
+          '--no-pager',
+          '-o',
+          'cat',
+          '-n',
+          '25',
+          '--grep',
+          'Update prefetch|Update did not start|AppValidationError',
+        ],
+        { environment, timeout_seconds: 10, allow_nonzero: true },
+        cleanup_execution,
+      )
+        .then((messages) =>
+          writeFile(join(evidence, 'installed-update-errors.log'), messages.stdout),
+        )
+        .catch((error: unknown) => {
+          report.journal_error = String(error);
+        });
+    }
     // Stop only the exact jobs whose installers this proof attempted. Absence is valid after rollback.
     const jobs =
       system === 'linux'

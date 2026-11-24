@@ -6,8 +6,26 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { expect, test, vi } from 'vitest';
 import { mac_installation_paths, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
-import { supervise_launcher, wait_for_launcher_recovery } from './launcher_trial.ts';
+import {
+  mac_designated_requirement,
+  supervise_launcher,
+  wait_for_launcher_recovery,
+} from './launcher_trial.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
+
+test('preserves explicit and implied macOS signing requirements', () => {
+  const hash = 'a'.repeat(40),
+    cdhash = 'cdhash H"' + hash + '"';
+  const identity = 'identifier "com.panels.executor.typescript.app" and anchor apple generic';
+  expect(mac_designated_requirement('Executable=/a\ndesignated => ' + identity)).toBe(identity);
+  expect(mac_designated_requirement('Executable=/a\n# designated => ' + cdhash)).toBe(cdhash);
+  expect(
+    mac_designated_requirement('# designated => ' + cdhash + '\ndesignated => ' + identity),
+  ).toBe(identity);
+  expect(mac_designated_requirement('Signature=adhoc\nCDHash=' + hash)).toBe(cdhash);
+  expect(() => mac_designated_requirement('TeamIdentifier=FB99BBDJBA\nCDHash=' + hash)).toThrow();
+  expect(() => mac_designated_requirement('Signature=adhoc\nCDHash=invalid')).toThrow();
+});
 
 test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
   'signed launcher transaction: %s',

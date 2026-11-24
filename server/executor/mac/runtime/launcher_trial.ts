@@ -74,8 +74,8 @@ function transaction(id: string, home = userInfo().homedir) {
     receipt: join(root, 'launcher-receipts', key + '.json'),
   };
 }
-async function probe(app: string) {
-  await command([
+function verify_bundle(app: string) {
+  return command([
     '/usr/bin/codesign',
     '--verify',
     '--strict',
@@ -83,6 +83,9 @@ async function probe(app: string) {
     '=identifier "com.panels.executor.typescript.app"',
     app,
   ]);
+}
+async function probe(app: string) {
+  await verify_bundle(app);
   const result = await command([
     join(app, 'Contents/MacOS/Panels'),
     WORKER_LAUNCHER_MODE,
@@ -177,6 +180,18 @@ export async function admit_launcher(root: string, runtime: string): Promise<voi
   throw new Error('The signed Mac launcher did not finish its trial.');
 }
 
+/** codesign reports an implicitly generated requirement as a source comment.
+ * Ad-hoc signatures without a displayed requirement identify this exact CodeDirectory. */
+export function mac_designated_requirement(display: string): string {
+  const explicit = /^[ \t]*designated[ \t]*=>[ \t]*(\S[^\r\n]*)$/m.exec(display);
+  const implied = /^[ \t]*#[ \t]*designated[ \t]*=>[ \t]*(\S[^\r\n]*)$/m.exec(display);
+  const requirement = explicit ?? implied;
+  if (requirement) return requirement[1]!.trim();
+  const hash = /^CDHash=([a-f0-9]{40})$/im.exec(display)?.[1];
+  if (/^Signature=adhoc$/m.test(display) && hash) return 'cdhash H"' + hash + '"';
+  throw new Error('Cannot read the installed Mac signing requirement.');
+}
+
 /** This helper is started from a verified release. launchd restarts it after an
  * unexpected exit, including on login. Journal before swap, observe actual bundle
  * digests on restart, and leave the old bundle intact until selection commits. */
@@ -192,20 +207,19 @@ export async function supervise_launcher(
       await command(['/bin/launchctl', 'bootout', domain + '/' + label], true);
     },
     stage: async (source: string, destination: string, installed: string) => {
-      const signature = async (app: string) =>
-        (await command(['/usr/bin/codesign', '-dv', '--verbose=4', app])).stderr
-          .match(/^TeamIdentifier=(.+)$/m)?.[1]
-          ?.trim();
-      const currentTeam = await signature(installed);
-      if (currentTeam && currentTeam !== 'not set' && currentTeam !== (await signature(source)))
-        throw new Error('The Mac launcher signing team changed.');
-      // macOS uses the old app's designated requirement when deciding whether
-      // its privacy grants still apply. The certificate's display name is insufficient.
-      const display = await command(['/usr/bin/codesign', '-d', '-r-', installed]);
-      const requirement = (display.stdout + '\n' + display.stderr).match(
-        /^designated => (.+)$/m,
-      )?.[1];
-      if (!requirement) throw new Error('Cannot read the installed Mac signing requirement.');
+      await verify_bundle(installed);
+      const display = await command(['/usr/bin/codesign', '-d', '--verbose=4', '-r-', installed]);
+      const details = display.stdout + '\n' + display.stderr;
+      const currentTeam = /^TeamIdentifier=(.+)$/m.exec(details)?.[1]?.trim();
+      if (!currentTeam && !/^Signature=adhoc$/m.test(details))
+        throw new Error('Cannot read the installed Mac signing team.');
+      if (currentTeam && currentTeam !== 'not set') {
+        const candidate = await command(['/usr/bin/codesign', '-dv', '--verbose=4', source]);
+        if (currentTeam !== /^TeamIdentifier=(.+)$/m.exec(candidate.stderr)?.[1]?.trim())
+          throw new Error('The Mac launcher signing team changed.');
+      }
+      // macOS uses the old app's designated requirement to recognize continued identity.
+      const requirement = mac_designated_requirement(details);
       const equivalent = await command(
         ['/usr/bin/codesign', '--verify', '-R', '=' + requirement, source],
         true,
