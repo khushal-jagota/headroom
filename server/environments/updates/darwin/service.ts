@@ -83,7 +83,7 @@ export class DarwinHomeService {
   readonly identity: DarwinHomeIdentity;
   readonly io: DarwinHomeIO;
   readonly resume_labels = new Set<string>();
-  stopped = false;
+  phase: 'original' | 'stopped' | 'started' = 'original';
   constructor(root: string, service: string, io: DarwinHomeIO) {
     this.io = io;
     this.identity = read_home_identity(root, service, io.uid);
@@ -219,13 +219,12 @@ export class DarwinHomeService {
       optional ? DARWIN_HOME_AUXILIARY_ENVIRONMENT : ['PLAN_DB_PATH', 'PLAN_CONFIG_PATH'],
       realpathSync,
     );
-    if (required && pid === null)
-      throw new Error('The installed Mac home has no running supervisor');
     return { pid, text };
   }
   async validate_running_home(parent?: number): Promise<void> {
     const { pid } = await this.authenticate(this.identity.label, true);
-    const process = pid === null ? null : this.io.process(pid);
+    if (pid === null) throw new Error('The installed Mac home has no running supervisor');
+    const process = this.io.process(pid);
     if (!process || process.uid !== this.io.uid || (parent !== undefined && pid !== parent))
       throw new Error('Mac home supervisor identity differs from this process');
   }
@@ -241,10 +240,13 @@ export class DarwinHomeService {
     ]) {
       const { pid, text } = await this.authenticate(
         label,
-        label === this.identity.label && !this.stopped,
+        label === this.identity.label && this.phase !== 'stopped',
         scope,
       );
       if (text === null) continue;
+      // A candidate can exit before health. Its authenticated launchd job still needs bootout.
+      if (label === this.identity.label && this.phase === 'original' && pid === null)
+        throw new Error('The installed Mac home has no running supervisor');
       loaded.push(label);
       if (label !== this.identity.label) this.resume_labels.add(label);
       if (pid !== null) {
@@ -291,7 +293,7 @@ export class DarwinHomeService {
         ([pid, original]) => this.io.process(pid)?.birth !== original.birth,
       );
       if (jobs_gone && processes_gone) {
-        this.stopped = true;
+        this.phase = 'stopped';
         return;
       }
       await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
@@ -307,7 +309,7 @@ export class DarwinHomeService {
       scope,
       DARWIN_HOME_COMMAND_SECONDS,
     );
-    this.stopped = false;
+    this.phase = 'started';
   }
   async provision_schedules(): Promise<void> {
     const home = await this.plist(this.identity.label),
@@ -383,7 +385,7 @@ export function create_darwin_installer_effects(
     },
     async recover_unchanged(sha: string) {
       const service = await home();
-      if (service.stopped) return false;
+      if (service.phase === 'stopped') return false;
       await service.validate_running_home();
       if (!(await healthy(sha)))
         throw new Error('The unchanged home did not pass health after its stop failed');

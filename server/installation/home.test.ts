@@ -27,7 +27,10 @@ import { home_install_fixture as fixture } from './testing/home_fixture.ts';
 import type { HomeInstallDependencies, HomeServicePlan } from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
-import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
+import {
+  create_darwin_home_io,
+  DarwinHomeService,
+} from '../environments/updates/darwin/service.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { create_linux_home_service } from './linux.ts';
 import { initialize_candidate_home_database } from './database.ts';
@@ -86,6 +89,78 @@ test('Mac job conversion refuses pre-existing and late hard links before either 
     );
     assert.equal(readFileSync(alias, 'utf8'), JSON.stringify(job) + '\n');
     assert(existsSync(f.request.root));
+  } finally {
+    await f.close();
+  }
+});
+
+test('Mac rollback boots out the authenticated failed candidate while launchd has no supervisor PID', async () => {
+  const f = await fixture();
+  try {
+    const { root, service: label } = f.request;
+    mkdirSync(join(root, 'app/node/bin'), { recursive: true });
+    writeFileSync(join(root, 'app/node/bin/node'), '', { mode: 0o700 });
+    const plan = await create_darwin_home_service(f.request, f.deps, false);
+    for (const file of plan.files) {
+      mkdirSync(dirname(file.path), { recursive: true });
+      writeFileSync(file.path, file.content, { mode: file.mode });
+    }
+    const target = `gui/${f.deps.uid}/${label}`;
+    const plist = join(root, 'agents', label + '.plist');
+    const program = join(root, 'app/bin/panels');
+    let loaded = true,
+      foreign = false,
+      bootouts = 0;
+    const ok = { code: 0, stdout: '', stderr: '' };
+    const io = create_darwin_home_io(f.deps.execution, f.deps.environment, {
+      processes: () => new Map(),
+      process: () => {
+        throw new Error('This launchd job has no process');
+      },
+      async command(argv) {
+        if (argv[0] === '/usr/bin/plutil')
+          return { ...ok, stdout: readFileSync(argv.at(-1)!, 'utf8') };
+        if (argv[1] === 'print') {
+          if (!loaded || argv[2] !== target)
+            return { code: 113, stdout: '', stderr: 'Could not find service' };
+          const fields = [
+            `path = ${plist}`,
+            `program = ${foreign ? '/foreign' : program}`,
+            `working directory = ${root}`,
+            'arguments = {',
+            program,
+            'serve',
+            '}',
+            'environment = {',
+            `PLAN_DB_PATH => ${root}/data/planner.db`,
+            `PLAN_CONFIG_PATH => ${root}/data/config.yaml`,
+            '}',
+          ];
+          return { ...ok, stdout: fields.join('\n') };
+        }
+        if (argv[1] === 'bootstrap') {
+          assert.equal(argv[3], plist);
+          loaded = true;
+          return ok;
+        }
+        assert.deepEqual(argv, ['/bin/launchctl', 'bootout', target]);
+        bootouts++;
+        loaded = false;
+        return ok;
+      },
+    });
+    const home = new DarwinHomeService(root, target, io);
+    await assert.rejects(home.validate_running_home(), /no running supervisor/);
+    await assert.rejects(home.stop(), /no running supervisor/);
+    loaded = false;
+    await home.start();
+    foreign = true;
+    await assert.rejects(home.stop(), /different program/);
+    assert.equal(bootouts, 0);
+    foreign = false;
+    await home.stop();
+    assert.equal(bootouts, 1);
+    assert.equal(loaded, false);
   } finally {
     await f.close();
   }

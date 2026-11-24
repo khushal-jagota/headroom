@@ -190,7 +190,7 @@ export function create_installer_effects(
           async resume_interrupted() {
             // The coordinator was recreated after a crash or login. An absent job
             // is permitted here; any loaded job still has to authenticate.
-            (await home()).stopped = true;
+            (await home()).phase = 'stopped';
           },
           async validate_service() {
             await (await home_effects()).validate_service();
