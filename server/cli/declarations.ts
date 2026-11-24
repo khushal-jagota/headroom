@@ -176,9 +176,13 @@ export const argument = (
   convert: ValueParser = text,
   settings: InputSettings = {},
 ) => new CliArgument(key, syntax, convert, settings);
+/** Who a leaf command is for. Role help groups commands by it. */
+export const AUDIENCES = ['worker', 'supervisor', 'everyone', 'data', 'config', 'host'] as const;
+export type Audience = (typeof AUDIENCES)[number];
 export class CliCommand extends Command {
   readonly path: string[];
   readonly inputs: (CliOption | CliArgument)[] = [];
+  audience: Audience | null = null;
   // Commander owns suggestions; use its diagnostics before eager help.
   declare unknownCommand: () => never;
   declare unknownOption: (flag: string) => never;
@@ -193,9 +197,16 @@ export class CliCommand extends Command {
       .configureHelp({
         optionDescription(this: Help, option: Option) {
           const description = Help.prototype.optionDescription.call(this, option);
-          return option.isBoolean() && option.defaultValue === false
-            ? description.replace(/\s*\(default: false\)$/, '')
+          // An unset value or a false flag has no default worth printing.
+          return (option.isBoolean() && option.defaultValue === false) ||
+            option.defaultValue === null
+            ? description.replace(/\s*\(default: (false|null)\)$/, '')
             : description;
+        },
+        argumentDescription(this: Help, argument: Argument) {
+          return Help.prototype.argumentDescription
+            .call(this, argument)
+            .replace(/\s*\(default: null\)$/, '');
         },
       });
   }

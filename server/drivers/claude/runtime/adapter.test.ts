@@ -17,7 +17,7 @@ import {
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
-import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
+import type { ClaudeSdkClient, ClaudeSdkMessage, ClaudeSdkOptions } from './query_contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 import { CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS } from './configuration.ts';
@@ -185,6 +185,7 @@ async function live_child(
   options: {
     vendor_session_cursor?: string | null;
     client?: Partial<ClaudeSdkClient>;
+    message_files?: import('../../../conversation/message_files.ts').ConversationMessageFiles;
   } = {},
 ) {
   const delivered: IteratorResult<ClaudeSdkMessage>[] = [];
@@ -234,13 +235,17 @@ async function live_child(
   const stream_ended = new Deferred<void>();
   const child_processes = new ChildProcesses();
   const one_shot_children = new OneShotChildren(child_processes);
+  let sdk_options!: ClaudeSdkOptions;
   const child = new ClaudeAgentSdkBackendChild({
     child_processes,
     one_shot_children,
     worker_supervision: uncontained_worker_supervision(one_shot_children),
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
-    client_factory: () => client,
+    client_factory: (value) => {
+      sdk_options = value;
+      return client;
+    },
     event_sink: {
       report: async (_turn, event) => {
         reported.push(event);
@@ -248,7 +253,7 @@ async function live_child(
         if (event instanceof BackendStreamEnded) stream_ended.resolve();
       },
     },
-    message_files: {
+    message_files: options.message_files ?? {
       keep: async () => {
         throw new Error('No message file belongs to this check');
       },
@@ -270,6 +275,7 @@ async function live_child(
     });
   return {
     child,
+    can_use_tool: sdk_options.canUseTool!,
     content,
     prompt,
     deliver,
@@ -522,4 +528,66 @@ it('starts a full-access conversation in auto permission mode', async () => {
   const options = client_factory.mock.calls[0]![0] as Record<string, unknown>;
   expect(options.permissionMode).toBe('auto');
   expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
+});
+
+// Gap: AskUserQuestion answer callbacks never carried a managed file reference to readable bytes.
+it('Claude receives a readable managed image reference with its structured answer', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { ConversationMessageFiles } =
+    await import('../../../conversation/record/message_files.ts');
+  const { MessageImage } = await import('../../../conversation/message_content.ts');
+  const { UserInputAnswer } = await import('../../../conversation/events.ts');
+  const { UserInputRequested } = await import('../../../conversation/backends/contracts.ts');
+  const root = mkdtempSync(join(tmpdir(), 'claude-answer-'));
+  const files = new ConversationMessageFiles(join(root, 'record.sqlite'));
+  const state = await live_child('answer-image', { message_files: files });
+  try {
+    await state.prompt(1, 'low');
+    const response = state.can_use_tool(
+      'AskUserQuestion',
+      {
+        questions: [
+          {
+            question: 'What proof?',
+            header: 'Proof',
+            options: [{ label: 'Screenshot', description: 'A picture' }],
+            multiSelect: false,
+          },
+        ],
+      },
+      { signal: new AbortController().signal, toolUseID: 'question', requestId: 'question' },
+    );
+    await vi.waitFor(() =>
+      expect(state.reported.some((event) => event instanceof UserInputRequested)).toBe(true),
+    );
+    const request = state.reported.find(
+      (event) => event instanceof UserInputRequested,
+    ) as InstanceType<typeof UserInputRequested>;
+    const bytes = Buffer.from('PNG fixture bytes');
+    const kept = await files.keep('answer-image', bytes, { media_type: 'image/png' });
+    await state.child.answer_user_input(request.request.request_id, [
+      new UserInputAnswer({
+        question_id: 'What proof?',
+        answers: ['Use this screenshot'],
+        attachments: [
+          new MessageImage({
+            stored_file_id: kept.stored_file_id,
+            file_name: 'proof.png',
+            media_type: 'image/png',
+          }),
+        ],
+      }),
+    ]);
+    const native = await response;
+    if (native === null || native.behavior !== 'allow') throw new Error('Question was not allowed');
+    const answer = (native.updatedInput?.answers as Record<string, string>)['What proof?'];
+    expect(answer).toContain('Use this screenshot');
+    const reference = answer.match(/is available at (.+)\.$/)![1];
+    expect(readFileSync(reference)).toEqual(bytes);
+  } finally {
+    await state.child.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

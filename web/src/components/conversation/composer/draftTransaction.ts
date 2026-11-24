@@ -118,7 +118,7 @@ export function beginComposerSend(
     ...pendingImagesAsPieces(draftBeforeSend.pendingImages),
     ...pendingFilesAsPieces(draftBeforeSend.pendingFiles),
     ...(draftBeforeSend.pendingVideos ?? []).flatMap(video => video.phase === "ready" && video.uploadId
-      ? [{piece: "video_upload" as const, upload_id: video.uploadId}] : [])
+      ? [{piece: "attachment_upload" as const, upload_id: video.uploadId}] : [])
   ];
   const draftAfterSend: ComposerDraft = {
     text: "",

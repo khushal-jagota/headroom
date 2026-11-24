@@ -120,6 +120,12 @@
     "ts_0010_answer_receipt_index": [
       "ts_0009_work_moves"
     ],
+    "ts_0011_remove_tickets_blocks": [
+      "ts_0010_answer_receipt_index"
+    ],
+    "ts_0012_empty_attachments": [
+      "ts_0011_remove_tickets_blocks"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

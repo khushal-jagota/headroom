@@ -505,3 +505,41 @@ test("a synced Manager file lands in the Manager's artifacts folder, only from i
   );
   await expect(send(owner(HOME_MACHINE_ID))).rejects.toMatchObject({ code: 'retry_later' });
 });
+
+// Gap: prompt authorization never proves that a question answer can fetch only its own files.
+test('an answer command authorizes its attached bytes and refuses another stored file', async () => {
+  const { service, mailbox, path } = world();
+  const files = new ConversationMessageFiles(path);
+  const kept = await files.keep('c', Buffer.from('answer proof'), { media_type: 'text/plain' });
+  const other = await files.keep('c', Buffer.from('unrelated'), { media_type: 'text/plain' });
+  await mailbox.put_child_command({
+    command_id: 'answer-input',
+    child,
+    turn: { conversation_id: 'c', turn_number: 1 },
+    operation: 'answer_user_input',
+    arguments: {
+      kind: 'answer_user_input',
+      request_id: 'question',
+      answers: [
+        {
+          question_id: 'proof',
+          answers: [],
+          attachments: [
+            {
+              stored_file_id: kept.stored_file_id,
+              media_type: 'text/plain',
+              file_name: 'proof.txt',
+              byte_count: 12,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const input = await service.input_file(identity, 'answer-input', kept.stored_file_id);
+  expect(input.sha256).toBe(createHash('sha256').update('answer proof').digest('hex'));
+  await input.close();
+  await expect(
+    service.input_file(identity, 'answer-input', other.stored_file_id),
+  ).rejects.toMatchObject({ code: 'not_found' });
+});

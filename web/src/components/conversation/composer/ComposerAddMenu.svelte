@@ -1,13 +1,10 @@
 <script lang="ts">
-  let { open = $bindable(false), root = $bindable(null), disabled, imageCount, fileCount, onPicture, onFile, onCamera, onCommand }: {
+  let { open = $bindable(false), root = $bindable(null), disabled, fileCount, onFile, onCommand }: {
     open?: boolean;
     root?: HTMLDivElement | null;
     disabled: boolean;
-    imageCount: number;
     fileCount: number;
-    onPicture: () => void;
     onFile: () => void;
-    onCamera: () => void;
     onCommand: () => void;
   } = $props();
 </script>
@@ -19,8 +16,8 @@
     data-conversation-add
     aria-haspopup="menu"
     aria-expanded={open}
-    aria-label="Add a picture, a file, a photo, or a command"
-    title="Add a picture, a file, a photo, or a command"
+    aria-label="Attach a file or add a command"
+    title="Attach a file or add a command"
     disabled={disabled}
     onclick={() => (open = !open)}
   >
@@ -30,21 +27,6 @@
   </button>
   {#if open}
     <div class="chat-add-menu" role="menu">
-      <button
-        type="button"
-        class="chat-add-item"
-        role="menuitem"
-        disabled={disabled}
-        data-conversation-image
-        data-conversation-image-count={imageCount || undefined}
-        onclick={() => { open = false; onPicture(); }}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM4.5 16l4.2-4.2a1.5 1.5 0 0 1 2.1 0l4.7 4.7M13.5 14.5l1.2-1.2a1.5 1.5 0 0 1 2.1 0l2.7 2.7M14.5 9h.01" />
-        </svg>
-        <span>Picture</span>
-        {#if imageCount > 0}<span class="chat-add-count">{imageCount}</span>{/if}
-      </button>
       <button
         type="button"
         class="chat-add-item"
@@ -60,19 +42,7 @@
         <span>File</span>
         {#if fileCount > 0}<span class="chat-add-count">{fileCount}</span>{/if}
       </button>
-      <button
-        type="button"
-        class="chat-add-item"
-        role="menuitem"
-        disabled={disabled}
-        data-conversation-camera
-        onclick={() => { open = false; onCamera(); }}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3.5 8.5a2 2 0 0 1 2-2h2l1.5-2h6l1.5 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-        </svg>
-        <span>Take a picture</span>
-      </button>
+
       <!-- The cursor stays in the box: everything this does is done to what is
            being written there. -->
       <button

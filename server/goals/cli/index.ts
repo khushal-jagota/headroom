@@ -1,7 +1,7 @@
 /** Goal CLI handlers keep requests and output separate from server-domain behavior. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { emit, fail_validation, json, send, send_text } from '../../cli/http.ts';
-import { read_source, stdin_object } from '../../cli/input.ts';
+import { read_json_input, read_text } from '../../cli/input.ts';
 import { numeric_value } from '../../core/http/numeric_json.ts';
 import { scalar_text } from '../../cli/text.ts';
 import { response_field } from '../../cli/response_field.ts';
@@ -73,14 +73,14 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
     case 'goal create':
       return goal_response(
         await send(invocation, 'POST', '/api/goals', {
-          json_body: await stdin_object(invocation),
+          json_body: await read_json_input(invocation, 'goal request'),
         }),
         as_json,
       );
     case 'goal edit':
       return goal_response(
         await send(invocation, 'PATCH', `/api/goals/${quote(values.goal_id)}`, {
-          json_body: await stdin_object(invocation),
+          json_body: await read_json_input(invocation, 'goal request'),
         }),
         as_json,
       );
@@ -111,7 +111,13 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
         'PUT',
         artifact_url(values.goal_id, values.artifact_path),
         {
-          json_body: { content: await read_source(invocation, values.body_file, true) },
+          json_body: {
+            content: await read_text(invocation, {
+              inline: 'message',
+              label: 'artifact text',
+              exact: true,
+            }),
+          },
         },
       );
       return emit(data, as_json, scalar_text(response_field(invocation, data, 'url')));
@@ -127,7 +133,7 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
     case 'goal make-manager':
       return goal_response(
         await send(invocation, 'POST', `/api/goals/${quote(values.goal_id)}/make-manager`, {
-          json_body: await stdin_object(invocation),
+          json_body: await read_json_input(invocation, 'goal request'),
         }),
         as_json,
       );

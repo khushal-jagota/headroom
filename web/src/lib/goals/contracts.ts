@@ -212,12 +212,7 @@ export interface SectionBlock {
   views?: Array<SegmentedView>;
 }
 
-export type Block = TicketsBlock | TextBlock | ChecklistBlock | ChartBlock | TableBlock | SectionBlock | GridBlock | SegmentedBlock | CalloutBlock | MetricsBlock | PropertiesBlock | StatusBlock | RowsBlock;
-
-export interface TicketsBlock {
-  type: "tickets";
-  id: string;
-}
+export type Block = TextBlock | ChecklistBlock | ChartBlock | TableBlock | SectionBlock | GridBlock | SegmentedBlock | CalloutBlock | MetricsBlock | PropertiesBlock | StatusBlock | RowsBlock;
 
 export interface GridBlock {
   type: "grid";

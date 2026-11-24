@@ -31,29 +31,6 @@ export type ListPageFacts = {
   next_offset: number | null;
 };
 
-export type TicketSummary = WorkAttention & {
-  machine_id?: string;
-  locale?: import("./ticketMachines").TicketLocale;
-  is_backlogged: boolean;
-  manager?: Principal;
-  id: string;
-  title: string;
-  worker_type: string;
-  stage: string;
-  ticket_status: string;
-  project_id: string | null;
-  project: string | null;
-  manager_id: string | null;
-  manager_title: string | null;
-  recap_preview: string;
-  worker_setup?: import("./navigation/contracts").WorkerSetup | null;
-};
-
-export type TicketSummariesResponse = {
-  tickets: TicketSummary[];
-  page: ListPageFacts;
-};
-
 export type ManagerSummary = WorkAttention & {
   settled?: boolean;
   id: string;
@@ -299,7 +276,6 @@ export type ManagerWorkspace = ManagerSummary & {
     launch_configuration: EmployeeConfigurationSnapshot;
   };
   tickets: ManagerWorkspaceTicket[];
-  ticket_rollup: WorkAttention;
   artifacts: ManagerArtifact[];
   conversation_history: TicketConversationHistoryEntry[];
 };
@@ -318,12 +294,6 @@ export type {
   ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem, ReviewAskItem,
   ReviewTicketItem, NavigationReviewTicketItem, NavigationReviewItem, ReviewItem,
 } from "./navigation/contracts";
-import type { ReviewItem } from "./navigation/contracts";
-
-export type ReviewResponse = {
-  items: ReviewItem[];
-  running_worker_count: number;
-};
 
 // A Manager's own identity and its manager's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
@@ -346,7 +316,6 @@ export type BoardManager = {
   awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
-  ticket_rollup: WorkAttention;
 };
 
 export type BoardCard = WorkAttention & {

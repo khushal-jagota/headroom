@@ -7,10 +7,10 @@ import {
 } from '../../tickets/logic/machine.ts';
 import type { WorkflowDefinition } from '../../worker_types/contracts.ts';
 import { render_workflow_guide } from '../../worker_types/guidance.ts';
-export const READ_YOUR_TICKET_COMMAND = 'panels worker my-ticket brief';
+export const READ_YOUR_TICKET_COMMAND = 'panels ticket show brief';
 export const FOLLOW_YOUR_WORKFLOW_GUIDE =
   'Follow this Ticket’s workflow guide. ' +
-  'Read the full guide again with panels worker my-ticket workflow if needed.';
+  'Read the full guide again with panels ticket show workflow if needed.';
 export const MEMORY_LOSS_NOTICE =
   'Your context was compacted, so the conversation you were working from is gone. ' +
   `Re-read your Ticket with ${READ_YOUR_TICKET_COMMAND}, re-load the panels-worker skill, ` +

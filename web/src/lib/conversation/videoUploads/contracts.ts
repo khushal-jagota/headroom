@@ -33,9 +33,16 @@ export type PendingVideo = {
   error?: string;
   /** Memory only: never included by the persistence serializer. */
   file?: File;
+  /** Browser-local raster preview; never persisted. */
+  previewUrl?: string;
 };
 export type ComposerSendContext = {
   messageId: string;
   expectedConversationId: string | null;
   destination?: UploadDestination;
 };
+
+/** The existing streamed transfer also carries images and arbitrary files. */
+export type PendingAttachment = PendingVideo;
+export type AttachmentUploadAdapter = VideoUploadAdapter;
+export type AttachmentUploadStatus = VideoUploadStatus;

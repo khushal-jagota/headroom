@@ -4,12 +4,12 @@
  * HTTP tests cannot prove that a browser's media element consumes streamed files.
  * Reuses the signal server and browser context; only the existing backend is fake.
  */
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Response, Route } from '@playwright/test';
 import { expectResponse, REPO_ROOT, WAIT_MS, expect, test, type JsonObject } from './support/fixtures.ts';
 import { createTicketConversation, getJson, openTicketConversation } from './support/conversation.ts';
+import { createVideoFixture } from './support/video.ts';
 
 test('test_video_upload_early_send_and_native_range_playback', async ({
   signalServer,
@@ -18,30 +18,7 @@ test('test_video_upload_early_send_and_native_range_playback', async ({
   const started = performance.now();
   // The test's own temporary folder, as Python's tmp_path.
   const temporary = testInfo.outputPath('tmp');
-  mkdirSync(temporary, { recursive: true });
-  const video = join(temporary, 'screen-recording.mp4');
-  const encoded = spawnSync(
-    'ffmpeg',
-    [
-      '-v',
-      'error',
-      '-f',
-      'lavfi',
-      '-i',
-      'testsrc=size=160x96:rate=10',
-      '-t',
-      '4',
-      '-c:v',
-      'libx264',
-      '-pix_fmt',
-      'yuv420p',
-      '-movflags',
-      '+faststart',
-      video,
-    ],
-    { timeout: 10_000, encoding: 'utf8' },
-  );
-  expect(encoded.status, `ffmpeg failed: ${encoded.error ?? ''} ${encoded.stderr}`).toBe(0);
+  const video = createVideoFixture(temporary);
   const videoName = basename(video);
   const server = signalServer;
   const conversationId = 'e2e-video-upload';

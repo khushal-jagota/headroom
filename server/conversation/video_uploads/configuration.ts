@@ -1,5 +1,6 @@
 /** Video intake limits. */
-export const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
+import { MAX_ATTACHMENT_BYTES } from '../../../web/src/lib/conversation/attachmentPolicy.ts';
+export const MAX_VIDEO_BYTES = MAX_ATTACHMENT_BYTES;
 export const VIDEO_BUDGET_BYTES = 10 * 1024 * 1024 * 1024;
 export const FREE_SPACE_FLOOR_BYTES = 5 * 1024 * 1024 * 1024;
 export const UPLOAD_TTL_SECONDS = 24 * 60 * 60;

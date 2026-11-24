@@ -43,7 +43,11 @@ const user_input_content = (request_id: string, answers: readonly UserInputAnswe
     'user_input',
     request_id,
     answers
-      .map((answer) => [answer.question_id, answer.answers])
+      .map((answer) => [
+        answer.question_id,
+        answer.answers,
+        ...(answer.attachments?.length ? [answer.attachments] : []),
+      ])
       .sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
   ]);
 const row_content = (row: AnswerRow): string =>

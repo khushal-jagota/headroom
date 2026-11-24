@@ -12,7 +12,7 @@
    * head is the one place to open them.
    *
    * While the turn runs it counts, honestly, from the moment the prompt landed. The mark
-   * turns while live frames arrive and holds still when they stop. It is drawn as the
+   * turns for as long as the line shows: the server saying the turn runs is the only word it follows. It is drawn as the
    * conversation's one system line (SystemLine).
    */
   import {
@@ -22,10 +22,6 @@
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import SystemLine from "./SystemLine.svelte";
-
-  /** How long a sign of life is still recent. Long enough to ride out the gaps between
-   *  frames, short enough that a stalled backend stops claiming to be alive. */
-  const LIVELINESS_DECAY_MS = 2_000;
 
   let {
     activityUncertain = false,
@@ -37,7 +33,6 @@
     foldedMessageCount = 0,
     expanded = false,
     waiting = null,
-    livenessPulse = 0,
     onToggle
   }: {
     activityUncertain?: boolean;
@@ -56,13 +51,10 @@
     /** What the running turn is waiting on the person for, if anything. A turn held by a
      *  question or an approval is not working, and its head must not say it is. */
     waiting?: "permission" | "question" | null;
-    /** Moves whenever a live frame arrives. Only its movement is read. */
-    livenessPulse?: number;
     /** Opens and closes the turn's earlier messages. Absent where the reading shows them. */
     onToggle?: () => void;
   } = $props();
 
-  let fresh = $state(true);
   const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
   let foldLabel = $derived(workedSentence(durationSeconds));
@@ -73,14 +65,6 @@
   // in its own words, and a clock here would claim progress that is not being made.
   let held = $derived(!settled && waiting !== null && !activityUncertain);
   let visible = $derived(!held && (!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0));
-  let alive = $derived(fresh && !activityUncertain);
-
-  $effect(() => {
-    livenessPulse;
-    fresh = true;
-    const decay = setTimeout(() => (fresh = false), LIVELINESS_DECAY_MS);
-    return () => clearTimeout(decay);
-  });
 </script>
 
 {#if visible}
@@ -114,15 +98,13 @@
         </SystemLine>
       {/if}
     {:else}
-      <!-- It turns only while frames arrive; when they stop it holds still. Unknown
+      <!-- It turns while the line shows, quiet or not. Unknown
            activity has no mark, because nothing is known to be running. -->
       <SystemLine
         mark={activityUncertain ? null : "spinner"}
         hangMark={false}
-        turning={fresh}
         role="status"
         data-conversation-alive=""
-        data-conversation-alive-fresh={alive ? "true" : "false"}
       >
         {#if activityUncertain}
           <span data-conversation-alive-word>Current activity on this machine is unknown.</span>

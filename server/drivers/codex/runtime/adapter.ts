@@ -19,6 +19,7 @@ import {
 } from '../../../conversation/contracts.ts';
 import { ConversationTurnEnding as E } from '../../../conversation/events.ts';
 import type { UserInputAnswer } from '../../../conversation/events.ts';
+import { answer_file_references } from '../../../conversation/user_input_attachments.ts';
 import {
   ComposedMessageDoesNotContainSenderContent,
   MessageText,
@@ -564,10 +565,15 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     const turn = this.turn;
     const parked = turn?.parked_user_inputs.get(request_id);
     if (turn === null || parked === undefined) throw new B.UserInputAnswerWriteFailed(request_id);
+    const prepared = answer_file_references(
+      answers,
+      this.message_files,
+      this.resolved_start.conversation_id,
+    );
     turn.parked_user_inputs.delete(request_id);
     let answer: Record<string, unknown>;
     try {
-      answer = user_input_answer(answers);
+      answer = user_input_answer(prepared);
     } catch (error) {
       turn.parked_user_inputs.set(request_id, parked);
       if (error instanceof P.CodexProtocolError)

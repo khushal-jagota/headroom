@@ -55,7 +55,7 @@ function draw(options: { expanded: boolean; settled?: boolean; status?: Partial<
     body: async () => ""
   } as unknown as ConversationViewReader;
   return render(ProjectedTranscript, {
-    props: { reader, models: [], ownSenderLabel: null, livenessPulse: 0 }
+    props: { reader, models: [], ownSenderLabel: null }
   }).body;
 }
 

@@ -1,93 +1,75 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
-import type { ArtifactEntry } from '../files/contracts.ts';
 import { run } from './main.ts';
 import * as http from './http.ts';
 
-// Existing workspace comparisons have no artifacts and miss the wrong-field fault.
-// A stubbed wire response proves rendering without another server or filesystem host.
-test('workspace renders each top-level artifact opens value and retains the JSON tree', async () => {
-  const artifacts: ArtifactEntry[] = [
-    { name: 'note.md', opens: 'artifacts/note.md', modified_at: 3000, children: [] },
-    { name: 'report', opens: 'artifacts/report/index.html', modified_at: 2000, children: [] },
-    {
-      name: 'group',
-      opens: null,
-      modified_at: 1000,
-      children: [
-        {
-          name: 'nested.txt',
-          opens: 'artifacts/group/nested.txt',
-          modified_at: 1000,
-          children: [],
-        },
-      ],
-    },
-  ];
-  const workspace = {
-    title: 'Artifact Manager',
-    goal: 'Review the artifact tree.',
-    recap: 'Files are ready.',
-    page_revision: 0,
-    goals: [],
-    tickets: [],
-    artifacts,
-  };
-  const request = vi.spyOn(http, 'send').mockResolvedValue(workspace);
-  try {
-    const environment = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
-    const human = await run(['manager', 'workspace', 'si_artifacts'], environment);
-    expect(human).toMatchObject({ exit_code: 0, stderr: '' });
-    expect(human.stdout.split('\n\nArtifacts:\n')[1].split('\n\nTickets:\n')[0]).toBe(
-      'artifacts/note.md\nartifacts/report/index.html\nnull',
-    );
-    const machine = await run(['manager', 'workspace', 'si_artifacts', '--json'], environment);
-    expect(machine).toMatchObject({ exit_code: 0, stderr: '' });
-    expect(JSON.parse(machine.stdout)).toEqual(workspace);
-  } finally {
-    request.mockRestore();
-  }
+const SERVER = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
+const complete_page = (count: number) => ({
+  return_count: count,
+  match_count: count,
+  omitted_before: 0,
+  omitted_after: 0,
+  complete: true,
+  next_offset: null,
 });
 
-// Existing populated comparisons use an old fixed server clock. Freeze the CLI clock
-// here to prove the age boundary and same-second stage marker without another host.
-test('ticket summaries show recap freshness independently of record activity', async () => {
+// Risk: the list sends a removed filter or the wrong scope, or hides what it left out.
+// Freezing the clock also proves the recap age boundary and the stage-changed marker.
+test('ticket list sends scope, needs, and Manager kind and says what it did not show', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-07-04T12:00:02Z'));
-  const base = {
-    id: 't_recap',
-    stage: 'needs_implementation',
-    ticket_status: 'agent',
-    title: 'Recap',
-  };
+  const base = { id: 't_recap', stage: 'needs_implementation', title: 'Recap' };
   const request = vi.spyOn(http, 'send').mockResolvedValue({
     tickets: [
       {
         ...base,
+        needs: 'agent_approval',
+        ceiling_holder: { kind: 'chief', id: 'chief' },
         recap: 'Current\nrecap',
         recap_updated_at: Math.trunc(Date.now() / 1000),
         recap_stage_changed: true,
       },
-      { ...base, recap: 'Older recap', recap_updated_at: null, recap_stage_changed: false },
-      { ...base, recap: ' ', recap_updated_at: null, recap_stage_changed: false },
+      { ...base, needs: 'owner_approval', recap: 'Older recap', recap_updated_at: null },
+      { ...base, needs: 'working', recap: ' ', recap_updated_at: null },
     ],
-    page: {
-      return_count: 3,
-      match_count: 3,
-      omitted_before: 0,
-      omitted_after: 0,
-      complete: true,
-      next_offset: null,
-    },
+    page: { ...complete_page(3), not_shown: { backlog: 9, done: 104 } },
   });
   try {
-    const output = await run(['ticket', 'list'], {
-      PLAN_SERVER_URL: 'http://127.0.0.1:19020',
-      PLAN_ACTOR: '',
-    });
+    const output = await run(
+      ['ticket', 'list', '--chief', '--needs', 'owner_approval', '--needs', 'working'],
+      SERVER,
+    );
     expect(output).toMatchObject({ exit_code: 0, stderr: '' });
+    expect(request.mock.lastCall?.slice(1)).toEqual([
+      'GET',
+      '/api/tickets',
+      {
+        params: {
+          detail: 'summary',
+          scope: 'live',
+          needs: ['owner_approval', 'working'],
+          manager_kind: 'chief',
+          limit: 30,
+          offset: 0,
+        },
+      },
+    ]);
+    expect(output.stdout.split('\n').slice(0, 2)).toEqual([
+      'ID       NEEDS             STAGE                 TITLE',
+      't_recap  Chief: approve    needs_implementation  Recap',
+    ]);
     expect(output.stdout).toContain('Current recap (recap 0s old, stage changed since)');
     expect(output.stdout).toContain('Older recap (recap age unknown)');
     expect(output.stdout).toContain('\n  no recap');
+    expect(output.stdout).toContain(
+      '3 live Tickets.\nNot shown: 9 in backlog, 104 done. Add --backlog, --done, or --all.\n',
+    );
+    expect(output.stdout).not.toContain('Returned');
+    await run(['ticket', 'list', '--done', '--manager', 'si_1'], SERVER);
+    expect(request.mock.lastCall?.[3]?.params).toMatchObject({ scope: 'done', manager_id: 'si_1' });
+    expect((await run(['ticket', 'list', '--done', '--all'], SERVER)).exit_code).toBe(1);
   } finally {
     request.mockRestore();
     vi.useRealTimers();
@@ -98,10 +80,9 @@ test('ticket summaries show recap freshness independently of record activity', a
 test('CLI validates missing native values and skips an absent optional page continuation', async () => {
   const request = vi.spyOn(http, 'send').mockResolvedValue({});
   try {
-    const environment = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
     const missing = await run(
       ['project', 'create', '--name', 'Missing wire values', '--json'],
-      environment,
+      SERVER,
     );
     expect(missing).toMatchObject({ exit_code: 1, stdout: '' });
     expect(JSON.parse(missing.stderr).error).toMatchObject({
@@ -112,7 +93,7 @@ test('CLI validates missing native values and skips an absent optional page cont
       datasets: [],
       page: { return_count: 0, match_count: 0, omitted_before: 0, omitted_after: 0 },
     });
-    const paged = await run(['dataset', 'list'], environment);
+    const paged = await run(['dataset', 'list'], SERVER);
     expect(paged).toMatchObject({ exit_code: 0, stderr: '' });
     expect(paged.stdout).toContain('Returned 0 of 0 matches.');
     expect(paged.stdout).not.toMatch(/Use --limit|undefined|\[object Object\]/);
@@ -120,11 +101,12 @@ test('CLI validates missing native values and skips an absent optional page cont
     const names = ['__proto__', 'constructor', 'toString'];
     request.mockResolvedValue({
       id: 't_own_keys',
+      needs: 'ready',
       workflow: { fields: names.map((id) => ({ id })) },
       field_values: {},
       field_approvals: {},
     });
-    const record = await run(['ticket', 'show', 't_own_keys'], environment);
+    const record = await run(['ticket', 'show', 't_own_keys'], SERVER);
     expect(record).toMatchObject({ exit_code: 0, stderr: '' });
     for (const name of names) expect(record.stdout).toContain(`  ${name}:\n    character_count: 0`);
   } finally {
@@ -134,28 +116,27 @@ test('CLI validates missing native values and skips an absent optional page cont
 
 // Gap: HTTP comparisons cannot prove CLI option merging or the credential output policy.
 // Reuse the wire stub and stdin seam. No server or external credential store participates.
-test('machine commands preserve credential JSON and ticket destination inputs', async () => {
+test('machine commands print the credential once and merge ticket destination inputs', async () => {
   const remote = 'ad1f66de-bcaa-45b7-918a-8d0e7a018ae1';
   const grant = { machine_id: remote, credential: 'synthetic-secret', issued_at_ms: 100 };
   const request = vi.spyOn(http, 'send').mockResolvedValue(grant);
-  const environment = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
   try {
-    const registered = await run(['machine', 'register', 'Build host'], environment);
+    const registered = await run(['machine', 'register', 'Build host', '--json'], SERVER);
     expect(JSON.parse(registered.stdout)).toEqual(grant);
     expect(request.mock.lastCall?.slice(1)).toEqual([
       'POST',
       '/api/machines',
       { json_body: { name: 'Build host' } },
     ]);
-    const replaced = await run(['machine', 'replace-credential', remote], environment);
-    expect(JSON.parse(replaced.stdout)).toEqual(grant);
+    const human = await run(['machine', 'replace-credential', remote], SERVER);
+    expect(human.stdout.split(grant.credential)).toHaveLength(2);
     expect(request.mock.lastCall?.slice(1)).toEqual(['POST', `/api/machines/${remote}/credential`]);
     const private_grant = { ...grant, credential: 'x'.repeat(43) },
       revision = 'a'.repeat(40);
     request.mockResolvedValueOnce({ app_sha: revision }).mockResolvedValueOnce(private_grant);
     const joined = await run(
       ['machine', 'join-command', 'Build host', '--home', 'https://home.example'],
-      environment,
+      SERVER,
     );
     expect(joined.exit_code).toBe(0);
     expect(request.mock.calls.slice(-2).map((call) => call.slice(1))).toEqual([
@@ -172,23 +153,19 @@ test('machine commands preserve credential JSON and ticket destination inputs', 
     request.mockClear();
     const invalid_home = await run(
       ['machine', 'join-command', 'Build host', '--home', 'http://home.example'],
-      environment,
+      SERVER,
     );
     expect(invalid_home.exit_code).toBe(1);
     expect(request).not.toHaveBeenCalled();
-    request.mockResolvedValue({
-      machines: [{ machine_id: remote, name: 'Build host', available: false }],
-    });
-    const listed = await run(['machine', 'list'], environment);
-    expect(listed.stdout.trim()).toBe(`${remote} Build host Away`);
 
     request.mockResolvedValue({
       id: 't_created',
       stage: 'needs_brief',
       supervision_receipt: 'Owner review',
     });
-    const args = ['ticket', 'create', '--input-json', '-', '--machine-id', remote];
-    const created = await run(args, environment, async () => Buffer.from('{"title":"Remote"}'));
+    // The JSON input rule: stdin when --input-json is absent.
+    const args = ['ticket', 'create', '--machine-id', remote];
+    const created = await run(args, SERVER, async () => Buffer.from('{"title":"Remote"}'));
     expect(created.exit_code).toBe(0);
     expect(request.mock.lastCall?.slice(1)).toEqual([
       'POST',
@@ -196,7 +173,7 @@ test('machine commands preserve credential JSON and ticket destination inputs', 
       { json_body: { title: 'Remote', machine_id: remote } },
     ]);
     request.mockClear();
-    const duplicate = await run(args, environment, async () =>
+    const duplicate = await run(args, SERVER, async () =>
       Buffer.from(JSON.stringify({ machine_id: remote })),
     );
     expect(duplicate.exit_code).toBe(1);
@@ -207,70 +184,197 @@ test('machine commands preserve credential JSON and ticket destination inputs', 
   }
 });
 
-// Gap: API comparisons cannot observe implicit stdin reads or CLI payload omission.
-// Reuse the wire stub; explicit guidance and final approval need no connected host.
-test('proposal guidance is explicit and final approval omits onward scope', async () => {
-  const request = vi.spyOn(http, 'send').mockResolvedValue({ id: 't_cli' });
-  const stdin = vi.fn(async () => Buffer.from('Exact stdin guidance.'));
-  const env = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
+// Risk: the shared text rule reads the wrong source, or reads stdin when a flag was given.
+test('text input takes --message, --body-file, or stdin, and refuses two sources', async () => {
+  const request = vi.spyOn(http, 'send').mockResolvedValue({ fate: 'delivered' });
+  const stdin = vi.fn(async () => Buffer.from('From stdin.\r\n'));
+  const file = join(mkdtempSync(join(tmpdir(), 'panels-cli-')), 'message.md');
+  writeFileSync(file, 'From a file.');
+  const message = () => (request.mock.lastCall?.[3]?.json_body as { message?: string })?.message;
   try {
-    expect((await run(['ticket', 'proposal', 't_cli', 'revise'], env, stdin)).exit_code).toBe(1);
-    expect(stdin).not.toHaveBeenCalled();
     expect(
-      (
-        await run(
-          ['ticket', 'proposal', 't_cli', 'revise', '--message', 'one', '--body-file', '-'],
-          env,
-          stdin,
-        )
-      ).exit_code,
-    ).toBe(1);
-    expect(
-      (await run(['ticket', 'proposal', 't_cli', 'submit', '--message', 'no'], env, stdin))
-        .exit_code,
-    ).toBe(1);
-    expect(
-      (
-        await run(
-          [
-            'ticket',
-            'proposal',
-            't_cli',
-            'revise',
-            '--body-file',
-            '-',
-            '--expected-proposal-revision',
-            '2',
-          ],
-          env,
-          stdin,
-        )
-      ).exit_code,
+      (await run(['send-message', '--owner', '--message', 'Inline.'], SERVER, stdin)).exit_code,
     ).toBe(0);
-    expect(request.mock.lastCall?.[3]).toEqual({
-      json_body: {
-        message: 'Exact stdin guidance.',
-        expected_proposal_revision: 2,
-        decision_id: 't_cli:2:reject',
-      },
-    });
-    const detail = (stage: string, field: string, target: string) => ({
-      id: 't_cli',
-      stage,
-      pending_proposal: { field, revision: 2 },
-      workflow: { stages: [{ id: stage, gating_field: field }], advance: { [stage]: target } },
-    });
-    request.mockResolvedValueOnce(
-      detail('needs_implementation', 'implementation', 'needs_consequences'),
+    expect(message()).toBe('Inline.');
+    expect(stdin).not.toHaveBeenCalled();
+    await run(['send-message', '--owner', '--body-file', file], SERVER, stdin);
+    expect(message()).toBe('From a file.');
+    await run(['send-message', '--owner'], SERVER, stdin);
+    expect(message()).toBe('From stdin.\n');
+    request.mockClear();
+    const both = await run(
+      ['send-message', '--owner', '--message', 'one', '--body-file', file],
+      SERVER,
+      stdin,
     );
-    expect((await run(['ticket', 'proposal', 't_cli', 'accept'], env)).exit_code).toBe(1);
+    expect(both.exit_code).toBe(1);
+    expect(both.stderr).toContain('one way only');
+    const empty = await run(['send-message', '--owner'], SERVER, async () => Buffer.from(' \n'));
+    expect(empty.exit_code).toBe(1);
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    request.mockRestore();
+  }
+});
+
+// Risk: recap writes another record, or writes the owner's when no identity is present.
+test('recap writes the caller record for each role and refuses without an identity', async () => {
+  const request = vi.spyOn(http, 'send').mockResolvedValue({});
+  const stdin = async () => Buffer.from('Done.');
+  try {
+    const roles: [NodeJS.ProcessEnv, string, string][] = [
+      [{ PLAN_ACTOR: 'worker', PLAN_TICKET_ID: 't_me' }, 'PATCH', '/api/tickets/t_me'],
+      [{ PLAN_ACTOR: 'manager', PLAN_MANAGER_ID: 'si_me' }, 'PATCH', '/api/managers/si_me'],
+      [{ PLAN_ACTOR: 'chief' }, 'PUT', '/api/workers/chief-of-staff/recap'],
+    ];
+    for (const [identity, method, path] of roles) {
+      const result = await run(['recap'], { ...SERVER, ...identity }, stdin);
+      expect(result).toMatchObject({ exit_code: 0, stdout: 'recap written\n' });
+      expect(request.mock.lastCall?.slice(1)).toEqual([
+        method,
+        path,
+        { json_body: { recap: 'Done.' } },
+      ]);
+    }
+    request.mockClear();
+    const nobody = await run(['recap'], SERVER, stdin);
+    expect(nobody.exit_code).toBe(1);
+    expect(nobody.stderr).toContain('No panels call writes a recap without an agent identity.');
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    request.mockRestore();
+  }
+});
+
+// Risk: an approval with no --holder names someone other than the caller, the old word
+// "me" (which meant the owner) changes meaning without notice, and the final approval sends
+// onward scope. Send-back uses the shared text rule and pins the revision.
+test('approve defaults the holder to the caller, refuses me, and send-back sends its guidance', async () => {
+  const request = vi.spyOn(http, 'send');
+  const detail = (stage: string, field: string, target: string) => ({
+    id: 't_cli',
+    stage,
+    pending_proposal: { field, revision: 2 },
+    workflow: { stages: [{ id: stage, gating_field: field }], advance: { [stage]: target } },
+  });
+  const manager = { ...SERVER, PLAN_ACTOR: 'manager', PLAN_MANAGER_ID: 'si_me' };
+  try {
+    request
+      .mockResolvedValueOnce(detail('needs_implementation', 'implementation', 'needs_consequences'))
+      .mockResolvedValueOnce({ id: 't_cli' });
+    const refused = await run(
+      ['ticket', 'approve', 't_cli', '--ceiling', 'needs_consequences', '--holder', 'me'],
+      manager,
+    );
+    expect(refused.exit_code).toBe(1);
+    expect(refused.stderr).toContain('Use --holder owner, --holder chief, or --holder MANAGER_ID');
+    request.mockReset();
+    request
+      .mockResolvedValueOnce(detail('needs_implementation', 'implementation', 'needs_consequences'))
+      .mockResolvedValueOnce({ id: 't_cli' });
+    const approved = await run(
+      ['ticket', 'approve', 't_cli', '--ceiling', 'needs_consequences'],
+      manager,
+    );
+    expect(approved).toMatchObject({ exit_code: 0, stdout: 't_cli approved implementation\n' });
+    expect(
+      (request.mock.lastCall?.[3]?.json_body as { next_holder?: unknown })?.next_holder,
+    ).toEqual({
+      kind: 'manager',
+      id: 'si_me',
+    });
+    request.mockResolvedValueOnce(detail('needs_implementation', 'implementation', 'x'));
+    const worker = { ...SERVER, PLAN_ACTOR: 'worker', PLAN_TICKET_ID: 't_me' };
+    expect((await run(['ticket', 'approve', 't_cli', '--ceiling', 'x'], worker)).exit_code).toBe(1);
     request
       .mockResolvedValueOnce(detail('needs_consequences', 'consequences', 'done'))
       .mockResolvedValueOnce({ id: 't_cli' });
-    expect((await run(['ticket', 'proposal', 't_cli', 'accept'], env)).exit_code).toBe(0);
+    expect((await run(['ticket', 'approve', 't_cli'], SERVER)).exit_code).toBe(0);
     expect(request.mock.lastCall?.[3]).toEqual({
       json_body: { expected_proposal_revision: 2, decision_id: 't_cli:2:accept' },
     });
+    request.mockResolvedValueOnce({ id: 't_cli' });
+    const sent_back = await run(
+      ['ticket', 'send-back', 't_cli', '--expected-proposal-revision', '2'],
+      SERVER,
+      async () => Buffer.from('Exact stdin guidance.'),
+    );
+    expect(sent_back).toMatchObject({ exit_code: 0, stdout: 't_cli proposal sent back\n' });
+    expect(request.mock.lastCall?.slice(1)).toEqual([
+      'POST',
+      '/api/tickets/t_cli/reject',
+      {
+        json_body: {
+          message: 'Exact stdin guidance.',
+          expected_proposal_revision: 2,
+          decision_id: 't_cli:2:reject',
+        },
+      },
+    ]);
+  } finally {
+    request.mockRestore();
+  }
+});
+
+// Risk: manager show names the wrong document as the visible page (the logic that
+// manager workspace held), or reads the caller's own Manager when an id is given.
+test('manager show defaults to the caller and names the visible page', async () => {
+  const request = vi.spyOn(http, 'send').mockResolvedValue({
+    id: 'si_me',
+    title: 'Mine',
+    settled: false,
+    goal: 'Purpose',
+    recap: 'Recap',
+    goals: [{ id: 'goal_1', title: 'Grow', active: true }],
+    ticket_needs: { owner_approval: 1, working: 2, done: 4 },
+  });
+  try {
+    const own = await run(['manager', 'show', 'recap'], {
+      ...SERVER,
+      PLAN_ACTOR: 'manager',
+      PLAN_MANAGER_ID: 'si_me',
+    });
+    expect(request.mock.lastCall?.[3]).toEqual({ params: { detail: 'full', id: 'si_me' } });
+    expect(own.stdout).toContain('  visible_page: held goal Grow (goal_1)\n');
+    expect(own.stdout).toContain('  page_edit: panels goal edit goal_1\n');
+    expect(own.stdout).toContain('  tickets: 1 Khushal: approve, 2 working; 4 done\n');
+    expect(own.stdout).toContain('parts:\n  recap:\n    value: Recap');
+    const page = await run(['manager', 'show', 'si_me', 'page'], SERVER);
+    expect(page.stderr).toContain('Use: panels page show --manager MANAGER_ID');
+  } finally {
+    request.mockRestore();
+  }
+});
+
+// Risk: during an install this CLI reaches the release before it, which ignores scope and
+// omits the need fields. A list would then silently include backlog with no need column.
+test('each new read refuses an old-server response instead of printing it', async () => {
+  const old_page = complete_page(1);
+  const cases: [string[], unknown][] = [
+    [
+      ['ticket', 'list'],
+      { tickets: [{ id: 't_old', stage: 'done', title: 'Old' }], page: old_page },
+    ],
+    [['ticket', 'show', 't_old'], { id: 't_old', workflow: { fields: [] }, field_values: {} }],
+    [['manager', 'list'], { managers: [{ id: 'si_old', title: 'Old' }], page: old_page }],
+    [['manager', 'show', 'si_old'], { id: 'si_old', title: 'Old', goal: '', recap: '' }],
+    [['review'], { items: [] }],
+  ];
+  const request = vi.spyOn(http, 'send');
+  try {
+    for (const [argv, body] of cases) {
+      request.mockResolvedValue(body);
+      const human = await run(argv, SERVER);
+      expect(human, argv.join(' ')).toEqual({
+        exit_code: 1,
+        stdout: '',
+        stderr:
+          'error: The Panels server is older than this command. It is being updated. Run the command again in a few minutes.\n',
+      });
+      const machine = await run([...argv, '--json'], SERVER);
+      expect(machine.stdout).toBe('');
+      expect(JSON.parse(machine.stderr).error.code).toBe('server_too_old');
+    }
   } finally {
     request.mockRestore();
   }

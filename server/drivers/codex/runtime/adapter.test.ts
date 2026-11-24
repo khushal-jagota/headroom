@@ -364,3 +364,82 @@ test('records Codex last input separately from cumulative usage', async () => {
     await state.child.stop();
   }
 });
+
+// Gap: string-only answers never prove that a native request carries an attachment path with readable bytes.
+test('Codex receives a readable managed file reference in its structured answer and retries missing files', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { ConversationMessageFiles } =
+    await import('../../../conversation/record/message_files.ts');
+  const { MessageFile } = await import('../../../conversation/message_content.ts');
+  const { UserInputAnswer } = await import('../../../conversation/events.ts');
+  const root = mkdtempSync(join(tmpdir(), 'codex-answer-'));
+  const files = new ConversationMessageFiles(join(root, 'record.sqlite'));
+  const state = await setup(files);
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    state.reply(1, { turn: { id: 'native', status: 'inProgress' } });
+    await writing;
+    await state.handler.on_server_request('item/tool/requestUserInput', 7, {
+      threadId: 'thread',
+      turnId: 'native',
+      itemId: 'question',
+      questions: [
+        {
+          id: 'proof',
+          header: 'Proof',
+          question: 'What proof?',
+          isOther: true,
+          isSecret: false,
+          options: [],
+        },
+      ],
+    });
+    const request = state.report.mock.calls.find(
+      ([, event]) => event instanceof B.UserInputRequested,
+    )![1] as B.UserInputRequested;
+    await expect(
+      state.child.answer_user_input(request.request.request_id, [
+        new UserInputAnswer({
+          question_id: 'proof',
+          answers: [],
+          attachments: [
+            new MessageFile({
+              stored_file_id: 'missing',
+              file_name: 'missing.txt',
+              media_type: 'text/plain',
+              byte_count: 1,
+            }),
+          ],
+        }),
+      ]),
+    ).rejects.toBeInstanceOf(B.UserInputAnswerWriteFailed);
+    expect(state.client.respond).not.toHaveBeenCalled();
+    const bytes = Buffer.from('native Codex answer proof');
+    const kept = await files.keep('conversation', bytes, { media_type: 'text/plain' });
+    await state.child.answer_user_input(request.request.request_id, [
+      new UserInputAnswer({
+        question_id: 'proof',
+        answers: [],
+        attachments: [
+          new MessageFile({
+            stored_file_id: kept.stored_file_id,
+            file_name: 'proof.txt',
+            media_type: 'text/plain',
+            byte_count: bytes.length,
+          }),
+        ],
+      }),
+    ]);
+    const native = vi.mocked(state.client.respond).mock.calls.at(-1)![1] as {
+      answers: { proof: { answers: string[] } };
+    };
+    const reference = native.answers.proof.answers[0].match(/is available at (.+)\.$/)![1];
+    expect(readFileSync(reference)).toEqual(bytes);
+  } finally {
+    await state.child.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

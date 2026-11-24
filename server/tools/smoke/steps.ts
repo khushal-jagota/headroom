@@ -87,11 +87,16 @@ async function poll<T>(read: () => Promise<T>, accepted: (value: T) => boolean):
 }
 async function review_gate(base: string, ticket_id: string): Promise<void> {
   const api = client(base);
-  const review = await api<{ items: Json[] }>('/api/review');
-  assert.ok(
-    review.items.some(
-      (item) => item.ticket_id === ticket_id && item.review_item_type === 'ticket' && item.proposal,
-    ),
+  await poll(
+    () => api<{ available: boolean; cards: Json[] }>('/api/review'),
+    (review) =>
+      review.available &&
+      review.cards.some(
+        (card) =>
+          card.kind === 'ticket' &&
+          card.id === ticket_id &&
+          (card.waits as string[]).includes('proposal'),
+      ),
   );
   await poll(
     () =>

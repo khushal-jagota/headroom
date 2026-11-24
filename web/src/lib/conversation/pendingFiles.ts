@@ -15,10 +15,6 @@ const MEDIA_TYPE_BY_EXTENSION = new Map<string, string>([
   ["jsonl", "application/x-ndjson"]
 ]);
 
-export const CONVERSATION_FILE_ACCEPT = [...MEDIA_TYPE_BY_EXTENSION.keys()]
-  .map((extension) => `.${extension}`)
-  .join(",");
-
 export type PendingConversationFile = {
   id: number;
   fileName: string;

@@ -159,7 +159,15 @@ async function invoke(
       invoking();
       await child.native.answer_user_input(
         args.request_id,
-        args.answers.map((answer) => new UserInputAnswer(answer)),
+        args.answers.map(
+          (answer) =>
+            new UserInputAnswer({
+              ...answer,
+              attachments: native_content(
+                answer.attachments ?? [],
+              ) as UserInputAnswer['attachments'],
+            }),
+        ),
       );
       return answer_application(
         dependencies,
