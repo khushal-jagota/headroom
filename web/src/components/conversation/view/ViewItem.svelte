@@ -6,7 +6,7 @@
       itemKey: string;
       /** Where this item stands in the thread's rhythm; the stylesheet turns it into the
        *  gap above it (.chat-thread-content > [data-conversation-transcript] > [data-rhythm]). Absent takes the block gap. */
-      rhythm?: 'first' | 'turn' | 'meta' | 'block' | 'row' | 'none';
+      rhythm?: 'first' | 'turn' | 'break' | 'meta' | 'block' | 'row' | 'none';
       children: Snippet;
   } = $props();
   function register(node: HTMLElement, key: string | null) {

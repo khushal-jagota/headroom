@@ -7,7 +7,6 @@
   import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
   import type { ConversationJump } from "./viewportConfiguration";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
-  import LiveEdge from '../view/LiveEdge.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
@@ -1251,7 +1250,6 @@
       {onSendAgain}
     />
     {/if}
-    {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
     {#if afterTranscript}
       <div class="held-queue-slot">{@render afterTranscript()}</div>
     {/if}

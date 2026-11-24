@@ -3839,6 +3839,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * box's, and every rule names that level. */
 :where(.chat-thread-content, .chat-thread-content > [data-conversation-transcript]) > :where(:not([data-conversation-transcript], [data-conversation-history-edge])) + :where(:not([data-conversation-history-edge])) { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
+/* A short break between agent messages: a turn's gap above a 32px hairline (as Review draws it), and 16px under it. */
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="break"] { position: relative; margin-block-start: var(--cv-gap-turn); padding-block-start: var(--space-4); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="break"]::before { content: ""; position: absolute; inset-block-start: 0; inset-inline-start: 0; inline-size: var(--space-6); border-block-start: var(--border-hairline) solid var(--text-faintest); opacity: .55; }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="row"], [data-rhythm="first"]) { margin-block-start: 0; }
@@ -3846,7 +3849,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .chat-thread-content > [data-conversation-transcript] > [data-conversation-turn] + :not([data-rhythm]) { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-gap-block); }
 /* The live edge under a message keeps the message's hover row clear: a turn's gap. */
-.chat-thread-content > [data-conversation-transcript][data-conversation-ends-with-message] ~ [data-conversation-live-edge] { margin-block-start: var(--cv-gap-turn); }
 /* An item that draws nothing gives nothing, and the item after it keeps its own gap. */
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="none"] { margin-block: 0; }
 
@@ -4803,6 +4805,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
   width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
+}
+/* Narrow: the opened column starts 36px in, so a turn's spinner hanging in the gutter keeps
+ * clear of the screen edge (x >= 12px). The header, thread and composer move together. */
+@media (max-width: 480px) {
+  [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
+    width: calc(100% - 36px - var(--space-5));
+    margin-inline: 36px var(--space-5);
+  }
 }
 .conversation-layer [data-conversation-pane] { max-height: 100%; }
 /* Large questions and held prompts scroll inside the card; the whole composer remains one

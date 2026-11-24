@@ -104,7 +104,7 @@ export function conversationState(facts: ConversationStateFacts): ConversationSt
   if (facts.waitingForYou) return { state: 'waiting', text: waitingWords(facts.waitingFor ?? null), mark: 'dot' };
   if (facts.failure === 'turn_failed') return { state: 'failed', text: 'Turn failed', mark: 'alert' };
   if (facts.failure === 'not_delivered') return { state: 'undelivered', text: 'Message not delivered', mark: 'alert' };
-  if (facts.running) return { state: 'working', text: facts.elapsed ? `Working · ${facts.elapsed}` : 'Working', mark: 'spinner' };
+  if (facts.running) return { state: 'working', text: facts.elapsed ? `Working for ${facts.elapsed}` : 'Working', mark: 'spinner' };
   if (facts.backgroundWorking) return { state: 'working', text: 'Working in the background', mark: 'spinner' };
   if (facts.settingUp) return { state: 'setting-up', text: facts.settingUp, mark: 'spinner' };
   if (facts.interrupted) return { state: 'interrupted', text: 'Interrupted', mark: 'stop' };
@@ -132,10 +132,9 @@ export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | 
 }
 
 /** The dock's status line says one of four things, whatever else waits: the ask, the proposal
- * and a failure each say themselves on the page, the ask card or the transcript. An ask in the
- * conversation stops the agent on the person, so the line says Idle; a proposal on the page
- * does not stop it, so a running turn still says Working. A machine Panels cannot read says
- * only that, with no motion and no clock. */
+ * and a failure each say themselves on the page, the ask card or the transcript. A running turn
+ * says Working while an ask waits too, as the server counts it working until the turn ends. A
+ * machine Panels cannot read says only that, with no motion and no clock. */
 export type DockStatus =
   | { kind: 'setting-up' | 'working'; clock: string | null }
   | { kind: 'idle' | 'offline'; clock: null };
@@ -148,7 +147,7 @@ export function dockStatusFrom(facts: {
   turnClock: string | null;
 }): DockStatus {
   if (facts.offline) return { kind: 'offline', clock: null };
-  const state = conversationState({ ...facts.conversation, waitingForYou: facts.askWaiting }).state;
+  const state = conversationState({ ...facts.conversation, waitingForYou: facts.askWaiting && !facts.conversation.running }).state;
   if (state === 'setting-up') return { kind: 'setting-up', clock: facts.setupClock };
   if (state === 'working') return { kind: 'working', clock: facts.turnClock };
   return { kind: 'idle', clock: null };
