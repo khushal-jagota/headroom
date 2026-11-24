@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { chromium } from 'playwright';
 import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
@@ -46,13 +47,14 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
   assert.equal((await read_status())?.app_sha, o.predecessor);
   const workspace = join(o.base, 'conversation-workspace');
   await mkdir(workspace, { mode: 0o700 });
-  const turn = () =>
+  const turn = (after_rollback = false) =>
     smoke_file_turn(
       url,
       {
         model: 'TEST',
         reply: DEFAULT_BACKEND_PEER_REPLY,
         workspace,
+        after_rollback,
       },
       o.machine_id,
     );
@@ -77,6 +79,9 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       response.writeHead(503, { Connection: 'close' });
       response.end();
     });
+    const readJournal = async () =>
+      JSON.parse(await readFile(join(o.base, 'installed/data/update-attempt.json'), 'utf8'));
+    let failedAttemptId: string;
     try {
       const started = page.waitForResponse(
         (response) =>
@@ -97,7 +102,10 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         await confirm.click();
       const accepted = await started;
       assert.equal(accepted.ok(), true, await accepted.text());
-      assert.equal((await accepted.json()).attempt.to_sha, candidate);
+      const firstAttempt = (await accepted.json()).attempt;
+      assert.equal(firstAttempt.to_sha, candidate);
+      failedAttemptId = firstAttempt.attempt_id;
+      assert.ok(failedAttemptId);
       await wait_for(
         () =>
           new Promise<boolean>((done, reject) => {
@@ -117,10 +125,9 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         'injecting failure on candidate bind',
         20,
       );
-      const journal = join(o.base, 'installed/data/update-attempt.json');
       await wait_for(
         async () => {
-          const attempt = JSON.parse(await readFile(journal, 'utf8'));
+          const attempt = await readJournal();
           if (attempt.to_sha !== candidate || !attempt.steps?.rollback_service_stopped)
             return false;
           assert.ok(
@@ -135,36 +142,59 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     } finally {
       if (fault.listening) await new Promise<void>((done) => fault.close(() => done()));
     }
+    const rollbackEvidence = join(o.base, 'evidence/rollback.json');
     await wait_for(async () => {
-      const status = await read_status();
-      return status?.attempt?.state === 'failed' && status.app_sha === o.predecessor;
-    }, 'waiting for previous version after rollback');
+      const attempt = await readJournal();
+      assert.equal(attempt.attempt_id, failedAttemptId);
+      assert.equal(attempt.from_sha, o.predecessor);
+      assert.equal(attempt.to_sha, candidate);
+      if (attempt.state === 'failed' || attempt.steps?.rollback_failed) {
+        const detail = recorded_failure_detail(attempt.detail);
+        const backup_present = typeof attempt.backup === 'string' && attempt.backup.length > 0;
+        const status = await read_status();
+        await writeFile(
+          rollbackEvidence,
+          JSON.stringify(
+            {
+              runtime: status?.app_sha ?? null,
+              attempt_id: failedAttemptId,
+              outcome: attempt.state,
+              refused_candidate: candidate,
+              detail,
+              snapshot_required: attempt.snapshot_required,
+              backup_present,
+              rollback_database_restored: attempt.steps?.rollback_database_restored ?? null,
+              rollback_healthy: attempt.steps?.rollback_healthy ?? null,
+              rollback_failed: attempt.steps?.rollback_failed ?? null,
+              enrolled_machine: o.machine_id,
+              preserved_attachment: before.stored_file_id,
+            },
+            null,
+            2,
+          ),
+        );
+        assert.ok(
+          !attempt.steps?.rollback_failed && attempt.steps?.rollback_healthy,
+          'Installer did not recover the predecessor: ' + detail,
+        );
+        assert.ok(!attempt.snapshot_required || backup_present, 'Required snapshot missing');
+        assert.ok(
+          !backup_present || attempt.steps.rollback_database_restored,
+          'Installer did not restore the database snapshot',
+        );
+        return status?.app_sha === o.predecessor && status.attempt?.attempt_id === failedAttemptId;
+      }
+      return false;
+    }, 'waiting for the terminal rollback journal and restored predecessor');
     await o.verify_rollback?.();
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const preserved = { ...before, model: 'TEST' };
     await verify_smoke_history(url, preserved);
-    const recovered = await turn();
-    const rolledBack = await read_status();
-    await writeFile(
-      join(o.base, 'evidence/rollback.json'),
-      JSON.stringify(
-        {
-          runtime: rolledBack.app_sha,
-          attempt_id: rolledBack.attempt.attempt_id,
-          refused_candidate: rolledBack.attempt.to_sha,
-          detail: rolledBack.attempt.detail,
-          enrolled_machine: o.machine_id,
-          completed_conversation: recovered.conversation_id,
-          preserved_attachment: before.stored_file_id,
-        },
-        null,
-        2,
-      ),
-    );
+    const recovered = await turn(true);
     const expectedBuild = JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8'))
       .parts.machines[process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'].build_id;
     assert.match(expectedBuild, /^[a-f0-9]{64}$/);
-    const rolledBackAttempt = rolledBack.attempt.attempt_id;
+    const rolledBackAttempt = failedAttemptId;
     await page.goto(url);
     const card = page.locator('[data-shell-status]:visible');
     const headline = card.locator('.status-base');
@@ -240,6 +270,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           reported_build: expectedBuild,
           conversations: [before.conversation_id, after.conversation_id],
           rollback_sha: o.predecessor,
+          recovered_conversation: recovered.conversation_id,
           original_linux_start: originalStart,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
         },

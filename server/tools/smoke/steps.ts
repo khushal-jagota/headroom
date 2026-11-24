@@ -40,17 +40,39 @@ function client(base: string) {
   assert.ok(url.port && url.port !== '0');
   assert.equal(url.username + url.password + url.search + url.hash, '');
   assert.equal(url.pathname, '/');
-  return async <T = Json>(path: string, body?: unknown, headers = {}): Promise<T> => {
-    const response = await fetch(url.origin + path, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-    });
-    const output = await response.text();
-    assert.ok(response.ok, `${path}: ${response.status}: ${output}`);
-    return JSON.parse(output) as T;
+  return async <T = Json>(
+    path: string,
+    body?: unknown,
+    headers = {},
+    recovered_create = false,
+  ): Promise<T> => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const deadline = recovered_create ? performance.now() + 8_000 : null;
+    for (;;) {
+      const response = await fetch(url.origin + path, {
+        method: payload === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        ...(payload === undefined ? {} : { body: payload }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(
+          deadline === null ? 15_000 : Math.max(1, Math.ceil(deadline - performance.now())),
+        ),
+      });
+      const output = await response.text();
+      // This 503 comes from the predecessor's write barrier before the route is invoked.
+      if (
+        deadline !== null &&
+        performance.now() + 250 < deadline &&
+        path === '/api/conversation/conversations' &&
+        response.status === 503 &&
+        output === '{"detail":"Owner update in progress."}'
+      ) {
+        await delay(250);
+        continue;
+      }
+      assert.ok(response.ok, `${path}: ${response.status}: ${output}`);
+      return JSON.parse(output) as T;
+    }
   };
 }
 async function cli_ticket(base: string, id: string, environment: NodeJS.ProcessEnv): Promise<Json> {
@@ -172,20 +194,27 @@ export async function smoke_before_restart(
 }
 export async function smoke_file_turn(
   base: string,
-  options: Pick<SmokeOptions, 'model' | 'reply' | 'workspace' | 'step'>,
+  options: Pick<SmokeOptions, 'model' | 'reply' | 'workspace' | 'step'> & {
+    after_rollback?: boolean;
+  },
   machine_id?: string,
 ) {
   const api = client(base);
   const step = options.step ?? log;
   const conversation_id = 'smoke-' + randomUUID();
   const conversation = `/api/conversation/conversations/${conversation_id}`;
-  const started = await api('/api/conversation/conversations', {
-    conversation_id,
-    backend_key: DEFAULT_BACKEND_INSTANCE_ID,
-    model: options.model,
-    workspace_folder: options.workspace,
-    ...(machine_id ? { machine_id } : {}),
-  });
+  const started = await api(
+    '/api/conversation/conversations',
+    {
+      conversation_id,
+      backend_key: DEFAULT_BACKEND_INSTANCE_ID,
+      model: options.model,
+      workspace_folder: options.workspace,
+      ...(machine_id ? { machine_id } : {}),
+    },
+    {},
+    options.after_rollback,
+  );
   assert.equal(started.model, options.model);
   step('04 manual conversation through production adapter', { conversation_id });
   const events = await (async () => {
