@@ -34,6 +34,9 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
         case 'credential_request': return { ...base, kind: body.kind, request: body };
+        case 'agent_turn_started': return { ...base, kind: body.kind, reason: body.reason };
+        case 'background_task_started': return { ...base, kind: body.kind, taskDescription: body.task_description };
+        case 'background_task_ended': return { ...base, kind: body.kind, taskDescription: body.task_description, taskStatus: body.task_status };
         case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
         case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
         case 'prompt_uncertain':

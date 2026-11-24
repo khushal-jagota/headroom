@@ -267,32 +267,32 @@ export class ConversationStorePrimitives {
       destination: conversation_machine_id(sql, conversation_id) ?? HOME_MACHINE_ID,
     }));
   }
+  reserve_turn_number_in_transaction(tx: TransactionSql, conversation_id: string): number {
+    const facts = tx.get<{ maximum: number }>(
+      'SELECT COALESCE(MAX(turn_number),0) AS maximum FROM conversation_lifecycle_facts WHERE conversation_id=?',
+      [conversation_id],
+    )!;
+    const occurrence = tx.get<{ maximum: number }>(
+      'SELECT COALESCE(MAX(turn_number),0) AS maximum FROM conversation_turn_occurrences WHERE conversation_id=?',
+      [conversation_id],
+    )!;
+    const number = Math.max(facts.maximum, occurrence.maximum) + 1;
+    const epoch = tx.get<{ epoch: string }>(
+      'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
+    );
+    if (epoch === undefined) throw new Error('conversation runtime epoch is absent');
+    tx.run('INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)', [
+      conversation_id,
+      number,
+      randomUUID().replaceAll('-', ''),
+      epoch.epoch,
+    ]);
+    return number;
+  }
   reserve_turn(conversation_id: string, requests: readonly StartRequest[] = []): number {
     return this.database.write(
       (tx) => {
-        const facts = tx.get<{ maximum: number }>(
-          'SELECT COALESCE(MAX(turn_number),0) AS maximum ' +
-            'FROM conversation_lifecycle_facts WHERE conversation_id=?',
-          [conversation_id],
-        )!;
-        const occurrence = tx.get<{ maximum: number }>(
-          'SELECT COALESCE(MAX(turn_number),0) AS maximum ' +
-            'FROM conversation_turn_occurrences WHERE conversation_id=?',
-          [conversation_id],
-        )!;
-        const number = Math.max(facts.maximum, occurrence.maximum) + 1;
-        const epoch = tx.get<{ epoch: string }>(
-          'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
-        );
-        if (epoch === undefined) {
-          throw new Error('conversation runtime epoch is absent');
-        }
-        tx.run('INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)', [
-          conversation_id,
-          number,
-          randomUUID().replaceAll('-', ''),
-          epoch.epoch,
-        ]);
+        const number = this.reserve_turn_number_in_transaction(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {

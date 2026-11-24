@@ -8,6 +8,7 @@ import {
 } from '../conversation/record/codec.ts';
 import { ConversationStorePrimitives } from '../conversation/record/data/store.ts';
 import { append_projection } from '../conversation/views/data/writer.ts';
+import { read_status } from '../conversation/views/status.ts';
 import { read_page } from '../conversation/views/data/storage.ts';
 import { conversation_view_changes } from '../conversation/views/routes.ts';
 import { in_focus } from '../conversation/views/logic/bodies.ts';
@@ -199,4 +200,111 @@ test('a resend folds the refused message it sends again away, in both lenses', (
       expect(kinds).not.toContain('prompt_refused');
     }
   });
+});
+
+// A prompted turn no longer supplies every turn boundary. Prove the new start opens
+// its own projected turn so status can name it and tools cannot attach to the old turn.
+test('an agent-started turn owns its work and keeps background task history', () => {
+  const database = projected([
+    ['prompt', { sender_label: 'owner', text: 'Delegate the check', mode: 'queue', sender: owner }],
+    ['background_task_started', { task_id: 'task-1', task_description: 'Check tests' }],
+    ['turn_ended', { ending: 'failed', error_summary: 'Earlier failure' }],
+    [
+      'background_task_ended',
+      { task_id: 'task-1', task_description: 'Check tests', task_status: 'completed' },
+    ],
+    ['agent_turn_started', { turn_number: 2, reason: "Sub-agent 'Check tests' finished" }],
+    [
+      'tool_call_started',
+      { tool_call_id: 't3', title: 'Read result', tool_kind: 'read', detail: null },
+    ],
+  ]);
+  database.read((sql) => {
+    const status = read_status(
+      sql,
+      'c',
+      'focus',
+      {
+        runtime_epoch: 'test',
+        output: () => null,
+        status: () => [0, null],
+        latest_tool_id: () => null,
+        progress: () => null,
+        read_chunk: () => {
+          throw new Error('No live output');
+        },
+      },
+      { running: true },
+    );
+    expect(status).toMatchObject({
+      turn_key: 'turn:e5',
+      turn_running: true,
+      rest: { last_boundary_failed: false },
+    });
+    const focus = read_page(sql, 'c', 'focus');
+    expect(
+      focus.items.find((item) => item.kind === 'row' && item.row_kind === 'agent_turn_started'),
+    ).toMatchObject({
+      body: {
+        kind: 'inline',
+        value: { kind: 'agent_turn_started', reason: "Sub-agent 'Check tests' finished" },
+      },
+    });
+    expect(focus.items.find((item) => item.key === 'turn:e5')).toMatchObject({
+      kind: 'turn',
+      settled: false,
+      started_at_unix_milliseconds: 105000,
+      tool_call_count: 1,
+    });
+    const full = read_page(sql, 'c', 'full');
+    expect(
+      full.items
+        .filter((item) => item.kind === 'row' && item.row_kind.startsWith('background_task_'))
+        .map((item) => item.key),
+    ).toEqual(['e2', 'e4']);
+    expect(
+      sql.get<{ current_turn_key: string }>(
+        'SELECT current_turn_key FROM conversation_view_state WHERE conversation_id=?',
+        ['c'],
+      )?.current_turn_key,
+    ).toBe('turn:e5');
+  });
+});
+
+// The same completion must appear once, while an adjacent different task completion
+// stays visible. The history remains canonical even when its display row is folded away.
+test('an adjacent autonomous header replaces only its matching completion row', () => {
+  for (const task of [
+    { task_id: 'wake', task_description: 'Check tests', visible: false },
+    { task_id: 'other', task_description: 'Build package', visible: true },
+  ]) {
+    const database = projected([
+      [
+        'background_task_started',
+        { task_id: task.task_id, task_description: task.task_description },
+      ],
+      ['agent_turn_started', { turn_number: 1, reason: 'Background task "Check tests" completed' }],
+      [
+        'background_task_ended',
+        {
+          task_id: task.task_id,
+          task_description: task.task_description,
+          task_status: 'completed',
+        },
+      ],
+      ['turn_ended', { ending: 'completed' }],
+    ]);
+    database.read((sql) => {
+      const rows = read_page(sql, 'c', 'full').items.filter((item) => item.kind === 'row');
+      expect(rows.filter((item) => item.row_kind === 'background_task_started')).toHaveLength(1);
+      expect(rows.filter((item) => item.row_kind === 'agent_turn_started')).toHaveLength(1);
+      expect(rows.some((item) => item.row_kind === 'background_task_ended')).toBe(task.visible);
+      expect(
+        sql.get<{ kind: string }>(
+          'SELECT kind FROM conversation_events WHERE conversation_id=? AND sequence=?',
+          ['c', 3],
+        )?.kind,
+      ).toBe('background_task_ended');
+    });
+  }
 });

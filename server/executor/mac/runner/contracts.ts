@@ -31,6 +31,8 @@ export interface MacRunningChild {
   readonly workspace: WorkspaceIdentity | null;
   readonly lock: FifoLock;
   active_turn: TurnToken | null;
+  /** Turn controls join activation, except named-turn steers. Retirement cancels before source join. */
+  pending_agent_turn: { promise: Promise<TurnToken | null>; cancelled: AbortController } | null;
   readonly open_tool_calls: Set<string>;
   readonly background_task_ids: Set<string>;
   model: string | null;

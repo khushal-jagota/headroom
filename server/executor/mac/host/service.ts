@@ -159,6 +159,15 @@ export class MacService {
       incarnation: identity.executor_incarnation,
       journal,
       outbox,
+      supports_agent_turns: () => this.presence.agent_started_turns,
+      confirm_agent_turn: async (submission_id, cancelled) => {
+        const signal = AbortSignal.any([this.controller.signal, cancelled]);
+        while (!signal.aborted) {
+          const receipt = await this.gateway_outbox.wait_confirmed(submission_id, 60, signal);
+          if (receipt !== null) return receipt;
+        }
+        return null;
+      },
       live: this.live,
       inputs: new MacInputs(this.transfer, this.files, configuration.paths, on_failure),
       now_ms: Date.now,

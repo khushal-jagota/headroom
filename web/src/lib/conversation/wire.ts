@@ -249,6 +249,9 @@ type SenderMintedPromptFields = {
 };
 
 export type ConversationEvent =
+  | Row<"agent_turn_started", { turn_number: number; reason: string }>
+  | Row<"background_task_started", { task_id: string; task_description: string }>
+  | Row<"background_task_ended", { task_id: string; task_description: string; task_status: string }>
   | Row<
       "prompt",
       StoredMessageContent & {

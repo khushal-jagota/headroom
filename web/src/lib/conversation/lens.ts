@@ -57,6 +57,7 @@ export function conversationEventIsInFocus(
       return event.payload.recipient.kind === "owner";
     // A command reply answers a command the person typed. The server's in_focus
     // (server/conversation/views/logic/bodies.ts) keeps the same rule.
+    case "agent_turn_started":
     case "credential_request":
     case "command_reply":
       return true;
@@ -107,7 +108,8 @@ export function conversationRowsForLens(
 ): readonly TranscriptRow[] {
   if (lens === "full") return rows;
   return rows.filter((row) => (
-    row.kind === "prompt"
+    row.kind === "agent_turn_started"
+    || row.kind === "prompt"
     || row.kind === "prompt_refused"
     || row.kind === "prompt_uncertain"
     || row.kind === "prompt_discarded"
