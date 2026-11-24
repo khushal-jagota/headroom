@@ -12,7 +12,10 @@ import { accepted_lease } from '../../linux_executor/logic/lease.ts';
 
 const execute = promisify(execFile);
 export async function published_mac_home_fault(base: string, service: string, predecessor: string) {
-  if (process.platform !== 'darwin') return null;
+  // This shipped coordinator requires a live candidate supervisor to roll back.
+  // Later releases exercise the same failed-start case as Linux.
+  if (process.platform !== 'darwin' || predecessor !== '54aede8564ee693d178cae55d3acb04ca9d770f4')
+    return null;
   const inputs = JSON.parse(
     await readFile(join(base, 'evidence/qualification-inputs.json'), 'utf8'),
   );
