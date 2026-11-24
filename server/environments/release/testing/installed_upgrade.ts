@@ -52,7 +52,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
   assert.equal((await read_status())?.app_sha, o.predecessor);
   const workspace = join(o.base, 'conversation-workspace');
   await mkdir(workspace, { mode: 0o700 });
-  const turn = (after_rollback = false) =>
+  const missingMachine = await published_mac_home_fault(o.base, o.service, o.predecessor);
+  const turn = (after_rollback = false, worker_artifact?: 'before-update' | 'after-rollback') =>
     smoke_file_turn(
       url,
       {
@@ -60,10 +61,11 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         reply: DEFAULT_BACKEND_PEER_REPLY,
         workspace,
         after_rollback,
+        worker_artifact,
       },
       o.machine_id,
     );
-  const before = await turn();
+  const before = await turn(false, missingMachine ? 'before-update' : undefined);
   await promisify(execFile)('python3', [
     'server/environments/release/testing/configure_feed.py',
     o.base,
@@ -81,7 +83,6 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
   try {
     const page = await browser.newPage();
     await page.goto(url);
-    const missingMachine = await published_mac_home_fault(o.base, o.service, o.predecessor);
     // Other journeys make the real candidate fail to bind on this disposable port.
     const fault = createServer((_request, response) => {
       response.writeHead(503, { Connection: 'close' });
@@ -212,6 +213,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
               rollback_healthy: attempt.steps?.rollback_healthy ?? null,
               rollback_failed: attempt.steps?.rollback_failed ?? null,
               enrolled_machine: o.machine_id,
+              preserved_file: before.file_url,
               preserved_attachment: before.stored_file_id,
             },
             null,
@@ -239,7 +241,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const preserved = { ...before, model: 'TEST' };
     await verify_smoke_history(url, preserved);
-    const recovered = await turn(true);
+    const recovered = await turn(true, missingMachine ? 'after-rollback' : undefined);
     const expectedBuild = JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8'))
       .parts.machines[process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'].build_id;
     assert.match(expectedBuild, /^[a-f0-9]{64}$/);
@@ -340,6 +342,11 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           candidate,
           machine_id: o.machine_id,
           reported_build: expectedBuild,
+          baseline_file_check: missingMachine
+            ? 'joined text turn and Worker-written Ticket artifact'
+            : 'file attachment delivered to the joined agent',
+          preserved_file: before.file_url,
+          candidate_agent_attachment: after.stored_file_id,
           conversations: [before.conversation_id, after.conversation_id],
           rollback_sha: o.predecessor,
           restored_home_machine: missingMachine?.label,

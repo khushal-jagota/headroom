@@ -19,8 +19,7 @@ export async function published_mac_home_fault(base: string, service: string, pr
   const inputs = JSON.parse(
     await readFile(join(base, 'evidence/qualification-inputs.json'), 'utf8'),
   );
-  if (inputs.predecessor.native_build_run) return null;
-  assert.ok(Number.isSafeInteger(inputs.predecessor.release_id));
+  if (inputs.predecessor.release_id !== 456256714) return null;
   assert.equal(inputs.predecessor.sha, predecessor);
   assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
   assert.ok((await realpath(base)).startsWith((await realpath(process.env.RUNNER_TEMP!)) + sep));

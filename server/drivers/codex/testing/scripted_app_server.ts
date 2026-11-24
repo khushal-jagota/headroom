@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Synthetic Codex JSONL executable shared by the Python and TS parity drivers. */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -251,6 +251,20 @@ function coreMessage(message: Record<string, unknown>): boolean {
     const content = (params.input as { type: string; text?: string }[])
       .map((piece) => piece.text ?? '')
       .join('\n');
+    const artifact = /^Write the Worker artifact (before-update|after-rollback)\.txt\.$/m.exec(
+      content,
+    );
+    if (artifact) {
+      const directory = process.env.UNIT17_WORKER_ARTIFACTS;
+      if (!directory)
+        throw new Error('The scripted Worker requires its qualification artifact directory.');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, artifact[1] + '.txt'),
+        'Private production smoke attachment.\n',
+        { flag: 'wx' },
+      );
+    }
     if (content.includes('Production smoke prompt.')) {
       const path = /Attached file "smoke\.txt" .*? is available at (.+)\.$/m.exec(content)?.[1];
       if (!path || readFileSync(path, 'utf8') !== 'Private production smoke attachment.\n')

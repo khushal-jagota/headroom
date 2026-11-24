@@ -26,6 +26,7 @@ export interface SmokeState {
   conversation_id: string;
   goal_id: string;
   stored_file_id: string;
+  file_url: string;
   events: Event[];
   model: string;
 }
@@ -129,16 +130,12 @@ async function review_gate(base: string, ticket_id: string): Promise<void> {
     (attention) => attention.rows.some((row) => row.id === ticket_id),
   );
 }
-async function verify_smoke_attachment(
-  base: string,
-  conversation: string,
-  file: string,
-): Promise<void> {
+async function verify_smoke_file(base: string, path: string): Promise<void> {
   client(base);
-  const response = await fetch(
-    `${new URL(base).origin}/api/conversation/conversations/${conversation}/files/${file}`,
-    { redirect: 'error', signal: AbortSignal.timeout(15_000) },
-  );
+  const response = await fetch(new URL(base).origin + path, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
   assert.equal(response.status, 200);
   assert.ok(response.headers.get('content-type')?.startsWith('text/plain'));
   assert.equal(await response.text(), attachment);
@@ -178,7 +175,11 @@ export async function smoke_before_restart(
   await review_gate(base, ticket_id);
   step('03 proposal opens owner review notification and attention');
 
-  const { conversation_id, stored_file_id, events } = await smoke_file_turn(base, options);
+  const { conversation_id, stored_file_id, file_url, events } = await smoke_file_turn(
+    base,
+    options,
+  );
+  assert.ok(stored_file_id);
   const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
   assert.ok(typeof project.id === 'string');
   const goal = await api('/api/goals', {
@@ -190,17 +191,38 @@ export async function smoke_before_restart(
   assert.ok(typeof goal.id === 'string');
   const goal_id = goal.id;
   step('07 create goal', { goal_id });
-  return { ticket_id, conversation_id, goal_id, stored_file_id, events, model: options.model };
+  return {
+    ticket_id,
+    conversation_id,
+    goal_id,
+    stored_file_id,
+    file_url,
+    events,
+    model: options.model,
+  };
 }
 export async function smoke_file_turn(
   base: string,
   options: Pick<SmokeOptions, 'model' | 'reply' | 'workspace' | 'step'> & {
     after_rollback?: boolean;
+    worker_artifact?: 'before-update' | 'after-rollback';
   },
   machine_id?: string,
 ) {
   const api = client(base);
   const step = options.step ?? log;
+  const artifact = options.worker_artifact;
+  const prompt = artifact
+    ? `Write the Worker artifact ${artifact}.txt.`
+    : 'Production smoke prompt.';
+  const content: Json[] = [{ piece: 'text', text: prompt }];
+  if (!artifact)
+    content.push({
+      piece: 'file',
+      file_name: 'smoke.txt',
+      media_type: 'text/plain',
+      data: Buffer.from(attachment).toString('base64'),
+    });
   const conversation_id = 'smoke-' + randomUUID();
   const conversation = `/api/conversation/conversations/${conversation_id}`;
   const started = await api(
@@ -257,15 +279,7 @@ export async function smoke_file_turn(
       })();
       void live_reply.catch(() => {});
       const sent = await api(conversation + '/send', {
-        content: [
-          { piece: 'text', text: 'Production smoke prompt.' },
-          {
-            piece: 'file',
-            file_name: 'smoke.txt',
-            media_type: 'text/plain',
-            data: Buffer.from(attachment).toString('base64'),
-          },
-        ],
+        content,
         sender_label: 'Owner',
         sender_message_id: 'smoke-send',
       });
@@ -307,26 +321,36 @@ export async function smoke_file_turn(
       reader?.releaseLock();
     }
   })();
-  step('05 combined text/file send has live reply and completed recorded turn');
+  step(
+    artifact
+      ? '05 text send has live reply and completed recorded turn'
+      : '05 combined text/file send has live reply and completed recorded turn',
+  );
   const uploaded = events.find(
     (event) => event.kind === 'prompt' && event.payload.sender_message_id === 'smoke-send',
   );
   assert.ok(uploaded);
   const pieces = uploaded.payload.content as Json[];
-  assert.ok(
-    pieces.some((piece) => piece.piece === 'text' && piece.text === 'Production smoke prompt.'),
-  );
+  assert.ok(pieces.some((piece) => piece.piece === 'text' && piece.text === prompt));
+  if (artifact) {
+    assert.equal(pieces.length, 1);
+    const file_url = `/files/tickets/t_update_qualification/artifacts/${artifact}.txt`;
+    await verify_smoke_file(base, file_url);
+    step('06 Worker-written artifact bytes round trip', { file_url });
+    return { conversation_id, file_url, stored_file_id: null, events };
+  }
   const file = pieces.find((piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt');
   assert.ok(file && typeof file.stored_file_id === 'string');
   const stored_file_id = file.stored_file_id;
-  await verify_smoke_attachment(base, conversation_id, stored_file_id);
+  const file_url = conversation + '/files/' + stored_file_id;
+  await verify_smoke_file(base, file_url);
   step('06 uploaded file bytes round trip', { stored_file_id });
-  return { conversation_id, stored_file_id, events };
+  return { conversation_id, file_url, stored_file_id, events };
 }
 
 export async function verify_smoke_history(
   base: string,
-  state: Pick<SmokeState, 'conversation_id' | 'stored_file_id' | 'events' | 'model'>,
+  state: Pick<SmokeState, 'conversation_id' | 'file_url' | 'events' | 'model'>,
 ): Promise<void> {
   const api = client(base);
   const conversation = `/api/conversation/conversations/${state.conversation_id}`;
@@ -335,7 +359,7 @@ export async function verify_smoke_history(
   assert.equal(persisted.is_running, false);
   const replay = await api<{ events: Event[] }>(conversation + '/events');
   assert.deepEqual(replay.events.slice(0, state.events.length), state.events);
-  await verify_smoke_attachment(base, state.conversation_id, state.stored_file_id);
+  await verify_smoke_file(base, state.file_url);
 }
 
 export async function smoke_after_restart(
