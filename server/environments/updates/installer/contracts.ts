@@ -28,6 +28,7 @@ export type CaptureOutcome =
   | { readonly kind: 'unavailable'; readonly detail: string };
 export interface InstallerEffects {
   validate_service?(): Promise<void>;
+  resume_interrupted?(): Promise<void>;
   recover_unchanged?(sha: string): Promise<boolean>;
   finish_success?(): Promise<string | null>;
   finish_rollback?(): Promise<string | null>;

@@ -4,10 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'vitest';
-import {
-  installer_transient_command,
-  selected_installer_environment,
-} from './installation_command.ts';
+import { installer_unit, selected_installer_environment } from './installation_command.ts';
 
 it('keeps literal paths and production variables without forwarding test-runner markers', () => {
   // No existing command proof crosses the detached service environment boundary.
@@ -27,23 +24,26 @@ it('keeps literal paths and production variables without forwarding test-runner 
       LD_LIBRARY_PATH: 'must not travel',
     };
     const command = ['/external/node', join(root, 'copy/main.ts'), join(root, 'request.json')];
-    const argv = installer_transient_command('attempt-1', command, environment);
-    assert.deepEqual(argv.slice(0, 8), [
-      'systemd-run',
-      '--user',
-      '--collect',
-      '--quiet',
-      '--unit=panels-update-attempt-1',
-      '--expand-environment=no',
-      '--property=Restart=on-abnormal',
-      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
-    ]);
-    assert(argv.includes('--setenv=HOME=' + environment.HOME));
-    assert(argv.includes('--setenv=PLAN_DB_PATH=' + environment.PLAN_DB_PATH));
-    assert(!argv.some((part) => part.startsWith('--setenv=VITEST=')));
-    assert(!argv.some((part) => part.startsWith('--setenv=PYTEST_CURRENT_TEST=')));
-    assert.deepEqual(argv.slice(-4), ['--', ...command]);
-    assert(!argv.some((part) => part.includes('must not travel')));
+    const text = installer_unit(command, join(root, 'marker'), environment);
+    assert(text.includes('WantedBy=default.target'));
+    assert(text.includes('Restart=on-abnormal'));
+    assert(text.includes('ConditionPathExists=' + join(root, 'marker')));
+    assert(text.includes('Environment=' + JSON.stringify('HOME=' + environment.HOME)));
+    assert(
+      text.includes('Environment=' + JSON.stringify('PLAN_DB_PATH=' + environment.PLAN_DB_PATH)),
+    );
+    assert(
+      text.includes(
+        'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
+      ),
+    );
+    assert(!text.includes('must not travel'));
+    assert(text.includes('ExecStart=' + command.map((v) => JSON.stringify(v)).join(' ')));
+    assert(
+      installer_unit(['/path/$foo/%t'], join(root, 'marker'), {}).includes(
+        'ExecStart="/path/$$foo/%%t"',
+      ),
+    );
     assert.deepEqual(Object.keys(selected_installer_environment(environment)).sort(), [
       'DBUS_SESSION_BUS_ADDRESS',
       'HOME',
@@ -53,8 +53,8 @@ it('keeps literal paths and production variables without forwarding test-runner 
       'PLAN_TEST_MODE',
     ]);
     assert.throws(
-      () => installer_transient_command('attempt\n', command, environment),
-      /invalid installer attempt/,
+      () => installer_unit(['line\nbreak'], join(root, 'marker'), {}),
+      /control character/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

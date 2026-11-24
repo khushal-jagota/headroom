@@ -228,7 +228,7 @@ try {
       revision,
       '--isolated-providers',
     ],
-    no_node_environment,
+    qualifying ? { ...no_node_environment, GH_TOKEN: 'local-qualification' } : no_node_environment,
   );
   // The native package can boot while its shared styles are absent. Check the
   // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
@@ -356,7 +356,8 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
-  if (qualifying)
+  if (qualifying) {
+    await Promise.all([rm(archive), rm(machine_archive)]);
     await qualify_installed_upgrade({
       base,
       port,
@@ -365,6 +366,7 @@ try {
       joined_state,
       predecessor: revision,
     });
+  }
   if (system === 'darwin') {
     // The requested screenshot uses the real installed package on this existing
     // native host. It adds no preview server, browser host, or permanent test case.

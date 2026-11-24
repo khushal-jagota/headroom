@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { expect, test, vi } from 'vitest';
 import { mac_installation_paths, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
-import { supervise_launcher } from './launcher_trial.ts';
+import { supervise_launcher, wait_for_launcher_recovery } from './launcher_trial.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 
 test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
@@ -45,12 +45,16 @@ test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
         home,
         runtime,
         unregister: async () => {},
-        stage: async (src, dst) => cp(src, dst, { recursive: true }),
+        stage: async (src, dst) => {
+          await cp(src, dst, { recursive: true });
+          return true;
+        },
         probe: async (app) => {
           if (app === install.app && result === 'bad-probe')
             throw new Error('launcher refused the Worker');
         },
       });
+      let recovered: Promise<string> | undefined;
       if (result === 'keep' || result === 'revert') {
         await vi.waitFor(async () =>
           expect(JSON.parse(await readFile(receipt, 'utf8')).ready).toBe(true),
@@ -62,13 +66,20 @@ test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
             JSON.stringify({ request_id: id, runtime_path: runtime }),
           );
         await rm(join(root, 'pending.json'));
+        if (result === 'revert')
+          recovered = wait_for_launcher_recovery(install.state).then(() =>
+            readFile(join(install.app, 'binary'), 'utf8'),
+          );
       }
       await done;
+      if (recovered) expect(await recovered).toBe('old');
       expect(await readFile(join(install.app, 'binary'), 'utf8')).toBe(
         result === 'keep' ? 'new' : 'old',
       );
       expect(JSON.parse(await readFile(receipt, 'utf8'))).toMatchObject(
-        result === 'keep' ? { ready: true } : { error: expect.any(String) },
+        result === 'keep'
+          ? { ready: true, signing_requirement_changed: true }
+          : { error: expect.any(String) },
       );
     } finally {
       await rm(home, { recursive: true, force: true });

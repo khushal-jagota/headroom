@@ -1,4 +1,5 @@
 import {
+  HOME_MACHINE_ID,
   ORIGINAL_MAC_MACHINE_ID,
   same_machine_build,
   valid_uuid,
@@ -331,6 +332,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
       let state: MachineUpdateState['state'] = 'current';
       if (selected !== null && service.artifact(selected) === null) state = 'unavailable';
       else if (changed && preparation_error !== null) state = 'failed';
+      else if (
+        release === null &&
+        (status?.phase === 'downloading' || status?.phase === 'ready_to_restart')
+      )
+        state = machine.present ? 'updating' : 'waiting';
       else if (changed) {
         if (release !== null) state = 'available';
         else if (status?.phase === 'failed' || status?.phase === 'reverted') state = 'failed';
@@ -351,9 +357,10 @@ export class MacUpdateService implements MacUpdateServiceContract {
         attempt_id: release !== null ? null : (attempt?.attempt_id ?? active?.attempt_id ?? null),
         request_id: release !== null ? null : (status?.request_id ?? null),
         detail:
-          state === 'current'
-            ? null
-            : (preparation_error ?? (release === null ? (status?.detail ?? null) : null)),
+          preparation_error ??
+          (release === null && (state !== 'current' || status?.phase === 'current')
+            ? (status?.detail ?? null)
+            : null),
         can_retry:
           release === null &&
           attempt?.state === 'done' &&
@@ -475,6 +482,24 @@ export class MacUpdateService implements MacUpdateServiceContract {
       ]);
     };
     await drain(this);
+  }
+  /** Wait for this home's required package while other machines download independently. */
+  async prepare_home(release: PublishedUpdate): Promise<void> {
+    if (!this.context.machines?.().some((machine) => machine.machine_id === HOME_MACHINE_ID))
+      return;
+    const local = this.for_machine(HOME_MACHINE_ID) as MacUpdateService;
+    if (local.unchanged(release)) return;
+    if (!local.artifact(release))
+      throw new UpdateConflict('The release has no package for this home machine.');
+    const owner = local.archive_owner ?? local;
+    await owner.queue_preparation(async () => {
+      const digest = local.artifact(release)!.archive_sha256;
+      if (!owner.ready_archives.has(digest)) {
+        await owner.prepare_once(release);
+        owner.ready_archives.add(digest);
+      }
+      local.save_preparation(release, null);
+    });
   }
   prepare(release: PublishedUpdate): Promise<void> {
     this.signal.throwIfAborted();

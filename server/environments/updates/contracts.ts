@@ -160,7 +160,7 @@ export interface UpdateExperienceOptions {
   now: string;
 }
 export interface UpdateProvider {
-  available(): Promise<PublishedUpdate | null>;
+  available(proof_artifact_id?: number): Promise<PublishedUpdate | null>;
   download_artifact(
     artifact_id: number,
     destination: string,
@@ -192,6 +192,7 @@ export interface MacUpdateOperations {
   machine_states(release?: PublishedUpdate | null): MachineUpdateState[];
   retry_machine(machine_id: string, attempt_id: string): void;
   prepare(release: PublishedUpdate): Promise<void>;
+  prepare_home?(release: PublishedUpdate): Promise<void>;
   phase(attempt_id: string): string | null;
   reported_at(attempt_id: string): number | null;
   configured(): boolean;

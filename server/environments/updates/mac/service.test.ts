@@ -330,6 +330,7 @@ test('Linux validates retained archive bytes after restart and finishes acknowle
   await reconstructed.settled();
   f.identity.build_id = first.build_id;
   f.identity.application_revision = first.application_revision;
+  expect(reconstructed.machine_states()[0]?.state).toBe('updating');
   const target = restored.check().target;
   expect(target?.request_id).toBe(first.request_id);
   restored.report(
@@ -342,6 +343,7 @@ test('Linux validates retained archive bytes after restart and finishes acknowle
     { presence: 'present', identity: f.identity },
   );
   expect(restored.check().target).toBeNull();
+  expect(reconstructed.machine_states()[0]?.state).toBe('current');
   expect(f.context.provider.download_artifact).not.toHaveBeenCalled();
   await reconstructed.settled();
 });

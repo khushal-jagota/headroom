@@ -215,6 +215,7 @@ async function install_locked(
   const app = join(request.current_root, 'app'),
     staged = join(request.current_root, STAGED_APP_PREFIX + to_sha);
   if (is_object(attempt.steps) && Object.hasOwn(attempt.steps, 'installer_started')) {
+    await effects.resume_interrupted?.();
     const active = selected_release(request.current_root);
     const candidate_selected = active === release_path(request.current_root, to_sha);
     if (!candidate_selected && installed_sha(app) !== from_sha)

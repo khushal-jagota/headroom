@@ -9,7 +9,6 @@ import {
   rename,
   rm,
   symlink,
-  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -45,10 +44,17 @@ export async function ensure_upgrade_machine(
 ): Promise<void> {
   const pending = join(root, 'data/home-machine-enrollment.json');
   let resume = false;
+  let machine_revision = revision;
   try {
     const record = JSON.parse(await readFile(pending, 'utf8'));
-    if (record.machine_id !== HOME_MACHINE_ID || record.revision !== revision)
+    if (
+      record.machine_id !== HOME_MACHINE_ID ||
+      typeof record.revision !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(record.revision)
+    )
       throw new Error('An unfinished local machine enrollment belongs to a different release');
+    if (record.complete === true && has_home_credential(database)) return;
+    machine_revision = record.revision;
     resume = true;
   } catch (error) {
     if (!absent(error)) throw error;
@@ -69,11 +75,14 @@ export async function ensure_upgrade_machine(
   try {
     if (
       !(await lstat(runtime)).isDirectory() ||
-      JSON.parse(await readFile(join(runtime, 'manifest.json'), 'utf8')).app_sha !== revision
+      JSON.parse(await readFile(join(runtime, 'manifest.json'), 'utf8')).app_sha !==
+        machine_revision
     )
       throw new Error('The local machine runtime differs from the home release');
   } catch (error) {
     if (!absent(error)) throw error;
+    machine_revision = revision;
+    atomic_write_json(pending, { machine_id: HOME_MACHINE_ID, revision: machine_revision });
     const temporary = await mkdtemp(join(machine, '.stage-'));
     try {
       await deps.prepare_machine(
@@ -102,7 +111,7 @@ export async function ensure_upgrade_machine(
   const request: HomeInstallRequest = {
     root,
     service,
-    revision,
+    revision: machine_revision,
     port,
     isolated_providers: false,
     archive: '',
@@ -160,7 +169,13 @@ export async function ensure_upgrade_machine(
     );
     await plan.start_machine(deps.execution);
   }
-  await unlink(pending);
+  // The credential stays owned after a database rollback. A later upgrade reuses
+  // it and the baseline machine service even if it targets a different release.
+  atomic_write_json(pending, {
+    machine_id: HOME_MACHINE_ID,
+    revision: machine_revision,
+    complete: true,
+  });
 }
 
 async function write_owned(path: string, content: string, mode: number): Promise<void> {

@@ -8,6 +8,7 @@ import type { ChildProcess } from 'node:child_process';
 import { with_publication_entry } from './publication_entry.ts';
 import { publication_json_file, publication_text } from './publication_identity.ts';
 import { extract_app_archive, remove_owned_tree } from './archive.ts';
+import { prove_retained_installer } from './testing/retained_installer.ts';
 import { check_home_imports } from './testing/check_home_imports.ts';
 import { digest_app_source, validate_app_manifest } from './identity.ts';
 import { validate_app_sha } from './logic/manifest.ts';
@@ -251,7 +252,9 @@ try {
         ...(process.platform === 'darwin' ? { expected_target: MAC_HOME } : {}),
       });
       assert_release_execution(execution);
+      const retained_installer = await prove_retained_installer(work, sha, execution);
       replace_existing_json(join(work, 'boot-proof.json'), {
+        retained_installer,
         requested_sha: sha,
         archive_sha256: hash,
         screens_sha256: await digest_app_source(join(app, 'web/dist')),

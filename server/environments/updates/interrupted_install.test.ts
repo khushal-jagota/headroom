@@ -14,6 +14,9 @@ import { require_schema_revision } from '../../core/database/admission.ts';
 import { BASELINE_SEED } from '../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { UpdateBarrier } from '../update_barrier.ts';
+import { install } from './installer/install.ts';
+import { restore_database_snapshot } from '../backup/restore.ts';
+import { InstallationRecord } from './installer/record.ts';
 import { recover_interrupted_install } from './interrupted_install.ts';
 import {
   KILLED_ATTEMPT,
@@ -164,3 +167,58 @@ it('a kill before the swap changes nothing, during or after the snapshot too', a
     }
   }
 }, 30_000);
+
+it('the independent coordinator recovers a stopped installation after restart even when the candidate cannot boot', async () => {
+  const killed = await killed_install('steps_committed');
+  const data = join(killed.root, 'data');
+  const request = {
+    current_root: killed.root,
+    data_directory: data,
+    database: killed.database,
+    attempt_id: KILLED_ATTEMPT,
+    backup_directory: join(killed.root, 'backups'),
+    node_executable: process.execPath,
+    service_unit: 'test.service',
+    health_url: 'http://127.0.0.1:0',
+    health_timeout_seconds: 1,
+  };
+  try {
+    new InstallationRecord(request).record('coordinator_registered');
+    assert.equal(await killed.recover(TO), 'none');
+    const events: string[] = [];
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async restore(snapshot) {
+          events.push('restore');
+          await restore_database_snapshot(snapshot, killed.database, { live_stopped: true });
+        },
+        async healthy(sha) {
+          events.push('verify-previous');
+          return sha === FROM && installed_sha(killed.root) === FROM;
+        },
+        async capture() {
+          return assert.fail('unexpected capture');
+        },
+        async snapshot() {
+          assert.fail('unexpected snapshot');
+        },
+        async schema_steps() {
+          assert.fail('unexpected migration');
+        },
+      },
+      { stderr: () => {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, ['stop', 'restore', 'start', 'verify-previous']);
+    assert.equal(record(killed.root).state, 'failed');
+    assert(!existsSync(join(data, 'update-barrier.json')));
+    require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
+  } finally {
+    rmSync(killed.root, { recursive: true, force: true });
+  }
+}, 30000);

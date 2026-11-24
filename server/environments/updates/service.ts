@@ -1,5 +1,6 @@
 import { require_snapshot_space } from './installer/snapshot_space.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
+import { with_installer_lock } from '../update_barrier.ts';
 import { selected_release } from './installer/selection.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
@@ -171,7 +172,9 @@ export class UpdateService {
       barrier.generation !== generation ||
       (current?.attempt_id ?? '') !== attempt_id ||
       this.owns_preparation(attempt_id) ||
-      (current?.state === 'installing' && current.steps.installer_started !== undefined) ||
+      (current?.state === 'installing' &&
+        (current.steps.installer_started !== undefined ||
+          current.steps.coordinator_registered !== undefined)) ||
       current?.steps.rollback_failed !== undefined
     )
       return null;
@@ -260,6 +263,39 @@ export class UpdateService {
     if (!this.active(incarnation) || provider === null) return;
     const release = await provider.available();
     if (!this.active(incarnation)) return;
+    const applied = this.attempts.read();
+    // Earlier Darwin homes recorded the home archive but discarded its signed machine package.
+    if (
+      applied?.state === 'done' &&
+      applied.to_sha === this.current_app_sha &&
+      applied.release.manifest.runtime_contract?.system === 'darwin' &&
+      applied.release.mac === null &&
+      applied.release.parts?.machines['darwin-arm64']
+    ) {
+      const saved = applied.release;
+      const published =
+        release?.proof_artifact_id === saved.proof_artifact_id
+          ? release
+          : await provider.available(saved.proof_artifact_id);
+      if (!this.active(incarnation)) return;
+      if (
+        published?.mac &&
+        published.proof_artifact_id === saved.proof_artifact_id &&
+        published.publication_run_id === saved.publication_run_id &&
+        published.manifest.app_sha === applied.to_sha &&
+        published.archive_sha256 === saved.archive_sha256 &&
+        published.mac.archive_sha256 === saved.parts!.machines['darwin-arm64']!.archive_sha256 &&
+        this.attempts.read()?.attempt_id === applied.attempt_id
+      ) {
+        const repaired = this.attempts.change(applied.attempt_id, states('done'), (current) => ({
+          ...current,
+          mac_attempt_id: current.mac_attempt_id ?? current.attempt_id,
+          release: { ...current.release, mac: published.mac },
+        }));
+        await this.options.mac.prepare(repaired.release);
+        if (!this.active(incarnation)) return;
+      }
+    }
     if (release === null || release.manifest.app_sha === this.current_app_sha) {
       this.ready = null;
       this.checked = true;
@@ -355,6 +391,10 @@ export class UpdateService {
     const pending = this.attempts.read();
     if (pending?.to_sha === app_sha && states('preparing', 'installing').has(pending.state))
       return pending;
+    if (pending?.steps.rollback_failed !== undefined && this.options.update_barrier?.frozen)
+      throw new UpdateConflict(
+        'Finish recovering the interrupted installation before starting another update.',
+      );
     const release = this.ready_release();
     if (release === null || release.manifest.app_sha !== app_sha)
       throw new UpdateConflict('This update is no longer ready. Refresh and try again.');
@@ -514,6 +554,8 @@ export class UpdateService {
       const staged = staged_app_path(this.options.current_root, attempt.to_sha);
       if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
         throw new Error('the staged release is missing');
+      await this.options.mac.prepare_home?.(attempt.release);
+      if (!this.active(incarnation)) return;
       const database_bytes = database_file_bytes(this.options.database);
       const steps_pending = await this.options.installer.node_schema_steps_pending(
         this.options.database,
@@ -568,13 +610,23 @@ export class UpdateService {
         !this.owns_attempt(attempt_id, 'preparing')
       )
         return;
-      console.error('Update did not start its installer', error);
-      this.fail(
-        attempt_id,
-        states('preparing', 'installing'),
-        `The update could not start, so nothing changed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      if (barrier_closed) this.release_barrier();
+      const fail_before_start = () => {
+        if (this.attempts.read()?.steps.installer_started !== undefined) return;
+        console.error('Update did not start its installer', error);
+        this.fail(
+          attempt_id,
+          states('preparing', 'installing'),
+          `The update could not start, so nothing changed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        if (barrier_closed) this.release_barrier();
+      };
+      // The OS can start the unit before its client disconnects or times out.
+      // Serialize the last check with the installer's claim before reopening.
+      if (barrier_closed)
+        await with_installer_lock(dirname(this.options.database), attempt_id, async () =>
+          fail_before_start(),
+        );
+      else fail_before_start();
     }
   }
   /** Every failed update reaches the journal and the owner once. */

@@ -84,8 +84,11 @@ export function atomic_write_json(path: string, payload: Record<string, unknown>
 }
 /** Atomically replace the record in its existing parent directory. */
 export function replace_existing_json(path: string, payload: Record<string, unknown>): void {
+  replace_existing_text(path, JSON.stringify(payload) + '\n');
+}
+export function replace_existing_text(path: string, text: string): void {
   const parent = dirname(path);
-  const encoded = Buffer.from(JSON.stringify(payload) + '\n');
+  const encoded = Buffer.from(text);
   const temporary = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   try {
@@ -193,7 +196,8 @@ export class FileUpdateAttemptStore {
         payload = decoded;
         release = parse_release(decoded.release);
       } catch (error) {
-        console.warn('The deployment request record is not a valid update request', error);
+        if (!missing(error))
+          console.warn('The deployment request record is not a valid update request', error);
         return null;
       }
       if (

@@ -23,12 +23,12 @@ export class HomeUpdateTrial {
     return this.barrier.frozen && this.barrier.generation === 0;
   }
 
-  observed(machine: string, incarnation: string): void {
-    if (this.active && this.replied_to === machine + '/' + incarnation) this.verified = true;
+  observed(incarnation: string): void {
+    if (this.active && this.replied_to === incarnation) this.verified = true;
   }
 
-  replied(machine: string, incarnation: string): void {
-    if (this.active) this.replied_to = machine + '/' + incarnation;
+  replied(incarnation: string): void {
+    if (this.active) this.replied_to = incarnation;
   }
 
   get prepared_attempt_id(): string | null {

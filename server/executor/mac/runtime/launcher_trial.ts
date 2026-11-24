@@ -25,6 +25,7 @@ type RecordFields = {
   next?: string;
   error?: string;
   ready?: boolean;
+  signing_requirement_changed?: boolean;
 };
 
 async function read(path: string): Promise<RecordFields | null> {
@@ -91,6 +92,16 @@ async function probe(app: string) {
   ]);
   if (result.stdout.trim() !== 'panels-worker-ready')
     throw new Error('The installed Mac app did not start a Worker.');
+}
+
+export async function wait_for_launcher_recovery(root: string): Promise<void> {
+  const journal = join(root, 'updates/launcher-trial.json');
+  const deadline = performance.now() + MAC_RUNTIME_READY_TIMEOUT_SECONDS * 1000;
+  while (await read(journal)) {
+    if (performance.now() >= deadline)
+      throw new Error('Still restoring the signed Mac app before starting its machine.');
+    await delay(100);
+  }
 }
 
 /** Preserve the supervisor's tracked PID across the handoff: exec the installed
@@ -188,7 +199,19 @@ export async function supervise_launcher(
       const currentTeam = await signature(installed);
       if (currentTeam && currentTeam !== 'not set' && currentTeam !== (await signature(source)))
         throw new Error('The Mac launcher signing team changed.');
+      // macOS uses the old app's designated requirement when deciding whether
+      // its privacy grants still apply. The certificate's display name is insufficient.
+      const display = await command(['/usr/bin/codesign', '-d', '-r-', installed]);
+      const requirement = (display.stdout + '\n' + display.stderr).match(
+        /^designated => (.+)$/m,
+      )?.[1];
+      if (!requirement) throw new Error('Cannot read the installed Mac signing requirement.');
+      const equivalent = await command(
+        ['/usr/bin/codesign', '--verify', '-R', '=' + requirement, source],
+        true,
+      );
       await command(['/usr/bin/ditto', source, destination]);
+      return equivalent.code !== 0;
     },
   },
 ): Promise<void> {
@@ -217,10 +240,11 @@ export async function supervise_launcher(
           if (!(await lstat(app)).isDirectory())
             throw new Error('Expected an installed Mac app directory.');
           await rm(t.staged, { recursive: true, force: true });
-          await options.stage(next, t.staged, app);
+          const signing_requirement_changed = await options.stage(next, t.staged, app);
           await options.probe(t.staged);
           const prepared = {
             request_id: id,
+            signing_requirement_changed,
             old: await digest_machine_build(app),
             next: await digest_machine_build(next),
           };
@@ -239,7 +263,10 @@ export async function supervise_launcher(
           await sync_dir(dirname(app));
         }
         await options.probe(app);
-        atomic_write_json(t.receipt, { ready: true });
+        atomic_write_json(t.receipt, {
+          ready: true,
+          signing_requirement_changed: intent.signing_requirement_changed === true,
+        });
         while ((await selected())?.request_id !== id && (await is_pending())) await delay(200);
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);

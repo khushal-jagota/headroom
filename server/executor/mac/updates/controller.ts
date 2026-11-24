@@ -1,5 +1,5 @@
 /** Latest lease offers prepare an independent, durable runtime handoff. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { platform } from 'node:os';
 import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
@@ -102,6 +102,7 @@ export class MacUpdateController {
   private offered = false;
   private wake: (() => void) | undefined;
   private confirmed: string | null = null;
+  private current_report: string | null = null;
   private gate_pending: boolean;
   private supervisor_kept = false;
   private prefetch:
@@ -182,7 +183,10 @@ export class MacUpdateController {
           detail === null
             ? null
             : Array.from(detail).slice(0, settings.MAX_MAC_UPDATE_DETAIL_CHARACTERS).join(''),
-        identity: phase === 'current' ? this.options.presence.identity : null,
+        identity:
+          phase === 'current' || phase === 'ready_to_restart'
+            ? this.options.presence.identity
+            : null,
       },
       'MacUpdateReport',
     );
@@ -388,20 +392,34 @@ export class MacUpdateController {
         ? target.build_id === identity.build_id
         : same_machine_build(target, identity)
     ) {
-      if (
-        this.options.presence.leased() &&
-        this.confirmed !== target.request_id &&
-        (await this.report(session, target, 'current'))
-      ) {
+      if (!target.activate || !this.options.presence.leased()) return;
+      const ready = this.options.runtime.ready_path;
+      if (ready !== null && !this.supervisor_kept && this.confirmed !== target.request_id) {
+        // A response means the home accepted this exact leased identity. Only the
+        // fixed supervisor's later selection makes this machine current.
+        await this.report(session, target, 'ready_to_restart');
         this.signal.throwIfAborted();
-        if (this.options.runtime.ready_path !== null)
-          await atomic_record(this.options.files, this.options.runtime.ready_path, {
-            request_id: target.request_id,
-            application_revision: identity.application_revision,
-            identity,
-          });
+        await atomic_record(this.options.files, ready, {
+          request_id: target.request_id,
+          application_revision: identity.application_revision,
+          identity,
+        });
         this.confirmed = target.request_id;
-        await this.release_runtime_admission();
+      }
+      if (this.current_report !== target.request_id && (await this.kept_by_supervisor())) {
+        const key = createHash('sha256').update(target.request_id).digest('hex');
+        const receipt = await read_record(
+          this.options.files,
+          join(this.root, 'launcher-receipts', key + '.json'),
+        );
+        const detail =
+          receipt?.signing_requirement_changed === true
+            ? 'The Mac app’s signing identity changed. macOS may ask you to allow Files and Folders access for Panels again when a Worker uses a protected folder.'
+            : null;
+        if (await this.report(session, target, 'current', detail)) {
+          this.current_report = target.request_id;
+          await this.release_runtime_admission();
+        }
       }
       return;
     }

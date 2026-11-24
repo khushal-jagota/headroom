@@ -5,16 +5,14 @@ import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../co
 export type UpdateCardState =
   | "check_unavailable" | "available" | "updating" | "refresh_needed"
   | "failed" | "mac_failed" | "mac_unreachable" | "unreachable" | "machines";
-export type UpdateFailureState = "failed" | "mac_failed" | "mac_unreachable";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
 /** What the card's action button does. */
-export type UpdateCardAction = "offer" | "refresh" | "retry" | "retry_mac" | "reconnect";
+export type UpdateCardAction = "install" | "refresh" | "retry" | "reconnect";
 export type UpdateCard = {
   word: string;
   tone: "changing" | "settled" | "wrong" | "done";
   action?: { label: string; does: UpdateCardAction };
-  info?: UpdateFailureState;
   detail?: string;
   track?: boolean;
   sentence?: boolean;
@@ -44,7 +42,8 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   if (!status) return { state: null, dimmed: false };
   if (status.state === "up_to_date") {
     const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
-    return { state: hasTarget ? "machines" : pageIsBehind ? "refresh_needed" : null, dimmed: false };
+    const installed = status.attempt?.state === "done" && status.attempt.to_sha === status.app_sha;
+    return { state: hasTarget || installed ? "machines" : pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
 }
@@ -56,7 +55,7 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
   switch (state) {
     case "available":
       return { word: "Update available", tone: "settled",
-        action: allows("update") && status?.available ? { label: "Update", does: "offer" } : undefined };
+        action: allows("update") && status?.available ? { label: "Update", does: "install" } : undefined };
     case "updating":
       return { word: "Updating…", tone: "changing", track: true };
     case "check_unavailable":
@@ -64,7 +63,7 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
     case "refresh_needed":
       return { word: "Refresh to load this version", tone: "settled", action: { label: "Refresh", does: "refresh" } };
     case "failed":
-      return { word: "Update didn't install", tone: "wrong", info: state,
+      return { word: "Update didn't install", tone: "wrong", detail: status?.detail ?? status?.attempt?.detail ?? undefined,
         action: allows("retry") && attempt ? { label: "Try again", does: "retry" } : undefined };
     case "mac_failed":
     case "mac_unreachable":

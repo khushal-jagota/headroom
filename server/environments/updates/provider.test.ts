@@ -4,6 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GitHubUpdateProvider } from './provider.ts';
+import { MAC_HOME } from '../release/contracts.ts';
+import type { RuntimeTarget } from '../release/contracts.ts';
 import { TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
 import { parse_release } from './codec.ts';
 import { validate_release } from './service.ts';
@@ -85,6 +87,7 @@ async function setup(
   payload = publication(),
   pages = [[release_entry()]],
   receipts = new Map([[20, payload]]),
+  target?: RuntimeTarget,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'panels-release-provider-'));
   roots.push(root);
@@ -92,6 +95,7 @@ async function setup(
   await writeFile(token, 'secret');
   const calls: string[] = [];
   const provider = new GitHubUpdateProvider('owner/repo', token, {
+    target,
     fetch: async (url, options) => {
       const path = new URL(String(url)).pathname;
       calls.push(path);
@@ -130,6 +134,36 @@ test('durable publication persists source, parts, and offered compatibility with
   );
   expect(await readFile(join(root, 'asset.zip'), 'utf8')).toBe('zip');
   expect(calls.every((path) => !path.includes('/actions/'))).toBe(true);
+});
+test('a Darwin home selects its own archive and retains the joined Mac archive from its pinned publication', async () => {
+  const base = publication();
+  const payload = {
+    ...base,
+    mac_home: {
+      artifact_id: 23,
+      artifact_source: 'github-release',
+      archive_sha256: 'c'.repeat(64),
+      manifest: {
+        ...base.manifest,
+        runtime_contract: {
+          version: 2,
+          system: 'darwin',
+          role: 'home',
+          architecture: 'arm64',
+          minimum_node_version: '22.18.0',
+          minimum_os: '15.0',
+          node_major: 22,
+          inventory_sha256: digest,
+          external_libraries: [],
+        },
+      },
+    },
+  };
+  const entry = release_entry();
+  entry.assets.push({ id: 23, name: 'mac-home.zip' });
+  const { provider } = await setup(payload, [[entry]], new Map([[20, payload]]), MAC_HOME);
+  expect(await provider.available(20)).toMatchObject({ artifact_id: 23, mac: base.mac });
+  expect(await provider.available(21)).toBeNull();
 });
 test('selects the newest eligible publication across pages when GitHub lists the older release first', async () => {
   const older = release_entry();

@@ -32,7 +32,10 @@ function interrupted_attempt(data_directory: string, app_sha: string): Interrupt
     (value.to_sha !== app_sha && value.from_sha !== app_sha) ||
     typeof value.to_sha !== 'string' ||
     !is_object(value.steps) ||
-    !Object.hasOwn(value.steps, 'installer_started') ||
+    Object.hasOwn(value.steps, 'coordinator_registered') ||
+    !(
+      Object.hasOwn(value.steps, 'installer_started') || Object.hasOwn(value.steps, 'app_swapped')
+    ) ||
     typeof value.attempt_id !== 'string' ||
     typeof value.from_sha !== 'string' ||
     !(value.backup === null || value.backup === undefined || typeof value.backup === 'string')

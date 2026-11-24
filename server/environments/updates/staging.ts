@@ -1,6 +1,6 @@
 /** Bind the exact publication receipt before an app becomes the retained stage. */
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdtemp, open, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
@@ -37,6 +37,23 @@ async function remove_directory(path: string): Promise<void> {
     throw new Error('Cannot call rmtree on a symbolic link');
   await rm(path, { recursive: true });
 }
+async function flush(path: string): Promise<void> {
+  const descriptor = await open(path, 'r');
+  try {
+    await descriptor.sync();
+  } finally {
+    await descriptor.close();
+  }
+}
+async function flush_release(directory: string, signal: AbortSignal): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    signal.throwIfAborted();
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) await flush_release(path, signal);
+    else if (entry.isFile()) await flush(path);
+  }
+  await flush(directory);
+}
 async function staged_manifest(
   path: string,
   app_sha: string,
@@ -46,7 +63,6 @@ async function staged_manifest(
     return await validate_app_manifest(join(path, 'manifest.json'), {
       expected_sha: app_sha,
       require_runtime: true,
-      verify_artifact_digest: false,
       ...(expected_target === undefined ? {} : { expected_target }),
     });
   } catch (error) {
@@ -139,7 +155,9 @@ export function create_release_staging(
           throw new AppValidationError('The downloaded app differs from its publication receipt.');
         await admit_candidate(unpacked, manifest);
         signal.throwIfAborted();
+        await flush_release(unpacked, signal);
         await rename(unpacked, staged);
+        await flush(current_root);
         return staged;
       } catch (error) {
         failure = error;

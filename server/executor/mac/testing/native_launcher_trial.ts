@@ -92,7 +92,22 @@ export async function native_launcher_trial(
       await rm(selection, { force: true });
     }
   }
+  // Enter exactly as the permanent supervisor's versioned child does. Observe
+  // the process which actually owns the re-entered runtime, outside Node.
+  const requester = await run([
+    paths.node,
+    '--input-type=module',
+    '-e',
+    `import { execFileSync } from 'node:child_process';
+     const {enter_signed_runtime} = await import(process.argv[1]);
+     enter_signed_runtime(process.argv[2], process.env);
+     console.log(execFileSync('/bin/ps', ['-p', String(process.ppid), '-o', 'comm='], {encoding:'utf8'}).trim());`,
+    helper,
+    paths.state,
+  ]);
+  assert.equal(requester.stdout.trim(), paths.app_executable);
   return {
+    active_requester: requester.stdout.trim(),
     previous_revision: manifest.application_revision,
     previous_launcher_sha256: old,
     candidate_launcher_sha256: candidate,

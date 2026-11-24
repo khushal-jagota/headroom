@@ -24,7 +24,8 @@ PLATFORM = "darwin-arm64" if MAC else "linux-x86_64"
 
 
 def github(path, to=None):
-    command = ["gh", "api", "-H", "Accept: application/octet-stream", f"repos/{REPO}/{path}"]
+    media_type = "application/octet-stream" if path.startswith("releases/assets/") else "application/vnd.github+json"
+    command = ["gh", "api", "-H", f"Accept: {media_type}", f"repos/{REPO}/{path}"]
     if to is None:
         return json.loads(subprocess.check_output(command))
     with to.open("xb") as dest:
@@ -114,8 +115,14 @@ def main():
     source = {**receipt["source_run"], "repository": "qualification/panels", "source_sha": SHA,
               "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"]}
     source["workflow_ref"] = "qualification/panels/" + source["workflow_path"] + "@refs/heads/main"
-    target = {**app, "publication_run_id": int(source["run_id"]), "expires_at": None,
-              "source_run": source, "schema_floor": build.get("schema_floor", receipt["schema_floor"]),
+    policy = json.loads(subprocess.check_output([
+        "node", "--input-type=module", "-e",
+        "import {CLIENT_COMPATIBILITY} from './server/client_versions/policy.ts';"
+        "import {SUPPORTED_UPDATE_SCHEMA_FLOOR} from './server/environments/updates/configuration.ts';"
+        "console.log(JSON.stringify({compatibility:CLIENT_COMPATIBILITY,schema_floor:SUPPORTED_UPDATE_SCHEMA_FLOOR}));"
+    ]))
+    target = {**app, **policy, "publication_run_id": int(source["run_id"]), "expires_at": None,
+              "source_run": source,
               "parts": {"server": {"app_sha": SHA, "artifact_digest": manifest["artifact_digest"]},
                         "screens": {"sha256": boot["screens_sha256"]},
                         "machines": {PLATFORM: {"archive_sha256": machine["archive_sha256"],

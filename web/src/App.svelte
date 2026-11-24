@@ -195,7 +195,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -230,7 +230,7 @@
 
 <!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
 {#snippet railStatus()}
-  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
+  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} />
 {/snippet}
 
 {#snippet destinationPane()}

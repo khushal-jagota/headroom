@@ -8,16 +8,15 @@
   import type { ConnectionStatus } from "../lib/changeStream";
   import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import { retryChangeStream } from "../lib/changeStream";
-  import UpdateActions from "./UpdateActions.svelte";
   import type { UpdateStatus } from "../lib/updates/contracts";
   import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, type UpdateCardState } from "../lib/updates/logic/presentation";
   import MachineRows from "../lib/updates/MachineRows.svelte";
-  import { performUpdateAction } from "../lib/updates/api";
+  import { performUpdateAction, type UpdateActionRequest } from "../lib/updates/api";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation, now }: {
+  let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation }: {
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth; showsSavedSession?: boolean;
-    status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
+    status: UpdateStatus | undefined; presentation: UpdateCardState | null;
   } = $props();
   const desktop = typeof location !== "undefined" && location.protocol === "panels:" && location.host === "app";
   let reachDialog = $state<HTMLDialogElement | null>(null);
@@ -67,7 +66,6 @@
   const desktopUnreachable = $derived(desktop && displayedWord === "unreachable");
   let displayedHealth = $state.raw<ShownHealth>(null);
   let textOut = $state(false);
-  let actions = $state<UpdateActions | null>(null);
   // The card follows the displayed word, so its text changes with the crossfade.
   const resolvedCard = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
   const card = $derived($releaseState.updateAvailable && connectionState === "connected" && resolvedCard && presentation !== "updating"
@@ -75,22 +73,21 @@
   function activate(): void {
     if (!card?.action) return;
     switch (card.action.does) {
-      case "offer": void actions?.perform({ action: "install" }, "offer"); break;
+      case "install": void perform({ action: "install" }); break;
       case "refresh": requestReleaseReload(); break;
       case "reconnect": retryChangeStream(); break;
-      case "retry": void actions?.perform({ action: "retry" }, "failed"); break;
-      case "retry_mac": if (card.info) void actions?.perform({ action: "retry_mac" }, card.info); break;
+      case "retry": void perform({ action: "retry" }); break;
     }
   }
   const impact = $derived(status ? cardInterruption(status, presentation ?? undefined) : null);
-  let machineError = $state<string | null>(null);
-  async function retryMachine(machine_id: string): Promise<void> {
+  let actionError = $state<string | null>(null);
+  async function perform(request: UpdateActionRequest): Promise<void> {
     if (!status) return;
-    machineError = null;
+    actionError = null;
     try {
-      await performUpdateAction(status, { action: "retry_machine", machine_id });
+      await performUpdateAction(status, request);
     } catch (cause) {
-      machineError = cause instanceof Error ? cause.message : "The machine update failed.";
+      actionError = cause instanceof Error ? cause.message : "The update action failed.";
     }
   }
   let open = $state(false);
@@ -240,9 +237,6 @@
             {#if desktopUnreachable}
               <button type="button" class="swap status-info status-info--alone" aria-label="Server connection details" data-out={textOut ? "" : undefined}
                 data-desktop-connection-info onclick={openReachDialog}>i</button>
-            {:else if card.info}
-              <button type="button" class="swap status-info" class:status-info--alone={!card.action} aria-label="Update details" data-out={textOut ? "" : undefined}
-                data-update-info={card.info} onclick={() => card?.info && actions?.openDialog(card.info)}>i</button>
             {/if}
           </span>
           {#if status && presentation !== "unreachable"}
@@ -253,8 +247,8 @@
             {#if presentation === "available"}
               {#each deviceUpdateWarnings(status) as warning (warning)}<span class="status-detail">{warning}</span>{/each}
             {/if}
-            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" && !$releaseState.updateAvailable ? retryMachine : undefined} />
-            {#if machineError}<span role="alert">{machineError}</span>{/if}
+            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" && !$releaseState.updateAvailable ? (machine_id) => void perform({ action: "retry_machine", machine_id }) : undefined} />
+            {#if actionError}<span role="alert">{actionError}</span>{/if}
           {/if}
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}
           {#if card.detail && !desktopUnreachable}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
@@ -270,7 +264,6 @@
     {/if}
   </div>
 </div>
-{#if status}<UpdateActions bind:this={actions} {status} {now} />{/if}
 
 {#if desktop}
   <dialog bind:this={reachDialog} aria-labelledby={reachTitle} data-desktop-connection-dialog

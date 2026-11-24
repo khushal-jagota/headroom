@@ -1,5 +1,5 @@
 import { InstallationRecord } from './record.ts';
-import { release_path } from './selection.ts';
+import { release_path, selected_release } from './selection.ts';
 import type { ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -150,15 +150,16 @@ export async function run_installer_command(
 async function require_node_runtime(
   request: InstallerRequest,
   value: InstallerPhase,
+  root = selected_release(request.current_root),
 ): Promise<void> {
   assert_installer_path(request.current_root, value.environment);
-  assert_installer_path(join(request.current_root, 'app'), value.environment);
+  assert_installer_path(root, value.environment);
   const argv = [
     request.node_executable,
     '--input-type=module',
     '-e',
     INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
-    join(request.current_root, 'app'),
+    root,
   ];
   assert_phase(value, argv);
   let result;
@@ -230,6 +231,11 @@ export function create_installer_effects(
   return {
     ...(darwin
       ? {
+          async resume_interrupted() {
+            // The coordinator was recreated after a crash or login. An absent job
+            // is permitted here; any loaded job still has to authenticate.
+            (await home()).stopped = true;
+          },
           async validate_service() {
             await (await home_effects()).validate_service();
           },
@@ -316,8 +322,12 @@ export function create_installer_effects(
     async restore(snapshot, lifetime_lock_fd) {
       assert_installer_path(snapshot, execution.environment);
       const value = phase(execution, DATABASE_RESTORE_TIMEOUT_SECONDS);
-      await require_node_runtime(request, value);
-      const app = join(request.current_root, 'app'),
+      const previous = release_path(
+        request.current_root,
+        String(new InstallationRecord(request).read().from_sha),
+      );
+      await require_node_runtime(request, value, previous);
+      const app = previous,
         main = join(app, 'server/environments/updates/restore_main.ts');
       assert_installer_path(request.database, execution.environment);
       assert_installer_path(app, execution.environment);
@@ -332,13 +342,17 @@ export function create_installer_effects(
     async schema_steps(lifetime_lock_fd, backup_taken) {
       const value = phase(execution, SCHEMA_STEP_TIMEOUT_SECONDS);
       await require_node_runtime(request, value);
-      const app = join(request.current_root, 'app'),
-        main = join(app, 'server/environments/updates/schema_step_main.ts');
+      const app = selected_release(request.current_root);
+      const node =
+        app === join(request.current_root, 'app')
+          ? request.node_executable
+          : join(app, 'node/bin/node');
+      const main = join(app, 'server/environments/updates/schema_step_main.ts');
       assert_installer_path(request.database, execution.environment);
       assert_installer_path(app, execution.environment);
       assert_installer_path(main, execution.environment);
       await run_installer_command(
-        [request.node_executable, main, request.database, backup_taken ? 'backup' : 'no-backup'],
+        [node, main, request.database, backup_taken ? 'backup' : 'no-backup'],
         value,
         { check: true, output: 'inherit', lifetime_lock_fd },
       );

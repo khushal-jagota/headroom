@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import { render } from "svelte/server";
-import UpdateActions from "../src/components/UpdateActions.svelte";
 import { performUpdateAction, settleUpdateStarting, updateStarting, updateActionRoute } from "../src/lib/updates/api";
 import { atUpdateDeadline } from "../src/lib/updates/deadline";
 import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, machineUpdateLabel, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
@@ -28,6 +27,9 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); updateStarting.set(
 describe("the update card resolver", () => {
   it("shows each server state on a connected page", () => {
     expect(updatePresentation({ ...base, status: at("up_to_date") })).toEqual({ state: null, dimmed: false });
+    const complete = at("up_to_date", { attempt: { ...attempt, state: "done" }, app_sha: attempt.to_sha });
+    expect(updatePresentation({ ...base, status: complete }).state).toBe("machines");
+    expect(updateCard("machines", complete).word).toBe("Up to date");
     expect(updatePresentation({ ...base, status: undefined })).toEqual({ state: null, dimmed: false });
     for (const state of ["available", "updating", "failed", "mac_failed", "mac_unreachable"] as const) {
       expect(updatePresentation({ ...base, status: at(state) })).toEqual({ state, dimmed: false });
@@ -81,29 +83,30 @@ describe("the update card", () => {
       unreachable: updateCard("unreachable", undefined),
     };
     expect(Object.fromEntries(Object.entries(cards).map(([state, card]) =>
-      [state, [card.word, card.action?.label ?? null, card.action?.does ?? null, card.info ?? null, Boolean(card.track)]]))).toEqual({
-      available: ["Update available", "Update", "offer", null, false],
+      [state, [card.word, card.action?.label ?? null, card.action?.does ?? null, card.detail ?? null, Boolean(card.track)]]))).toEqual({
+      available: ["Update available", "Update", "install", null, false],
       updating: ["Updating…", null, null, null, true],
       refresh_needed: ["Refresh to load this version", "Refresh", "refresh", null, false],
-      failed: ["Update didn't install", "Try again", "retry", "failed", false],
+      failed: ["Update didn't install", "Try again", "retry", null, false],
       mac_failed: ["Machine update needs attention", null, null, null, false],
       mac_unreachable: ["Machine update needs attention", null, null, null, false],
-      unreachable: ["Can't reach Panels", "Try now", "reconnect", null, false],
+      unreachable: ["Can't reach Panels", "Try now", "reconnect", "Trying again every few seconds", false],
     });
     // A failure the server will not retry keeps its details, without a dead button.
-    expect(updateCard("failed", { ...failed, allowed_actions: [] })).toMatchObject({ action: undefined, info: "failed" });
+    expect(updateCard("failed", { ...failed, detail: "The previous release is running.", allowed_actions: [] })).toMatchObject({ action: undefined, detail: "The previous release is running." });
     expect(updateCard("available", { ...status, allowed_actions: [] }).action).toBeUndefined();
   });
 
   it("keeps retained targets distinct from future offers, with each machine's outcome", () => {
     const rows = [machine("desk", "failed"), machine("server", "updating"), machine("away", "waiting"),
-      machine("done", "current"), machine("unsupported", "unavailable")];
+      { ...machine("done", "current"), detail: "Allow Panels to access Files and Folders." }, machine("unsupported", "unavailable")];
     const mixed = at("up_to_date", { available: null, machines: rows });
     expect(updatePresentation({ ...base, status: mixed }).state).toBe("machines");
     const body = render(MachineRows, { props: { machines: rows, retry: () => {} } }).body;
     for (const word of ["Update failed", "Updating…", "Updates when it is back", "Done", "Needs an update to continue"])
       expect(body).toContain(word);
     expect(body).toContain('aria-label="Try again for desk"');
+    expect(body).toContain("Allow Panels to access Files and Folders.");
     const offered = rows.map(row => ({ ...row, attempt_id: null, state: "available" as const, can_retry: false }));
     expect(cardMachines({ ...mixed, available: status.available, available_machines: offered })).toEqual(rows);
     expect(machineUpdateLabel({ ...offered[0], present: false })).toBe("Updates when it is back");
@@ -123,7 +126,6 @@ describe("the update card", () => {
       "Your iPhone needs the TestFlight update first.", "Your desktop app needs an update first.",
       "Office needs an update to continue.",
     ]);
-    expect(render(UpdateActions, { props: { status: offered, now: 0 } }).body).toContain("Your iPhone needs the TestFlight update first.");
     expect(deviceUpdateWarnings({ ...offered, available: status.available })).toEqual([]);
     const compatible = offered.client_versions.map(identity => ({ ...identity, build: 20, bridge_version: 3, protocol_version: 6 }));
     expect(deviceUpdateWarnings({ ...offered, client_versions: compatible })).toEqual([]);
@@ -136,12 +138,8 @@ describe("the update card", () => {
   it("names affected agents before Update and uses the press snapshot afterwards", () => {
     const interruption = { stops_agents: true, agents: ["Release proof", "Inbox cleanup"], machine_ids: ["desk"] };
     const offered = { ...status, interruption, activity: "busy" as const };
-    const body = render(UpdateActions, { props: { status: offered, now: 0 } }).body;
-    expect(body).toContain("This update stops your agents");
-    expect(body).toContain("Release proof, Inbox cleanup");
-    expect(body).toContain(">Update</button>");
-    expect(body).not.toContain("When work finishes");
-    expect(body).not.toContain("Protocol");
+    expect(interruptionText(cardInterruption(offered))).toBe("This update stops your agents");
+    expect(cardInterruption(offered)?.agents).toEqual(["Release proof", "Inbox cleanup"]);
     expect(interruptionText(status.interruption)).toBe("Your agents keep running");
     const pressed = { ...offered, state: "updating" as const, attempt: { ...attempt, interruption: status.interruption } };
     expect(cardInterruption(pressed)).toBe(status.interruption);

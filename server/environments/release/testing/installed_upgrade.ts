@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { smoke_file_turn } from '../../../tools/smoke/steps.ts';
+import { smoke_file_turn, verify_smoke_attachment } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
 import { credential_path } from '../../../executor/credential_file.ts';
 
@@ -85,7 +85,13 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         .getByRole('button', { name: 'Update', exact: true })
         .click();
       const confirm = page.getByRole('dialog').getByRole('button', { name: 'Update', exact: true });
-      if (await confirm.isVisible()) await confirm.click();
+      if (
+        (await Promise.race([
+          confirm.waitFor().then(() => 'dialog'),
+          started.then(() => 'started'),
+        ])) === 'dialog'
+      )
+        await confirm.click();
       const accepted = await started;
       assert.equal(accepted.ok(), true, await accepted.text());
       assert.equal((await accepted.json()).attempt.to_sha, candidate);
@@ -121,6 +127,9 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     }, 'waiting for previous version after rollback');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     await turn();
+    const expectedBuild = JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8'))
+      .parts.machines[process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'].build_id;
+    assert.match(expectedBuild, /^[a-f0-9]{64}$/);
     const rolledBackAttempt = (await read_status()).attempt.attempt_id;
     await page.goto(url);
     await page
@@ -135,18 +144,18 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         status?.app_sha === candidate &&
         status?.attempt?.state === 'done' &&
         status.machines.some(
-          (m: { machine_id: string; state: string }) =>
-            m.machine_id === o.machine_id && m.state === 'current',
+          (m: { machine_id: string; state: string; present: boolean; build_id: string | null }) =>
+            m.machine_id === o.machine_id &&
+            m.state === 'current' &&
+            m.present &&
+            m.build_id === expectedBuild,
         )
       );
     }, 'waiting for installed home and joined machine to run the candidate');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const after = await turn();
     assert.notEqual(before.conversation_id, after.conversation_id);
-    const previousConversation = await fetch(
-      url + '/api/conversation/conversations/' + before.conversation_id + '/events',
-    );
-    assert.equal(previousConversation.status, 200);
+    await verify_smoke_attachment(url, before.conversation_id, before.stored_file_id);
     await page.reload();
     await page.getByText('Up to date', { exact: true }).first().waitFor();
     await page.screenshot({ path: join(o.base, 'evidence/update-complete.png') });

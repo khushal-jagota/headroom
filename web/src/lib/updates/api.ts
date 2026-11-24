@@ -33,7 +33,7 @@ export function updateActionRoute(status: UpdateStatus, request: UpdateActionReq
     if (!machine?.can_retry || !machine.attempt_id) throw new Error("This machine update is no longer available to retry.");
     return { path: `/api/updates/attempts/${encodeURIComponent(machine.attempt_id)}/machines/${encodeURIComponent(machine.machine_id)}/retry` };
   }
-  if (!status.attempt) throw new Error("This update changed. Close this dialog and try again.");
+  if (!status.attempt) throw new Error("This update changed. Refresh and try again.");
   const attempt = `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}`;
   switch (request.action) {
     case "retry": return { path: `${attempt}/retry` };

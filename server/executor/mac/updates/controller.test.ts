@@ -1,4 +1,5 @@
 /** Scripted update responses exercise activation and the two admission gates. */
+import { createHash } from 'node:crypto';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
@@ -51,6 +52,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
   };
   const archive = runtime_archive('a'.repeat(40), false, runtime_target);
   const phases: string[] = [];
+  const details: (string | null)[] = [];
   let exit!: () => void;
   const exit_requested = new Promise<void>((resolve) => {
     exit = resolve;
@@ -91,7 +93,8 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
         expect(input.path).toBe('/api/executor/update');
         const report = decode_bounded(input.body as Uint8Array, 'MacUpdateReport');
         phases.push(report.phase);
-        body = Buffer.from('{"confirmed":true}');
+        details.push(report.detail ?? null);
+        body = Buffer.from(JSON.stringify({ confirmed: report.phase === 'current' }));
       } else {
         download_paths.push(input.path);
         const error = download_errors.shift();
@@ -173,6 +176,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
     target,
     check,
     phases,
+    details,
     on_failure,
     exit_requested,
     downloads: () => download_paths.length,
@@ -302,9 +306,11 @@ test('trial admission waits for supervisor selection, and an inactive target sto
   const current = {
     ...f.target,
     request_id: 'current',
+    activate: true,
     application_revision: f.identity.application_revision,
   };
   await f.controller.apply(f.check(current));
+  expect(f.phases).toEqual(['ready_to_restart']);
   expect(await f.controller.kept_by_supervisor()).toBe(false);
   expect(f.runner.finish_planned_replay).not.toHaveBeenCalled();
   expect(JSON.parse(readFileSync(f.runtime.ready_path!, 'utf8')).request_id).toBe('current');
@@ -325,12 +331,16 @@ test('trial admission waits for supervisor selection, and an inactive target sto
     request_id: 'current',
     application_revision: f.identity.application_revision,
   });
+  const key = createHash('sha256').update(current.request_id).digest('hex');
+  await atomic_record(f.files, join(f.root, 'updates/launcher-receipts', key + '.json'), {
+    ready: true,
+    signing_requirement_changed: true,
+  });
   await f.controller.apply(f.check(current));
+  expect(f.details.at(-1)).toContain('Files and Folders');
   expect(await f.controller.kept_by_supervisor()).toBe(true);
   await f.controller.apply(f.check({ ...current, request_id: 'same-revision-new-request' }));
-  expect(JSON.parse(readFileSync(f.runtime.ready_path!, 'utf8')).request_id).toBe(
-    'same-revision-new-request',
-  );
+  expect(JSON.parse(readFileSync(f.runtime.ready_path!, 'utf8')).request_id).toBe('current');
   expect(JSON.parse(readFileSync(join(f.root, 'updates', 'selection.json'), 'utf8'))).toEqual({
     request_id: 'current',
     application_revision: f.identity.application_revision,
@@ -347,7 +357,7 @@ test('trial admission waits for supervisor selection, and an inactive target sto
   await f.controller.apply(f.check(f.target));
   await f.controller.apply(f.check(null));
   expect(f.runner.resume_after_cancelled_update).toHaveBeenCalledTimes(1);
-  expect(f.phases).toEqual(['current', 'current']);
+  expect(f.phases).toEqual(['ready_to_restart', 'current', 'current']);
   expect(f.downloads()).toBe(0);
 });
 test('a newer target replaces a download in progress', async () => {

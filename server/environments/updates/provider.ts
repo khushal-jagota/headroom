@@ -177,7 +177,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       throw new Error('The repository update service refused the operation.', { cause: error });
     }
   }
-  async available(): Promise<PublishedUpdate | null> {
+  async available(proof_artifact_id?: number): Promise<PublishedUpdate | null> {
     const publications: Record<string, unknown>[] = [];
     for (let page = 1; ; page++) {
       const response = await this.request('releases', { per_page: '100', page: String(page) });
@@ -203,7 +203,11 @@ export class GitHubUpdateProvider implements UpdateProvider {
     for (const { publication } of eligible) {
       const assets = list(publication.assets);
       const proof = assets.find((asset) => asset.name === 'publication.json');
-      if (proof === undefined) continue;
+      if (
+        proof === undefined ||
+        (proof_artifact_id !== undefined && proof.id !== proof_artifact_id)
+      )
+        continue;
       const payload = await this.response_json(
         await this.request(
           `releases/assets/${proof.id}`,
@@ -252,7 +256,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       let selected = payload;
       if (this.target.system === 'darwin') {
         if (!is_object(payload.mac_home)) continue;
-        selected = { ...payload, ...payload.mac_home, mac: null };
+        selected = { ...payload, ...payload.mac_home };
       }
       const release = parse_release({ ...selected, proof_artifact_id: proof.id });
       if (
@@ -321,7 +325,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
         let selected = payload;
         if (this.target.system === 'darwin') {
           if (!is_object(payload.mac_home)) return null;
-          selected = { ...payload, ...payload.mac_home, mac: null };
+          selected = { ...payload, ...payload.mac_home };
         }
         selected.proof_artifact_id = proof.id;
         release = parse_release(selected);

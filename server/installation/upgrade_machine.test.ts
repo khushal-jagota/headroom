@@ -46,6 +46,14 @@ it('resumes a missing local machine after a failed unit start without replacing 
     assert.equal(starts, 2);
     assert.equal(await saved(), before);
     db.read((sql) => verify_enrolled_executor(sql, HOME_MACHINE_ID, before));
+    // Simulate restoring the pre-trial snapshot, then trying a different release.
+    db.write((tx) =>
+      tx.run('UPDATE machine_executor_credentials SET credential_sha256=NULL WHERE machine_id=?', [
+        HOME_MACHINE_ID,
+      ]),
+    );
+    await ensure_upgrade_machine(root, service + '.service', port, 'e'.repeat(40), db, deps);
+    db.read((sql) => verify_enrolled_executor(sql, HOME_MACHINE_ID, before));
     assert.equal(
       JSON.parse(await readFile(join(root, 'machine/data/identity.json'), 'utf8')).machine_id,
       HOME_MACHINE_ID,

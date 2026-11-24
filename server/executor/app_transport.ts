@@ -62,7 +62,11 @@ const SINGLETON = new Set([
   PROTOCOL,
   CREDENTIAL,
 ]);
-import { ORIGINAL_MAC_MACHINE_ID, validate_identity } from '../execution_identity.ts';
+import {
+  HOME_MACHINE_ID,
+  ORIGINAL_MAC_MACHINE_ID,
+  validate_identity,
+} from '../execution_identity.ts';
 import type { HomeUpdateTrial } from '../environments/updates/home_trial.ts';
 
 export interface ExecutorHttpServices {
@@ -467,7 +471,8 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       work(async (request, reply) => {
         const trial = services.trial;
         if (trial?.active) {
-          const claimed = executor_ingress_claim(request.raw, null);
+          const trustedLogin = (request as FastifyRequest & { trustedLogin?: string }).trustedLogin;
+          const claimed = executor_ingress_claim(request.raw, trustedLogin ?? null);
           const machine =
             claimed === services.config.executor_id ? ORIGINAL_MAC_MACHINE_ID : claimed;
           const credential = header_map(request.raw).get(CREDENTIAL)?.[0];
@@ -480,8 +485,10 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           );
           validate_identity(lease.identity);
           const incarnation = lease.identity.executor_incarnation;
-          trial.observed(machine, incarnation);
-          reply.raw.once('finish', () => trial.replied(machine, incarnation));
+          if (machine === HOME_MACHINE_ID && is_executor_link_connection(request.raw.socket)) {
+            trial.observed(incarnation);
+            reply.raw.once('finish', () => trial.replied(incarnation));
+          }
           return typed_reply(
             reply,
             {

@@ -1,5 +1,4 @@
 /** Literal manager arguments and the explicitly selected installer environment. */
-import { installer_attempt_id } from './installer/configuration.ts';
 import { assert_installer_path } from './installer/configuration.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import { installer_unit_environment } from '../../core/config.ts';
@@ -14,26 +13,34 @@ export function selected_installer_environment(
   const selected = selection.environment;
   return selected;
 }
-/** Pure argv construction is testable without a service-manager exception or flag. */
-export function installer_transient_command(
-  attempt_id: string,
+function unit_value(value: string): string {
+  if (/[\x00-\x1f\x7f]/.test(value))
+    throw new Error('Installer unit value contains a control character');
+  return JSON.stringify(value.replaceAll('%', '%%'));
+}
+/** A regular user unit survives loss of the manager. The marker disappears when the trial settles. */
+export function installer_unit(
   command: readonly string[],
+  marker: string,
   environment: Readonly<NodeJS.ProcessEnv>,
-): readonly string[] {
-  const selected = selected_installer_environment(environment);
+): string {
+  if (!marker.startsWith('/') || /[\x00-\x1f\x7f]/.test(marker))
+    throw new Error('Invalid installer marker path');
   return [
-    'systemd-run',
-    '--user',
-    '--collect',
-    '--quiet',
-    '--unit=panels-update-' + installer_attempt_id(attempt_id),
-    '--expand-environment=no',
-    '--property=Restart=on-abnormal',
-    '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
-    ...Object.keys(selected)
-      .sort()
-      .map((name) => '--setenv=' + name + '=' + selected[name]),
-    '--',
-    ...command,
-  ];
+    '[Unit]',
+    'Description=Panels home update',
+    'ConditionPathExists=' + marker.replaceAll('%', '%%'),
+    '[Service]',
+    'Type=simple',
+    'Restart=on-abnormal',
+    'SuccessExitStatus=2',
+    'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
+    ...Object.entries(selected_installer_environment(environment)).map(
+      ([key, value]) => 'Environment=' + unit_value(key + '=' + value),
+    ),
+    'ExecStart=' + command.map((value) => unit_value(value.replaceAll('$', () => '$$'))).join(' '),
+    '[Install]',
+    'WantedBy=default.target',
+    '',
+  ].join('\n');
 }

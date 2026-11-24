@@ -106,7 +106,11 @@ async function review_gate(base: string, ticket_id: string): Promise<void> {
     (attention) => attention.rows.some((row) => row.id === ticket_id),
   );
 }
-async function download(base: string, conversation: string, file: string): Promise<void> {
+export async function verify_smoke_attachment(
+  base: string,
+  conversation: string,
+  file: string,
+): Promise<void> {
   client(base);
   const response = await fetch(
     `${new URL(base).origin}/api/conversation/conversations/${conversation}/files/${file}`,
@@ -271,7 +275,7 @@ export async function smoke_file_turn(
   const file = pieces.find((piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt');
   assert.ok(file && typeof file.stored_file_id === 'string');
   const stored_file_id = file.stored_file_id;
-  await download(base, conversation_id, stored_file_id);
+  await verify_smoke_attachment(base, conversation_id, stored_file_id);
   step('06 uploaded file bytes round trip', { stored_file_id });
   return { conversation_id, stored_file_id, events };
 }
@@ -290,7 +294,7 @@ export async function smoke_after_restart(
   const replay = await api<{ events: Event[] }>(conversation + '/events');
   assert.deepEqual(replay.events.slice(0, state.events.length), state.events);
   step('08 restart preserves conversation, prompt and completed turn');
-  await download(base, state.conversation_id, state.stored_file_id);
+  await verify_smoke_attachment(base, state.conversation_id, state.stored_file_id);
   const goal = await api(`/api/goals/${state.goal_id}`);
   assert.equal(goal.id, state.goal_id);
   assert.equal(goal.title, 'Production smoke goal');

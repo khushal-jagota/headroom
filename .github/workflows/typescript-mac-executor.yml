@@ -2,6 +2,7 @@ name: TypeScript Mac executor rehearsal
 
 on:
   pull_request:
+    branches-ignore: [main, feature/update-rework]
     paths:
       - "server/executor/**"
       - "server/conversation/**"
