@@ -194,6 +194,12 @@ export class ClaudeEvents {
     this.live_background_tasks.clear();
     this.background_endings.clear();
   }
+  agent_turn_reason(message: ClaudeSdkMessage): string | null {
+    if (message.type !== 'system' || message.subtype !== 'task_notification') return null;
+    const description = this.live_background_tasks.get(String(message.task_id));
+    if (description === undefined) return null;
+    return `Background task "${description}" ${String(message.status)}`;
+  }
   async take_background(message: ClaudeSdkMessage): Promise<boolean> {
     if (message.type !== 'system') return false;
     if (message.subtype === 'task_notification' || message.subtype === 'task_updated') {

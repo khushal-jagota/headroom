@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { parse_backend_instance_id } from '../../core/identity.ts';
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
@@ -14,6 +15,7 @@ import {
   SessionLoadFailed,
   TokenUsageReported,
   TurnEnded,
+  ToolCallStarted,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
@@ -185,6 +187,9 @@ async function live_child(
   options: {
     vendor_session_cursor?: string | null;
     client?: Partial<ClaudeSdkClient>;
+    start_agent_turn?: (
+      reason: string,
+    ) => Promise<import('../../../conversation/backends/contracts.ts').TurnToken | null>;
   } = {},
 ) {
   const delivered: IteratorResult<ClaudeSdkMessage>[] = [];
@@ -242,6 +247,7 @@ async function live_child(
     resolved_start: start,
     client_factory: () => client,
     event_sink: {
+      start_agent_turn: options.start_agent_turn,
       report: async (_turn, event) => {
         reported.push(event);
         if (event instanceof TurnEnded) turn_endings.push(event);
@@ -522,4 +528,58 @@ it('starts a full-access conversation in auto permission mode', async () => {
   const options = client_factory.mock.calls[0]![0] as Record<string, unknown>;
   expect(options.permissionMode).toBe('auto');
   expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
+});
+
+// Risk: a root task hand-back after the prompted turn ends previously lost every event.
+// Recorded through the real driver capture tee with Claude 2.1.322 / Haiku on 2026-11-24.
+// The nested Bash task also finishes first. It must not start a parent turn.
+it('replays a recorded background hand-back as a new turn with tools, text, and usage', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  const names = new Map(
+    frames
+      .filter((frame) => frame.type === 'result')
+      .map((frame) => [String(frame.uuid), frame.user_message_uuids as string[]]),
+  );
+  let prompt_uuid = '';
+  const start_agent_turn = vi.fn(async () => ({
+    conversation_id: 'background-handback',
+    turn_number: 2,
+  }));
+  const { child, prompt, deliver, reported, turn_endings } = await live_child(
+    'background-handback',
+    {
+      start_agent_turn,
+      client: {
+        watch_user_message: (uuid) => {
+          prompt_uuid = uuid;
+        },
+        user_message_uuids_for_result: (uuid) =>
+          new Set(
+            (names.get(uuid ?? '') ?? []).map((name) => (name === '<prompt>' ? prompt_uuid : name)),
+          ),
+      },
+    },
+  );
+  try {
+    await prompt(1, 'low');
+    for (const frame of frames) deliver({ value: frame, done: false });
+    await vi.waitFor(() => expect(turn_endings).toHaveLength(2));
+    expect(start_agent_turn).toHaveBeenCalledExactlyOnceWith(
+      'Background task "Background sleep and report" completed',
+    );
+    expect(turn_endings.map((event) => event.ending)).toEqual(['completed', 'completed']);
+    const after_first_end = reported.slice(reported.indexOf(turn_endings[0]!) + 1);
+    expect(
+      after_first_end.some((event) => event instanceof ToolCallStarted && event.title === 'Bash'),
+    ).toBe(true);
+    expect(after_first_end.some((event) => event instanceof AgentMessageCompleted)).toBe(true);
+    expect(after_first_end.some((event) => event instanceof TokenUsageReported)).toBe(true);
+  } finally {
+    await child.stop();
+  }
 });

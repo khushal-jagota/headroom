@@ -678,6 +678,12 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     const session_id = durable_session_id(message);
     if (session_id !== null) await this.note_session_id(session_id);
     if (this.wire_broken) return;
+    const wake_reason = this.events.agent_turn_reason(message);
+    if (this.turn === null && wake_reason !== null) {
+      const token = await this.sink.start_agent_turn?.(wake_reason);
+      if (token !== null && token !== undefined && this.turn === null)
+        this.turn = new TurnInFlight(token);
+    }
     if (await this.events.take_background(message)) return;
     const turn = this.turn;
     if (!turn) {
