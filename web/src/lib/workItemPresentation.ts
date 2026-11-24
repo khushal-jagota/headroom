@@ -1,4 +1,4 @@
-import { WORKER_STATUS_LABEL } from "./ticketStatusPresentation";
+import { WORKER_STATUS_LABEL } from "../../../server/tickets/logic/status_presentation";
 import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 

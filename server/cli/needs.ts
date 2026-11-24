@@ -1,5 +1,5 @@
 /** The display form of the need word. This is the only place the CLI words a need. */
-import { WORKER_STATUS_LABEL } from '../../web/src/lib/ticketStatusPresentation.ts';
+import { WORKER_STATUS_LABEL } from '../tickets/logic/status_presentation.ts';
 import { numeric_value } from '../core/http/numeric_json.ts';
 import { TICKET_NEEDS, type TicketNeed } from '../tickets/contracts.ts';
 

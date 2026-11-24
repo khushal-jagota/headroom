@@ -14,7 +14,7 @@ import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
 import { join_command, require_released_revision } from '../installation/join_command.ts';
 import { need_counts_display, need_display } from './needs.ts';
-import { ticketStatusLabel as ticket_status_label } from '../../web/src/lib/ticketStatusPresentation.ts';
+import { ticketStatusLabel as ticket_status_label } from '../tickets/logic/status_presentation.ts';
 import { response_field } from './response_field.ts';
 import { CliFailure } from './errors.ts';
 import { require_current_server } from './current_server.ts';

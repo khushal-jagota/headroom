@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { run } from './main.ts';
 import * as http from './http.ts';
-import { WORKER_STATUS_LABEL } from '../../web/src/lib/ticketStatusPresentation.ts';
+import { WORKER_STATUS_LABEL } from '../tickets/logic/status_presentation.ts';
 
 const SERVER = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
 const complete_page = (count: number) => ({
