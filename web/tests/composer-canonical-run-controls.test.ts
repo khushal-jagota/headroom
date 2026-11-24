@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { sendBodyFor } from "../src/lib/conversation/composer";
-import { mintOutgoingMessage, rememberOutgoingMessages, recallOutgoingMessages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
+import { mintOutgoingMessage, rememberOutgoingMessages, recallOutgoingMessages, moveRememberedOutgoingMessages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
 
 // The outgoing store is the actual durable browser boundary used after transport
 // uncertainty. Pure draft tests cannot prove its decoder retains explicit null.
@@ -13,16 +13,26 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
   }});
   resetOutgoingImageReservationsForTest();
   try {
-    const message = mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"});
+    const message = {
+      ...mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"}),
+      sendTarget: {conversation_id: null, backend_key: "claude", model: "opus", reasoning_effort: null}
+    };
     const old = mintOutgoingMessage({content:[{piece:"text",text:"old words"}], senderLabel:"owner", mode:"queue"});
     // A backend the apps do not name keeps its key, so the held prompt does not restart elsewhere.
     const fourth = mintOutgoingMessage({content:[{piece:"text",text:"fourth driver"}], senderLabel:"owner", mode:"queue", pickedBackend:"scripted-agent"});
     // A resend of a refused message keeps naming the refused row, so sending it again after a
     // reload still folds the refused bubble away (hands-on test 1, item 14).
     const resend = {...mintOutgoingMessage({content:[{piece:"text",text:"resent words"}], senderLabel:"owner", mode:"queue"}), reconcilesSequence: 41};
-    await rememberOutgoingMessages("canonical-retry", [message, old, fourth, resend]);
-    const [reopened, historical, heldForFourth, reopenedResend] = await recallOutgoingMessages("canonical-retry");
+    await rememberOutgoingMessages("owner:chief", [message, old]);
+    await rememberOutgoingMessages("canonical-retry", [fourth, resend]);
+    expect(await moveRememberedOutgoingMessages("owner:chief", "canonical-retry")).toBe(true);
+    expect(await recallOutgoingMessages("owner:chief")).toEqual([]);
+    const recalled = await recallOutgoingMessages("canonical-retry");
+    const [reopened, historical, heldForFourth, reopenedResend] =
+      [message, old, fourth, resend].map(sent => recalled.find(item => item.messageId === sent.messageId)!);
     expect(sendBodyFor({message:reopenedResend!, current:{model:null,reasoningEffort:null}, picked:{model:null,reasoningEffort:null}, conversationId:"c"})).toMatchObject({reconciles_sequence:41});
+    expect(reopened.sendTarget).toStrictEqual(message.sendTarget);
+    expect(historical).not.toHaveProperty("sendTarget");
     expect(heldForFourth).toMatchObject({pickedBackend:"scripted-agent"});
     expect(reopened).toMatchObject({pickedModel:"opus",pickedReasoningEffort:null,effortIsSet:true,pickedBackend:"claude",knownFate:"sent_before_this_page"});
     const body = sendBodyFor({message:reopened, current:{model:"sonnet",reasoningEffort:"high"}, picked:{model:reopened.pickedModel ?? null, reasoningEffort:reopened.pickedReasoningEffort ?? null, effortIsSet:reopened.effortIsSet, backendKey:reopened.pickedBackend}, conversationId:null});

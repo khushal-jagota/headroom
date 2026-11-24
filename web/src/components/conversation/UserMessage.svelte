@@ -11,7 +11,7 @@
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
   import { conversationHeight } from '../../lib/conversation/surfaceMotion';
   import { refusalOffersResend } from '../../lib/conversation/transcript';
-  import { recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
+  import { recordedContentCanBeEdited, recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
   import { getContext } from 'svelte';
   let { presentationRowKey = null, row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
     presentationRowKey?: string | null;
@@ -34,17 +34,26 @@
   const resendRecorded = getContext<ResendRecordedMessage | undefined>(RESEND_RECORDED_MESSAGE);
   let resent = $state(false);
   let resendFailed = $state(false);
+  let edited = $state(false);
+  let editFailed = $state(false);
   const offersResend = $derived(row?.kind === 'prompt_refused' && resendRecorded !== undefined && resendRecorded.available() && refusalOffersResend(row.reason) && recordedContentCanBeResent(row.content));
+  const localFailed = $derived(!row && (local?.knownFate === 'not_sent' || local?.knownFate === 'machine_offline'));
+  const localVideo = $derived(local?.content.some(piece => piece.piece === 'video_upload') ?? false);
+  const offersEdit = $derived(!edited && !resent && resendRecorded?.available() && (
+    row?.kind === 'prompt_refused' && resendRecorded.edit && recordedContentCanBeEdited(row.content)
+    || localFailed && resendRecorded.editLocal
+  ));
   // What became of the message, said under it in the thread's status voice, never inside
   // the words the person wrote.
   const status = $derived.by((): TranscriptStatus | null => {
     if (row?.kind === 'prompt_refused' || row?.kind === 'prompt_uncertain' || row?.kind === 'prompt_discarded') return promptOutcomeStatus(row, offersResend);
-    if (row || !local) return null;
+    if (row || !local || local.accepted) return null;
     // The machine was away: not delivered, said inside the bubble (B5), the server's words behind Details.
     if (local.knownFate === 'machine_offline') return { tone: 'error', title: local.refusal?.reason ?? 'The machine is offline', detail: local.refusal?.detail || null };
+    if (local.knownFate === 'not_sent') return { tone: 'error', title: local.failureNote ?? 'The message did not reach Panels.', detail: null };
     const note = outgoingMessageNote(local);
     if (note === null) return null;
-    return { tone: local.knownFate === 'answer_never_came_back' ? 'warning' : 'neutral', title: note.charAt(0).toUpperCase() + note.slice(1), detail: null };
+    return { tone: (local.knownFate === 'answer_never_came_back' || local.knownFate === 'agent_unconfirmed') ? 'warning' : 'neutral', title: note.charAt(0).toUpperCase() + note.slice(1), detail: null };
   });
   // A message the running turn took in as it went. It reads as the person's message, and
   // a quiet line under it says it joined the turn rather than starting one.
@@ -53,7 +62,8 @@
   // A message the offline machine turned away can go again once the machine is back, or be let go.
   const machineOffline = $derived(!row && local?.knownFate === 'machine_offline');
   const heldActions = $derived(local && !row ? heldPromptRowActions(heldPromptRows([], [local])[0]!) : []);
-  const hasHeldLineActions = $derived(heldActions.includes('send_again') || heldActions.includes('stop_drawing'));
+  const canRetryUnanswered = $derived(heldActions.includes('send_again') && !!local?.sendTarget);
+  const hasHeldLineActions = $derived(canRetryUnanswered || heldActions.includes('stop_drawing'));
   async function stop(): Promise<void> {
     if (!local || busy) return;
     busy = true;
@@ -68,6 +78,19 @@
     catch { resendFailed = true; }
     finally { busy = false; }
   }
+  async function edit(): Promise<void> {
+    if (!offersEdit || busy) return;
+    busy = true;
+    editFailed = false;
+    try {
+      if (row) edited = await resendRecorded!.edit!(conversationId, row.content);
+      else if (local) edited = await resendRecorded!.editLocal!(local.messageId);
+    } catch {
+      editFailed = true;
+    } finally {
+      busy = false;
+    }
+  }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
   // B5: the person's message that was not delivered says so inside its own bubble.
   const undelivered = $derived(label === null && status?.tone === 'error' ? status : null);
@@ -79,22 +102,24 @@
 <!-- Passed only when there is an action: an empty actions slot keeps its gap, and the
      caption would end short of the bubble's edge. -->
 {#snippet heldLineActions()}
-  {#if heldActions.includes('send_again')}<button type="button" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
+  {#if canRetryUnanswered}<button type="button" data-conversation-held-send-again={local?.messageId} disabled={busy} onclick={()=>void resend()}>Try Again</button>{/if}
   {#if heldActions.includes('stop_drawing')}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
 {/snippet}
 {#snippet undeliveredFooter()}
   {#if undelivered}
     <div class="c2-undelivered" role="alert" data-conversation-message-status="error">
       <p class="c2-undelivered-reason" data-conversation-status-next>Not delivered<span aria-hidden="true">{" · "}</span>{statusReason(undelivered)}</p>
-      {#if (offersResend && !resent) || machineOffline || undelivered.action === 'choose-model' || undelivered.detail}
+      {#if (offersResend && !resent) || localFailed || offersEdit || undelivered.action === 'choose-model' || undelivered.detail}
         <div class="c2-undelivered-actions">
-          {#if offersResend && !resent}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
-          {#if machineOffline}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Resending…" : "Resend"}</button>{/if}
+          {#if offersResend && !resent && !edited}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Try again." : "Send this message again"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
+          {#if localFailed && !edited && !localVideo && onSendAgain}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
+          {#if offersEdit}<button type="button" data-conversation-edit-unsent disabled={busy} onclick={() => void edit()}>Edit</button>{/if}
           {#if undelivered.action === 'choose-model'}<button type="button" data-conversation-status-choose-model onclick={() => openComposerModelPicker(root)}>Choose another model</button>{/if}
           {#if undelivered.detail}<button type="button" aria-expanded={detailsOpen} aria-controls={detailsId} data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>Details<DetailsChevron open={detailsOpen}/></button>{/if}
-          {#if machineOffline}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
+          {#if localFailed && (machineOffline || edited)}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         </div>
       {/if}
+      {#if editFailed}<p role="status">An attachment could not be restored.</p>{/if}
       {#if undelivered.detail}<BackendWords id={detailsId} detail={undelivered.detail} open={detailsOpen}/>{/if}
     </div>
   {/if}

@@ -56,20 +56,20 @@ describe("sending again a message that was not delivered", () => {
     expect(refusalOffersResend("backend_did_not_start")).toBe(true);
     expect(refusalOffersResend("backend_rejected_prompt")).toBe(false);
     expect(refusalOffersResend("no_such_conversation")).toBe(false);
-    expect(promptOutcomeStatus(refused, true).next).toBe("Resend it, or choose another model in the composer first.");
+    expect(promptOutcomeStatus(refused, true).next).toBe("Try again, or choose another model in the composer first.");
   });
 
-  it("shows Resend on the refused message, at rest, and names it in the next step", async () => {
+  it("shows Try Again on the refused message, at rest, and names it in the next step", async () => {
     const resend = vi.fn(async () => true);
     const html = drawWith(refused, { available: () => true, resend });
     expect(html).toContain('data-conversation-resend-refused="e7"');
-    expect(html).toContain(">Resend</button>");
+    expect(html).toContain(">Try Again</button>");
     // The bubble says the cause; its actions say the rest.
     expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The backend did not start/);
-    expect(html).not.toContain("Resend it, or choose another model in the composer first.");
+    expect(html).not.toContain("Try again, or choose another model in the composer first.");
   });
 
-  it("does not show Resend in a read-only pane, nor for a message that cannot be sent again", () => {
+  it("does not show Try Again in a read-only pane, nor for a message that cannot be sent again", () => {
     expect(drawWith(refused, { available: () => false, resend: async () => true })).not.toContain("data-conversation-resend-refused");
     expect(drawWith({ ...refused, reason: "backend_rejected_prompt" }, { available: () => true, resend: async () => true }))
       .not.toContain("data-conversation-resend-refused");

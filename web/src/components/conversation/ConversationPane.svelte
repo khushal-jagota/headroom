@@ -9,6 +9,7 @@
   import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { AskEntranceTracker } from "../../lib/conversation/askEntrance";
+  import UserMessage from "./UserMessage.svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import SystemLine from "./SystemLine.svelte";
@@ -86,6 +87,7 @@
     connectionTrouble = false,
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
+    sendAvailable = true,
     showRunPicker = true,
     readOnly = false,
     historyOwner,
@@ -190,6 +192,7 @@
     connectionTrouble?: boolean;
     composerPlaceholder?: string;
     composerDisabled?: boolean;
+    sendAvailable?: boolean;
     showRunPicker?: boolean;
     /** A historical transcript is visible through this single boundary. No mutation
      *  control is rendered inside it. */
@@ -340,7 +343,10 @@
   // retry; the red line under the box is kept for failures nothing else explains.
   /** v11 (4): Edit on a queued message: it leaves the queue, and its words come back to the
    *  composer (after anything already written there). */
-  let composerHandle = $state<{ takeBackQueuedWords: (words: string) => void } | null>(null);
+  let composerHandle = $state<ReturnType<typeof ConversationComposer> | null>(null);
+  export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
+    return composerHandle?.takeBackUnsentMessage(content) ?? false;
+  }
   async function editHeldPrompt(heldPromptId: string, words: string): Promise<void> {
     if (!onDiscardHeldPrompt || composerHandle === null) return;
     await onDiscardHeldPrompt(heldPromptId, true);
@@ -686,6 +692,10 @@
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} status={dockStatus}
       askBelow={ask !== null || userInput !== null || credentialWaiting} onOpen={moveThroughTheStates} />
+    {#each outgoingMessages.filter(message => message.sendTarget && !message.accepted && !acknowledgedMessageIds.has(message.messageId)) as message (message.messageId)}
+      <UserMessage local={message} {conversationId} {ownSenderLabel}
+        onStopDrawingMessage={onStopDrawingHeldPrompt} onSendAgain={onSendHeldPromptAgain} />
+    {/each}
   {/if}
 
   <!-- The way back to the newest line is a 32px round icon button centred on the column,
@@ -741,6 +751,7 @@
       {undeliveredReason}
       placeholder={composerPlaceholder}
       disabled={composerDisabled}
+      {sendAvailable}
       {showRunPicker}
       {onSend}
       {onStop}

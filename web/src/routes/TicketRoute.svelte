@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
@@ -234,11 +235,7 @@
    * same write that made the link.
    */
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
-      method: "POST",
-      body});
-    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(`/api/tickets/${stableId}/conversation/send`, body);
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next

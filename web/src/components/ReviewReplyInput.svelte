@@ -1,16 +1,14 @@
 <script lang="ts">
-  import {onMount,untrack} from 'svelte';
+  import {onMount} from 'svelte';
   import ComposerField from './conversation/ComposerField.svelte';
-  import {readComposerDraft,writeComposerDraft} from '../lib/conversation/composerDraft';
   import {CONVERSATION_FILE_ACCEPT,type PendingConversationFile} from '../lib/conversation/pendingFiles';
-  import {releasePendingImages,type PendingConversationImage} from '../lib/conversation/pendingImages';
+  import type { PendingConversationImage } from '../lib/conversation/pendingImages';
   import {takePendingAttachments,ATTACHMENT_REJECTED} from '../lib/conversation/pendingAttachments';
   import AttachmentChips from './conversation/AttachmentChips.svelte';
   import {createVoiceCapture,voiceCaptureSupported,type VoiceCapture,type VoiceCaptureState} from '../lib/conversation/voiceCapture';
-  let {text=$bindable(''),files=$bindable([]),images=$bindable([]),intakeBusy=$bindable(false),voiceActive=$bindable(false),draftKey,disabled=false,sendDisabled=false,sending=false,placeholder='Reply…',label='Reply',sendLabel='Send reply',preserveHeight=false,allowEmpty=false,onSend,onError}: {
-    text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;draftKey:string;disabled?:boolean;sendDisabled?:boolean;sending?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;allowEmpty?:boolean;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
+  let {text=$bindable(''),files=$bindable([]),images=$bindable([]),intakeBusy=$bindable(false),voiceActive=$bindable(false),attachmentDisabled=false,sendDisabled=false,placeholder='Reply…',label='Reply',sendLabel='Send reply',preserveHeight=false,onSend,onError}: {
+    text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;attachmentDisabled?:boolean;sendDisabled?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
   }=$props();
-  text=untrack(()=>text || readComposerDraft(draftKey));
   let fileInput=$state<HTMLInputElement|null>(null);
   let root=$state<HTMLDivElement|null>(null);
   let input=$state<HTMLTextAreaElement|null>(null);
@@ -19,20 +17,20 @@
   let voice:VoiceCapture|null=null;
   let voiceSupported=$state(false);
   let hasReply=$derived(Boolean(text.trim() || files.length || images.length));
-  $effect(()=>{writeComposerDraft(draftKey,text);});
   $effect(()=>{voiceActive=voiceState.phase!=='idle';});
   onMount(()=>{
     voiceSupported=voiceCaptureSupported();
     voice=createVoiceCapture({onState:state=>voiceState=state,onTranscript:transcript=>{if(transcript)text=text.trim()?`${text.trim()}\n\n${transcript}`:transcript;}});
-    return()=>{voice?.dispose();releasePendingImages(images);};
+    return()=>{voice?.dispose();};
   });
+  export function focus(): void { input?.focus(); }
   async function submit():Promise<void>{
-    if(sendDisabled || intakeBusy || (!hasReply && !allowEmpty) || voiceState.phase!=='idle')return;
+    if(sendDisabled || intakeBusy || !hasReply || voiceState.phase!=='idle')return;
     if(preserveHeight)held={box:Math.max(held?.box??0,root?.getBoundingClientRect().height??0),input:Math.max(held?.input??0,input?.getBoundingClientRect().height??0)};
     await onSend();
   }
   async function attach(chosen:FileList|null):Promise<void>{
-    if(!chosen || disabled)return;
+    if(!chosen || attachmentDisabled)return;
     intakeBusy=true;onError(null);
     try{
       const taken=await takePendingAttachments([...chosen],{images,files});
@@ -46,18 +44,18 @@
      reply, and the arrow sends it, as Enter does (Shift+Enter adds a line). -->
 <div class="review-reply" bind:this={root} data-review-voice={voiceState.phase}>
   <input bind:this={fileInput} hidden type="file" multiple accept={`image/png,image/jpeg,image/gif,image/webp,${CONVERSATION_FILE_ACCEPT}`} onchange={()=>void attach(fileInput?.files??null)}/>
-  <ComposerField bind:value={text} bind:input {placeholder} {label} {disabled} {held}
+  <ComposerField bind:value={text} bind:input {placeholder} {label} {held}
     inputAttributes={{'data-review-reply':''}}
     onsubmit={()=>void submit()}
-    attach={{label:'Attach a file',onclick:()=>fileInput?.click(),attributes:{'data-review-attach':''}}}
+    attach={{label:'Attach a file',disabled:attachmentDisabled,onclick:()=>fileInput?.click(),attributes:{'data-review-attach':''}}}
     record={{label:'Speak a reply',disabled:!voiceSupported,onclick:()=>void voice?.startRecording(),attributes:{'data-voice-record':''}}}
-    send={{label:sendLabel,ready:hasReply,sending,disabled:sendDisabled || intakeBusy || (!hasReply && !allowEmpty),onclick:()=>void submit(),attributes:{'data-review-send':''}}}
+    send={{label:sendLabel,ready:hasReply,sending:false,disabled:sendDisabled || intakeBusy || !hasReply,onclick:()=>void submit(),attributes:{'data-review-send':''}}}
     voice={{state:voiceState,cancel:()=>voice?.cancel(),stop:()=>voice?.stopRecording(),retry:()=>voice?.retry()}}
     attachments={images.length || files.length ? attached : undefined}/>
 </div>
 
 {#snippet attached()}
-  <AttachmentChips bind:images bind:files {disabled}/>
+  <AttachmentChips bind:images bind:files disabled={attachmentDisabled}/>
 {/snippet}
 
 <style>

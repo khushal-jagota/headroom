@@ -31,6 +31,7 @@ import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import { video_send_admission } from '../conversation/video_send_admission.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { send_message } from '../message_delivery/service.ts';
+import { run_owner_send } from '../message_delivery/owner_sends.ts';
 import { read_page, write_page, page_readings } from './pages.ts';
 import { calendar_now } from '../goals/calendar.ts';
 import { stringify_numeric_response } from '../core/http/numeric_intake.ts';
@@ -246,63 +247,82 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   app.post<{ Params: { item_id: string } }>(
     '/managers/:item_id/conversation/send',
     async (request, reply) => {
-      const body = parse_owner_send_body(request.body, reply);
-      if (body === null) return;
-      const item = database.read((sql) => data.read_manager(sql, request.params.item_id).item);
-      const current = conversation_start.read_agent_conversation(database, item.manager_agent_key);
-      const overrides = {
-        backend_key:
-          body.backend_key === null ? null : require_conversation_backend_key(body.backend_key),
-        model: body.model,
-        reasoning_effort: body.reasoning_effort,
-        reasoning_effort_is_set: body.provided_fields.has('reasoning_effort'),
-      };
-      if (
-        current !== null &&
-        overrides.backend_key !== null &&
-        overrides.backend_key !== item.manager_launch_configuration.employee_backend
-      )
-        throw new PlannerError(
-          'validation',
-          'an existing Manager conversation cannot change backend',
-          { conversation_id: current, backend_key: overrides.backend_key },
-        );
-      const target = { kind: 'manager' as const, id: item.id };
-      const admission = video_send_admission(
+      const parsed = parse_owner_send_body(request.body, reply);
+      if (parsed === null) return;
+      const identity = services.identity(request);
+      const target = { kind: 'manager' as const, id: request.params.item_id };
+      const system = conversations(services);
+      return run_owner_send(
         database,
-        services.config.db_path,
-        files,
-        body.content,
-        body.sender_message_id,
-        { kind: 'manager', id: item.id, expected_conversation_id: body.conversation_id },
+        system,
+        identity.principal,
         target,
-        services.identity(request).principal,
-      );
-      const delivered = await send_message(
-        conversations(services),
-        database,
-        clock,
-        services.identity(request),
-        target,
-        admission !== null
-          ? (id) => admission.content(id)
-          : (id) =>
-              conversation_message_content(files, id, body.content, {
-                sender_message_id: body.sender_message_id,
-              }),
-        body.mode,
-        {
-          admission,
-          conversation_id: body.conversation_id,
-          created_conversation_id: conversation_start.new_conversation_id(),
-          runs_under: overrides,
-          owner_read_through_sequence: body.owner_read_through_sequence,
-          sender_message_id: body.sender_message_id,
-          sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
-          reconciles_sequence: body.reconciles_sequence,
+        parsed,
+        async (body, remember_destination) => {
+          const item = database.read((sql) => data.read_manager(sql, request.params.item_id).item);
+          const current = conversation_start.read_agent_conversation(
+            database,
+            item.manager_agent_key,
+          );
+          const overrides = {
+            backend_key:
+              body.backend_key === null ? null : require_conversation_backend_key(body.backend_key),
+            model: body.model,
+            reasoning_effort: body.reasoning_effort,
+            reasoning_effort_is_set: body.provided_fields.has('reasoning_effort'),
+          };
+          if (
+            current !== null &&
+            overrides.backend_key !== null &&
+            overrides.backend_key !== item.manager_launch_configuration.employee_backend
+          )
+            throw new PlannerError(
+              'validation',
+              'an existing Manager conversation cannot change backend',
+              { conversation_id: current, backend_key: overrides.backend_key },
+            );
+          const admission = video_send_admission(
+            database,
+            services.config.db_path,
+            files,
+            body.content,
+            body.sender_message_id,
+            { kind: 'manager', id: item.id, expected_conversation_id: body.conversation_id },
+            target,
+            identity.principal,
+          );
+          const delivered = await send_message(
+            system,
+            database,
+            clock,
+            identity,
+            target,
+            remember_destination(
+              admission !== null
+                ? (id) => admission.content(id)
+                : (id) =>
+                    conversation_message_content(files, id, body.content, {
+                      sender_message_id: body.sender_message_id,
+                    }),
+            ),
+            body.mode,
+            {
+              admission,
+              conversation_id: body.conversation_id,
+              created_conversation_id: conversation_start.new_conversation_id(),
+              runs_under: overrides,
+              owner_read_through_sequence: body.owner_read_through_sequence,
+              sender_message_id: body.sender_message_id,
+              sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
+              reconciles_sequence: body.reconciles_sequence,
+            },
+          );
+          return {
+            conversation_id: delivered.conversation_id,
+            ...delivery_fate_json(delivered.fate),
+          };
         },
       );
-      return { conversation_id: delivered.conversation_id, ...delivery_fate_json(delivered.fate) };
     },
   );
   app.post<{ Params: { item_id: string } }>(

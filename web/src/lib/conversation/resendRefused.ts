@@ -32,6 +32,15 @@ function bytesAsBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+export function isRecordedVideo(piece: MessagePiece): boolean {
+  return piece.piece === "file" && piece.media_type.startsWith("video/");
+}
+
+export function recordedContentCanBeEdited(content: readonly MessagePiece[]): boolean {
+  const editable = content.filter(piece => !isRecordedVideo(piece));
+  return recordedContentCanBeResent(editable) || editable.length === 0 && content.some(isRecordedVideo);
+}
+
 export const ATTACHMENT_NOT_READ_BACK = "An attachment could not be read back from the conversation, so nothing was sent.";
 
 /** The recorded message as pieces to send: its words as they were, and each kept file
@@ -71,6 +80,8 @@ export type ResendRecordedMessage = {
   available(): boolean;
   /** ``refusedSequence`` is the refused row's sequence: the new prompt names it, and the
    *  refused bubble folds away once that prompt is recorded. */
+  edit?(conversationId: string, content: readonly MessagePiece[]): Promise<boolean>;
+  editLocal?(id: string): Promise<boolean>;
   resend(conversationId: string, content: readonly MessagePiece[], refusedSequence?: number): Promise<boolean>;
 };
 export const RESEND_RECORDED_MESSAGE = Symbol("conversation-resend-recorded-message");

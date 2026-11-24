@@ -77,6 +77,7 @@
   import {
     createPendingConversationImages,
     pendingConversationImageBytes,
+    restoredPendingImages,
     releasePendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
@@ -84,6 +85,7 @@
     CONVERSATION_FILE_ACCEPT,
     createPendingConversationFiles,
     pendingConversationFileBytes,
+    restoredPendingFiles,
     type PendingConversationFile
   } from "../../lib/conversation/pendingFiles";
   import type {
@@ -131,6 +133,7 @@
     undeliveredReason = null,
     placeholder = "Message the agent...",
     disabled = false,
+    sendAvailable = true,
     showRunPicker = true,
     onSend,
     onStop,
@@ -203,6 +206,7 @@
     undeliveredReason?: string | null;
     placeholder?: string;
     disabled?: boolean;
+    sendAvailable?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
     showRunPicker?: boolean;
     onSend: (
@@ -433,7 +437,7 @@
     startsOnModel,
     startsOnReasoningEffort,
     inputDisabled,
-    hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
+    hasSendableContent: sendAvailable && (text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0),
     sendsInFlight,
     deliveryMode,
     supportsSteer,
@@ -598,6 +602,7 @@
         return;
       }
     }
+    if (!sendAvailable) return;
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
     const capturedRetryContext = restoredSendContext;
@@ -1105,6 +1110,27 @@
       if (!destroyed && !inputDisabled && (active === null || active === document.body)) returnFocusToTheField();
     });
   });
+  export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
+    if (text !== "" || attachmentIntakesInFlight > 0 || attachments.length > 0 || voiceState.phase !== "idle") return false;
+    if (content.some(piece => piece.piece === "video_upload")) return false;
+    const images = restoredPendingImages(content, nextImageId);
+    const files = restoredPendingFiles(content, nextFileId);
+    let imageIndex = 0;
+    let fileIndex = 0;
+    const order: ComposerAttachmentReference[] = [];
+    for (const piece of content) {
+      if (piece.piece === "image") order.push({kind: "image", id: images.images[imageIndex++]!.id});
+      if (piece.piece === "file") order.push({kind: "file", id: files.files[fileIndex++]!.id});
+    }
+    pendingImages = images.images;
+    pendingFiles = files.files;
+    nextImageId = images.nextId;
+    nextFileId = files.nextId;
+    attachmentOrder = order;
+    takeBackQueuedWords(content.flatMap(piece => piece.piece === "text" ? [piece.text] : []).join("\n\n"));
+    return true;
+  }
+
   /** v11 (4): a queued message taken back to edit: its words come into the field, after
    *  anything already written there, and the cursor waits at their end. They were queued,
    *  so the composer sends them with Queue again unless the person picks another mode. */

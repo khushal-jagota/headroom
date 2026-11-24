@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   import WorkMoveDialog from "./machines/WorkMoveDialog.svelte";
   import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
@@ -176,10 +177,7 @@
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered = await mutateJson<DeliveredMessage>(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body});
-    conversationId = delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(`/api/managers/${encodeURIComponent(itemId)}/conversation/send`, body);
   }
 
   async function newConversation(): Promise<void> {
