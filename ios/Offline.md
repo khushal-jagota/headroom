@@ -17,7 +17,9 @@ retain their requested conversation and remain read only when it is no longer cu
 Saved responses can supply display while fresh reads run. Review builds its cards
 from the saved view, and a message or ask card whose read cannot reach the server
 uses the phone's saved copy of its last read, so Mark read and an answer still
-save. A card whose detail this phone never read shows its title and waits. New responses apply
+save. A card whose detail this phone never read acts on the saved view: its Mark read
+reads through the conversation's newest message when the view was built, and its ask
+comes from the view ([Review](Review.md#cards)). New responses apply
 immediately, including changes that move rows. A failed refresh keeps the content
 on screen with no note; the next stream event or pull replaces it. A read that
 cannot reach the server (no network, a timeout, a dropped connection, a failed host

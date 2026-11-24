@@ -224,6 +224,50 @@ import XCTest
         XCTAssertEqual(sent["request_id"] as? String, "request-1")
         XCTAssertEqual(sent["answers"] as? [String: [String: [String]]], ["colour": ["answers": ["Blue"]]])
     }
+    /// Risk: offline, a card this phone never read has no saved copy, so it waits and
+    /// cannot act. The saved view's bound and ask stand in: Mark read reaches only the
+    /// newest message the view knew, so a later one stays unread, and the ask is answered
+    /// with the view's own IDs. A run the card did read always wins over the bound.
+    func testOfflineCardsNeverReadActOnTheSavedView() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        ReviewMessageProtocol.state.offline = true
+        // The server has message 67 since the view was saved with 66 as its newest.
+        ReviewMessageProtocol.state.newMessage = true
+        var unread = item(); unread.latestOwnerMessageSequence = 66
+        let message = ReviewMessageDecision()
+        await message.load(item: unread, api: api, shownAt: .now)
+        XCTAssertNil(message.error)
+        XCTAssertFalse(message.loaded)
+        XCTAssertEqual(message.markReadThrough, 66)
+        let marked = await message.markRead()
+        XCTAssertTrue(marked)
+        var ask = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+        ask.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-1", title: "Run ls", detail: "ls", options: [
+            .init(optionId: "allow", label: "Allow", optionKind: "allow_once"), .init(optionId: "reject", label: "Reject", optionKind: "reject_once")]), pendingUserInput: nil)
+        let answer = ReviewAskDecision()
+        await answer.load(item: ask, api: api)
+        XCTAssertTrue(answer.available)
+        XCTAssertTrue(answer.answerPermission(try XCTUnwrap(answer.approveOption), item: ask, api: api))
+        ReviewMessageProtocol.state.offline = false
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ReviewMessageProtocol.state.bodies.count < 2, ContinuousClock.now < deadline {
+            await Outbox.shared.drain(api: api)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let bodies = ReviewMessageProtocol.state.bodies
+        XCTAssertEqual(bodies.filter { $0["through_sequence"] != nil }.map { $0["through_sequence"] as? Int }, [66])
+        let sent = try XCTUnwrap(bodies.first { $0["ask_id"] != nil })
+        XCTAssertEqual(sent["ask_id"] as? String, "ask-1")
+        XCTAssertEqual(sent["option_id"] as? String, "allow")
+        // Once read, the displayed run bounds Mark read, even below a higher window bound.
+        unread.latestOwnerMessageSequence = 70
+        ReviewMessageProtocol.state.newMessage = false
+        let read = ReviewMessageDecision()
+        await read.load(item: unread, api: api, shownAt: .now)
+        XCTAssertEqual(read.markReadThrough, 66)
+    }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()

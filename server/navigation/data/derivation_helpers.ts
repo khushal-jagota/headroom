@@ -3,7 +3,7 @@ import type {
   LifecycleSummary,
   CurrentAttentionKnowledge,
 } from '../../../web/src/lib/navigation/contracts.ts';
-import { RECAP_PREVIEW_CHARACTERS } from './derivation_configuration.ts';
+import { PENDING_ASK_MAXIMUM_BYTES, RECAP_PREVIEW_CHARACTERS } from './derivation_configuration.ts';
 import { PlannerError } from '../../core/contracts.ts';
 export type Row = Record<string, any>;
 export interface WorkflowStage {
@@ -170,4 +170,47 @@ export function currentAttention(sql: ReadSql, id: string): CurrentAttentionKnow
       last_turn_failed: current.last_turn_failed,
     },
   };
+}
+
+/**
+ * The ask a conversation's running turn waits on, in the conversation route's shape, so a
+ * Review card can answer it from the window alone. The newest ask is the one waiting, as
+ * `latest_ask_at` reads it. Null when it is larger than the record carries.
+ */
+export function pendingAsk(sql: ReadSql, id: string): Row | null {
+  const event = sql.get<{ kind: string; payload: string }>(
+    "SELECT kind,payload FROM conversation_events WHERE conversation_id=? AND kind IN ('permission_asked','user_input_requested') ORDER BY sequence DESC LIMIT 1",
+    [id],
+  );
+  if (!event) return null;
+  const stored = JSON.parse(event.payload);
+  const ask =
+    event.kind === 'permission_asked'
+      ? {
+          kind: 'permission',
+          ask_id: stored.ask_id,
+          title: stored.title,
+          detail: stored.detail ?? null,
+          options: stored.options.map((option: Row) => ({
+            option_id: option.option_id,
+            label: option.label,
+            option_kind: option.option_kind,
+          })),
+        }
+      : {
+          kind: 'user_input',
+          request_id: stored.request_id,
+          questions: stored.questions.map((question: Row) => ({
+            question_id: question.question_id,
+            header: question.header,
+            question: question.question,
+            options: question.options.map((option: Row) => ({
+              label: option.label,
+              description: option.description,
+            })),
+            multi_select: question.multi_select,
+            allow_other: question.allow_other,
+          })),
+        };
+  return Buffer.byteLength(JSON.stringify(ask)) > PENDING_ASK_MAXIMUM_BYTES ? null : ask;
 }

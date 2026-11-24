@@ -27,6 +27,11 @@ struct ReviewItem: Identifiable, Equatable, Sendable {
     var ownerReadThroughSequence = 0
     /// False when the owner has moved on to another conversation: read only.
     var addressCurrent = true
+    /// The newest message to the owner when the view was built: the Mark read bound for a
+    /// message card that never read its run.
+    var latestOwnerMessageSequence: Int? = nil
+    /// The ask the view carried, for an ask card that cannot read its conversation.
+    var pendingAsk: ReviewAskState? = nil
     var isProposal: Bool { reviewItemType == "proposal" }
     var isMessage: Bool { reviewItemType == "message" }
     var isAsk: Bool { reviewItemType == "ask" }

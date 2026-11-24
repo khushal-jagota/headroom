@@ -4,15 +4,15 @@ import Observation
 /// The ask an agent's running turn waits on, read from its conversation as the web's
 /// ReviewAskCard reads it (`GET /api/conversation/conversations/{id}`).
 struct ReviewAskState: Decodable, Equatable, Sendable {
-    struct PermissionOption: Decodable, Equatable, Sendable { let optionId: String; let label: String; let optionKind: String }
-    struct Permission: Decodable, Equatable, Sendable {
+    struct PermissionOption: Codable, Equatable, Sendable { let optionId: String; let label: String; let optionKind: String }
+    struct Permission: Codable, Equatable, Sendable {
         let askId: String
         let title: String
         let detail: String?
         let options: [PermissionOption]
     }
-    struct Option: Decodable, Equatable, Sendable { let label: String; let description: String? }
-    struct Question: Decodable, Equatable, Sendable {
+    struct Option: Codable, Equatable, Sendable { let label: String; let description: String? }
+    struct Question: Codable, Equatable, Sendable {
         let questionId: String
         let header: String?
         let question: String
@@ -22,7 +22,7 @@ struct ReviewAskState: Decodable, Equatable, Sendable {
         /// The owner may answer in words.
         var takesWords: Bool { allowOther || options.isEmpty }
     }
-    struct UserInput: Decodable, Equatable, Sendable { let requestId: String; let questions: [Question] }
+    struct UserInput: Codable, Equatable, Sendable { let requestId: String; let questions: [Question] }
     let isRunning: Bool
     let pendingPermissionAsk: Permission?
     let pendingUserInput: UserInput?
@@ -74,7 +74,8 @@ extension APIClient {
     func load(item: ReviewItem, api: APIClient) async {
         guard let id = item.conversationId, !loading else { return }
         if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
-        if state == nil, let saved = api.savedReviewAsk(id) { accept(saved) }
+        // The ask the view carried is newer than a saved read that predates it, so it comes first.
+        if state == nil, let saved = item.pendingAsk ?? api.savedReviewAsk(id) { accept(saved) }
         loading = true; defer { loading = false }
         do {
             let read = try await api.reviewAsk(id)

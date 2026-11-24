@@ -26,7 +26,7 @@ const view = encodeURIComponent(
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
 const streamPath = `/api/navigation/view/events?view=${view}`;
 
-async function setup(asking = false) {
+async function setup(asking = false, events: Array<[number, string, object]> = []) {
   let producer: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let attached = false;
@@ -45,6 +45,11 @@ async function setup(asking = false) {
       (conversation_id,backend_key,model,workspace_folder,access,created_at)
       VALUES('actual','codex','fixture','/synthetic','full',0)`);
     tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','actual')");
+    for (const [sequence, kind, payload] of events)
+      tx.run(
+        "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES('actual',?,?,?,0)",
+        [sequence, kind, JSON.stringify(payload)],
+      );
   });
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
   producer.bind_runtime(() =>
@@ -182,7 +187,7 @@ test('actual producer revocation closes an open HTTP stream and reattachment adm
 // can show that it holds the Chief's card, keeps the unread list as it was, and drops the card
 // when the ask is gone. Reuses this fixture: no Ticket, browser or second host.
 test('a Chief with an open ask joins Review and not the unread list', async () => {
-  const members = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') => {
+  const snapshot = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') => {
     const request = encodeURIComponent(
       JSON.stringify({
         projection_version: 7,
@@ -208,12 +213,45 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     );
     const response = await f.app.inject(`/api/navigation/view/snapshot?view=${request}`);
     expect(response.statusCode).toBe(200);
-    const snapshot = response.json() as CurrentViewSnapshot;
-    return (snapshot.content.windows[0]?.members ?? []).map((key) => `${key.kind}:${key.id}`);
+    return response.json() as CurrentViewSnapshot;
   };
+  const members = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') =>
+    ((await snapshot(f, section)).content.windows[0]?.members ?? []).map(
+      (key) => `${key.kind}:${key.id}`,
+    );
+  const conversation = async (f: Awaited<ReturnType<typeof setup>>) =>
+    (await snapshot(f, 'review')).content.records.find(
+      (record) => record.kind === 'conversation' && record.id === 'actual',
+    )?.value;
+  const permission = (detail: string) => ({
+    ask_id: 'ask',
+    title: 'Run a command',
+    detail,
+    options: [{ option_id: 'allow', label: 'Allow', option_kind: 'allow_once' }],
+  });
+  const events = (detail: string): Array<[number, string, object]> => [
+    [1, 'message_to_owner', { text: 'Done' }],
+    [2, 'permission_asked', permission(detail)],
+    [3, 'tool_call_started', {}],
+  ];
   const asking = await setup(true);
   const quiet = await setup(false);
+  const answerable = await setup(true, events('ls'));
+  const answered = await setup(false, events('ls'));
+  const oversized = await setup(true, events('x'.repeat(4096)));
   try {
+    // Distinct risk: an unloaded Review card offline has only the window. Its conversation record
+    // must carry the read bound (the newest owner message, not the newest event) and the waiting
+    // ask in the conversation route's shape, only while it waits, and never an ask over the cap.
+    expect(await conversation(answerable)).toMatchObject({
+      latest_owner_message_sequence: 1,
+      pending_ask: { kind: 'permission', ...permission('ls') },
+    });
+    expect(await conversation(answered)).toMatchObject({
+      latest_owner_message_sequence: 1,
+      pending_ask: null,
+    });
+    expect(await conversation(oversized)).toMatchObject({ pending_ask: null });
     expect(await members(asking, 'review')).toHaveLength(1);
     expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
     expect(await members(asking, 'unread')).toEqual([]);
@@ -234,5 +272,9 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     asking.navigation.close();
     await quiet.app.close();
     quiet.navigation.close();
+    for (const f of [answerable, answered, oversized]) {
+      await f.app.close();
+      f.navigation.close();
+    }
   }
 });

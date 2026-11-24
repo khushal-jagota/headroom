@@ -49,6 +49,8 @@ export function project(record: NavigationRecord, settledOnly = false): ViewReco
           'owner_read_through_sequence',
           'first_unread_owner_message_at',
           'latest_ask_at',
+          'latest_owner_message_sequence',
+          'pending_ask',
           'error_acknowledged_through_sequence',
           'attention',
         ].map((name) => [name, value[name]]),

@@ -85,8 +85,14 @@ selection feedback; crossing the swipe threshold uses a light impact.
 The next cards are read ahead, three at a time with the shown one: a proposal with its
 worker manifest, a message with its unread run, an ask with its wording. Each read is
 also saved on the phone. Offline, a message or ask card uses that saved copy, so Mark
-read and an answer still save; a card this phone never read shows its title and
-waits for the connection.
+read and an answer still save. A card this phone never read acts on the review window
+instead. Each conversation in the window carries its newest message to Khushal and the
+ask its turn waits on, if that ask is 4 KB or less. A message card then shows only its
+title and recap. Its Mark read reads through that newest message, so a later message
+stays unread. This is a deliberate exception to "Mark read acknowledges only the
+displayed run": the card shows the run as the window last saw it. A run the card did
+read always bounds Mark read. Reply waits for the run. An ask card shows the window's
+ask and answers it through the outbox. A larger ask waits for the connection.
 
 ### Proposal card
 
@@ -202,11 +208,13 @@ Simulator.
 - `NavigationViewTests` checks the split against desktop's fixtures: canonical
   addresses with no fallback to a former owner, window order, the native identities,
   exclusion of backlogged, done, settled-owner and agent-held work, asks from live and
-  saved views, and a request that sends every field with the history keys.
+  saved views, the read bound and ask that a saved view keeps for cards never read, and
+  a request that sends every field with the history keys.
 - `ReviewMessageTests` covers a complete 65-message run, bounded Mark read,
   refusal, relaunch and retry with attachments, a reply that gave up keeping its
   identity on Try Again, Mark read and an ask answer saved from the phone's saved copy
-  offline, historical send prevention and recovery sender attribution.
+  offline, the same from the window for a card never read, historical send prevention
+  and recovery sender attribution.
 - `ReviewDecisionTests` covers approval with the visible revision, next gate and
   holder; changed proposals; send-back guidance; a refused decision bringing back its
   note and attachments; voice; and deployment expiry.
@@ -226,7 +234,11 @@ stub with `PANELS_REVIEW_MESSAGES=1`, `PANELS_REVIEW_SPLIT=1` and
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testSplitCardsSkipAndReturn`.
 `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` reaches
 Review through the Sidebar and its summary, replies through a refusal and follows the
-conversation route.
+conversation route. `ReviewQueueScreensTests/testCardsNeverReadActOffline` runs alone
+with `PANELS_REVIEW_QUEUE=1` and `--review`. The stub fails every card's conversation
+read, then drops every connection and adds a message. Mark read, a question and a
+permission are each saved from the window and land once on reconnect, and Mark read
+stops before the added message.
 
 The one-off walk `ReviewQueueScreensTests/testCardsAndSummaryStates` runs with
 `PANELS_REVIEW_QUEUE=1` and `--review`. It visits every card kind and the four

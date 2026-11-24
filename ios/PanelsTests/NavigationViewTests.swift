@@ -256,6 +256,32 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(restored.items.map(\.id), ["a:plan:2.0:revision:1", "message:a-conversation:1.0", "ask:chief-conversation:4.0"])
     }
 
+    /// Risk: offline, a card the phone never read can act only on what the saved view kept.
+    /// The Mark read bound and the waiting ask must survive the saved copy's encode, its
+    /// runtime-fact strip and its decode at launch, and reach each card. A record without
+    /// them, from an older server, decodes as before.
+    func testSavedViewKeepsTheReadBoundAndTheAskForUnreadCards() throws {
+        let ask: [String: Any] = ["kind": "user_input", "request_id": "request-1", "questions": [["question_id": "colour", "header": "", "question": "Which colour?",
+            "options": [["label": "Blue", "description": "Calm"]], "multi_select": false, "allow_other": true]]]
+        let worker = address("worker", owner: ("ticket", "a"), conversation: "a-conversation", current: true, parent: ("manager", "parent"))
+        let chiefAddress = address("chief-address", owner: ("chief", "chief"), conversation: "chief-conversation", current: true, parent: nil)
+        let records = [ticket([:]), conversation("a-conversation", unreadAt: 1, latestOwnerMessage: 7), worker, parentManager(), project("p", "Project"),
+                       chiefRecord("chief-conversation"), conversation("chief-conversation", message: false, askAt: 4, pendingAsk: ask), chiefAddress]
+        let window = viewWindow("review", members: [["kind": "ticket", "id": "a"], ["kind": "address", "id": "chief-address"]])
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        let saved = try APIClient.decoder().decode(ViewSnapshot.self, from: encoder.encode(try snapshot(records, windows: [window]).savedDisplay)).savedDisplay
+        let items = NavigationPresentation(saved.content.records).reviewQueue(in: saved).items
+        XCTAssertEqual(items.map(\.id), ["message:a-conversation:1.0", "ask:chief-conversation:4.0"])
+        XCTAssertEqual(items[0].latestOwnerMessageSequence, 7)
+        let question = try XCTUnwrap(items[1].pendingAsk?.pendingUserInput?.questions.first)
+        XCTAssertEqual(items[1].pendingAsk?.pendingUserInput?.requestId, "request-1")
+        XCTAssertEqual(question.options.map(\.label), ["Blue"])
+        XCTAssertTrue(question.allowOther)
+        XCTAssertEqual(items[1].pendingAsk?.isRunning, true)
+        XCTAssertNil(try conversationValue("a-conversation").latestOwnerMessageSequence)
+        XCTAssertNil(try conversationValue("a-conversation").pendingAsk)
+    }
+
     // MARK: Request (owner.ts refreshDemand, read.py request)
 
     func testRequestSendsEveryFieldAndStaysWithinTheRowBudget() throws {
@@ -319,11 +345,15 @@ final class NavigationViewTests: XCTestCase {
          "members": members, "total": total ?? members.count, "previous": NSNull(), "next": NSNull(), "forward_overlap": NSNull(), "backward_overlap": NSNull()]
     }
     /// fixtures.ts conversation(): working, awaiting an answer, unread and failed by default.
-    private func conversation(_ id: String, read: Int = 0, message: Bool = true, failure: Bool = true, unreadAt: Int = 1, awaiting: Bool = true, askAt: Int? = nil) -> [String: Any] {
-        ["kind": "conversation", "id": id, "value": ["first_unread_owner_message_at": message ? unreadAt as Any : NSNull(), "owner_read_through_sequence": read, "error_acknowledged_through_sequence": 0,
+    private func conversation(_ id: String, read: Int = 0, message: Bool = true, failure: Bool = true, unreadAt: Int = 1, awaiting: Bool = true, askAt: Int? = nil,
+                              latestOwnerMessage: Int? = nil, pendingAsk: [String: Any]? = nil) -> [String: Any] {
+        var value: [String: Any] = ["first_unread_owner_message_at": message ? unreadAt as Any : NSNull(), "owner_read_through_sequence": read, "error_acknowledged_through_sequence": 0,
             "latest_ask_at": askAt as Any? ?? NSNull(),
             "attention": ["current": ["signal": ["working": true, "message_for_owner": message], "awaiting_answer": awaiting, "last_turn_failed": failure],
-                          "durable": ["message_for_owner": message, "last_turn_failed": failure]]]]
+                          "durable": ["message_for_owner": message, "last_turn_failed": failure]]]
+        if let latestOwnerMessage { value["latest_owner_message_sequence"] = latestOwnerMessage }
+        if let pendingAsk { value["pending_ask"] = pendingAsk }
+        return ["kind": "conversation", "id": id, "value": value]
     }
     private func conversationValue(_ id: String) throws -> ViewConversationValue {
         try APIClient.decoder().decode(ViewConversationValue.self, from: JSONSerialization.data(withJSONObject: conversation(id)["value"]!))

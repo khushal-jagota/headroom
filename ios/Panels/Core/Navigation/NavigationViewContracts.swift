@@ -167,6 +167,36 @@ struct ViewConversationValue: Codable, Sendable {
     let ownerReadThroughSequence: Int
     let errorAcknowledgedThroughSequence: Int
     let attention: ViewAttention
+    /// The newest message to the owner. A Review card that never read its run marks read
+    /// through it, so a later message stays unread. Absent from older servers.
+    var latestOwnerMessageSequence: Int? = nil
+    /// The ask the running turn waited on when the view was built, so a Review card that
+    /// never read its conversation can still answer it. Absent from older servers.
+    var pendingAsk: ViewPendingAsk? = nil
+}
+
+/// The view's `pending_ask`: the conversation route's permission ask or question, with a kind.
+struct ViewPendingAsk: Codable, Equatable, Sendable {
+    let permission: ReviewAskState.Permission?
+    let userInput: ReviewAskState.UserInput?
+    private enum CodingKeys: String, CodingKey { case kind }
+    init(permission: ReviewAskState.Permission? = nil, userInput: ReviewAskState.UserInput? = nil) {
+        self.permission = permission; self.userInput = userInput
+    }
+    /// An ask this build cannot read leaves its card waiting for the conversation read, as
+    /// before; it never makes the whole view unreadable.
+    init(from decoder: Decoder) throws {
+        let kind = try? decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .kind)
+        permission = kind == "permission" ? try? ReviewAskState.Permission(from: decoder) : nil
+        userInput = kind == "user_input" ? try? ReviewAskState.UserInput(from: decoder) : nil
+    }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let permission { try container.encode("permission", forKey: .kind); try permission.encode(to: encoder) }
+        else if let userInput { try container.encode("user_input", forKey: .kind); try userInput.encode(to: encoder) }
+    }
+    /// The view only carries an ask while its turn waits on it.
+    var state: ReviewAskState { ReviewAskState(isRunning: true, pendingPermissionAsk: permission, pendingUserInput: userInput) }
 }
 
 struct ViewAddressValue: Codable, Sendable {
@@ -310,7 +340,8 @@ extension ViewSnapshot {
             return .conversation(id, ViewConversationValue(firstUnreadOwnerMessageAt: value.firstUnreadOwnerMessageAt,
                 latestAskAt: value.latestAskAt, ownerReadThroughSequence: value.ownerReadThroughSequence,
                 errorAcknowledgedThroughSequence: value.errorAcknowledgedThroughSequence,
-                attention: ViewAttention(current: nil, durable: value.attention.durable)))
+                attention: ViewAttention(current: nil, durable: value.attention.durable),
+                latestOwnerMessageSequence: value.latestOwnerMessageSequence, pendingAsk: value.pendingAsk))
         }
         return ViewSnapshot(wireVersion: wireVersion, projectionVersion: projectionVersion, viewId: viewId,
             scopeGeneration: scopeGeneration, orderingGeneration: orderingGeneration, coverage: coverage,

@@ -169,10 +169,36 @@ export interface CurrentAttentionKnowledge {
 
 export type AttentionKnowledge = CurrentAttentionKnowledge;
 
+/** An ask in the conversation route's shape, so a Review card can answer it from the window. */
+export type PendingAsk =
+  | {
+      kind: "permission";
+      ask_id: string;
+      title: string;
+      detail: string | null;
+      options: Array<{ option_id: string; label: string; option_kind: string }>;
+    }
+  | {
+      kind: "user_input";
+      request_id: string;
+      questions: Array<{
+        question_id: string;
+        header: string;
+        question: string;
+        options: Array<{ label: string; description: string }>;
+        multi_select: boolean;
+        allow_other: boolean;
+      }>;
+    };
+
 export interface ConversationValue {
   first_unread_owner_message_at: number | null;
   /** When the newest ask was raised. A stored record from before the field has none. */
   latest_ask_at?: number | null;
+  /** The newest message to the owner. A stored record from before the field has none. */
+  latest_owner_message_sequence?: number | null;
+  /** The ask the running turn waits on, while it waits and fits the record. */
+  pending_ask?: PendingAsk | null;
   latest_sequence: number;
   owner_read_through_sequence: number;
   latest_agent_activity_sequence: number;
@@ -467,6 +493,8 @@ export interface ViewSettledManagerValue {
 export interface ViewConversationValue {
   first_unread_owner_message_at: number | null;
   latest_ask_at?: number | null;
+  latest_owner_message_sequence?: number | null;
+  pending_ask?: PendingAsk | null;
   owner_read_through_sequence: number;
   error_acknowledged_through_sequence: number;
   attention: AttentionKnowledge;
