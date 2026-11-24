@@ -53,7 +53,7 @@
   {#if destination}<MachineIdentity locale={destination} {machineId} showName />{/if}
   <UnifiedModelPicker
     view={editor.picker}
-    bind:snapshots={editor.backends}
+    snapshots={editor.backends}
     models={editor.snapshot?.available_models ?? []}
     backendEffortOptions={editor.snapshot?.reasoning_effort_options ?? []}
     below chevron="none" scrollPanel

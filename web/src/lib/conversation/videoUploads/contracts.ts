@@ -37,7 +37,10 @@ export type PendingVideo = {
   previewUrl?: string;
 };
 export type ComposerSendContext = {
+  queueWhilePending?: boolean;
   messageId: string;
+  sentAtUnixMilliseconds?: number;
+  attachmentNames?: readonly string[];
   expectedConversationId: string | null;
   destination?: UploadDestination;
 };

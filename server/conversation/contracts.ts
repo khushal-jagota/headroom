@@ -218,6 +218,7 @@ export class PromptDeliveryUncertain {
   declare private readonly _PromptDeliveryUncertain: void;
 }
 export class HeldPrompt {
+  readonly requested_mode: PromptDeliveryMode;
   readonly held_prompt_id: string;
   readonly content: MessageContent;
   readonly sender_label: string;
@@ -228,6 +229,7 @@ export class HeldPrompt {
   readonly queue_reason: PromptQueueReason;
   readonly delivery_uncertain: boolean;
   constructor(values: {
+    requested_mode?: PromptDeliveryMode;
     held_prompt_id: string;
     content: MessageContent;
     sender_label: string;
@@ -238,6 +240,7 @@ export class HeldPrompt {
     queue_reason?: PromptQueueReason;
     delivery_uncertain?: boolean;
   }) {
+    this.requested_mode = values.requested_mode ?? PromptDeliveryMode.queue;
     this.held_prompt_id = values.held_prompt_id;
     this.content = values.content;
     this.sender_label = values.sender_label;
@@ -330,6 +333,9 @@ export interface RecordMessageToOwnerOptions {
   sent_at_unix_milliseconds?: number | null;
   recording_receipt?: NativeMessageOperation | null;
 }
+export type OwnerSendProgress =
+  { state: 'queued'; position: number } | { state: 'pending' } | { state: 'uncertain' };
+
 export interface ConversationSystem {
   configure_worker_cleanup_recheck?(
     callback: (
@@ -366,6 +372,12 @@ export interface ConversationSystem {
   ): Promise<void>;
   interrupt(conversation_id: string): Promise<void>;
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]>;
+  owner_send_progress(
+    conversation_id: string,
+    sender_message_id: string,
+    recipient: Principal,
+  ): Promise<OwnerSendProgress | null>;
+
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>>;
   promote_held_prompt(
     conversation_id: string,

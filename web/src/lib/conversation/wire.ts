@@ -185,6 +185,7 @@ export type ComposerCatalogEntry = {
 };
 
 export type HeldPrompt = StoredMessageContent & {
+  requested_mode?: PromptDeliveryMode;
   held_prompt_id: string;
   sender_message_id?: string | null;
   sender_label: string;
@@ -192,6 +193,7 @@ export type HeldPrompt = StoredMessageContent & {
   sender?: Principal | null;
   recipient?: Principal | null;
   queue_reason: PromptQueueReason;
+  delivery_uncertain?: boolean;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */
@@ -248,6 +250,9 @@ type SenderMintedPromptFields = {
 };
 
 export type ConversationEvent =
+  | Row<"agent_turn_started", { turn_number: number; reason: string }>
+  | Row<"background_task_started", { task_id: string; task_description: string }>
+  | Row<"background_task_ended", { task_id: string; task_description: string; task_status: string }>
   | Row<
       "prompt",
       StoredMessageContent & {

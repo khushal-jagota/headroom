@@ -688,7 +688,7 @@ test('a backend that cannot steer holds a steer and refuses its promotion until 
       }),
     ).toEqual(new PromptDeliveryQueued({ queue_position: 1 }));
     const held = (await f.core.held_prompts('core'))[0];
-    expect(held.queue_reason).toBe('steer_refused');
+    expect(held).toMatchObject({ queue_reason: 'steer_refused', requested_mode: 'steer' });
     // A running turn and a live child leave the capability as the only reason to refuse.
     expect(f.core.runtime_turn('core')).not.toBeNull();
     expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toEqual(

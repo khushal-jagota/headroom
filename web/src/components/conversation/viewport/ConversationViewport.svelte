@@ -70,8 +70,6 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
-    /** What stands at the very end of the thread after everything said: the person's
-     *  messages that are waiting to be sent. */
     afterTranscript?: Snippet;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
@@ -161,7 +159,7 @@
   let newestLineBelowTheView = $state(false);
   /** v8 (11): how far the thread's end was below the view at the last scroll or resize. */
   let endGapBeforeResize = 0;
-  /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
+  /** Newer content is below the view, past the near-the-bottom margin: Jump to latest shows. */
   let newestLineFarBelow = $state(false);
   /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
   let atTheTop = $state(true);
@@ -1195,10 +1193,11 @@
     return () => observer.disconnect();
   });
 
-  // The jump is drawn by the pane, straddling the composer's top edge. v5.4: it shows only
-  // while the newest content is more than one viewport below the visible area (or newer
-  // history is not loaded yet, or a jump is under way).
-  const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);
+  // The jump is drawn by the pane, straddling the composer's top edge. It shows while the newest
+  // content is below the view and the reader has moved off it. While the thread follows new
+  // output the following steps trail the arriving lines, so that gap does not show it. It also
+  // shows while newer history is not loaded yet, or a jump is under way.
+  const jumpShown = $derived((newestLineFarBelow && manualReader) || newerHistory || newerThanUnplacedAnchor || latestPending);
   $effect(() => {
     jump = jumpShown
       ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
@@ -1252,10 +1251,10 @@
       {onSendAgain}
     />
     {/if}
-    <!-- v8 (3): the Working line right after the running turn's content (its steered
-         messages are inside the turn), then the queued messages, which send after it. -->
     {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
-    {#if afterTranscript}{@render afterTranscript()}{/if}
+    {#if afterTranscript}
+      <div class="held-queue-slot">{@render afterTranscript()}</div>
+    {/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1296,6 +1295,9 @@
   }
   /* An empty conversation takes the whole view, so its one line stands in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
+  /* Keep a short transcript at the top and its held messages against the composer. */
+  .chat-thread-content:has(> .held-queue-slot) { flex-grow: 1; }
+  .chat-thread-content > .held-queue-slot { margin-block-start: auto; }
   /* Answer room is not content and never shrinks to make room for content. The browser keeps
      the reader's place when history arrives above them; nothing here competes with it. */
   .c2-reserved { flex: none; overflow-anchor: none; }

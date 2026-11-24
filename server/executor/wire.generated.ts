@@ -14,6 +14,7 @@ export type AcceptanceReceipt = {
 };
 export type AgentMessageCompleted = { content: MessageContent };
 export type AgentMessageDelta = { text_delta: string };
+export type AgentTurnStarted = { reason: string };
 export type AnswerApplication = { answer_id: string; applied_at_mac_ms: number; ask: AskReference };
 export type AnswerPermission = {
   answer?: DurableAnswer | null;
@@ -41,6 +42,7 @@ export type BackendEvent = {
   turn: TurnToken | null;
 };
 export type BackendEventMethod =
+  | 'agent_turn_started'
   | 'agent_message_delta'
   | 'model_thinking_happened'
   | 'agent_message_completed'
@@ -282,6 +284,7 @@ export type LeaseRefused = {
 };
 export type LeaseReply = {
   accepted_at_vps_ms: number;
+  agent_started_turns?: boolean;
   away_after_seconds: number;
   mailbox_high_sequence: number;
   server_move?: ServerMoveNotice | null;
@@ -563,6 +566,7 @@ export type WritePrompt = {
   sender_message_count?: number;
 };
 export interface WireTypes {
+  AgentTurnStarted: AgentTurnStarted;
   AcceptanceReceipt: AcceptanceReceipt;
   AgentMessageCompleted: AgentMessageCompleted;
   AgentMessageDelta: AgentMessageDelta;

@@ -1,5 +1,6 @@
 /** Local backend news, serialized behind accepted prompt and steer receipts. */
 import {
+  AgentTurnStarted,
   BackendStreamEnded,
   BackgroundTaskEnded,
   BackgroundTaskStarted,
@@ -18,6 +19,13 @@ import type {
   BackendEventValue,
   TurnToken,
 } from '../backends/contracts.ts';
+import { new_running_turn } from './delivery.ts';
+import {
+  AgentTurnStartedEventPayload,
+  BackgroundTaskStartedEventPayload,
+  BackgroundTaskEndedEventPayload,
+} from '../events.ts';
+import { LifecycleOperation as O, LifecycleStatus as S } from '../record/lifecycle.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleKind as K } from '../record/lifecycle.ts';
 import { interpret_backend_event } from '../logic/backend_events.ts';
@@ -37,6 +45,8 @@ import {
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
 import { randomUUID } from 'node:crypto';
+import { observe_promise } from '../../core/promise_observer.ts';
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
@@ -67,6 +77,7 @@ export async function take_backend_event_with_receipt(
     expected_sink?: BackendEventSink;
     in_commit?: RecordCommitParticipant<JsonObject>;
     retry_later_at?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<AcceptedRecordEvent<JsonObject>> {
   await host.wait_for_reservation(state, token, options.retry_later_at);
@@ -85,7 +96,69 @@ export async function take_backend_event_with_receipt(
     event instanceof BackgroundTaskEnded ||
     event instanceof BackendStreamEnded;
   try {
-    if (host.shutting_down) return accepted;
+    if (host.shutting_down || options.signal?.aborted) return accepted;
+    if (event instanceof AgentTurnStarted) {
+      const can_start =
+        token === null &&
+        state.phase === 'idle' &&
+        state.running_turn === null &&
+        state.reserved_turn === null &&
+        !state.being_killed &&
+        !state.child_is_quarantined &&
+        (options.expected_sink === undefined || state.child_event_sink === options.expected_sink);
+      let started: TurnToken | null = null;
+      const result = await host.persist(state, () =>
+        host.options.store.commit_backend_event<JsonObject>((tx) => {
+          if (!can_start) return { result: { applied: false, turn: null }, written: [] };
+          const number = host.options.store.reserve_turn_number_in_transaction(
+            tx,
+            state.record.conversation_id,
+          );
+          started = { conversation_id: state.record.conversation_id, turn_number: number };
+          const written = host.options.store.append_in_transaction(
+            tx,
+            state.record.conversation_id,
+            [new AgentTurnStartedEventPayload({ turn_number: number, reason: event.reason })],
+            {
+              agent_activity: true,
+              lifecycle: [
+                {
+                  kind: K.turn,
+                  identity: String(number),
+                  turn_number: number,
+                  operation: O.turn,
+                  status: S.running,
+                  provider_identity: null,
+                },
+              ],
+            },
+          );
+          return { result: { applied: true, turn: { ...started } }, written };
+        }, options.in_commit ?? null),
+      );
+      if (result.taken && started !== null) {
+        state.running_turn = new_running_turn({
+          token: started,
+          automatic_compaction: false,
+          automatic_notice: false,
+          memory_notice_only: false,
+        });
+        state.last_touched_monotonic = host.monotonic_now();
+        state.model_thinking_shown_at_monotonic = 0;
+        set_phase(state, 'running');
+        const last = result.written.at(-1);
+        if (last)
+          state.record = new ConversationRecord({
+            ...state.record,
+            latest_agent_activity_at: last.created_at,
+            latest_agent_activity_sequence: last.sequence,
+          });
+        host.note_written(state, result.written);
+        host.options.publish_status_changed?.(state.record.conversation_id);
+        host.options.emit_change?.();
+      }
+      return result;
+    }
     const running = state.running_turn;
     const session =
       token === null &&
@@ -184,7 +257,7 @@ export async function take_backend_event_with_receipt(
         host.options.store.commit_backend_event<JsonObject>(
           (tx) => {
             const conversation_id = state.record.conversation_id;
-            const written = host.options.store.append_in_transaction(
+            let written = host.options.store.append_in_transaction(
               tx,
               conversation_id,
               interpreted.payloads,
@@ -231,6 +304,23 @@ export async function take_backend_event_with_receipt(
                 ...host.options.store.take_background_tasks_in_transaction(tx, conversation_id),
               ];
             }
+            if (live && event instanceof BackgroundTaskStarted)
+              written = [
+                ...written,
+                ...host.options.store.append_in_transaction(tx, conversation_id, [
+                  new BackgroundTaskStartedEventPayload(event),
+                ]),
+              ];
+            if (live && event instanceof BackgroundTaskEnded && ended_task_description !== null)
+              written = [
+                ...written,
+                ...host.options.store.append_in_transaction(tx, conversation_id, [
+                  new BackgroundTaskEndedEventPayload({
+                    ...event,
+                    task_description: ended_task_description,
+                  }),
+                ]),
+              ];
             return { result: { applied: live }, written };
           },
           options.in_commit === undefined
@@ -273,6 +363,13 @@ export async function take_backend_event_with_receipt(
     } else if (live && background_task_news) {
       if (event instanceof BackgroundTaskEnded) {
         state.last_touched_monotonic = host.monotonic_now();
+        if (
+          ended_task_description !== null &&
+          BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN.has(event.task_status) &&
+          !host.options.backend_registry.require_live(state.record.backend_key).capabilities.turns
+            .wakesOnBackgroundCompletion
+        )
+          host.background_task_notices.enqueue(state, [ended_task_description], true);
         if (
           ended_task_description !== null &&
           !BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN.has(event.task_status)
@@ -393,6 +490,49 @@ export function make_sink(
   const generation = randomUUID().replaceAll('-', '');
   const sink: CoreBackendEventSink = {
     generation,
+    start_agent_turn: (reason, cancellation) => {
+      const signal =
+        cancellation === undefined
+          ? host.shutdown_signal
+          : AbortSignal.any([host.shutdown_signal, cancellation]);
+      if (signal.aborted) return Promise.resolve(null);
+      const result = Promise.withResolvers<TurnToken | null>();
+      // Take a FIFO position now, rather than waiting for later pump work as well.
+      enqueue_backend_event(host, state, async () => {
+        if (signal.aborted) {
+          result.resolve(null);
+          return;
+        }
+        try {
+          const accepted = await take_backend_event_with_receipt(
+            host,
+            state,
+            null,
+            new AgentTurnStarted({ reason }),
+            { expected_sink: sink, signal },
+          );
+          result.resolve(
+            accepted.result.applied === true
+              ? (accepted.result.turn as unknown as TurnToken)
+              : null,
+          );
+        } catch (error) {
+          if (signal.aborted && is_shutdown_business_cancellation(error)) {
+            result.resolve(null);
+            return;
+          }
+          result.reject(error);
+          throw error;
+        }
+      });
+      return own_settlement(
+        state,
+        (async () => {
+          const observed = await observe_promise(result.promise, signal);
+          return observed.completed ? observed.value : null;
+        })(),
+      );
+    },
     report: (token, event) =>
       own_settlement(
         state,

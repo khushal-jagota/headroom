@@ -1,4 +1,4 @@
-import { PlannerError } from '../core/contracts.ts';
+import { PlannerError, type Principal } from '../core/contracts.ts';
 import type {
   WorkspaceIdentity,
   RetirementTarget,
@@ -17,6 +17,7 @@ import type {
   ConversationStartRequest,
   ConversationSystem,
   HeldPromptPromotionMode,
+  OwnerSendProgress,
   PromptDeliveryFate,
   RecordMessageToOwnerOptions,
   SendOptions,
@@ -57,7 +58,7 @@ import * as update_preparation from './runtime/update_preparation.ts';
 import * as system_shutdown from './runtime/system_shutdown.ts';
 import { acquire_after_steers, acquire_settled } from './runtime/synchronization.ts';
 import type { LockLease } from './runtime/synchronization.ts';
-import { IdleChildJanitor, LostBackgroundTaskNotices } from './runtime/maintenance.ts';
+import { IdleChildJanitor, BackgroundTaskNotices } from './runtime/maintenance.ts';
 import { save_attempt } from './runtime/save_attempt.ts';
 import { ConversationState, own_settlement } from './runtime/state.ts';
 import { WorkspaceAdmission } from './workspace_admission.ts';
@@ -96,7 +97,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     ConversationState
   >();
   idle_janitor: IdleChildJanitor | null = null;
-  readonly lost_task_notices: LostBackgroundTaskNotices;
+  readonly background_task_notices: BackgroundTaskNotices;
   background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
     for (const entry of options.backend_registry.list())
@@ -107,7 +108,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (typeof options.delivery_model_refusal !== 'function')
       throw new Error('Conversation model admission is required');
     this.options = options;
-    this.lost_task_notices = new LostBackgroundTaskNotices(this);
+    this.background_task_notices = new BackgroundTaskNotices(this);
     this.start_admission = new AutomaticStartAdmission({ clock: () => this.monotonic_now() });
     const adopted = remote.initialize_retained_runs(this);
     this.background_tasks_left_by_previous_process = new Map(
@@ -649,6 +650,13 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]> {
     return queries.held_prompts(this, conversation_id);
+  }
+  owner_send_progress(
+    conversation_id: string,
+    sender_message_id: string,
+    recipient: Principal,
+  ): Promise<OwnerSendProgress | null> {
+    return queries.owner_send_progress(this, conversation_id, sender_message_id, recipient);
   }
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
     return queries.sender_message_ids_awaiting_outcome(this, conversation_id);

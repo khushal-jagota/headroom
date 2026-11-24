@@ -75,6 +75,7 @@ export class MacPresence {
   refusal: ExecutorRefusal | null = null;
   going_to_sleep = false;
   private accepted_lease = false;
+  agent_started_turns = false;
   constructor(
     identity: ExecutorIdentity,
     now = Date.now,
@@ -89,7 +90,8 @@ export class MacPresence {
   leased(): boolean {
     return this.accepted_lease;
   }
-  accepted(): void {
+  accepted(agent_started_turns = false): void {
+    this.agent_started_turns = agent_started_turns;
     this.accepted_lease = true;
     this.lease_accepted_at_mac_ms = this.now();
     this.last_lease_failure = null;
@@ -97,6 +99,7 @@ export class MacPresence {
   }
   failed(failure: string, refusal: ExecutorRefusal | null = null): void {
     this.accepted_lease = false;
+    this.agent_started_turns = false;
     this.last_lease_failure = failure;
     if (refusal !== null) this.refusal = refusal;
   }
@@ -225,7 +228,7 @@ export class MacLeaseLoop {
       if (reply.update !== null) updates.offer(reply.update);
       return true;
     }
-    presence.accepted();
+    presence.accepted(reply.agent_started_turns === true);
     updates.offer(reply.update);
     this.options.after_lease?.();
     this.options.server_move?.notice(reply.server_move ?? null);

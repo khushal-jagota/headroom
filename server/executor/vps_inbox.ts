@@ -27,7 +27,8 @@ import type { WireValue, FileOperationOptions, HeldFileLocation } from './contra
 import { FileCleanupError } from './files.ts';
 import { InboxStore, MissingFiles } from './data/inbox.ts';
 import type { PublishedFiles } from './data/inbox.ts';
-import { open_child_assignment } from './data/child_custody.ts';
+import { AgentTurnStarted } from '../conversation/backends/contracts.ts';
+import { record_agent_turn_in_transaction, open_child_assignment } from './data/child_custody.ts';
 import { AgentWrites } from './vps_agent_writes.ts';
 import { now_ms } from './clock.ts';
 import { observe_promise } from '../core/promise_observer.ts';
@@ -523,7 +524,17 @@ export class MacInbox {
     const decoded = decode_event_arguments(event);
     const published = await publish();
     const accepted = await this.conversations.take_backend_event(event.turn, decoded, {
-      in_commit: (tx, take) => this.record_event(envelope, identity, published, tx, take),
+      in_commit: (tx, take) =>
+        this.record_event(envelope, identity, published, tx, () => {
+          const result = take();
+          if (decoded instanceof AgentTurnStarted && result.applied === true)
+            record_agent_turn_in_transaction(
+              tx,
+              event.child,
+              decode_value(result.turn, 'TurnToken'),
+            );
+          return result;
+        }),
       conversation_id: event.child.conversation_id,
       retry_later_at: deadline,
     });

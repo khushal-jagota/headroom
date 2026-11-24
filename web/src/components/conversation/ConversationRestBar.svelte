@@ -23,10 +23,8 @@
   data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <!-- The shared system line, its mark kept inline and inside the column: the mark sits over
-         the composer's "+" and the words over its text, so the status and the composer read as
-         one column. -->
-    <SystemLine mark={live ? "spinner" : "dot"} hangMark={false} data-conversation-rest-line="">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</SystemLine>
+    <!-- The shared system line: the words start at the column's edge with the preview and the composer pill, the mark after them. -->
+    <SystemLine mark={live ? "spinner" : "dot"} data-conversation-rest-line="">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</SystemLine>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open</span>
       <!-- The one exception to the no-chevron rule: a 12px up arrow after the label says the
@@ -56,10 +54,6 @@
   .c2-rest:has(> .c2-rest-preview) .c2-rest-status { min-height:36px; }
   /* The line and "Open" share one centre: the line drops its start alignment here. */
   .c2-rest-status > :global(.cv-system-line) { align-self:center; }
-  /* The mark's 16 px slot is centred over the composer's "+" (18 px in from the column edge),
-     and the words start where the composer's text does (50 px in, past the textarea's 4 px inset): 18 + 16 + 16. */
-  .c2-rest-status > :global(.cv-system-line) { padding-inline-start:18px; }
-  .c2-rest-status :global(.cv-system-line-row) { column-gap:16px; }
   /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
   .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px;
     border:0; border-radius:999px; background:transparent; color:#d0d0d0; font-weight:var(--cv-weight-label);

@@ -33,13 +33,14 @@
       <SkeletonRegion shape="inline" loading={editor.loading} loadingText="Loading models…" />
       <UnifiedModelPicker
         view={editor.picker}
-        bind:snapshots={editor.backends}
+        snapshots={editor.backends}
         models={editor.snapshot?.available_models ?? []}
         backendEffortOptions={editor.snapshot?.reasoning_effort_options ?? []}
         below
         disabled={editor.saving}
         keepOpenWhenDisabled
         attributes={{ "data-launch-defaults-picker": "" }}
+        onRetry={() => editor.loadBackends()}
         onChooseBackend={editor.chooseBackend}
         onChooseModel={editor.chooseModel}
       />

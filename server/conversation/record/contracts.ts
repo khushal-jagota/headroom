@@ -368,6 +368,7 @@ export interface ConversationRecordStore {
   latest_turn_ended_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   owner_read_through_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   has_delivered_prompt(conversation_id: string): boolean;
+  reserve_turn_number_in_transaction(tx: TransactionSql, conversation_id: string): number;
   reserve_turn(conversation_id: string, requests?: readonly StartRequest[]): number;
   lifecycle_facts(conversation_id: string): readonly LifecycleFact[];
   append_events(

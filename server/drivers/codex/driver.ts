@@ -14,7 +14,7 @@ export const codex_driver: AgentDriver<null> = {
   home_instructions_file: 'AGENTS.md',
   capabilities: {
     sessions: { supportsModelSwitchInSession: true },
-    turns: { supportsActiveSteering: true },
+    turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: false },
   },
   plan_selection_transition: turn_scoped_selection_transition,
   config: NO_DRIVER_CONFIG,
