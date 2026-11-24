@@ -1,10 +1,6 @@
-/** A send remains durable while transport resolves its destination. Unresolved sends
- * draw neither a provisional thread bubble nor a queue row. Confirmed acceptance
- * commits one transcript display slot; confirmed queue membership uses the tray.
- * A correlated record row replaces the contents of that same mounted slot. Recovery
- * outcomes stay visible without claiming that the agent accepted the message.
- */
-
+import type { PendingMessagePresentation } from "./transcriptOutgoing";
+/** A send appears under its browser-minted identity. The queue and the notebook
+ * replace its presentation when the server knows what happened. */
 import { ConversationWireError, type ConversationEvent, type OwnerSendBody, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
 import { PlannerFetchError } from "../api";
 import { SEND_REQUEST_LIMIT_MS } from "../requestLimit/config";
@@ -45,6 +41,10 @@ export type OutgoingMessage = {
   /** The original destination and model fields, before a late answer or reload changes the pane. */
   sendTarget?: Pick<OwnerSendBody, "conversation_id" | "backend_key" | "model" | "reasoning_effort">;
   failureNote?: string;
+  settledConversationId?: string;
+  attachmentNames?: readonly string[];
+  /** The mounted transcript's view of an upload or a server-held prompt. */
+  presentation?: PendingMessagePresentation;
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
@@ -164,7 +164,7 @@ function base64DecodedByteCount(data: string): number {
 const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
-  waiting_for_the_agent: "waiting for the agent to be free",
+  waiting_for_the_agent: "queued",
   answer_never_came_back: "no response from Panels",
   machine_offline: null,
   not_sent: "not sent",
@@ -382,35 +382,6 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
     || message.knownFate === "sent_before_this_page"
     || message.knownFate === "waiting_for_the_agent"
   );
-}
-
-/** A transport in flight has no rendered destination. Acceptance or a record commits
- * the thread; confirmed queue membership commits the tray. Recovery remains visible. */
-export function outgoingMessagesByPlace(
-  outgoing: readonly OutgoingMessage[],
-  where: {
-    composerStackMessageIds: readonly string[];
-    serverHeldSenderMessageIds: ReadonlySet<string>;
-    recordedSenderMessageIds?: ReadonlySet<string>;
-  }
-): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
-  const recorded = (message: OutgoingMessage): boolean =>
-    where.recordedSenderMessageIds?.has(message.messageId) ?? false;
-  const aboveTheComposer = (message: OutgoingMessage): boolean =>
-    !message.accepted && !recorded(message) && (
-      where.composerStackMessageIds.includes(message.messageId)
-      || where.serverHeldSenderMessageIds.has(message.messageId)
-      || message.knownFate === "waiting_for_the_agent"
-    );
-  return {
-    thread: outgoing.filter(message => !aboveTheComposer(message) && (
-      message.accepted || recorded(message) || message.knownFate === "answer_never_came_back"
-      || message.knownFate === "machine_offline" || message.knownFate === "not_sent"
-      || message.knownFate === "agent_unconfirmed"
-      || (message.sendTarget && message.knownFate === "nothing_yet")
-    )),
-    composerStack: outgoing.filter(aboveTheComposer)
-  };
 }
 
 /** Receipt lookup is for unresolved identities, separate from mounted presentation.
@@ -868,6 +839,9 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   return {
     messageId,
     content: pieces,
+    ...(typeof held.settledConversationId === "string" ? {settledConversationId: held.settledConversationId} : {}),
+    ...(Array.isArray(held.attachmentNames) && held.attachmentNames.every(name => typeof name === "string")
+      ? { attachmentNames: held.attachmentNames as string[] } : {}),
     ...(typeof held.failureNote === "string" ? { failureNote: held.failureNote } : {}),
     ...(sendTarget ? { sendTarget } : {}),
     ...(held.accepted === true ? { accepted: true } : {}),

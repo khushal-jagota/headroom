@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { connectionStatus } from '../changeStream';
 import { fateSentence } from '../conversation/composer';
 import { readComposerDraft, writeComposerDraft } from '../conversation/composerDraft';
@@ -5,14 +6,29 @@ import { mintOutgoingMessage, theServerRefusedTheSend } from '../conversation/ou
 import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from '../conversation/ownerSend';
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES, pendingConversationFileBytes, pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../conversation/pendingFiles';
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES, pendingConversationImageBytes, pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from '../conversation/pendingImages';
-import { clearAttachmentDraft, openAttachmentDraft, pendingUploadsAsPieces, publishAttachmentDraft, restoredPendingUploads } from '../conversation/videoUploads/uploads';
+import { attachmentTransfersFor, clearAttachmentDraft, openAttachmentDraft, pendingUploadsAsPieces, publishAttachmentDraft, restoredPendingUploads } from '../conversation/videoUploads/uploads';
+import { videoUploadAdapter } from '../conversation/videoUploads/adapter';
 import type { PendingAttachment, UploadDestination } from '../conversation/videoUploads/contracts';
 import { messageContentText, type DeliveredMessage, type SentMessagePiece } from '../conversation/wire';
 import { readReviewDraft, saveReviewDraft } from './messages';
 import { recallReviewAttempts, rememberReviewAttempts, type ReviewReplyAttempt } from './sendAttempts';
 
-type ReplyStatus = 'checking' | 'sending' | 'connection-failed' | 'failed' | 'uncertain';
-export type ReviewOutgoingReply = ReviewReplyAttempt & { status: ReplyStatus; note: string | null };
+type ReplyStatus = 'preparing' | 'uploading' | 'upload-failed' | 'waiting' | 'checking' | 'sending'
+  | 'connection-failed' | 'failed' | 'uncertain' | 'queued' | 'sent';
+export type ReviewOutgoingReply = ReviewReplyAttempt & {
+  status: ReplyStatus;
+  note: string | null;
+  /** The live transfer stays observable after its token enters the immutable POST. */
+  postedUploads?: PendingAttachment[];
+};
+
+function isAccepted(attempt: ReviewOutgoingReply): boolean {
+  return attempt.status === 'queued' || attempt.status === 'sent';
+}
+
+function uploadFailed(upload: PendingAttachment): boolean {
+  return upload.phase === 'failed' || upload.phase === 'interrupted';
+}
 
 type Options = {
   draftKey: string;
@@ -49,6 +65,7 @@ export class ReviewReplyComposer {
   #mountsAbort: AbortController | null = null;
   #unsubscribe: (() => void) | null = null;
   #checking = new Set<string>();
+  #watchUploads: (() => void) | null = null;
   #text = $state('');
   #files = $state.raw<PendingConversationFile[]>([]);
   #images = $state.raw<PendingConversationImage[]>([]);
@@ -58,7 +75,7 @@ export class ReviewReplyComposer {
   #attachmentWrite = Promise.resolve(true);
   #attemptWrite = Promise.resolve(true);
   #nextAttachmentId = 0;
-  attempts = $state.raw<ReviewOutgoingReply[]>([]);
+  attempts = $state<ReviewOutgoingReply[]>([]);
   ready = $state(false);
   submitting = $state(false);
   intakeBusy = $state(false);
@@ -73,6 +90,12 @@ export class ReviewReplyComposer {
   }
 
   get draftKey() { return this.#key; }
+  get hasUnsettled() { return this.attempts.some(attempt => !isAccepted(attempt)); }
+  get canAttach() {
+    return this.attachmentReady && (this.uploadDestination.expected_conversation_id !== null || !this.attempts.some(attempt =>
+      attempt.status === 'preparing' || attempt.status === 'waiting' || attempt.status === 'uploading' || attempt.status === 'sending'));
+  }
+  get #transfers() { return attachmentTransfersFor(this.draftKey, videoUploadAdapter); }
   get text() { return this.#text; }
   set text(value: string) {
     this.#text = value;
@@ -101,6 +124,20 @@ export class ReviewReplyComposer {
     entry.mounts += 1;
     if (entry.mounts === 1) {
       const scope = this.#mountsAbort = new AbortController();
+      if (!this.#watchUploads) this.#watchUploads = $effect.root(() => {
+        $effect(() => {
+          for (const attempt of this.attempts) {
+            if (!attempt.pendingUploads) continue;
+            for (const upload of attempt.pendingUploads) {
+              // File transfer ownership stays with the draft registry; the
+              // same reactive handles now belong to this outgoing message.
+              void upload.phase;
+              void upload.uploadId;
+            }
+          }
+          untrack(() => { void this.#pump(); });
+        });
+      });
       if (!this.ready) void this.#restore(scope.signal);
       this.#unsubscribe = connectionStatus.subscribe(state => {
         if (state === 'connected') void this.reconcile(scope.signal);
@@ -116,7 +153,9 @@ export class ReviewReplyComposer {
   }
 
   #disposeIfIdle(): void {
-    if (mounted.get(this.#key)?.mounts !== 0 || this.submitting) return;
+    if (mounted.get(this.#key)?.mounts !== 0 || this.submitting || this.attempts.some(attempt =>
+      attempt.status === 'preparing' || attempt.status === 'uploading' || attempt.status === 'waiting')) return;
+    this.#watchUploads?.();
     releasePendingImages(this.#images);
     mounted.delete(this.#key);
   }
@@ -170,7 +209,7 @@ export class ReviewReplyComposer {
       if (attempts.status === 'rejected') throw attempts.reason;
       this.attempts = attempts.value.map(attempt => ({
         ...attempt,
-        status: attempt.localRefusal ? 'failed' : 'checking',
+        status: attempt.pendingUploads ? 'uploading' : attempt.localRefusal ? 'failed' : 'checking',
         note: attempt.localRefusal ?? null
       }));
       // Older Review stored the very same text and attachments as both draft and send.
@@ -187,6 +226,13 @@ export class ReviewReplyComposer {
     } finally {
       if (!signal.aborted) this.ready = true;
     }
+    if (signal.aborted) return;
+    for (const attempt of this.attempts) {
+      for (const attachment of attempt.pendingUploads ?? []) {
+        if (attachment.phase === 'validating') void this.#transfers.validate(attachment);
+      }
+    }
+    void this.#pump();
     await this.reconcile(signal);
   }
 
@@ -195,17 +241,20 @@ export class ReviewReplyComposer {
     publishAttachmentDraft(this.draftKey, uploads);
   }
 
-  #clearAttachments() {
+  #clearAttachments(moveUploads = false) {
     releasePendingImages(this.#images);
     this.#images = [];
     this.#files = [];
-    clearAttachmentDraft(this.draftKey);
-    this.#uploads = [];
+    if (moveUploads) this.#setUploads([]);
+    else { clearAttachmentDraft(this.draftKey); this.#uploads = []; }
     void this.#saveAttachments();
   }
 
   #store(attempts: ReviewOutgoingReply[]): Promise<boolean> {
-    const contents = attempts.map(({ message, conversationId, localRefusal }) => ({ message, conversationId, localRefusal }));
+    const contents = attempts.filter(attempt => !isAccepted(attempt)).map(({ message, conversationId, localRefusal, pendingUploads }) => ({
+      message, conversationId, localRefusal,
+      pendingUploads: pendingUploads?.map(upload => ({ ...upload }))
+    }));
     this.#attemptWrite = this.#attemptWrite.then(() => rememberReviewAttempts(
       this.#options.attemptKey, this.#options.attemptMetadataKey, contents
     ))
@@ -227,7 +276,11 @@ export class ReviewReplyComposer {
     if (delivery.fate === 'started' || delivery.fate === 'injected' || delivery.fate === 'queued') {
       this.accepted = { through: attempt.message.ownerReadThroughSequence, fate: delivery.fate };
       if (this.#options.legacyConversationId === undefined && !this.uploads.length) this.#updateUploadDestination(delivery.conversation_id);
-      await this.#remove(id);
+      this.#update(id, {
+        status: delivery.fate === 'queued' ? 'queued' : 'sent',
+        note: delivery.fate === 'queued' ? 'Queued' : delivery.fate === 'injected' ? 'Sent to the running turn' : 'Sent'
+      });
+      await this.#store(this.attempts);
       return;
     }
     this.#update(id, statusFor(delivery));
@@ -299,40 +352,82 @@ export class ReviewReplyComposer {
   }
 
   async send(through?: number): Promise<void> {
-    if (this.submitting || this.intakeBusy || !this.ready || !this.hasDraft) return;
-    this.submitting = true;
+    if (!this.ready || !this.hasDraft) return;
     this.error = null;
-    this.accepted = null;
-    const text = this.text;
-    const images = this.images;
-    const files = this.files;
     const uploads = this.uploads;
-    const content = this.#content();
+    const content = this.#content([...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files)]);
+    const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : this.uploadDestination.expected_conversation_id;
+    const message = mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' });
+    if (through !== undefined) message.ownerReadThroughSequence = through;
+    const entry: ReviewOutgoingReply = { conversationId, message, pendingUploads: uploads, status: 'preparing', note: null };
+
+    this.attempts = [...this.attempts, entry];
+    this.text = '';
+    this.#clearAttachments(true);
+    if (!await this.#store(this.attempts)) {
+      this.#update(message.messageId, { status: 'upload-failed', note: 'The message could not be saved in this browser.' });
+      this.#disposeIfIdle();
+      return;
+    }
+    this.#update(message.messageId, { status: uploads.length > 0 ? 'uploading' : 'waiting', note: null });
+    await this.#pump();
+  }
+
+  async #pump(): Promise<void> {
+    if (this.submitting || !this.ready) return;
+    const pending = this.attempts.find(attempt => attempt.status === 'preparing'
+      || attempt.status === 'waiting' || attempt.status === 'uploading');
+    if (!pending || pending.status === 'preparing' || !pending.pendingUploads) return;
+    const id = pending.message.messageId;
+    const failure = pending.pendingUploads.find(uploadFailed);
+    if (failure) {
+      this.#update(id, { status: 'upload-failed', note: failure.error ?? 'The attachment upload could not finish.' });
+      await this.#store(this.attempts);
+      this.#disposeIfIdle();
+      void this.#pump();
+      return;
+    }
+    if (pending.pendingUploads.some(upload => upload.phase !== 'ready' || !upload.uploadId)) {
+      // Keep the latest upload tokens for reload recovery without saving file bytes.
+      void this.#store(this.attempts);
+      return;
+    }
+
+    this.submitting = true;
+    const message = { ...pending.message, content: [...pending.message.content, ...pendingUploadsAsPieces(pending.pendingUploads)] };
+    const outgoing: ReviewOutgoingReply = {
+      conversationId: pending.conversationId, message, postedUploads: pending.pendingUploads,
+      status: 'sending', note: null
+    };
+    this.attempts = this.attempts.map(attempt => attempt.message.messageId === id ? outgoing : attempt);
     try {
-      const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : await this.#options.destination();
-      if (!uploads.length) this.#updateUploadDestination(conversationId);
-      const message = mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' });
-      if (through !== undefined) message.ownerReadThroughSequence = through;
-      const entry: ReviewOutgoingReply = { conversationId, message, status: 'sending', note: null };
-      this.attempts = [...this.attempts, entry];
       if (!await this.#store(this.attempts)) {
-        await this.#remove(message.messageId);
-        throw new Error('The reply could not be saved in this browser. Your draft is kept.');
+        this.attempts = this.attempts.map(attempt => attempt.message.messageId === id
+          ? { ...pending, status: 'upload-failed', note: 'The message could not be saved in this browser.' } : attempt);
+        return;
       }
-      if (this.text === text) this.text = '';
-      if (this.images === images && this.files === files && this.uploads === uploads) this.#clearAttachments();
-      await this.#post(entry);
-    } catch (problem) {
-      this.error = problem;
+      await this.#post(outgoing);
     } finally {
       this.submitting = false;
       this.#disposeIfIdle();
+      void this.#pump();
     }
+  }
+
+  canRetry(attempt: ReviewOutgoingReply): boolean {
+    return attempt.status === 'failed' || attempt.status === 'connection-failed'
+      || attempt.status === 'upload-failed' && Boolean(attempt.pendingUploads?.every(upload => !uploadFailed(upload) || upload.file));
   }
 
   async retry(attempt: ReviewOutgoingReply): Promise<void> {
     if (this.submitting || this.#checking.has(attempt.message.messageId)) return;
-    if (attempt.status !== 'failed' && attempt.status !== 'connection-failed') return;
+    if (!this.canRetry(attempt)) return;
+    if (attempt.status === 'upload-failed') {
+      this.#update(attempt.message.messageId, { status: 'uploading', note: null });
+      await Promise.all((attempt.pendingUploads ?? []).filter(uploadFailed).map(upload => this.#transfers.start(upload)));
+      void this.#pump();
+      return;
+    }
     this.submitting = true;
     this.error = null;
     const original = this.attempts;
@@ -343,7 +438,7 @@ export class ReviewReplyComposer {
             ownerReadThroughSequence: attempt.message.ownerReadThroughSequence
           }
         : attempt.message;
-      const next: ReviewOutgoingReply = { conversationId: attempt.conversationId, message, status: 'sending', note: null };
+      const next: ReviewOutgoingReply = { conversationId: attempt.conversationId, message, postedUploads: attempt.postedUploads, status: 'sending', note: null };
       this.attempts = this.attempts.map(candidate => candidate.message.messageId === attempt.message.messageId ? next : candidate);
       if (!await this.#store(this.attempts)) {
         this.attempts = original;
@@ -355,11 +450,12 @@ export class ReviewReplyComposer {
     } finally {
       this.submitting = false;
       this.#disposeIfIdle();
+      void this.#pump();
     }
   }
 
   async edit(attempt: ReviewOutgoingReply): Promise<boolean> {
-    if (this.submitting || this.intakeBusy || attempt.status !== 'failed') return false;
+    if (this.submitting || this.intakeBusy || (attempt.status !== 'failed' && attempt.status !== 'upload-failed')) return false;
     const nextId = Math.max(this.#nextAttachmentId, ...[...this.#images, ...this.#files].map(file => file.id + 1));
     const restoredImages = restoredPendingImages(attempt.message.content, nextId);
     const restoredFiles = restoredPendingFiles(attempt.message.content, restoredImages.nextId);
@@ -378,13 +474,19 @@ export class ReviewReplyComposer {
       this.#files = files;
       this.#nextAttachmentId = restoredFiles.nextId;
       const attemptDestination: UploadDestination = { ...this.#options.owner, expected_conversation_id: attempt.conversationId };
-      this.#setUploads(restoredPendingUploads(attempt.message.content, attemptDestination, this.uploads));
+      const uploads = attempt.pendingUploads
+        ? [...this.uploads, ...attempt.pendingUploads.map((upload, index) => ({
+            ...upload, id: Math.max(0, ...this.uploads.map(item => item.id)) + index + 1
+          }))]
+        : restoredPendingUploads(attempt.message.content, attemptDestination, this.uploads);
+      this.#setUploads(uploads);
       if (!await this.#saveAttachments()) return false;
       await this.#remove(attempt.message.messageId);
       return true;
     } finally {
       this.submitting = false;
       this.#disposeIfIdle();
+      void this.#pump();
     }
   }
 }

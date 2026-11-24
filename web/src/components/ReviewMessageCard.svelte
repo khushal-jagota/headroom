@@ -60,7 +60,7 @@
   });
   $effect(() => {
     const settled = composer.accepted?.through ?? (events.length === 0 ? ownerReadThrough : null);
-    if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && composer.attempts.length === 0) resolve(settled);
+    if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && !composer.hasUnsettled) resolve(settled);
   });
 
   async function load(): Promise<void> {
@@ -132,8 +132,8 @@
         <ReviewOutgoingReplies {composer} busy={voiceActive || markingRead} onEdit={() => reply?.focus()} />
         <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
-          bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || composer.submitting}
-          sendDisabled={busy || !composer.ready || !through} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
+          bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || markingRead}
+          sendDisabled={markingRead || !composer.ready || !through} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
         <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error || composer.error}<ErrorLine error={error ?? composer.error}/>{/if}
       </div>

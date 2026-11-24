@@ -66,7 +66,7 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 | suppressed | Dropped on purpose before the wire, usually because a notice went stale. |
 | recorded | A message to the owner was written. No backend was called. |
 
-The web composer keeps the draft editable while the outgoing message waits for its receipt. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. A confirmed failure offers **Edit** to recover the draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply so it can still be found in its conversation.
+On the web, Send clears the draft and puts the message into the conversation at once. The message shows upload progress and its send result. Replies that wait for a busy agent appear as queued messages in the transcript, with the existing queue actions on each message. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 

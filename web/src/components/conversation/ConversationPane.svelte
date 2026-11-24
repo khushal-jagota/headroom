@@ -9,11 +9,11 @@
   import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { AskEntranceTracker } from "../../lib/conversation/askEntrance";
-  import UserMessage from "./UserMessage.svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import SystemLine from "./SystemLine.svelte";
-  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
+  import { transcriptOutgoing, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from "../../lib/conversation/transcriptOutgoing";
+  import type { PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import { askShape, DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -343,6 +343,23 @@
   /** v11 (4): Edit on a queued message: it leaves the queue, and its words come back to the
    *  composer (after anything already written there). */
   let composerHandle = $state<ReturnType<typeof ConversationComposer> | null>(null);
+  let pendingSends = $state.raw<readonly PendingComposerSend[]>([]);
+  const transcriptMessages = $derived(transcriptOutgoing(
+    outgoingMessages, readOnly ? [] : pendingSends, readOnly ? [] : heldPromptRows,
+    ownSenderLabel ?? "owner", acknowledgedMessageIds
+  ));
+  const hasNewOutgoing = $derived(transcriptMessages.some(message => !message.restored));
+  setContext<TranscriptSendActions>(TRANSCRIPT_SEND_ACTIONS, {
+    running: () => running,
+    canSteer: () => supportsSteer && ask === null && userInput === null,
+    discard: row => row.heldPromptId ? onDiscardHeldPrompt?.(row.heldPromptId) : undefined,
+    promote: (row, mode) => row.heldPromptId ? onPromoteHeldPrompt?.(row.heldPromptId, mode) : undefined,
+    editHeld: (row, words) => row.heldPromptId ? editHeldPrompt(row.heldPromptId, words) : undefined,
+    canEditHeld: () => !readOnly && !!onDiscardHeldPrompt,
+    editUpload: id => composerHandle?.editPendingSend(id),
+    retryUpload: id => composerHandle?.retryPendingSend(id)
+  });
+
   export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
     return composerHandle?.takeBackUnsentMessage(content) ?? false;
   }
@@ -634,19 +651,6 @@
     </div>
   </div>
 
-  {#snippet waitingMessages()}
-    <HeldPromptStack
-      rows={heldPromptRows}
-      {conversationId}
-      supportsSteer={supportsSteer && ask === null && userInput === null}
-      {running}
-      onDiscard={onDiscardHeldPrompt}
-      onPromote={onPromoteHeldPrompt}
-      onStopDrawing={onStopDrawingHeldPrompt}
-      onSendAgain={onSendHeldPromptAgain}
-      onEdit={readOnly || !onDiscardHeldPrompt ? undefined : editHeldPrompt}
-    />
-  {/snippet}
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
@@ -658,7 +662,7 @@
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
     data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null || credentialWaiting) ? true : undefined}
-    style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
+    style:visibility={!hasNewOutgoing && (!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase)) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
     bind:placementReady
@@ -673,14 +677,13 @@
     {rows}
     visibleRows={rowsForLens}
     {lens}
-    {outgoingMessages}
+    outgoingMessages={transcriptMessages}
     {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
     {activityUncertain}
     {conversationState}
     {emptyState}
-    afterTranscript={readOnly ? undefined : waitingMessages}
     bind:jump
   />
   </div>
@@ -691,10 +694,6 @@
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} status={dockStatus}
       askBelow={ask !== null || userInput !== null || credentialWaiting} onOpen={moveThroughTheStates} />
-    {#each outgoingMessages.filter(message => message.sendTarget && !message.accepted && !acknowledgedMessageIds.has(message.messageId)) as message (message.messageId)}
-      <UserMessage local={message} {conversationId} {ownSenderLabel}
-        onStopDrawingMessage={onStopDrawingHeldPrompt} onSendAgain={onSendHeldPromptAgain} />
-    {/each}
   {/if}
 
   <!-- The way back to the newest line is a 32px round icon button centred on the column,
@@ -753,6 +752,8 @@
       {sendAvailable}
       {showRunPicker}
       {onSend}
+      onPendingSends={entries => { pendingSends = entries; }}
+      onMessageComposed={() => { if (conversationState === "rest") conversationState = "opened"; }}
       {onStop}
       {onAnswer}
       {userInput}

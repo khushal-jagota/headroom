@@ -23,7 +23,7 @@
   });
   export function focus(): void { input?.focus(); }
   async function submit():Promise<void>{
-    if(sendDisabled || intakeBusy || !hasReply || voiceState.phase!=='idle')return;
+    if(sendDisabled || !hasReply || voiceState.phase!=='idle')return;
     if(preserveHeight)held={box:Math.max(held?.box??0,root?.getBoundingClientRect().height??0),input:Math.max(held?.input??0,input?.getBoundingClientRect().height??0)};
     await onSend();
   }
@@ -37,7 +37,7 @@
     inputAttributes={{'data-review-reply':''}}
     onsubmit={()=>void submit()}
     record={{label:'Speak a reply',disabled:!voiceSupported,onclick:()=>void voice?.startRecording(),attributes:{'data-voice-record':''}}}
-    send={{label:sendLabel,ready:hasReply,sending:false,disabled:sendDisabled || intakeBusy || !hasReply,onclick:()=>void submit(),attributes:{'data-review-send':''}}}
+    send={{label:sendLabel,ready:hasReply,sending:false,allowWhileIntake:true,disabled:sendDisabled || !hasReply,onclick:()=>void submit(),attributes:{'data-review-send':''}}}
     voice={{state:voiceState,cancel:()=>voice?.cancel(),stop:()=>voice?.stopRecording(),retry:()=>voice?.retry()}}/>
 </div>
 

@@ -116,7 +116,7 @@ describe("queued messages in the pane", () => {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const content = body.indexOf("data-conversation-content");
-    const stack = body.indexOf("data-conversation-held-stack");
+    const stack = body.indexOf("data-conversation-held-row");
     expect(content).toBeGreaterThan(-1);
     expect(stack).toBeGreaterThan(content);
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
@@ -124,7 +124,7 @@ describe("queued messages in the pane", () => {
     expect(body).not.toContain("data-anchor-end");
   });
 
-  it("come after the Working line of the running turn", () => {
+  it("remain in the thread while the running turn keeps its own Working line", () => {
     const turn: ConversationViewItem = {
       kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
       settled: false, stopped: false, started_at_unix_milliseconds: 100_000, ending: null,
@@ -146,7 +146,8 @@ describe("queued messages in the pane", () => {
     });
     const edge = body.indexOf("data-conversation-live-edge");
     expect(edge).toBeGreaterThan(-1);
-    expect(edge).toBeLessThan(body.indexOf("data-conversation-held-stack"));
+    expect(body.indexOf("data-conversation-held-row")).toBeGreaterThan(body.indexOf("data-conversation-content"));
+    expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
   it("offer no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {

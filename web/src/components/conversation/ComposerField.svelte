@@ -90,7 +90,7 @@
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
      *  while it goes. */
-    send?: Control & { ready: boolean; sending: boolean; checkingReceipt?: boolean };
+    send?: Control & { ready: boolean; sending: boolean; allowWhileIntake?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -108,7 +108,7 @@
   function keydown(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }): void {
     onkeydown?.(event);
     if (onsubmit === undefined || event.defaultPrevented || event.key !== "Enter") return;
-    if (intakeBusy && !send?.checkingReceipt) { event.preventDefault(); return; }
+    if (intakeBusy && !send?.allowWhileIntake) { event.preventDefault(); return; }
     if (event.shiftKey || event.altKey) return;
     // Enter that confirms an input method's text (keyCode 229) is not a send.
     if (event.isComposing || event.keyCode === 229) return;
@@ -451,7 +451,7 @@
             class:on={send.ready}
             aria-label={send.label}
             aria-busy={send.sending}
-            disabled={send.disabled || (intakeBusy && !send.checkingReceipt)}
+            disabled={send.disabled || (intakeBusy && !send.allowWhileIntake)}
             onclick={send.onclick}
             {...(send.attributes ?? {})}
           >

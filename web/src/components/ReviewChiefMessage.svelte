@@ -18,9 +18,6 @@
   });
   let voiceActive = $state(false);
   let reply = $state<ReviewReplyInput>();
-  const note = $derived(composer.accepted?.fate === 'queued' ? 'Queued for Chief'
-    : composer.accepted?.fate === 'injected' ? 'Sent to Chief’s current turn'
-    : composer.accepted?.fate === 'started' ? 'Sent to Chief' : '');
   $effect(() => {
     const active = composer.submitting || composer.intakeBusy || voiceActive;
     untrack(() => onBusy?.(active));
@@ -35,13 +32,13 @@
   <ReviewOutgoingReplies {composer} busy={voiceActive} onEdit={() => reply?.focus()} />
   <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
-    bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || composer.submitting}
-    sendDisabled={composer.submitting || !composer.ready} preserveHeight
+    bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
+    sendDisabled={!composer.ready} preserveHeight
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
     onSend={() => composer.send()} onError={problem => composer.error = problem} />
   <div class="review-chief-receipt">
     {#if composer.error}<ErrorLine error={composer.error} />
-    {:else if note}<span role="status">{note}</span><a href={workspaceAddress({ kind: 'chief' })}>Open Chief</a>{/if}
+    {:else if composer.accepted}<a href={workspaceAddress({ kind: 'chief' })}>Open Chief</a>{/if}
   </div>
 </div>
 

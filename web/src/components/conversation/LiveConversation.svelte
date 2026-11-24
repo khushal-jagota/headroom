@@ -56,7 +56,6 @@
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
-    outgoingMessagesByPlace,
     outgoingReceiptBatches,
     retainOutgoingPresentations,
     recallOutgoingMessages,
@@ -217,7 +216,6 @@
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
   /** Sends whose confirmed queue fate precedes the next server snapshot. */
-  let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
   let fateNoteIsTerminal = $state(false);
@@ -436,30 +434,15 @@
     pickerBackends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );
   let current = $derived<RunValues>({model:view?.model??null,reasoningEffort:view?.reasoning_effort??null});
-  let serverHeldSenderIds = $derived(
-    new Set((view?.held_prompts ?? []).filter((held) =>
-      heldPromptIsInLens(held, lens, senderLabel)
-    ).flatMap((held) =>
-      held.sender_message_id == null ? [] : [held.sender_message_id]
-    ))
-  );
   const admittedMessageIds = $derived(new Set(reader?.pages.flatMap(page => page.items)
     .filter(item => item.kind === "row" && ["prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded"].includes(item.row_kind))
     .flatMap(item => item.kind === "row" && item.sender_message_id ? [item.sender_message_id] : []) ?? []));
   const committedMessageIds = $derived(new Set([...acknowledgedMessageIds, ...admittedMessageIds]));
-  let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
-    composerStackMessageIds,
-    serverHeldSenderMessageIds: serverHeldSenderIds,
-    recordedSenderMessageIds: committedMessageIds
-  }));
-  let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
-  let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
-  const withdrawnDisplayIds = $derived(new Set(stackOutgoingMessages.map(message => message.displayMessageId ?? message.messageId)));
   let visibleHeldRows = $derived(heldPromptRows(
     (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)
       && (held.sender_message_id == null || !committedMessageIds.has(held.sender_message_id)
         && !sentMessages.some(message => message.messageId === held.sender_message_id && message.accepted))),
-    stackOutgoingMessages
+    []
   ));
 
   // A queued or accepted-steer note describes traffic that a turn ending settles. A
@@ -520,7 +503,6 @@
       opening = false;
       view = null;
       reader = null;
-      composerStackMessageIds = [];
       void adoptUnopenedPersistence(persistenceKey);
       return;
     }
@@ -531,7 +513,6 @@
     closeStream();
     outgoingReady = false;
     sentMessages = [];
-    composerStackMessageIds = [];
     activePersistenceId = null;
     openedId = id;
     // Restoring this tab's messages is part of opening. App recovery must not start
@@ -557,10 +538,9 @@
     // Whatever this tab was still holding for this conversation when it was last here.
     const recalled = await recallOutgoingMessages(activePersistenceId);
     if (openedId !== id) return;
-    sentMessages = reserveRecalledOutgoingMessages(recalled);
-    composerStackMessageIds = sentMessages
-      .filter((message) => message.knownFate === "waiting_for_the_agent")
-      .map((message) => message.messageId);
+    sentMessages = reserveRecalledOutgoingMessages(recalled.filter(message =>
+      !message.settledConversationId || message.settledConversationId === id
+    ));
     outgoingReady = true;
     void checkSendReceipts();
     await openConversation(id);
@@ -574,9 +554,6 @@
     if (openedId !== null || conversationId !== null || persistenceKey !== storageKey) return;
     activePersistenceId = storageKey;
     sentMessages = recalled;
-    composerStackMessageIds = sentMessages
-      .filter((message) => message.knownFate === "waiting_for_the_agent")
-      .map((message) => message.messageId);
     outgoingReady = true;
     theRecordHasBeenRead();
     void checkSendReceipts();
@@ -737,7 +714,11 @@
       pickedReasoningEffort: picked.reasoningEffort,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
-    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}),
+    }), ...(sendContext ? {
+      messageId: sendContext.messageId,
+      sentAtUnixMilliseconds: sendContext.sentAtUnixMilliseconds ?? Date.now(),
+      attachmentNames: sendContext.attachmentNames
+    } : {}), ...(displayMessageId ? {displayMessageId} : {}),
       ...(reconcilesSequence === undefined ? {} : {reconcilesSequence}) };
     const body = sendBodyFor({
       message, current, picked,
@@ -783,17 +764,20 @@
     // return a receipt for a conversation that has since been reset.
     const id = delivered.conversation_id;
     const destinationIsCurrent = id !== null && id === openedId;
+    const awaitingFirstLink = id !== null && openedId === null && conversationId === null;
     switch (delivered.fate) {
       case "started":
       case "injected":
-        if (!destinationIsCurrent) {
+        if (!destinationIsCurrent && !awaitingFirstLink) {
           await stopDrawing(message.messageId);
           return true;
         }
-        await updateOutgoing(message.messageId, {accepted: true});
+        await updateOutgoing(message.messageId, {accepted: true, settledConversationId: id ?? undefined});
         break;
       case "queued":
-        if (destinationIsCurrent) await updateOutgoing(message.messageId, {knownFate: "waiting_for_the_agent"});
+        if (destinationIsCurrent || awaitingFirstLink) await updateOutgoing(message.messageId, {
+          knownFate: "waiting_for_the_agent", settledConversationId: id ?? undefined
+        });
         else await stopDrawing(message.messageId);
         break;
       case "refused":
@@ -875,7 +859,6 @@
       }
     }
     sentMessages = messages;
-    composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
     if (persistenceConversationId !== null) {
       return rememberOutgoingMessages(persistenceConversationId, messages.filter(message => !acknowledgedMessageIds.has(message.messageId)));
     }
@@ -884,7 +867,6 @@
 
   function forgetUndurableMessage(messageId: string): void {
     sentMessages = sentMessages.filter((message) => message.messageId !== messageId);
-    composerStackMessageIds = composerStackMessageIds.filter((candidate) => candidate !== messageId);
     releaseOutgoingMessageImages(messageId);
     releaseOutgoingMessageFiles(messageId);
   }
@@ -1080,7 +1062,6 @@
     // Leave saved sends under the conversation where they were attempted.
     sentMessages = [];
     activePersistenceId = null;
-    composerStackMessageIds = [];
     openedId = null;
     void adoptUnopenedPersistence(persistenceKey);
     view = null;
@@ -1170,7 +1151,6 @@
   title={title ?? null}
   subtitle={subtitle ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
-  {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
@@ -1187,7 +1167,7 @@
   transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
-  outgoingMessages={transcriptOutgoingMessages}
+  outgoingMessages={sentMessages}
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}

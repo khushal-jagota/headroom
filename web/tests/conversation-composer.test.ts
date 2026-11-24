@@ -1,3 +1,6 @@
+import ReviewOutgoingReplies from "../src/components/ReviewOutgoingReplies.svelte";
+import { mintOutgoingMessage } from "../src/lib/conversation/outgoing";
+import { ReviewReplyComposer } from "../src/lib/review/replyComposer.svelte";
 import ReviewReplyInput from "../src/components/ReviewReplyInput.svelte";
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
@@ -121,13 +124,31 @@ describe("a send from the dock that was not delivered", () => {
   });
 });
 
-// A linked token can fail ready validation after a lost response. Receipt lookup needs no
-// new upload admission, so the existing attempt must remain checkable while a fresh send waits.
-it("keeps receipt lookup available while a fresh reply waits for attachment readiness", () => {
-  const props = { draftKey: "receipt-lookup", uploadDestination: { kind: "chief" as const, id: "chief", expected_conversation_id: "c" }, text: "kept words", intakeBusy: true, disabled: true, onSend: async () => {}, onError: () => {}, sendLabel: "Check delivery" };
-  const receipt = render(ReviewReplyInput, { props: { ...props, allowEmpty: true } }).body;
-  const fresh = render(ReviewReplyInput, { props }).body;
-  expect(receipt).toMatch(/<button[^>]*data-review-send[^>]*>/);
-  expect(receipt).not.toMatch(/<button[^>]*disabled[^>]*data-review-send/);
-  expect(fresh).toMatch(/<button[^>]*disabled[^>]*data-review-send/);
+// A saved send owns its retry. A new reply can move its pending upload onto its own message.
+it("keeps an outgoing retry available while a fresh reply waits for an attachment", () => {
+  const draftKey = "receipt-lookup";
+  const owner = {kind: "chief" as const, id: "chief"};
+  const composer = new ReviewReplyComposer({
+    draftKey, owner, attachmentDraftId: draftKey, destination: () => "c",
+    attemptKey: draftKey, attemptMetadataKey: draftKey + ":meta"
+  });
+  composer.intakeBusy = true;
+  composer.attempts = [{
+    conversationId: "c",
+    message: mintOutgoingMessage({content: [{piece: "text", text: "Saved reply"}], senderLabel: "owner", mode: "queue"}),
+    status: "connection-failed",
+    note: "Panels did not confirm the send."
+  }];
+  const {body: prior} = render(ReviewOutgoingReplies, {props: {composer, onEdit: () => {}}});
+  const {body: fresh} = render(ReviewReplyInput, {
+    props: {
+      draftKey, uploadDestination: {...owner, expected_conversation_id: "c"}, text: "New reply",
+      intakeBusy: true, onSend: async () => {}, onError: () => {}
+    }
+  });
+  const retryButton = prior.match(/<button[^>]*data-review-retry[^>]*>/)?.[0];
+  expect(retryButton).toBeDefined();
+  expect(retryButton).not.toContain("disabled");
+  expect(fresh).not.toMatch(/<button[^>]*disabled[^>]*data-review-send/);
+  expect(fresh).toMatch(/<textarea(?![^>]*disabled)[^>]*data-review-reply/);
 });
