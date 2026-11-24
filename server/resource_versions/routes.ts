@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { resource_epoch } from './epoch.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -14,7 +14,7 @@ export function createRoutes(
     app.setReplySerializer((payload, statusCode) =>
       stringify_numeric_response(payload, statusCode >= 200 && statusCode < 300),
     );
-    const epoch = randomUUID();
+    const epoch = resource_epoch(app);
     app.get<{ Querystring: { keys?: string } }>('/resource-versions', async (request, reply) => {
       const query = scalarQueries(request.query);
       if (!requiredQuery(query.keys, 'keys', reply)) return;

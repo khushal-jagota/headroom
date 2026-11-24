@@ -1,3 +1,4 @@
+import { seed_machine_lease } from '../machines/testing/lease.ts';
 import { MacPresenceService } from '../executor/vps_presence.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
@@ -10,7 +11,13 @@ import { expect, test, vi } from 'vitest';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
-import { BackendStateStore } from '../conversation/backend_state.ts';
+import {
+  BackendPickerResources,
+  backend_resource_key,
+} from '../conversation/snapshot/resource_versions.ts';
+import { createRoutes as createResourceRoutes } from '../resource_versions/routes.ts';
+import { VpsCatalogRelay } from '../executor/catalog_relay.ts';
+import { BackendStateStore, save_machine_model_list } from '../conversation/backend_state.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import type { BackendHttpRuntime, BackendSnapshot } from '../conversation/snapshot/contracts.ts';
@@ -32,7 +39,17 @@ const snapshot: BackendSnapshot = {
     detail: null,
     login_command: null,
   },
-  available_models: [],
+  available_models: [
+    {
+      model_id: 'native',
+      display_name: null,
+      detail: null,
+      reasoning_effort_options: null,
+      selected_variant: null,
+      version: [],
+      resolved_model_id: null,
+    },
+  ],
   reasoning_effort_options: [],
   default_model_id: null,
   default_reasoning_effort: null,
@@ -60,14 +77,32 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
   'machine %s cards and sign-in never borrow the server allowance or provider controller',
   async (machine_id) => {
     const database = fixture();
-    const state = new BackendStateStore(database);
+    database.write((tx) => {
+      seed_machine_lease(tx, machine_id);
+      save_machine_model_list(tx, machine_id, snapshot);
+      // Legal older wire snapshots omit optional model fields. Versioned reads must
+      // normalize them exactly as the ordinary catalog relay does.
+      tx.run(
+        'UPDATE machine_backend_snapshots SET snapshot_json=? WHERE machine_id=? AND backend_key=?',
+        [
+          JSON.stringify({ ...snapshot, available_models: [{ model_id: 'native' }] }),
+          machine_id,
+          key,
+        ],
+      );
+    });
+    const write = vi.fn(database.write);
+    const backend_database = { read: database.read, write, close: database.close };
+    const state = new BackendStateStore(backend_database);
     state.keep_successful_usage(usage(91));
     state.keep_successful_usage(usage(17), machine_id);
     const home_sign_in = vi.fn(() => null);
     const operations: string[] = [];
     let available = true;
+    let sign_in_state = 'pending';
+    const catalog_snapshot = vi.fn(async (_key: unknown, _options: unknown) => snapshot);
     const runtime: BackendHttpRuntime = {
-      database,
+      database: backend_database,
       backend_state: state,
       backend_ids: [key],
       drivers: [],
@@ -84,7 +119,7 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
       settled: async () => {},
       machine_catalog: () => ({
         retained: () => snapshot,
-        snapshot: async () => snapshot,
+        snapshot: catalog_snapshot,
         identity: null,
         ready: true,
         owns_conversation: () => false,
@@ -101,6 +136,7 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
             if (request.operation === 'capabilities')
               return { can_sign_in: true, reports_allowance_usage: true };
             if (request.operation === 'refresh_usage') return JSON.parse(JSON.stringify(usage(23)));
+            if (request.operation === 'sign_in_read') return { sign_in: { state: sign_in_state } };
             return { sign_in: null };
           },
         };
@@ -112,6 +148,7 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
       {
         database,
         areas: [
+          { prefix: '/api', routes: createResourceRoutes([new BackendPickerResources(runtime)]) },
           {
             prefix: '/api/conversation',
             routes: createBackendRoutes(runtime, { available: true, writes }),
@@ -124,11 +161,52 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
       const card = (await app.inject({ method: 'GET', url: path })).json().backends[0];
       expect(card.cached_usage.windows[0].used_percent).toBe(17);
       expect([card.can_sign_in, card.reports_allowance_usage]).toEqual([true, true]);
+      // Gap: ordinary card checks did not prove a warm read is command/write free, or
+      // that the versioned envelope shares its saved body and epoch with revision probes.
+      operations.length = 0;
+      write.mockClear();
+      const versioned = (await app.inject({ method: 'GET', url: path + '&versioned=true' })).json();
+      expect(versioned.body.backends[0]).toEqual(card);
+      const resource_key = backend_resource_key({ machine_id });
+      const probe = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/resource-versions?keys=' + encodeURIComponent(JSON.stringify([resource_key])),
+        })
+      ).json();
+      expect(probe.epoch).toBe(versioned.epoch);
+      expect(probe.resources).toEqual([{ key: resource_key, revision: versioned.revision }]);
+      database.write((tx) =>
+        tx.run('UPDATE machines SET name=? WHERE machine_id=?', ['Renamed', machine_id]),
+      );
+      const unchanged = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/resource-versions?keys=' + encodeURIComponent(JSON.stringify([resource_key])),
+        })
+      ).json();
+      expect(unchanged.resources[0].revision).toBe(versioned.revision);
+      write.mockClear();
+      expect(operations).toEqual([]);
+      expect(write).not.toHaveBeenCalled();
+      await app.inject({ method: 'GET', url: path + '&refresh=true' });
+      expect(operations).toEqual(['capabilities']);
+      expect(write).not.toHaveBeenCalled();
       await app.inject({
         method: 'POST',
         url: `/api/conversation/backends/codex/sign-in?machine_id=${machine_id}`,
       });
       expect(operations).toContain('sign_in_start');
+      const discovered = catalog_snapshot.mock.calls.length;
+      const signin_path = `/api/conversation/backends/codex/sign-in?machine_id=${machine_id}`;
+      await app.inject({ method: 'GET', url: signin_path });
+      expect(catalog_snapshot.mock.calls.length).toBe(discovered);
+      sign_in_state = 'confirmed';
+      await app.inject({ method: 'GET', url: signin_path });
+      expect(catalog_snapshot.mock.calls.length).toBe(discovered + 1);
+      expect(catalog_snapshot.mock.calls.at(-1)?.[1]).toMatchObject({ refresh: true });
+      await app.inject({ method: 'DELETE', url: signin_path });
+      expect(catalog_snapshot.mock.calls.length).toBe(discovered + 2);
       expect(home_sign_in).not.toHaveBeenCalled();
       if (machine_id !== HOME_MACHINE_ID)
         expect(state.read_usage(key, HOME_MACHINE_ID)?.windows[0]?.used_percent).toBe(91);
@@ -420,4 +498,68 @@ test('provider update crosses the backend relay and executes in the machine acco
   expect(environment.commands).toEqual([command]);
   expect(wait_seconds).toBeNull();
   expect(withdraw).toHaveBeenCalledWith('update', 'delivery_withdrawn');
+});
+
+// The old retained path silently started a background model command. A route-only fake
+// catalog cannot detect that, so this proves the real relay with the existing SQL fixture.
+test('warm catalog reads admit no command while explicit refresh does', async () => {
+  const database = fixture();
+  const put = vi.fn(async () => ({ command_id: 'catalog' }) as never);
+  const relay = new VpsCatalogRelay(
+    database,
+    { owns_conversation: () => false },
+    {
+      machine_id: HOME_MACHINE_ID,
+      current_identity: () => null,
+      is_present: () => true,
+    },
+    {
+      put_model_list_request: put,
+      wait_result: async () => ({ model_list: snapshot }) as never,
+      withdraw_waiting: vi.fn(),
+    },
+  );
+  expect(await relay.snapshot(key)).toMatchObject(snapshot);
+  expect(put).toHaveBeenCalledOnce();
+  put.mockClear();
+  expect(await relay.snapshot(key)).toMatchObject(snapshot);
+  expect(put).not.toHaveBeenCalled();
+  expect(await relay.snapshot(key, { refresh: true })).toMatchObject(snapshot);
+  expect(put).toHaveBeenCalledOnce();
+  await relay.stop({ deadline: performance.now() / 1000 + 5 });
+});
+
+// Gap: saved false values, provider changes, and old-incarnation replies are invisible
+// to the ordinary positive card fixture. The existing database fixture proves each boundary.
+test('capability facts distinguish missing and false and reject stale machine replies', () => {
+  const database = fixture();
+  const state = new BackendStateStore(database);
+  const value = { can_sign_in: false, reports_allowance_usage: false };
+  expect(state.read_machine_capabilities(HOME_MACHINE_ID, key)).toBeNull();
+  const initial = state.capability_source(HOME_MACHINE_ID, key);
+  expect(state.keep_machine_capabilities(HOME_MACHINE_ID, key, value, initial)).toBe(true);
+  expect(state.read_machine_capabilities(HOME_MACHINE_ID, key)).toEqual(value);
+  expect(state.read_machine_capabilities(ORIGINAL_MAC_MACHINE_ID, key)).toBeNull();
+  database.write((tx) => save_machine_model_list(tx, HOME_MACHINE_ID, snapshot));
+  const provider = state.capability_source(HOME_MACHINE_ID, key);
+  expect(provider).not.toBe(initial);
+  expect(state.capabilities_current(HOME_MACHINE_ID, key, provider)).toBe(false);
+  expect(state.keep_machine_capabilities(HOME_MACHINE_ID, key, value, provider)).toBe(true);
+  database.write((tx) =>
+    tx.run('UPDATE mac_executor_presence SET continuous_since_ms=123 WHERE machine_id=?', [
+      HOME_MACHINE_ID,
+    ]),
+  );
+  const reconnected = state.capability_source(HOME_MACHINE_ID, key);
+  expect(reconnected).not.toBe(provider);
+  expect(
+    state.keep_machine_capabilities(
+      HOME_MACHINE_ID,
+      key,
+      { can_sign_in: true, reports_allowance_usage: true },
+      provider,
+    ),
+  ).toBe(false);
+  expect(state.read_machine_capabilities(HOME_MACHINE_ID, key)).toEqual(value);
+  expect(state.capabilities_current(HOME_MACHINE_ID, key, reconnected)).toBe(false);
 });
