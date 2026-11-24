@@ -168,6 +168,11 @@ jobs:
               find "$directory" -maxdepth 1 -type f -name '*.json' -exec cp {} "$FIRST_INSTALL_ROOT/evidence/build/" \;
             fi
           done
+          for log in boot.stdout.log boot.stderr.log boot.phase.log boot.supervisor.stdout.log boot.supervisor.stderr.log; do
+            if [ -f "$FIRST_INSTALL_ROOT/build/server/proof-work/$log" ]; then
+              cp "$FIRST_INSTALL_ROOT/build/server/proof-work/$log" "$FIRST_INSTALL_ROOT/evidence/build/$log"
+            fi
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
