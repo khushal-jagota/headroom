@@ -154,9 +154,10 @@ export async function forward(request: Request, url: URL): Promise<Response> {
   } catch {
     return Response.error();
   }
-  const returned = new Headers(response.headers);
-  for (const name of RESPONSE_HEADERS_NOT_RETURNED) returned.delete(name);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: returned });
+  // Preserve Electron's fetch metadata and untouched body so its native relay owns
+  // cancellation when the page closes a stream. A new Response loses that relay.
+  for (const name of RESPONSE_HEADERS_NOT_RETURNED) response.headers.delete(name);
+  return response;
 }
 
 function notFound(): Response {
