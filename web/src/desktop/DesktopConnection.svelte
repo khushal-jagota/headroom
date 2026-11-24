@@ -2,7 +2,7 @@
   import { get } from "svelte/store";
   import { connectionStatus, retryChangeStream } from "../lib/changeStream";
   import { desktopBridge } from "./bridge";
-  import { queryClient } from "../lib/queryClient";
+  import { refreshScreen } from "../lib/resourceVersions/refresh";
 
   let failed = $state(false);
   let dismissed = $state(false);
@@ -21,7 +21,7 @@
         // can leave a forwarded stream open and consume another server connection.
         if (retry) {
           retryChangeStream();
-          void queryClient.refetchQueries({ type: "active" });
+          void refreshScreen();
         }
       }
     } catch { failed = get(connectionStatus) !== "connected"; }

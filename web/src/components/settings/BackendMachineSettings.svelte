@@ -8,6 +8,7 @@
   import SettingsRow from "./SettingsRow.svelte";
   import SettingsSection from "./SettingsSection.svelte";
   import { backendStatus } from "../../lib/settings/statusText";
+  import { withinScreenWait } from "../../lib/mutate";
   import { loadBackendPageSnapshots } from "../../lib/conversation/backendRefresh";
   import { backendCanBeSignedIn, signInIsPending } from "../../lib/conversation/backendSignIn";
   import { BackendSignInSession, type SignInPageState } from "../../lib/conversation/backendSignInSession";
@@ -76,8 +77,10 @@
         output_tail: ""
       };
     } finally {
-      // An unsuccessful command can still change the installation.
-      await refresh();
+      // An unsuccessful command can still change the installation. The row offers Update
+      // until the read shows the new version, so the control waits for that read for a
+      // short, limited time. A second press would run the install again.
+      await withinScreenWait(refresh());
       updating[key] = false;
     }
   }
