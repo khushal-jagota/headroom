@@ -1,3 +1,4 @@
+import { WORKER_STATUS_LABEL } from "../../server/tickets/logic/status_presentation";
 import { describe, expect, it } from "vitest";
 import {
   managerHeading,
@@ -15,8 +16,8 @@ describe("a worker that holds the claim but is between turns", () => {
   const held = ticketFacts({ ticket_status: "agent", agent_state: "idle" });
 
   it("still reads as the agent's on every screen", () => {
-    expect(workspaceHeading(held)).toBe("Agent");
-    expect(managerHeading(held)).toBe("Agent");
+    expect(workspaceHeading(held)).toBe(WORKER_STATUS_LABEL);
+    expect(managerHeading(held)).toBe(WORKER_STATUS_LABEL);
   });
 
   it("does not read as an untouched Stage on its own page", () => {
@@ -28,7 +29,7 @@ describe("a live turn with no claim behind it", () => {
   const running = ticketFacts({ ticket_status: "empty", agent_state: "working" });
 
   it("reads the same, so neither fact alone is the carrier", () => {
-    expect(workspaceHeading(running)).toBe("Agent");
+    expect(workspaceHeading(running)).toBe(WORKER_STATUS_LABEL);
     expect(ticketPageMark(running)).toBe("current-running");
   });
 });
