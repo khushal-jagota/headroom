@@ -6,6 +6,7 @@ import { copy_environment } from '../../../core/environment.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { START_SECONDS } from '../../../worker_supervision/config.ts';
 import * as records from '../../../worker_supervision/records.ts';
+import { with_worker_file_mask } from '../../../worker_supervision/file_mask.ts';
 import { channels, connect_channel, await_worker_admission } from './transport.ts';
 
 async function main(): Promise<void> {
@@ -38,12 +39,14 @@ async function main(): Promise<void> {
     // Pass the authenticated socket descriptors straight to the provider. The
     // wrapper must not buffer provider output or read its input. This preserves
     // kernel backpressure and lets the proxy drain bytes after the job exits.
-    const child = children.spawn(executable, args, {
-      stdio: [input!, output!, error!],
-      env: copy_environment(process.env),
-      cwd: process.cwd(),
-      detached: false,
-    });
+    const child = with_worker_file_mask(() =>
+      children.spawn(executable, args, {
+        stdio: [input!, output!, error!],
+        env: copy_environment(process.env),
+        cwd: process.cwd(),
+        detached: false,
+      }),
+    );
     child.once('error', failure);
     child.once('exit', (code, signal) => {
       children.seal();

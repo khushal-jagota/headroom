@@ -1,4 +1,6 @@
 /** Portable priorities and absolute-operation budgets, in seconds. */
+/** Backend output uses ordinary account permissions, apart from private machine state. */
+export const WORKER_FILE_MASK = 0o022;
 export const NICE = 10;
 export const STOP_SECONDS = 10;
 export const TERM_SECONDS = 5;
