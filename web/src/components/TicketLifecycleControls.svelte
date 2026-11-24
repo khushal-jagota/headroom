@@ -46,7 +46,7 @@
 </script>
 
 <div class="ticket-lifecycle" data-ticket-lifecycle>
-  <div class="actions">
+  <div class="actions" data-window-row-actions>
     {#if !terminal}
       {@render leading?.()}
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}

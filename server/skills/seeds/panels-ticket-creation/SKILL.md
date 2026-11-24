@@ -22,9 +22,11 @@ lifecycle. A Manager is the broader outcome that can own several Tickets. An ide
 is a loose thought that is not committed work. The Chief keeps it as a file in its
 home folder, not as a Panels record. Choose a preset whose workflow fits the job, or define a custom workflow. A preset supplies stages, specialist guidance, and launch defaults. Each new Ticket owns its stages.
 
-For custom work, specify each stage’s name, owner, result field, and instructions. Put the stages in order and review the whole workflow. Include any guidance that applies across stages. An adapted preset keeps its initial launch choices unless you change them. Pure custom work must name its backend and model. Custom guidance reaches the Worker as one complete guide at kickoff. No new Worker type is necessary. End each new workflow with worker-owned Consequences, then Done. Put decisions and required owner-only actions before Consequences. Consequences records verified follow-through for review. Consequences can be a ceiling.
+For custom work, specify each stage’s name, owner, result field, and instructions. Put the stages in order and review the whole workflow. Include any guidance that applies across stages. An adapted preset keeps its initial launch choices unless you change them. Pure custom work must name its backend and model. Custom guidance reaches the Worker as one complete guide at kickoff. No new Worker type is necessary. End each new workflow with worker-owned Consequences, then Done. Put decisions and required owner-only actions before Consequences. Consequences records verified follow-through for review. Consequences can be a ceiling. `panels ticket schema create` lists the keys that the create object accepts.
 
-Give the Ticket a clear outcome-oriented title and a Brief that stays top level. The
+If creation supplies Brief text, the first stage must gate the `brief` field. The server refuses the text otherwise. A custom workflow can omit Brief if creation supplies no Brief text.
+
+Give the Ticket a clear outcome-oriented title and, when its workflow has a Brief, keep it top level. The
 Worker reading it was not in the room: it needs to understand the work, know why it
 matters, and know what is still undecided. Carry the user's reason for the work, not
 only the facts. Ground references to existing work, preserve agreed boundaries and
@@ -36,7 +38,7 @@ Supplying a Brief does not approve it. With the default ceiling at Brief, suppli
 a proposal for review. If an authorized creator sets the ceiling past Brief, the supplied text
 settles and the Ticket advances to its next stage.
 
-If creation supplies no Brief text, the Ticket stays at Brief without a proposal. Its Worker
+If the first stage gates Brief and creation supplies no Brief text, the Ticket stays at Brief without a proposal. Its Worker
 writes the missing text, and the same ceiling rule determines whether it needs review. Empty or
 whitespace-only text counts as no text.
 
@@ -45,7 +47,7 @@ text also approves agent-authored work without the default review.
 
 ## Explicit manager assignment
 
-A Worker names Chief or one ordinary manager. Inspect existing Managers and
+A Worker names Chief or one ordinary manager. Inspect existing Managers with `panels manager list` and
 choose the one that describes responsibility for the job. Use Chief when no ordinary
 manager applies. Do not create a thin fallback Item for Chief.
 
@@ -77,8 +79,9 @@ operating system, executor process, or physical workspace identity.
 
 A real calendar constraint belongs in the deadline. A genuine prerequisite belongs in
 the Ticket's blockers so Panels can hold the dependent work until the prerequisite is
-resolved.
+resolved. List them in `blocked_by_ticket_ids`, or add one later with
+`panels ticket block <ticket-id> --by <prerequisite-id>`.
 
-After creation, read the Ticket back as a whole. Its title, Worker type, Brief,
+After creation, read the Ticket back as a whole. Its title, Worker type, stage text,
 Project, explicit manager assignment, deadline, and blockers must tell
 one coherent story. Correct a mismatch through its canonical surface.

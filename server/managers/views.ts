@@ -99,7 +99,15 @@ export function list_manager_summaries(
         recap_updated_at: item.recap_updated_at,
       };
     });
-  return { managers: rows, page: pageFacts(count, rows.length, page) };
+  const facts = pageFacts(count, rows.length, page);
+  if (filters.settled !== false) return { managers: rows, page: facts };
+  // Active Managers are the default read, so say how many settled ones it leaves out.
+  const settled = sql.get<{ count: number }>(
+    'SELECT count(*) AS count FROM managers' +
+      (clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''),
+    values.map((value, index) => (clauses[index] === 'settled=?' ? 1 : value)),
+  )!.count;
+  return { managers: rows, page: { ...facts, not_shown: { settled } } };
 }
 export function manager_tickets(sql: ReadSql, id: string): Record<string, unknown>[] {
   const blocked = blocked_ticket_ids(sql);
@@ -136,6 +144,18 @@ export function manager_tickets(sql: ReadSql, id: string): Record<string, unknow
         worker_type: ticket.worker_type,
       };
     });
+}
+/** The goals this Manager holds, from the same read as its workspace. */
+export function manager_held_goals(
+  sql: ReadSql,
+  id: string,
+  now: Date,
+): { id: string; title: string; active: boolean }[] {
+  return manager_workspace_document(sql, id, now).goals.map((goal) => ({
+    id: String(goal.id),
+    title: String(goal.title),
+    active: Boolean(goal.active),
+  }));
 }
 export function manager_workspace_document(
   sql: ReadSql,

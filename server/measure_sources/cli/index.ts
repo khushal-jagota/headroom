@@ -1,7 +1,7 @@
 /** Thin source commands: offline declarations, bounded input, and canonical HTTP writes. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send } from '../../cli/http.ts';
-import { stdin_object } from '../../cli/input.ts';
+import { read_json_input } from '../../cli/input.ts';
 import { emit } from '../../cli/measure_io.ts';
 import { CREATE, RUN, SCRIPT, runtime_guide } from '../guidance.ts';
 const quote = (value: string) =>
@@ -25,7 +25,9 @@ export async function run_measure_source_command(inv: Invocation): Promise<Comma
     if (v.project_id !== null) params.project_id = v.project_id;
     data = await send(inv, 'GET', path, { params });
   } else if (command === 'create')
-    data = await send(inv, 'POST', path, { json_body: await stdin_object(inv) });
+    data = await send(inv, 'POST', path, {
+      json_body: await read_json_input(inv, 'measure-source request'),
+    });
   else if (command === 'run-show')
     data = await send(inv, 'GET', '/api/measure-source-runs/' + quote(v.run_id));
   else {
@@ -48,7 +50,7 @@ export async function run_measure_source_command(inv: Invocation): Promise<Comma
         inv,
         command === 'request-run' ? 'POST' : 'PUT',
         source + '/' + tail[command],
-        { json_body: await stdin_object(inv) },
+        { json_body: await read_json_input(inv, 'measure-source request') },
       );
     }
   }

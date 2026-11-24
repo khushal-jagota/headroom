@@ -59,11 +59,11 @@ Manager and Chief pages display their text without owner edits. Agents still upd
 
 The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and current work. If it holds exactly one goal, that goal's document appears under the Manager name. Otherwise, its own document appears with active held goals as cards.
 
-A Tickets block places the Workers within the document. Without that block, they appear below it. See [Goals](goals.md).
+The Tickets box appears below the header, before goals and the page document. See [Goals](goals.md).
 
-Manager lists include recap freshness. Workspace reads also include each child Ticket's recap and freshness.
+Manager lists show active Managers by default, with recap freshness and a count of each Manager's Tickets by need. Backlogged and done Tickets have their own counts and never count as waiting. Workspace reads also include each child Ticket's recap and freshness.
 
-`panels manager workspace` explains which document the browser displays and gives its edit command. `panels page` reads and edits Manager and Chief documents. `panels goal` edits a held goal's document. Their schema commands explain the accepted content. The plain purpose, recap, and artifacts remain separate.
+`panels manager show` explains which document the browser displays and gives its edit command. `panels page` reads and edits Manager and Chief documents. `panels goal` edits a held goal's document. Their schema commands explain the accepted content. The plain purpose, recap, and artifacts remain separate.
 
 ## Decisions that shape it
 

@@ -12,6 +12,8 @@ export interface Invocation {
   values: Record<string, any>;
   environment: NodeJS.ProcessEnv;
   stdin: () => Promise<Buffer>;
+  /** True when stdin is an interactive terminal, so a read would wait for typing. */
+  stdin_is_terminal?: boolean;
   /** Flush incremental stderr before the operation resumes. */
   write_stderr?: (text: string) => Promise<void>;
 }

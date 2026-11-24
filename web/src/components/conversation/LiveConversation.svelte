@@ -213,7 +213,6 @@
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
    *  nothing: a frame with no words in it moves this and touches no row. */
-  let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
   /** Sends whose confirmed queue fate precedes the next server snapshot. */
@@ -583,7 +582,6 @@
     const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
-      livenessPulse++;
       if(local.coverage!==lastCoverage){
         lastCoverage=local.coverage;
         void refreshView(id);
@@ -990,10 +988,10 @@
     }
   }
 
-  async function submitUserInput(answers: UserInputAnswers): Promise<void> {
+  async function submitUserInput(answers: UserInputAnswers): Promise<boolean> {
     const requestId = userInput?.requestId;
-    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
-    if (answeredUserInput === requestId) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return false;
+    if (answeredUserInput === requestId) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
@@ -1004,8 +1002,10 @@
         : "The backend did not take those answers. You can try again or stop the turn.";
       if (fate !== "refused") answeredUserInput = requestId;
       void refreshView();
+      return fate !== "refused";
     } catch (error) {
       askNote = sentenceFor(error);
+      return false;
     } finally {
       busy = false;
     }
@@ -1132,7 +1132,6 @@
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
-  {livenessPulse}
   {running}
   {ask}
   {userInput}
@@ -1170,7 +1169,7 @@
   onSend={(content, mode, picked, context) => send(content, mode, picked, undefined, context)}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
-  onSubmitUserInput={(answers) => void submitUserInput(answers)}
+  onSubmitUserInput={submitUserInput}
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(heldPromptId, forEdit) => discard(heldPromptId, forEdit)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}

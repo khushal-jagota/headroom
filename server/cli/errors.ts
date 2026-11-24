@@ -14,27 +14,29 @@ export class CliFailure extends Error {
     this.result = result;
   }
 }
+/** Command shapes that the generated shape cannot say, such as text on stdin. */
 const recovery: Record<string, string> = {
-  'send-message': 'panels send-message --owner --message TEXT',
+  'send-message':
+    'panels send-message --owner|--chief|--ticket TICKET_ID|--manager MANAGER_ID < MESSAGE_FILE',
+  recap: 'panels recap < RECAP_FILE',
+  'ticket propose': 'panels ticket propose < PROPOSAL_FILE',
+  'ticket approve': 'panels ticket approve TICKET_ID --ceiling STAGE',
+  'ticket send-back': 'panels ticket send-back TICKET_ID < GUIDANCE_FILE',
+  'ticket complete': 'panels ticket complete TICKET_ID FIELD < VALUE_FILE',
+  'ticket create': 'panels ticket create < TICKET_FILE',
+  'ticket edit': 'panels ticket edit TICKET_ID < EDIT_FILE',
+  'ticket assign': 'panels ticket assign TICKET_ID --manager MANAGER_ID|--chief',
+  'ticket show': 'panels ticket show [TICKET_ID] [PART_NAMES...]',
+  'manager create': 'panels manager create --title TEXT --project-id PROJECT_ID',
+  'manager delete': 'panels manager delete MANAGER_ID --yes',
+  'manager set': 'panels manager set MANAGER_ID FIELD < VALUE_FILE',
+  'manager show': 'panels manager show [MANAGER_ID] [PART_NAMES...]',
+  'project set': 'panels project set PROJECT_ID FIELD < VALUE_FILE',
+  'page edit': 'panels page schema',
+  'page show': 'panels page show --manager MANAGER_ID|--chief',
+  'skill edit': 'panels skill edit NAME --description TEXT < SKILL_FILE',
   'worker-type save': 'panels worker-type save < RECORD_FILE',
   'worker-type skill': 'panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE',
-  'skill edit': 'panels skill edit NAME --description TEXT < SKILL_FILE',
-  'project set': 'panels project set PROJECT_ID FIELD --value VALUE',
-  'ticket delete': 'panels ticket delete TICKET_ID',
-  'ticket create': 'panels ticket create --input-json FILE',
-  'ticket assign': 'panels ticket assign TICKET_ID --chief',
-  'manager settle': 'panels manager settle ITEM_ID',
-  'ticket edit': 'panels ticket edit TICKET_ID --input-json FILE',
-  'ticket proposal': 'panels ticket proposal TICKET_ID ACTION',
-  'ticket complete': 'panels ticket complete TICKET_ID FIELD --value VALUE',
-  'manager create': 'panels manager create --title TEXT --project-id PROJECT_ID',
-  'manager delete': 'panels manager delete ITEM_ID --yes',
-  'page edit': 'panels page schema',
-  'page show': 'panels page show --manager ID',
-  'manager set': 'panels manager set ITEM_ID FIELD --value VALUE',
-  'manager conversation send': 'panels manager conversation send ITEM_ID --message TEXT',
-  'worker propose': 'panels worker propose TICKET_ID < PROPOSAL_FILE',
-  'worker recap': 'panels worker recap TICKET_ID < RECAP_FILE',
 };
 export function command_path(command: CommandDefinition): string {
   return ['panels', ...command.path].join(' ');

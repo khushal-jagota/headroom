@@ -84,6 +84,8 @@
         : conversationFileHref(conversationId, piece.stored_file_id)}
       alt={piece.file_name ?? "an image in this message"}
     />
+  {:else if piece.piece === "attachment_upload" || piece.piece === "video_upload"}
+    <span class="message-attachment-reference" data-message-upload-reference>Attached file</span>
   {:else if piece.piece === "file"}
     <ConversationFileCard
       href={"data" in piece

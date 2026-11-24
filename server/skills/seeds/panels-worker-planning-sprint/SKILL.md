@@ -30,7 +30,7 @@ The sequence is **Brief → Review → Next Sprint → Consequences → Done**.
 
 Keep three things visibly separate: facts from Panels, worker judgment, and user decisions. Be willing to challenge overload, vague outcomes, avoidance, and automatic carry-forward, but never turn a recommendation into an approved decision.
 
-Panels is canonical. Use supported `panels sprint`, `panels manager`, and `panels ticket` surfaces; never edit the database or legacy planning files. Keep working detail in Ticket Chat. Use a ticket-owned artifact only when an evidence packet would otherwise overwhelm the conversation.
+Panels is canonical. Use supported `panels manager` and `panels ticket` surfaces; never edit the database or legacy planning files. Keep working detail in Ticket Chat. Use a ticket-owned artifact only when an evidence packet would otherwise overwhelm the conversation.
 
 ### needs\_brief — bind the boundary
 

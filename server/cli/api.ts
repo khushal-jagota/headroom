@@ -1,7 +1,7 @@
 /** Authenticated requests for API operations without a dedicated CLI command. */
 import type { CommandHandler } from './contracts.ts';
 import { emit, fail_validation, json, send } from './http.ts';
-import { read_source } from './input.ts';
+import { read_named_file } from './input.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
 
 export const run_api_command: CommandHandler = async (invocation) => {
@@ -9,7 +9,7 @@ export const run_api_command: CommandHandler = async (invocation) => {
     fail_validation(invocation, 'API path must start with /');
   let body: unknown = undefined;
   if (invocation.values.input_json != null) {
-    const source = await read_source(invocation, invocation.values.input_json);
+    const source = await read_named_file(invocation, invocation.values.input_json);
     try {
       body = parse_numeric_json(source);
     } catch (error) {

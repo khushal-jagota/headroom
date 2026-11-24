@@ -1,7 +1,7 @@
 /** Manager and Chief document commands use the existing holder-page routes. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { emit, fail_validation, json, send } from '../../cli/http.ts';
-import { stdin_object } from '../../cli/input.ts';
+import { read_json_input } from '../../cli/input.ts';
 
 const response = (data: unknown, as_json: boolean): CommandResult =>
   emit(data, as_json, json(data, { ensure_ascii: false, indent: 2 }));
@@ -33,7 +33,7 @@ export async function run_page_command(invocation: Invocation): Promise<CommandR
       return response(await send(invocation, 'GET', route(invocation)), as_json);
     case 'page edit': {
       const target = route(invocation);
-      const body = await stdin_object(invocation);
+      const body = await read_json_input(invocation, 'page edit');
       if (
         !Object.hasOwn(body, 'page') ||
         Object.keys(body).some((key) => !['page', 'expected_revision'].includes(key))

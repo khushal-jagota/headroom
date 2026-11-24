@@ -43,7 +43,6 @@
     onSendAgain,
     models,
     ownSenderLabel,
-    livenessPulse,
     activityUncertain = false,
     conversationState,
     emptyState,
@@ -68,7 +67,6 @@
     onSendAgain?: (messageId: string) => Promise<void> | void;
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
-    livenessPulse: number;
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
@@ -1238,7 +1236,7 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {livenessPulse} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
+      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -1246,7 +1244,6 @@
       {lens}
       {models}
       {ownSenderLabel}
-      {livenessPulse}
       {activityUncertain}
       {conversationId}
       {outgoingMessages}
@@ -1257,7 +1254,7 @@
     {/if}
     <!-- v8 (3): the Working line right after the running turn's content (its steered
          messages are inside the turn), then the queued messages, which send after it. -->
-    {#if reader!==null}<LiveEdge {reader} {activityUncertain} {livenessPulse}/>{/if}
+    {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
     {#if afterTranscript}{@render afterTranscript()}{/if}
     </div>
     {#if reservedSpacePixels > 0}

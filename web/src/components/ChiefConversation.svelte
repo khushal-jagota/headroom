@@ -25,7 +25,6 @@
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
-  import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
@@ -112,11 +111,11 @@
     {#snippet actions()}<WorkMoveDialog owner={{kind:"chief"}} label="the Chief" currentMachineId={startValues.data?.machine_id} />{/snippet}
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
-  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
-  {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+  <section class="manager-workers" aria-label="Workers">
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
-  </section>{/if}
+  </section>
+  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
+  {#if chiefPage.data?.page}<div class="manager-content"><HolderDocument holder={{kind:"chief",id:"chief"}}/></div>{/if}
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}
@@ -139,5 +138,5 @@
 </div>
 <style>
   .chief-workspace-host { display:contents; }
-  .manager-workers { margin-top:var(--page-section-gap); }
+  .manager-workers, .manager-content { margin-top:var(--page-section-gap); }
 </style>

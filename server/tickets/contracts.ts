@@ -48,6 +48,24 @@ export type NextCeiling = string;
 export type TicketLocale = 'vps' | 'macos';
 export type WorkerStepClaim = 'none' | 'out' | 'errored';
 export type TicketStatus = 'empty' | 'blocked' | 'agent' | 'awaiting_approval' | 'errored';
+/** What a Ticket needs next, and from whom. The order is the list sort order. */
+export const TICKET_NEEDS = [
+  'owner_approval',
+  'owner_answer',
+  'owner_stage',
+  'owner_reply',
+  'agent_approval',
+  'working',
+  'ready',
+  'blocked',
+  'errored',
+  'backlog',
+  'done',
+] as const;
+export type TicketNeed = (typeof TICKET_NEEDS)[number];
+/** The Ticket list's scope: `live` is neither backlogged nor terminal. */
+export const TICKET_LIST_SCOPES = ['live', 'backlog', 'done', 'all'] as const;
+export type TicketListScope = (typeof TICKET_LIST_SCOPES)[number];
 export type TicketApprovalMethod = 'explicit_accept' | 'auto_accept' | 'unknown';
 export interface TicketFieldApproval {
   method: TicketApprovalMethod;
@@ -131,22 +149,24 @@ export interface TicketDeletion {
   linked_ticket_ids: string[];
 }
 export interface TicketListFilters {
-  manager?: Principal | null;
-  stages?: readonly string[];
-  excluded_stages?: readonly string[];
-  ticket_statuses?: readonly TicketStatus[];
-  excluded_ticket_statuses?: readonly TicketStatus[];
-  include_terminal?: boolean;
-  active?: boolean;
-  search?: string | null;
-  is_backlogged?: boolean | null;
-  worker_types?: readonly string[];
+  manager: Principal | null;
+  scope: TicketListScope;
+  needs: readonly TicketNeed[];
+  stages: readonly string[];
+  excluded_stages: readonly string[];
+  worker_types: readonly string[];
+  search: string | null;
 }
-export interface WorkAttention {
-  awaiting_reply: boolean;
-  awaiting_answer: boolean;
-  awaiting_approval: boolean;
-  awaiting_agent_approval: boolean;
-  assigned: boolean;
-  agent_state: string;
+/** The flag filters the iPhone app and older `panels` CLIs send instead of `scope` and `needs`. */
+export interface LegacyTicketListFilters {
+  manager: Principal | null;
+  ticket_statuses: readonly string[];
+  excluded_ticket_statuses: readonly string[];
+  is_backlogged: boolean | null;
+  include_terminal: boolean;
+  active: boolean;
+  stages: readonly string[];
+  excluded_stages: readonly string[];
+  worker_types: readonly string[];
+  search: string | null;
 }

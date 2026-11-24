@@ -9,7 +9,13 @@ import {
 } from '../contracts.ts';
 import type { Principal } from '../../core/contracts.ts';
 import type { CredentialRequestRowBody } from '../../../web/src/lib/conversation/view/contracts.ts';
-import { message_content_from_stored, message_content_json_entries } from '../message_content.ts';
+import {
+  message_content_from_stored,
+  message_content_json_entries,
+  MessageText,
+  MessageImage,
+  MessageFile,
+} from '../message_content.ts';
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown, detail: string): ObjectValue {
@@ -341,7 +347,20 @@ export function conversation_event_payload_from_canonical_json(
             const entries = required(record(value), 'answers');
             if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === 'string'))
               throw new Error('answers must be a list of text');
-            return new E.UserInputAnswer({ question_id, answers: entries });
+            return new E.UserInputAnswer({
+              question_id,
+              answers: entries,
+              ...(record(value).attachments
+                ? {
+                    attachments: message_content_from_stored({
+                      content: record(value).attachments,
+                    }).filter(
+                      (piece): piece is MessageImage | MessageFile =>
+                        !(piece instanceof MessageText),
+                    ),
+                  }
+                : {}),
+            });
           }),
       });
     }
@@ -520,7 +539,15 @@ export function conversation_event_payload_json_object(
         ...(payload.answer_id === null ? {} : { fate: payload.fate, answer_id: payload.answer_id }),
         ...(payload.operation_id === null ? {} : { operation_id: payload.operation_id }),
         answers: Object.fromEntries(
-          payload.answers.map((answer) => [answer.question_id, { answers: answer.answers }]),
+          payload.answers.map((answer) => [
+            answer.question_id,
+            {
+              answers: answer.answers,
+              ...(answer.attachments?.length
+                ? { attachments: message_content_json_entries(answer.attachments).content }
+                : {}),
+            },
+          ]),
         ),
       };
     case 'user_input_failed':

@@ -131,9 +131,6 @@
         "Block": {
           "anyOf": [
             {
-              "$ref": "#/$defs/TicketsBlock"
-            },
-            {
               "$ref": "#/$defs/TextBlock"
             },
             {
@@ -1648,25 +1645,6 @@
           ],
           "title": "TextBlock",
           "type": "object"
-        },
-        "TicketsBlock": {
-          "additionalProperties": false,
-          "properties": {
-            "type": {
-              "const": "tickets",
-              "title": "Type",
-              "type": "string"
-            },
-            "id": {
-              "title": "Id",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "title": "TicketsBlock",
-          "type": "object"
         }
       },
       "anyOf": [
@@ -1797,9 +1775,6 @@
         },
         "Block": {
           "anyOf": [
-            {
-              "$ref": "#/$defs/TicketsBlock"
-            },
             {
               "$ref": "#/$defs/TextBlock"
             },
@@ -3223,25 +3198,6 @@
             "text"
           ],
           "title": "TextBlock",
-          "type": "object"
-        },
-        "TicketsBlock": {
-          "additionalProperties": false,
-          "properties": {
-            "type": {
-              "const": "tickets",
-              "title": "Type",
-              "type": "string"
-            },
-            "id": {
-              "title": "Id",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "title": "TicketsBlock",
           "type": "object"
         }
       },

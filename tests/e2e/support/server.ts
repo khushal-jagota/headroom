@@ -19,6 +19,8 @@ export interface ServerOptions {
   host?: ServerHost;
   fakeNow?: string;
   databaseName?: string;
+  /** Real screen files for desktop verification when build output lives outside the checkout. */
+  appRoot?: string;
 }
 
 export interface ServerHandle {
@@ -113,6 +115,7 @@ export async function startServer(options: ServerOptions = {}): Promise<ServerHa
   const dbPath = join(root, options.databaseName ?? 'planning.db');
   const logPath = join(root, 'server.log');
   const environment = privateEnvironment(root);
+  if (options.appRoot) environment.PLAN_APP_ROOT = options.appRoot;
   // A fresh TypeScript install's database, built from the application schema seed.
   const created = spawnSync(
     process.execPath,

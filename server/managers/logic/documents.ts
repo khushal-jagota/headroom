@@ -15,7 +15,6 @@ type Schema = string | { [key: string]: Schema } | readonly Schema[];
 const tone = 'neutral|attention|bad|good';
 const definitions: Record<string, Record<string, Schema>> = {
   text: { type: '=text', id: 'string', text: 'string' },
-  tickets: { type: '=tickets', id: 'string' },
   checklist: {
     type: '=checklist',
     id: 'string',
