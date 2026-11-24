@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from "./Button.svelte";
+  import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import type { ReviewMessageItem } from '../lib/types';
@@ -153,12 +154,15 @@
   {/snippet}
   {#if !embedded}
   <!-- Skip and Open conversation stand in the page's top band at the right, as staging. -->
+  <!-- In the desktop window the front card's row is pinned on the window's top row. -->
+  <WindowPageRow>
   <div class="review-eyebrow review-eyebrow--decisions">
-    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
       <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
     </div>
   </div>
+  </WindowPageRow>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
