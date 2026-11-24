@@ -137,7 +137,7 @@ test.skipIf(!admitted)(
         });
         report.mini_builds = mini_builds;
         report.boundary =
-          'Real sealed mini-home archives, candidate database initialization, admission, launchd and copied updater. Production archive foreground proof is separate.';
+          'Sealed mini-home archives exercise database initialization, package admission, launchd and the retained installer. The package build also boots the full production archive.';
       }
       for (const fault of ['none', 'health', 'auxiliary'] as const) {
         const started = performance.now(),

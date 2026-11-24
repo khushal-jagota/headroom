@@ -57,12 +57,11 @@ export async function launch_darwin_installer(
     { identity, io } = service;
   await service.validate_running_home(process.ppid);
   const directory = join(identity.root, 'data/update-agent');
-  const copy = join(identity.root, 'data', 'update-installer-' + attempt_id);
   const runtime = selected_release(identity.root);
   const expected = [
     join(runtime, 'node/bin/node'),
     join(runtime, 'server/environments/updates/installer/main.ts'),
-    join(copy, 'request.json'),
+    join(identity.root, 'data', 'update-installer-' + attempt_id, 'request.json'),
   ];
   if (
     command.length !== expected.length ||
