@@ -140,7 +140,7 @@ function paging_lines(page: Body): string[] {
     );
   return [facts, ...directions];
 }
-function bounded(rows: string, page: Body): string {
+function paged(rows: string, page: Body): string {
   const result =
     numeric_value(page.match_count) === 0
       ? 'No matches.'
@@ -735,7 +735,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       return emit(
         data,
         as_json,
-        bounded(
+        paged(
           lines(data.projects, (row) => `${scalar(row.id)} ${scalar(row.name)}`),
           data.page,
         ),
