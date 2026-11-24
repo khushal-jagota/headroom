@@ -112,8 +112,10 @@ describe("the dock's status line", () => {
       expect(html).not.toContain('data-conversation-system-mark="spinner"');
       expect(html).not.toContain("data-conversation-rest-clock");
     }
-    // The status is the shared system line, its mark hanging so the words start at the column's edge.
-    expect(rest({ kind: "idle", clock: null })).toMatch(/<div class="cv-system-line[^"]*is-hanging[^"]*"[^>]*data-conversation-rest-line/);
+    // The status is the shared system line, its mark inline so it stays inside the column.
+    const idle = rest({ kind: "idle", clock: null });
+    expect(idle).toMatch(/<div class="cv-system-line[^"]*"[^>]*data-conversation-rest-line/);
+    expect(idle).not.toMatch(/cv-system-line[^"]*is-hanging/);
     // The line's text is exactly its words: no spaces around them from the markup.
     const line = working.slice(working.indexOf("<div class=\"cv-system-line"), working.indexOf("</div></div>") + 12).replace(/<[^>]+>/g, "");
     expect(line).toBe("Working · 29h 28m");
