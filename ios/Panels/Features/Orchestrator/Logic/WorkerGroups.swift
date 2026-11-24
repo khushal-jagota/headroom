@@ -21,6 +21,13 @@ protocol GroupedWorker: Identifiable where ID == String {
 extension ManagerTicket: GroupedWorker { var isBlocked: Bool { blocked } }
 extension TicketSummary: GroupedWorker { var isBlocked: Bool { blocked == true } }
 
+enum TicketStatusPresentation {
+    // New clients also read older servers and retained decision snapshots.
+    static func agentOwns(_ status: String) -> Bool {
+        status == "agent_owned" || status == "agent"
+    }
+}
+
 enum WorkerGroup: String, CaseIterable, Identifiable {
     case approval, answer, yours, errored, agent, agentApproval, empty, blocked, backlogged, done
     var id: String { rawValue }
@@ -30,7 +37,7 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         case .answer: "Needs Your Answer"
         case .yours: "Yours"
         case .errored: "Errored"
-        case .agent: "Agent"
+        case .agent: "Agent owned"
         case .agentApproval: "Awaiting an Agent’s Approval"
         case .empty: "Empty"
         case .blocked: "Blocked"
@@ -51,7 +58,7 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         // Replies remain unread dots; the complete page has no Messages bucket.
         if ticket.ticketStatus == "blocked" || ticket.isBlocked { return .blocked }
         if ticket.agentState == "errored" { return .errored }
-        if ticket.ticketStatus == "agent" || ticket.agentState == "working" || ticket.agentState == "setting_up" { return .agent }
+        if TicketStatusPresentation.agentOwns(ticket.ticketStatus) || ticket.agentState == "working" || ticket.agentState == "setting_up" { return .agent }
         if ticket.awaitingAgentApproval { return .agentApproval }
         return .empty
     }

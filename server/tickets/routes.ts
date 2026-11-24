@@ -41,7 +41,7 @@ import { notify_review_transfers } from './review_transfer.ts';
 import { review_body } from '../navigation/views/review_cards.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
 import { decision_routes } from './decision_routes.ts';
-import { add_ticket_need, add_work_attention } from '../work_attention.ts';
+import { add_work_attention } from '../work_attention.ts';
 
 export function write_reject_ticket_proposal(
   tx: TransactionSql,
@@ -439,7 +439,9 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           ['exclude_ticket_status', exclude_ticket_status],
         ] as const)
           for (const value of values ?? [])
-            if (!['empty', 'blocked', 'agent', 'awaiting_approval', 'errored'].includes(value))
+            if (
+              !['empty', 'blocked', 'agent_owned', 'awaiting_approval', 'errored'].includes(value)
+            )
               throw new PlannerError('validation', `invalid ${name}`, { [name]: value });
         const result = list_ticket_summaries_by_flags(
           sql,
@@ -536,7 +538,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       }
       return ticket_detail(sql, t.id, services.clock.nowUnix(), services.config.db_path);
     });
-    await add_ticket_need(services.database, services.conversationSystem, body);
+    await add_work_attention(services.database, services.conversationSystem, [body]);
     return body;
   });
   app.patch<{ Params: { ticket_id: string } }>('/tickets/:ticket_id', async (request, reply) => {

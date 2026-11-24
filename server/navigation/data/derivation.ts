@@ -192,7 +192,7 @@ export function derive(
         : t.worker_step_claim === 'errored'
           ? 'errored'
           : t.worker_step_claim === 'out'
-            ? 'agent'
+            ? 'agent_owned'
             : live
               ? 'blocked'
               : 'empty';

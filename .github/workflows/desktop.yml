@@ -150,6 +150,15 @@ jobs:
           shasum -a 256 "$zip"
           test -s "$RUNNER_TEMP/desktop/dist/latest-mac.yml"
           node desktop/scripts/check_update_artifacts.mjs "$RUNNER_TEMP/desktop/dist" "$DESKTOP_VERSION"
+      - name: Check the signed icon and process name
+        run: python3 desktop/scripts/check_mac_icon.py "$RUNNER_TEMP/check/Panels.app" desktop/resources/icon.icns "$RUNNER_TEMP/icon-proof"
+      - name: Upload the signed icon proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-desktop-icon-${{ matrix.build }}
+          path: ${{ runner.temp }}/icon-proof
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload the signed app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

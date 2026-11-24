@@ -136,7 +136,9 @@ export function installMiddleware(
       if (client) identities.set(request, client);
       if (
         client?.kind === 'desktop' &&
-        !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+        path.startsWith('/api/') &&
+        !(path === '/api/meta' && ['GET', 'HEAD'].includes(request.method)) &&
+        request.method !== 'OPTIONS' &&
         !supported_desktop_bridge(client)
       ) {
         reply

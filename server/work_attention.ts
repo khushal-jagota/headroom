@@ -185,13 +185,3 @@ export async function add_work_attention(
     });
   }
 }
-/** One Ticket body gains its need, and nothing else from the attention read. */
-export async function add_ticket_need(
-  database: Database,
-  system: ConversationSystem | undefined,
-  ticket: Record<string, unknown>,
-): Promise<void> {
-  const probe = [{ ...ticket }];
-  await add_work_attention(database, system, probe);
-  ticket.needs = probe[0]!.needs;
-}

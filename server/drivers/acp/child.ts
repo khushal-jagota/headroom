@@ -6,9 +6,11 @@ import type {
   LoadSessionResponse,
   NewSessionResponse,
   PromptResponse,
+  SessionNotification,
 } from '@agentclientprotocol/sdk/unstable';
 import {
   BackendAdapterError,
+  BackendStreamEnded,
   BackendPromptAccepted,
   BackendSpawnFailed,
   BackendSteerRefused,
@@ -83,6 +85,8 @@ export class AcpBackendChild implements BackendChild {
   private client: AcpClient | null = null;
   private configuration: AcpSessionConfiguration | null = null;
   private stopped = false;
+  private ready = false;
+  private readonly shutdown = new AbortController();
   constructor(
     flavor: AcpFlavor,
     dependencies: AcpChildDependencies,
@@ -130,9 +134,12 @@ export class AcpBackendChild implements BackendChild {
         resolved_start,
         {
           session_update: async (params) => {
+            if (await this.events.take_background_update(params.update)) return;
+            await this.admit_agent_activity(params.update.sessionUpdate);
             await this.events.session_update(params);
           },
           request_permission: async (params, id) => {
+            await this.admit_agent_activity('permission');
             return this.events.request_permission(params, id);
           },
           log: (error) => this.log(error),
@@ -141,6 +148,13 @@ export class AcpBackendChild implements BackendChild {
       this.client = client;
       const config = new AcpSessionConfiguration(client, this.flavor.label);
       this.configuration = config;
+      void client.closed
+        .then(async () => {
+          if (this.stopped) return;
+          await this.events.turn?.ending_reporter?.catch((error) => this.log(error));
+          if (!this.stopped) await this.sink.report(null, new BackendStreamEnded());
+        })
+        .catch((error) => this.log(error));
       try {
         await client.request('initialize', {
           protocolVersion: PROTOCOL_VERSION,
@@ -181,6 +195,7 @@ export class AcpBackendChild implements BackendChild {
       }
       this.require_running();
       await config.start_values(resolved_start);
+      this.ready = true;
     } catch (error) {
       try {
         await this.stop();
@@ -200,6 +215,54 @@ export class AcpBackendChild implements BackendChild {
   }
   private require_running(): void {
     if (this.stopped) throw new PromptWriteFailed('this child is being shut down');
+  }
+  /** Session metadata and session/load replay are not fresh agent activity. */
+  private async admit_agent_activity(
+    kind: SessionNotification['update']['sessionUpdate'] | 'permission',
+  ): Promise<void> {
+    if (!this.ready || this.stopped || this.events.turn !== null) return;
+    if (
+      ![
+        'agent_message_chunk',
+        'agent_thought_chunk',
+        'plan',
+        'tool_call',
+        'tool_call_update',
+        'permission',
+      ].includes(kind)
+    )
+      return;
+    const client = this.client;
+    const config = this.configuration;
+    if (!client || !config || config.wire_ended) return;
+    const signal = AbortSignal.any([this.shutdown.signal, client.signal]);
+    const token = await this.sink.start_agent_turn?.(
+      `${this.flavor.label} sent activity without a prompt`,
+      signal,
+    );
+    if (!token || signal.aborted) return;
+    const outcome = new Deferred<PromptResponse>();
+    const failed = () => outcome.reject(signal.reason);
+    signal.addEventListener('abort', failed, { once: true });
+    const turn = this.events.begin(
+      token,
+      {
+        written: Promise.resolve(),
+        write_started: () => false,
+        response: outcome.promise,
+        cancel: (reason) => outcome.reject(reason),
+      },
+      null,
+      outcome,
+    );
+    turn.ending_reporter = this.events
+      .report_ending(turn, {
+        standard_error_tail: () => this.launcher.standard_error_tail(),
+        wire_ended: () => config.wire_ended,
+        break_wire: (cause) => config.break_wire(cause),
+      })
+      .finally(() => signal.removeEventListener('abort', failed));
+    void turn.ending_reporter.catch((error) => this.log(error));
   }
   /** Nothing is written when this refuses. */
   private bound(): { client: AcpClient; config: AcpSessionConfiguration; sessionId: string } {
@@ -361,6 +424,7 @@ export class AcpBackendChild implements BackendChild {
     const turn = this.events.turn;
     config.require_wire();
     await config.guarded(() => client.notify('session/cancel', { sessionId }));
+    turn?.agent_outcome?.resolve({ stopReason: 'cancelled' });
     if (turn) await this.wait_for_ending(turn);
   }
   private async wait_for_ending(turn: AcpTurn): Promise<void> {
@@ -425,6 +489,7 @@ export class AcpBackendChild implements BackendChild {
   }
   async stop(options?: StopOptions): Promise<void> {
     this.stopped = true;
+    this.shutdown.abort(new Error('this child is being shut down'));
     const turn = this.events.turn;
     this.events.turn = null;
     if (turn) {

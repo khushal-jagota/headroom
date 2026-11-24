@@ -38,7 +38,7 @@ test.each([
     'done',
   ],
   ['awaiting_approval', { ...live, ticket_status: 'awaiting_approval' }, quiet, 'owner_approval'],
-  ['awaiting_answer', { ...live, ticket_status: 'agent' }, asking, 'owner_answer'],
+  ['awaiting_answer', { ...live, ticket_status: 'agent_owned' }, asking, 'owner_answer'],
   ['assigned', { ...live, ticket_status: 'empty', stage_ownership: 'user' }, quiet, 'owner_stage'],
   ['awaiting_reply', { ...live, ticket_status: 'empty' }, message, 'owner_reply'],
   [

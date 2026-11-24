@@ -4,7 +4,7 @@ import {createRailMotionController,type WorkspaceRailPresentation} from '../src/
 import {buildWorkspaceRail} from '../src/lib/workspaceRail';
 import type {WorkspaceTicket} from '../src/lib/workspaceRail';
 import {railHandoff,emptyRailHandoffState,createRailHandoffController} from '../src/lib/workspaceRailHandoff';
-const ticket = (id='a', extra:Partial<WorkspaceTicket>={}):WorkspaceTicket => ({id,title:id,manager_id:null,manager_title:null,stage:'needs_implementation',ticket_status:'agent',awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'idle',...extra});
+const ticket = (id='a', extra:Partial<WorkspaceTicket>={}):WorkspaceTicket => ({id,title:id,manager_id:null,manager_title:null,stage:'needs_implementation',ticket_status:'agent_owned',awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'idle',...extra});
 const contexts = new Map([['chief','runtime:scope:window']]);
 const group = (rail:ReturnType<typeof buildWorkspaceRail>,id='a') => rail.chiefGroups.find(group=>group.cards.some(ticket=>ticket.id===id))?.key;
 

@@ -96,7 +96,7 @@ export function group(value: Fact, attention: Fact | null, rail: boolean): strin
     failed = !!attention?.last_turn_failed;
   if (!working && (value.ticket_status === 'errored' || (failed && value.stage !== 'done')))
     return 'errored';
-  if (value.ticket_status === 'agent' || working) return 'agent';
+  if (value.ticket_status === 'agent_owned' || working) return 'agent';
   if (parked && !owner) return 'status_awaiting_approval';
   if (value.stage === 'done') return 'done';
   return 'empty';

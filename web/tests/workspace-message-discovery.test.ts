@@ -6,7 +6,7 @@ import type { BoardCard, BoardManager, ChiefManagementSettings, ManagerWorkspace
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
   awaiting_agent_approval:false, assigned:false, agent_state:"idle" as const };
 const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & ManagerWorkspaceTicket => ({
-  ...quiet, id, title:id, stage:"needs_implementation", ticket_status:"agent",
+  ...quiet, id, title:id, stage:"needs_implementation", ticket_status:"agent_owned",
   conversation_id:`conversation-${id}`, manager_id:null, manager_title:null,
   ...values
 } as BoardCard & ManagerWorkspaceTicket);
@@ -27,7 +27,7 @@ describe("exact unread conversation discovery", () => {
     const parent = item("parent", {settled:true, awaiting_reply:true});
     const rows = workspaceMessageConversations([
       card("done", {awaiting_reply:true, stage:"done", manager_id:parent.id}),
-      card("unfinished", {awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent", manager_id:parent.id})
+      card("unfinished", {awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent_owned", manager_id:parent.id})
     ], [parent], chief({awaiting_reply:true}));
     expect(rows.map((row) => [row.kind,row.id,row.settled])).toEqual([
       ["ticket","done",true], ["ticket","unfinished",true], ["manager","parent",true], ["chief","chief",false]
@@ -40,7 +40,7 @@ describe("exact unread conversation discovery", () => {
     const rows = [card("owner", { is_backlogged:true, awaiting_reply:true, awaiting_approval:true }),
       card("manager", { is_backlogged:true, awaiting_reply:true, awaiting_agent_approval:true }),
       card("done", { is_backlogged:true, awaiting_reply:true, stage:"done" }),
-      card("unfinished", { is_backlogged:true, awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent" })];
+      card("unfinished", { is_backlogged:true, awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent_owned" })];
     const parent = item("ordinary", { tickets:rows });
     expect(buildWorkspaceRail(rows, [parent]).items[0].groups.map((group) => group.key)).toEqual([]);
     expect(workspaceMessageConversations(rows, [parent]).map((row) => row.id))
