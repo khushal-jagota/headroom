@@ -378,6 +378,8 @@ def main() -> int:
     decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
+        # Set by /proof/artifact-revision: the dock artifact's file changes on the server.
+        "artifact_revision": False,
         "slow": (
             not REVIEW_COMPLETION and not GOALS_SMOKE
             and not REACHABILITY_SMOKE and not DESIGN_REVIEW
@@ -1399,6 +1401,8 @@ def main() -> int:
                     return
                 elif name == "new-message":
                     state["new_message"] = True
+                elif name == "artifact-revision":
+                    state["artifact_revision"] = True
                 elif DESIGN_REVIEW and name == "stall-refresh":
                     state["stall_refresh"] = True
                 elif DESIGN_REVIEW and name == "unstall-refresh":
@@ -1583,7 +1587,8 @@ def main() -> int:
             ):
                 content = (
                     ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
-                     + "\n[Nested dock artifact](nested-dock.md)\n").encode()
+                     + "\n[Nested dock artifact](nested-dock.md)\n"
+                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")).encode()
                     if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)
@@ -1768,9 +1773,24 @@ def main() -> int:
                 # Both decode the same Ticket controls from this fixture's retained state.
                 value = tickets[path.split("/")[3]]
             elif path == "/files/tickets/offline-1/proof.html" and REVIEW_MESSAGES:
-                content = b"<!doctype html><html><body><h1>Inline artifact proof</h1></body></html>"
+                # The sibling screenshot writes its line only when it loads, so the walk can
+                # tell a page with its images from a page alone.
+                content = (
+                    b"<!doctype html><html><body><h1>Inline artifact proof</h1>"
+                    b"<img src='shots/proof-shot.png' width='120' alt='' "
+                    b"onload=\"document.getElementById('shot').textContent='Screenshot loaded'\">"
+                    b"<p id='shot'></p></body></html>"
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            elif path == "/files/tickets/offline-1/shots/proof-shot.png" and REVIEW_MESSAGES:
+                content = (ROOT / "ios/Panels/Assets.xcassets/AppIcon.appiconset/AppIcon.png").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)

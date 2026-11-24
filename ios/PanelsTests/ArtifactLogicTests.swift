@@ -131,4 +131,116 @@ final class ArtifactLogicTests: XCTestCase {
         XCTAssertEqual(targets.first?.title, "Photo")
     }
 
+
+    /// The reader is the one door for opened files: it keeps a copy, hands it back per
+    /// server, and reports an unchanged file (304 or the same bytes) as nothing to draw.
+    @MainActor func testReaderKeepsCopiesPerServerAndDrawsOnlyChangedFiles() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ArtifactFileProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = APIClient(baseURL: URL(string: "https://artifact-test-a.example")!, session: session)
+        let other = APIClient(baseURL: URL(string: "https://artifact-test-b.example")!, session: session)
+        let target = ArtifactTarget(owner: .init(kind: .ticket, id: "t_copy\(UUID().uuidString.prefix(6))"), path: "artifacts/plan.md", title: "Plan")
+        ArtifactFileProtocol.body = "# First"
+        let read = try await client.artifactDocument(target)
+        XCTAssertEqual(read.text, "# First")
+
+        let savedCopy = await client.savedArtifactDocument(target)
+        let saved = try XCTUnwrap(savedCopy, "An opened file keeps a copy")
+        XCTAssertEqual(saved.text, "# First")
+        XCTAssertNotEqual(saved.localURL, read.localURL, "Each document owns its own temporary file")
+        let savedNil = await other.savedArtifactDocument(target)
+        XCTAssertNil(savedNil, "Another server has no copy")
+
+        let unchanged = try await client.refreshedArtifactDocument(target, shown: saved)
+        XCTAssertNil(unchanged)
+        XCTAssertEqual(ArtifactFileProtocol.conditionalReads, 1, "The copy's version asks for a 304")
+
+        ArtifactFileProtocol.body = "# Second"
+        let changed = try await client.refreshedArtifactDocument(target, shown: saved)
+        XCTAssertEqual(changed?.text, "# Second")
+        let replaced = await client.savedArtifactDocument(target)
+        XCTAssertEqual(replaced?.text, "# Second", "The new file replaces the copy")
+
+        let video = ArtifactTarget(owner: target.owner, path: "artifacts/clip.mp4", title: "Clip")
+        _ = try await client.artifactDocument(video)
+        let videoCopy = await client.savedArtifactDocument(video)
+        XCTAssertNil(videoCopy, "Video is not kept")
+    }
+
+    /// Bounds: the copy opened least recently leaves first, the copy just saved stays, one
+    /// page cannot outgrow the total, and a copy not opened within the age limit leaves.
+    func testCopiesLeaveBySizeAndAge() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("copies-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let clock = TestClock()
+        let copies = ArtifactCopies(directory: folder, byteLimit: 250, maximumAge: 100, now: { clock.now })
+        let sources = folder.appendingPathExtension("sources")
+        defer { try? FileManager.default.removeItem(at: sources) }
+        func file(_ bytes: Int) throws -> URL {
+            let url = sources.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+            try Data(repeating: 1, count: bytes).write(to: url)
+            return url
+        }
+        await copies.save(server: "s", id: "page", main: "/page.html", path: "/page.html", file: try file(50), etag: nil)
+        await copies.save(server: "s", id: "page", main: "/page.html", path: "/shot.png", file: try file(50), etag: nil)
+        await copies.save(server: "s", id: "loose", main: "/a.html", path: "/stray.png", file: try file(50), etag: nil)
+        let stray = await copies.location(server: "s", id: "loose", path: "/stray.png")
+        XCTAssertNil(stray, "A page's file joins only a copy that exists")
+        clock.now += 10
+        await copies.save(server: "s", id: "note", main: "/note.md", path: "/note.md", file: try file(100), etag: nil)
+        clock.now += 10
+        _ = await copies.open(server: "s", id: "page")
+        clock.now += 10
+        await copies.save(server: "s", id: "photo", main: "/photo.png", path: "/photo.png", file: try file(100), etag: nil)
+        let note = await copies.open(server: "s", id: "note")
+        XCTAssertNil(note, "The least recently opened copy leaves first")
+        let shot = await copies.location(server: "s", id: "page", path: "/shot.png")
+        XCTAssertNotNil(shot, "A recently opened page keeps its files")
+        let total = await copies.totalBytes
+        XCTAssertEqual(total, 200)
+
+        let kept = await copies.save(server: "s", id: "page", main: "/page.html", path: "/shot.png", file: try file(220), etag: nil)
+        XCTAssertFalse(kept, "A page's file that would take its copy over the total is not kept")
+        let oldShot = await copies.location(server: "s", id: "page", path: "/shot.png")
+        XCTAssertNil(oldShot, "Its older version leaves too, so the page reads the server's")
+        let pageCopy = await copies.open(server: "s", id: "page")
+        XCTAssertNotNil(pageCopy, "The page keeps its copy")
+
+        let pageFolder = folder.appendingPathComponent(ArtifactCopies.key("s", "page"))
+        try Data("stray".utf8).write(to: pageFolder.appendingPathComponent("left.saving"))
+        let relaunched = ArtifactCopies(directory: folder, byteLimit: 250, maximumAge: 100, now: { clock.now })
+        let afterRelaunch = await relaunched.totalBytes
+        XCTAssertEqual(afterRelaunch, 150, "The index on disk matches what is left: the page and the photo")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: pageFolder.path).count, 1,
+                       "A file the index does not name leaves at the next launch")
+
+        clock.now += 101
+        let aged = await relaunched.open(server: "s", id: "photo")
+        XCTAssertNil(aged, "A copy not opened within the age limit leaves")
+        let afterAge = await relaunched.totalBytes
+        XCTAssertEqual(afterAge, 0)
+    }
+}
+
+private final class TestClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000) }
+
+/// Serves one Markdown body with its version, and a 304 when the phone names that version.
+private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var body = ""
+    nonisolated(unsafe) static var conditionalReads = 0
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("artifact-test") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let data = Data(Self.body.utf8)
+        let etag = "\"\(data.hashValue)\""
+        let conditional = request.value(forHTTPHeaderField: "If-None-Match")
+        if conditional != nil { Self.conditionalReads += 1 }
+        let status = conditional == etag ? 304 : 200
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["ETag": etag])!, cacheStoragePolicy: .notAllowed)
+        if status == 200 { client?.urlProtocol(self, didLoad: data) }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

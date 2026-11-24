@@ -1,9 +1,11 @@
 import SwiftUI
 import WebKit
 
-/// Loads managed HTML from its Panels URL with ordinary browser navigation.
+/// Loads managed HTML with ordinary browser navigation, from this phone through its page source.
 struct ArtifactWebView: UIViewRepresentable {
     let url: URL
+    /// Serves the page and its files from this phone when the URL uses its scheme.
+    var source: ArtifactPageSource? = nil
     var desktopPreview = false
     var reloadSignal = 0
     let failed: (String) -> Void
@@ -16,6 +18,7 @@ struct ArtifactWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> ArtifactWebContainer {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        if let source { configuration.setURLSchemeHandler(source, forURLScheme: ArtifactPageSource.scheme) }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.isOpaque = false
         view.backgroundColor = .clear

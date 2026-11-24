@@ -5,10 +5,17 @@ final class ArtifactDocument: Sendable {
     let localURL: URL
     let remoteURL: URL
     let text: String?
-    init(localURL: URL, remoteURL: URL, text: String?) {
-        self.localURL = localURL; self.remoteURL = remoteURL; self.text = text
+    /// The server's version of these bytes, when it sent one.
+    let etag: String?
+    init(localURL: URL, remoteURL: URL, text: String?, etag: String? = nil) {
+        self.localURL = localURL; self.remoteURL = remoteURL; self.text = text; self.etag = etag
     }
     deinit { try? FileManager.default.removeItem(at: localURL.deletingLastPathComponent()) }
+
+    func hasSameBytes(as other: ArtifactDocument) -> Bool {
+        if let etag, etag == other.etag { return true }
+        return FileManager.default.contentsEqual(atPath: localURL.path, andPath: other.localURL.path)
+    }
 }
 
 extension APIClient {
@@ -20,36 +27,93 @@ extension APIClient {
         return try url("/files/\(collection)/\(target.owner.id)/\(target.path)")
     }
 
+    /// Reads the file, and keeps a copy of a kind the phone saves.
     func artifactDocument(_ target: ArtifactTarget) async throws -> ArtifactDocument {
+        try await artifactDocument(target, unlessUnchanged: nil)!
+    }
+
+    /// Reads the file again for a document already on screen. Nil means the server's file
+    /// is the one shown, so nothing needs to draw again.
+    func refreshedArtifactDocument(_ target: ArtifactTarget, shown: ArtifactDocument?) async throws -> ArtifactDocument? {
+        guard let fresh = try await artifactDocument(target, unlessUnchanged: shown?.etag) else { return nil }
+        if let shown, shown.hasSameBytes(as: fresh) { return nil }
+        return fresh
+    }
+
+    /// The copy of an artifact this phone opened before, as its own temporary document.
+    func savedArtifactDocument(_ target: ArtifactTarget) async -> ArtifactDocument? {
+        guard ArtifactCopies.keeps(target.path), let remoteURL = try? artifactURL(target) else { return nil }
+        let server = LocalStore.server(baseURL)
+        guard let entry = await ArtifactCopies.shared.open(server: server, id: target.id),
+              let saved = await ArtifactCopies.shared.location(server: server, id: target.id, path: entry.main) else { return nil }
+        let folder = Self.temporaryFolder()
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let localURL = folder.appendingPathComponent(remoteURL.lastPathComponent)
+            try FileManager.default.copyItem(at: saved, to: localURL)
+            return try Self.document(localURL, remoteURL: remoteURL, kind: target.kind, etag: entry.files[entry.main]?.etag)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            return nil
+        }
+    }
+
+    private func artifactDocument(_ target: ArtifactTarget, unlessUnchanged etag: String?) async throws -> ArtifactDocument? {
         let remoteURL = try artifactURL(target)
         var request = try self.request(remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         let (download, response) = try await session.download(for: request)
         defer { try? FileManager.default.removeItem(at: download) }
+        if etag != nil, (response as? HTTPURLResponse)?.statusCode == 304 { return nil }
         try Self.validate(response)
         try Task.checkCancellation()
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("artifact-\(UUID().uuidString)", isDirectory: true)
+        let folder = Self.temporaryFolder()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let localURL = folder.appendingPathComponent(remoteURL.lastPathComponent)
         do {
             try FileManager.default.moveItem(at: download, to: localURL)
-            var text: String?
-            if [.markdown, .text].contains(target.kind) {
-                let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                // Large source files remain shareable without allocating an unbounded text view.
-                if target.kind == .text {
-                    let handle = try FileHandle(forReadingFrom: localURL)
-                    defer { try? handle.close() }
-                    let prefix = try handle.read(upToCount: 256 * 1_024) ?? Data()
-                    text = String(decoding: prefix, as: UTF8.self)
-                    if size > 256 * 1_024 { text! += "\n\n[Preview limited to 256 KB. Share exports the whole file.]" }
-                } else if size <= 8 * 1_024 * 1_024 { text = try? String(contentsOf: localURL, encoding: .utf8) }
+            let version = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+            if ArtifactCopies.keeps(target.path) {
+                await ArtifactCopies.shared.save(server: LocalStore.server(baseURL), id: target.id, main: remoteURL.path,
+                                                 path: remoteURL.path, file: localURL, etag: version)
             }
-            return ArtifactDocument(localURL: localURL, remoteURL: remoteURL, text: text)
+            return try Self.document(localURL, remoteURL: remoteURL, kind: target.kind, etag: version)
         } catch {
             try? FileManager.default.removeItem(at: folder)
             throw error
         }
     }
+
+    private static func temporaryFolder() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("artifact-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private static func document(_ localURL: URL, remoteURL: URL, kind: ArtifactKind, etag: String?) throws -> ArtifactDocument {
+        var text: String?
+        if [.markdown, .text].contains(kind) {
+            let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            // Large source files remain shareable without allocating an unbounded text view.
+            if kind == .text {
+                let handle = try FileHandle(forReadingFrom: localURL)
+                defer { try? handle.close() }
+                let prefix = try handle.read(upToCount: 256 * 1_024) ?? Data()
+                text = String(decoding: prefix, as: UTF8.self)
+                if size > 256 * 1_024 { text! += "\n\n[Preview limited to 256 KB. Share exports the whole file.]" }
+            } else if size <= 8 * 1_024 * 1_024 { text = try? String(contentsOf: localURL, encoding: .utf8) }
+        }
+        return ArtifactDocument(localURL: localURL, remoteURL: remoteURL, text: text, etag: etag)
+    }
+}
+
+/// Draws the saved copy first when nothing is on screen, then the file again when it
+/// changed. A read that fails after a copy drew throws, and the caller keeps the copy.
+@MainActor func loadArtifact(_ target: ArtifactTarget, client: APIClient, shown: ArtifactDocument?,
+                             draw: (ArtifactDocument) async throws -> Void) async throws {
+    var current = shown
+    if current == nil, let saved = await client.savedArtifactDocument(target) {
+        try await draw(saved); current = saved
+    }
+    if let fresh = try await client.refreshedArtifactDocument(target, shown: current) { try await draw(fresh) }
 }

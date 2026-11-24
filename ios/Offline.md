@@ -43,6 +43,28 @@ they change. A Review draft belongs to the exact ticket, field, proposal time an
 revision. A failed local save is shown in the app; a send cannot clear its composer
 until the outgoing work and the composer clear have committed together.
 
+## Artifacts
+
+An artifact that the phone opened keeps a saved copy. The copies are files in the
+`Artifacts` folder beside the store, because the response budget is shared by every
+screen. A copy holds Markdown, text, HTML, an image or a PDF of up to 10 MiB. An HTML
+page's copy also holds the files that the page loaded from its own Ticket or Manager,
+such as screenshots and style files. Video, audio, other files and larger files keep no
+copy and are read each time.
+
+The viewer draws the saved copy at once, then reads the file again. The server's ETag
+answers 304 for an unchanged file; without one, the phone compares the bytes. Only a
+changed file draws again, so the scroll position stays. A failed read keeps the copy with
+no note. Until a read succeeds, the next connection reads again. An HTML page loads
+through the app's own scheme, so its page and saved files come from the phone, and a file
+that the copy lacks comes from the server with the page's own method, body and headers. A
+page's saved files are read again after the page. A changed file reloads the page. A file
+that the server no longer has leaves the copy, and so does a file that can no longer be kept.
+
+All copies stay under 256 MiB, and one page's copy never takes more. The copy opened least
+recently leaves first, and a copy not opened for 30 days leaves. Copies are kept per server address. A Ticket's file list is a
+saved response, so a Ticket page lists its files offline.
+
 ## The outbox
 
 Every message, approval, send-back, mark read, Review recording and ask answer goes
@@ -147,7 +169,7 @@ Messages from goal pages go through their holder's conversation.
 ## Verification
 
 Run `ios/scripts/test-offline.sh` for host tests. They cover cache eviction against
-saved work, server separation, the shared composer clear, each kind landing once
+saved work, artifact copies by size, age and server, server separation, the shared composer clear, each kind landing once
 across a lost connection, a lost response and a relaunch, mark read coalescing, the
 ask answer receipt rule and the refused-message mark.
 

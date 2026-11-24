@@ -29,6 +29,10 @@ struct ArtifactViewerView: View {
     @State private var htmlReloadSignal = 0
     @State private var webReady = false
     @State private var desktopPreview = false
+    /// Serves an HTML page and its files to the web view, from the saved copy first.
+    @State private var pageSource: ArtifactPageSource?
+    /// Set once this viewer read the server's file. Until then the next connection reads again.
+    @State private var isFresh = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
     /// The conversation whose composer sits below, when the dock is a conversation's.
@@ -38,6 +42,8 @@ struct ArtifactViewerView: View {
     }
 
     private var hasPreview: Bool { document != nil || webReady }
+    /// A saved copy or a read file is on screen, so a failed read says nothing.
+    private var hasContent: Bool { document != nil || pageSource?.page != nil }
     /// A read that could not reach the server leaves no error, so the quiet placeholder stays.
     private var waitingForPreview: Bool { isLoading || (!hasPreview && error == nil) }
 
@@ -116,8 +122,8 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
-        // With nothing drawn yet, the next connection reads again.
-        .task(id: "\(target.id)|\(loadVersion)|\(hasPreview ? 0 : store.connectionSession)") { await load() }
+        // Until the server's file was read, the next connection reads again.
+        .task(id: "\(target.id)|\(loadVersion)|\(isFresh ? 0 : store.connectionSession)") { await load() }
         .task(id: waitingForPreview) {
             showLoading = false
             if waitingForPreview {
@@ -134,7 +140,7 @@ struct ArtifactViewerView: View {
                 Text("Fit desktop").tag(true)
             }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
                 .accessibilityIdentifier("artifact-preview-width")
-            ArtifactWebView(url: url, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true }, reload: { reloadPreview() }, navigated: { currentHTMLURL = $0 }, openExternal: { openURL($0) })
+            ArtifactWebView(url: pageSource?.pageURL ?? url, source: pageSource, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true }, reload: { reloadPreview() }, navigated: { currentHTMLURL = pageSource?.remote($0) ?? $0 }, openExternal: { openURL($0) })
                 .id(renderVersion)
                 .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
         }
@@ -185,6 +191,7 @@ struct ArtifactViewerView: View {
                     shareDocument = try await store.client.artifactDocument(currentTarget)
                 } else { shareURL = currentHTMLURL }
             } else if let document { shareDocument = document }
+            else if let page = pageSource?.page { shareDocument = page }
             else { shareDocument = try await store.client.artifactDocument(target) }
             sharePresented = true
         } catch {
@@ -193,35 +200,50 @@ struct ArtifactViewerView: View {
         }
     }
     private func reloadPreview() {
-        if htmlURL != nil {
-            error = nil; webReady = false; htmlReloadSignal += 1
-        } else { loadVersion += 1 }
+        if htmlURL != nil { error = nil; webReady = false; htmlReloadSignal += 1 }
+        loadVersion += 1
     }
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            if target.kind == .html {
-                document = nil
-                htmlURL = try store.client.artifactURL(target)
-                currentHTMLURL = htmlURL
-                error = nil; webReady = false; renderVersion += 1
-                return
+            if target.kind == .html { try await loadPage() }
+            else {
+                htmlURL = nil; currentHTMLURL = nil
+                try await loadArtifact(target, client: store.client, shown: document) { result in
+                    let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
+                        UIImage(contentsOfFile: result.localURL.path)
+                    }.value : nil
+                    try Task.checkCancellation()
+                    self.image = image
+                    document = result; error = nil; webReady = false; renderVersion += 1
+                }
             }
-            htmlURL = nil; currentHTMLURL = nil
-            let result = try await store.client.artifactDocument(target)
-            let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
-                UIImage(contentsOfFile: result.localURL.path)
-            }.value : nil
-            try Task.checkCancellation()
-            self.image = image
-            document = result; error = nil; webReady = false; renderVersion += 1
+            isFresh = true
         } catch {
-            if !Task.isCancelled, let note = ServerReadFailure.note(error) {
+            if !Task.isCancelled, !hasContent, let note = ServerReadFailure.note(error) {
                 self.error = note
                 Haptics.error()
             }
         }
+    }
+    /// The page draws from its saved copy at once. A changed page or a changed saved file
+    /// reloads the same web view, so the preview keeps its place.
+    private func loadPage() async throws {
+        document = nil
+        guard let source = pageSource ?? ArtifactPageSource(client: store.client, target: target) else {
+            throw APIError(status: 0, message: "This artifact has an invalid file path.")
+        }
+        pageSource = source
+        try await loadArtifact(target, client: store.client, shown: source.page) { page in
+            let first = source.page == nil
+            source.page = page
+            if first {
+                htmlURL = page.remoteURL; currentHTMLURL = page.remoteURL
+                error = nil; webReady = false; renderVersion += 1
+            } else { htmlReloadSignal += 1 }
+        }
+        if await source.refreshFiles() { htmlReloadSignal += 1 }
     }
 }
 

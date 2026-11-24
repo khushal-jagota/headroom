@@ -61,6 +61,11 @@ struct ArtifactListView: View {
     }
     private func load(more: Bool = false) async {
         guard !isLoading else { return }
+        // The list this phone read last draws at once, so a saved artifact opens offline.
+        if !more, !hasLoaded, let saved = store.client.cachedArtifacts(owner: owner, directory: directory) {
+            entries = saved.entries; nextOffset = saved.offset + saved.entries.count
+            total = saved.total; revision = saved.revision; hasLoaded = true
+        }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -76,7 +81,7 @@ struct ArtifactListView: View {
             } else { entries = page.entries }
             nextOffset = page.offset + page.entries.count
             total = page.total; revision = page.revision; hasLoaded = true; error = nil
-        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
+        } catch { if !Task.isCancelled, !hasLoaded { self.error = ServerReadFailure.note(error) } }
     }
 }
 
@@ -124,6 +129,9 @@ private struct ArtifactFolderSection: View {
     }
     private func load(more: Bool = false) async {
         guard !loading else { return }
+        if !more, entries.isEmpty, let saved = store.client.cachedArtifacts(owner: owner, directory: folder.directory ?? folder.path) {
+            entries = saved.entries; total = saved.total; revision = saved.revision
+        }
         loading = true
         defer { loading = false }
         do {
@@ -134,6 +142,6 @@ private struct ArtifactFolderSection: View {
             try Task.checkCancellation()
             entries = append ? entries + page.entries.filter { item in !entries.contains { $0.id == item.id } } : page.entries
             total = page.total; revision = page.revision; error = nil
-        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
+        } catch { if !Task.isCancelled, entries.isEmpty { self.error = ServerReadFailure.note(error) } }
     }
 }

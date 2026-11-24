@@ -75,7 +75,8 @@ Ticket, Chief, Manager, settings, and deployment details use domain registration
 Unversioned reads use their scoped navigation stamps where available. Volatile
 unversioned reads retain a bounded signal fallback. Failed automatic reads back off;
 explicit retry remains immediate. Artifact inventory still reads
-on selection; previews retain Reload. Metrics retain their foreground sampling.
+on selection, from its saved list first; previews draw from their
+[saved copy](Offline.md#artifacts) first and retain Reload. Metrics retain their foreground sampling.
 
 Inactive resource responses have count, byte, and age bounds. The serial cache
 writer coalesces bounded replacement work. Live publication does not wait for disk.
@@ -287,7 +288,8 @@ once online, then the stub drops every connection: `SidebarNavigationTests/testD
 (`PANELS_DESIGN_REVIEW=1`), `ReviewQueueScreensTests/testCardKindsOnABadConnection`
 (`PANELS_REVIEW_QUEUE=1`) and `ArtifactDockTests/testDocksOnABadConnection`
 (`PANELS_ARTIFACT_DOCK_SMOKE=1`). Each checks that no screen shows a cover, banner or
-status note.
+status note. The artifact walk also relaunches offline and opens each saved copy from a
+Review card and a Ticket page, then checks that a changed file replaces its copy.
 
 A route without a screen test still needs a one-off check when a change touches it.
 Keep physical-device gaps on the phone checklist, including server entry and Save,

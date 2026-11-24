@@ -281,6 +281,8 @@ private struct ArtifactInlineMediaPreview: View {
     @State private var document: ArtifactDocument?
     @State private var image: UIImage?
     @State private var error: String?
+    /// Set once this preview read the server's file. Until then the next connection reads again.
+    @State private var isFresh = false
 
     var body: some View {
         Group {
@@ -300,7 +302,7 @@ private struct ArtifactInlineMediaPreview: View {
                 LoadErrorView(message: error) { await load() }
             } else { RingSpinner() }
         }
-        .task(id: "\(store.baseURL)|\(target.id)|\(image == nil && document == nil ? store.connectionSession : 0)") { await load() }
+        .task(id: "\(store.baseURL)|\(target.id)|\(isFresh ? 0 : store.connectionSession)") { await load() }
     }
 
     private func follow() {
@@ -308,13 +310,16 @@ private struct ArtifactInlineMediaPreview: View {
     }
     private func load() async {
         do {
-            let result = try await store.client.artifactDocument(target)
-            try Task.checkCancellation()
-            let loadedImage = ArtifactInlineMedia.isPhoto(target) ? UIImage(contentsOfFile: result.localURL.path) : nil
-            if ArtifactInlineMedia.isPhoto(target), loadedImage == nil {
-                throw APIError(status: 0, message: "This image could not be opened.")
+            // A photo draws from its saved copy at once. A video has no copy and reads each time.
+            try await loadArtifact(target, client: store.client, shown: document) { result in
+                try Task.checkCancellation()
+                let loadedImage = ArtifactInlineMedia.isPhoto(target) ? UIImage(contentsOfFile: result.localURL.path) : nil
+                if ArtifactInlineMedia.isPhoto(target), loadedImage == nil {
+                    throw APIError(status: 0, message: "This image could not be opened.")
+                }
+                image = loadedImage; document = result; error = nil
             }
-            image = loadedImage; document = result; error = nil
-        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
+            isFresh = true
+        } catch { if !Task.isCancelled, document == nil { self.error = ServerReadFailure.note(error) } }
     }
 }
