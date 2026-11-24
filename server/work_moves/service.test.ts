@@ -248,6 +248,22 @@ test('bulk moves require a completed server move and preserve individual refusal
     result.results.every((entry) => !entry.moved && entry.error === 'Push source work first'),
   ).toBe(true);
   expect(read(database, ticket.id).machine_id).toBe(HOME_MACHINE_ID);
+  // Reuse this bulk fixture to prove partial background results persist independently.
+  const { create_operation, read_operations, run_operation } = await import('./operations.ts');
+  registry.work_move_source.mockReset();
+  registry.work_move_source.mockRejectedValueOnce(new Error('Push source work first'));
+  registry.work_move_source.mockResolvedValue({ published_branch: null, published_revision: null });
+  const operation = create_operation(services, ORIGINAL_MAC_MACHINE_ID);
+  await run_operation(services, operation);
+  const persisted = database.read(read_operations)[0]!;
+  expect(persisted.finished_at_ms).not.toBeNull();
+  expect(persisted.items[0]!.result).toMatchObject({
+    moved: false,
+    error: 'Push source work first',
+  });
+  expect(
+    persisted.items.slice(1).every((item) => item.result?.error === null && item.result?.moved),
+  ).toBe(true);
 });
 
 test('work move routes refuse an agent before any machine request', async () => {
@@ -275,6 +291,12 @@ test('work move routes refuse an agent before any machine request', async () => 
     expect((await app.inject({ method: 'POST', url: '/work-moves', payload })).statusCode).toBe(
       400,
     );
+    expect(
+      (await app.inject({ method: 'POST', url: '/work-moves/operations', payload })).statusCode,
+    ).toBe(400);
+    expect((await app.inject({ method: 'GET', url: '/work-moves/operations' })).statusCode).toBe(
+      400,
+    );
     expect(services.registry.work_move_source).not.toHaveBeenCalled();
     principal = OWNER;
     expect(
@@ -292,4 +314,150 @@ test('work move routes refuse an agent before any machine request', async () => 
   } finally {
     await app.close();
   }
+});
+
+/** Gap: synchronous move coverage cannot prove the browser receives acceptance while
+ * source verification waits, or that another screen can recover and follow that work. */
+test('browser operation returns before the move, survives reread, rejects duplicate work and retains destination setup phases', async () => {
+  const services = setup();
+  const { create_operation, read_operations, report_move_setup } = await import('./operations.ts');
+  const ticket = create(services.database);
+  let release!: (proof: WorkMoveProof) => void;
+  const proof = new Promise<WorkMoveProof>((resolve) => {
+    release = resolve;
+  });
+  services.registry.work_move_source.mockImplementation(() => proof);
+  const send = services.system.send.bind(services.system);
+  vi.spyOn(services.system, 'send').mockImplementation(async (...args) => {
+    services.database.write((tx) => report_move_setup(tx, args[0], 'starting_worker', Date.now()));
+    return send(...args);
+  });
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(services.database),
+  });
+  const app = Fastify();
+  app.decorate('executor_registry', services.registry as unknown as VpsExecutorRegistry);
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof PlannerError) reply.code(error.statusCode).send(error.toPayload());
+    else reply.send(error);
+  });
+  await app.register(routes, {
+    database: services.database,
+    config,
+    clock: buildClock(config),
+    conversationSystem: services.system,
+    identity: () => ({ principal: OWNER, conversationId: null }),
+  });
+  try {
+    const payload = {
+      owner: { kind: 'ticket', id: ticket.id },
+      machine_id: ORIGINAL_MAC_MACHINE_ID,
+    };
+    const response = await app.inject({ method: 'POST', url: '/work-moves/operations', payload });
+    expect(response.statusCode).toBe(202);
+    const operation_id = response.json().operation_id;
+    await vi.waitFor(() => expect(services.registry.work_move_source).toHaveBeenCalled());
+    const current = (await app.inject({ method: 'GET', url: '/work-moves/operations' })).json()
+      .operations[0];
+    expect(current).toMatchObject({
+      operation_id,
+      finished_at_ms: null,
+      items: [{ phase: 'verifying', result: null }],
+    });
+    expect(
+      (await app.inject({ method: 'POST', url: '/work-moves/operations', payload })).statusCode,
+    ).toBe(400);
+    expect(() =>
+      create_operation(
+        services,
+        ORIGINAL_MAC_MACHINE_ID,
+        payload.owner as { kind: 'ticket'; id: string },
+      ),
+    ).toThrow('already has a move');
+    release({ published_branch: 'ticket/published-work', published_revision: 'a'.repeat(40) });
+    await vi.waitFor(() =>
+      expect(services.database.read(read_operations)[0]!.finished_at_ms).not.toBeNull(),
+    );
+    const settled = services.database.read(read_operations)[0]!;
+    expect(settled.items[0]!.result).toMatchObject({ moved: true, error: null });
+    expect(settled.items[0]!.phases.map((phase) => phase.phase)).toEqual([
+      'queued',
+      'stopping',
+      'verifying',
+      'recording',
+      'recovering',
+      'starting',
+      'complete',
+    ]);
+    expect(settled.items[0]!.phases.every((phase) => phase.finished_at_ms !== null)).toBe(true);
+  } finally {
+    release({ published_branch: null, published_revision: null });
+    await app.close();
+  }
+});
+
+/** Gap: a restart must never strand durable progress or silently repeat relocation. */
+test('server interruption settles unfinished items with their actual destination and preserves completed results', async () => {
+  const services = setup();
+  const { create_operation, interrupt_operations, read_operations, run_operation } =
+    await import('./operations.ts');
+  const ticket = create(services.database);
+  const done = create_operation(services, ORIGINAL_MAC_MACHINE_ID, {
+    kind: 'ticket',
+    id: ticket.id,
+  });
+  await run_operation(services, done);
+  const pending = create_operation(services, HOME_MACHINE_ID, { kind: 'ticket', id: ticket.id });
+  interrupt_operations(services);
+  const operations = services.database.read(read_operations);
+  expect(
+    operations.find((operation) => operation.operation_id === done.operation_id)!.items[0]!.result,
+  ).toMatchObject({ moved: true, error: null });
+  const interrupted = operations.find(
+    (operation) => operation.operation_id === pending.operation_id,
+  )!;
+  expect(interrupted.finished_at_ms).not.toBeNull();
+  expect(interrupted.items[0]!.phase).toBe('failed');
+  expect(interrupted.items[0]!.result).toMatchObject({
+    moved: false,
+    error: expect.stringContaining('server stopped'),
+  });
+  expect(read(services.database, ticket.id).machine_id).toBe(ORIGINAL_MAC_MACHINE_ID);
+});
+
+/** Gap: background work must not continue relocation after producer shutdown seals it. */
+test('move lifetime joins its current check and refuses the destination write after shutdown', async () => {
+  const services = setup();
+  const { create_operation, read_operations, WorkMoveOperationRuntime } =
+    await import('./operations.ts');
+  const runtime = new WorkMoveOperationRuntime(services.database);
+  const ticket = create(services.database);
+  let release!: (proof: WorkMoveProof) => void;
+  services.registry.work_move_source.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const operation = create_operation(services, ORIGINAL_MAC_MACHINE_ID, {
+    kind: 'ticket',
+    id: ticket.id,
+  });
+  runtime.submit(services, operation);
+  await vi.waitFor(() => expect(services.registry.work_move_source).toHaveBeenCalled());
+  let settled = false;
+  const close = runtime.close({ deadline: performance.now() / 1000 + 5 }).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release({ published_branch: null, published_revision: null });
+  await close;
+  expect(read(services.database, ticket.id).machine_id).toBe(HOME_MACHINE_ID);
+  expect(services.database.read(read_operations)[0]!.items[0]!.result).toMatchObject({
+    moved: false,
+    error: expect.stringContaining('server stopped'),
+  });
+  expect(() => runtime.assert_open()).toThrow('server stopped');
 });

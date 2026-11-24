@@ -5,6 +5,11 @@ export const RETENTION_SECONDS = 7 * 24 * 60 * 60;
 export const MIRROR_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const WORKTREE_DIRECTORY = 'worktree';
 export const OWNERSHIP_FILE = '.panels-workspace.json';
+export interface WorkspaceSafetyInspection {
+  readonly reason: string | null;
+  /** checkout path → advertised full ref name → revision */
+  readonly advertised_refs: ReadonlyMap<string, ReadonlyMap<string, string>>;
+}
 export interface WorkspaceState {
   readonly ticket_id: string;
   readonly ended_at: number | null;
