@@ -9,7 +9,7 @@ import { buildClock } from '../core/clock.ts';
 import { installCompatibility } from '../core/http/compatibility.ts';
 import { routes as tickets } from '../tickets/routes.ts';
 import { routes as managers } from '../managers/routes.ts';
-import { create, fixture, manager } from './ticket_fixture.ts';
+import { create, fixture, fixture_path, manager } from './ticket_fixture.ts';
 
 const owner = { kind: 'owner', id: 'owner' };
 async function setup() {
@@ -19,7 +19,7 @@ async function setup() {
   database.write((tx) => tx.run("UPDATE managers SET settled=1 WHERE title='Settled work'"));
   const facts: Record<string, Record<string, unknown>> = {
     approve: { ticket_status: 'awaiting_approval', updated_at: 100 },
-    working: { ticket_status: 'agent', updated_at: 300 },
+    working: { ticket_status: 'agent_owned', updated_at: 300 },
     ready_old: { ticket_status: 'empty', updated_at: 200 },
     ready_new: { ticket_status: 'empty', updated_at: 400 },
     backlog: { ticket_status: 'awaiting_approval', is_backlogged: true, updated_at: 500 },
@@ -52,14 +52,17 @@ async function setup() {
   }
   const app = Fastify();
   installCompatibility(app);
-  const config = loadConfig(undefined, { PLAN_TEST_MODE: '1' });
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(database),
+  });
   for (const routes of [tickets, managers])
     registerArea(app, { prefix: '/api', routes }, { database, config, clock: buildClock(config) });
   await app.ready();
   const get = async (path: string) => (await app.inject(`/api${path}`)).json();
   const names = (body: { tickets: { id: string; needs: string }[] }) =>
     body.tickets.map((row) => `${Object.keys(ids).find((k) => ids[k] === row.id)}:${row.needs}`);
-  return { app, held, ids, get, names };
+  return { app, database, held, ids, get, names };
 }
 
 test('the live list orders by need, pages after need filtering, and counts what it hides', async () => {
@@ -74,6 +77,22 @@ test('the live list orders by need, pages after need filtering, and counts what 
     ]);
     expect(live.tickets[0]).toMatchObject({ ceiling_holder: owner, blocked: false });
     expect(live.page.not_shown).toEqual({ backlog: 2, done: 1 });
+
+    // The CLI self-read uses a separate route. Summary-only coverage cannot prove that
+    // this boundary includes live state when a claim remains out after its turn stops.
+    f.database.write((tx) =>
+      tx.run("UPDATE tickets SET worker_step_claim='out' WHERE id=?", [f.ids.working!]),
+    );
+    const self = await f.get(`/tickets/${f.ids.working}/worker-self`);
+    expect(self).toMatchObject({
+      ticket_status: 'agent_owned',
+      agent_state: 'idle',
+      needs: 'working',
+    });
+    expect(live.tickets.find((row: { id: string }) => row.id === f.ids.working)).toMatchObject({
+      ticket_status: 'agent_owned',
+      agent_state: 'idle',
+    });
 
     const ready = await f.get('/tickets?detail=summary&needs=ready&limit=1');
     expect(f.names(ready)).toEqual(['ready_new:ready']);
@@ -141,7 +160,7 @@ test('the iPhone and older CLI list requests without scope or needs keep the fla
       'approve:owner_approval',
       'backlog:backlog',
     ]);
-    expect(f.names(await f.get(`${base}&exclude_ticket_status=agent`))).toEqual([
+    expect(f.names(await f.get(`${base}&exclude_ticket_status=agent_owned`))).toEqual([
       'approve:owner_approval',
       'ready_old:ready',
       'ready_new:ready',

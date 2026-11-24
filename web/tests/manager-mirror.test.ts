@@ -108,7 +108,7 @@ describe("the shared Item and Ticket presentation", () => {
     [{ assigned: true }, "assigned"],
     [{ awaiting_reply: true }, "awaiting_reply"],
     [{ agent_state: "errored" }, "errored"],
-    [{ ticket_status: "agent" }, "agent"],
+    [{ ticket_status: "agent_owned" }, "agent"],
     [{ gating_field: "consequences" }, "empty"],
     [{ awaiting_agent_approval: true }, "status_awaiting_approval"],
     [{ ticket_status: "empty" }, "empty"],

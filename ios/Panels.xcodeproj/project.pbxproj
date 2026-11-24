@@ -544,9 +544,9 @@
 				737B356E4B2DABD8765C96EE /* NotificationDeliveryTests.swift */,
 				872543CB15EF7C3EC792866D /* ReviewFinalPageTests.swift */,
 				4BA1D090E38AC7958361DF0F /* ReviewMessagesTests.swift */,
-				371F1DA2A9BB5E34BD5C0EDC /* UpdateFlowTests.swift */,
 				CE1B412A9A599B433E0ABBBD /* ReviewQueueScreensTests.swift */,
 				2C0C32BCC481FEDC922A58C7 /* SidebarNavigationTests.swift */,
+				371F1DA2A9BB5E34BD5C0EDC /* UpdateFlowTests.swift */,
 			);
 			path = PanelsReviewUITests;
 			sourceTree = "<group>";
@@ -1382,9 +1382,9 @@
 				CCD30C4BFBBCDBCE7695AFE9 /* NotificationDeliveryTests.swift in Sources */,
 				F7B6B4C3DCA84758ADD95FD9 /* ReviewFinalPageTests.swift in Sources */,
 				F9E07DD386F3F72DB31CF208 /* ReviewMessagesTests.swift in Sources */,
-				9C7AA56D5D86FE2B39D78C65 /* UpdateFlowTests.swift in Sources */,
 				3B72F7A36C7A4F19825D1A13 /* ReviewQueueScreensTests.swift in Sources */,
 				63B1FA2646A2AA9DEEE358FD /* SidebarNavigationTests.swift in Sources */,
+				9C7AA56D5D86FE2B39D78C65 /* UpdateFlowTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1479,7 +1479,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1522,7 +1522,7 @@
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
@@ -1579,7 +1579,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1667,7 +1667,7 @@
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;

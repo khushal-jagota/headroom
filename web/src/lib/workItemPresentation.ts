@@ -1,3 +1,4 @@
+import { WORKER_STATUS_LABEL } from "../../../server/tickets/logic/status_presentation";
 import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
@@ -55,7 +56,7 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "awaiting_reply", label: "Messages", quiet: false },
   { key: "errored", label: "Errored", quiet: false },
   { key: "backlog", label: "Backlog", quiet: false },
-  { key: "agent", label: "Agent", quiet: false },
+  { key: "agent", label: WORKER_STATUS_LABEL, quiet: false },
   {
     key: "status_awaiting_approval",
     label: "Awaiting an agent's approval",

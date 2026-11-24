@@ -175,7 +175,7 @@ test('the screens reach the server through the app, and links leave it', async (
         };
         return fetchDesktopCompatibility(address);
       }, server.base);
-      expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+      expect(compatibility).toEqual({ minimum_bridge_version: 2 });
     }, { timeout: WAIT_MS * 3 });
 
     await test.step('the native forward identifies API reads and files', async () => {
@@ -341,7 +341,7 @@ test('the screens reach the server through the app, and links leave it', async (
         return JSON.parse(request.identity!);
       });
       const nativeIdentity = identities[0];
-      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 2, device_id: expect.any(String) });
       for (const identity of identities) expect(identity).toEqual(nativeIdentity);
       // The server received and retained these facts, independent of the observation above.
       expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(

@@ -30,11 +30,31 @@ test('an event leaves the totals alone and an association change still recounts 
     );
   });
   const ticket = create(database);
+  // Stored navigation is a cache. A release must replace an old status word before
+  // any list reads it, without rewriting the authoritative worker-step claim.
+  database.write((tx) => {
+    tx.run("UPDATE tickets SET worker_step_claim='out' WHERE id=?", [ticket.id]);
+    tx.run("INSERT INTO navigation_records(kind,id,value) VALUES('ticket',?,?)", [
+      ticket.id,
+      JSON.stringify({ ticket_status: 'agent' }),
+    ]);
+  });
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
   producer.bind_runtime(() => null);
   producer.initialize();
   navigation = createSignalNavigationRuntime(producer);
   navigation.attach();
+  expect(
+    database.read(
+      (sql) =>
+        JSON.parse(
+          sql.get<{ value: string }>(
+            "SELECT value FROM navigation_records WHERE kind='ticket' AND id=?",
+            [ticket.id],
+          )!.value,
+        ).ticket_status,
+    ),
+  ).toBe('agent_owned');
   database.write((tx) =>
     tx.run("UPDATE tickets SET conversation_id='ticket_conversation' WHERE id=?", [ticket.id]),
   );

@@ -16,7 +16,7 @@ import { list_client_versions } from './data.ts';
 
 // Distinct risk: a native forward without Origin bypasses compatibility, or a rejected
 // declaration disappears from diagnostics. Reuse Fastify inject and the schema seed.
-test('declared versions gate writes and accepted device versions survive a database reopen', async () => {
+test('declared versions gate incompatible reads and writes and accepted device versions survive a database reopen', async () => {
   const root = mkdtempSync(join(tmpdir(), 'panels-client-versions-'));
   const path = join(root, 'test.sqlite');
   const database = createDatabaseFromSeed(path, application_schema_seed, () => {});
@@ -36,12 +36,17 @@ test('declared versions gate writes and accepted device versions survive a datab
     root,
     database,
   );
-  app.post('/api/write', async () => ({ ok: true }));
+  let writes = 0;
+  app.post('/api/write', async () => {
+    writes++;
+    return { ok: true };
+  });
+  app.get('/api/ticket-status', async () => ({ ticket_status: 'agent_owned' }));
   const identity = {
     kind: 'desktop',
     device_id: 'desktop-one',
     version: '0.0.1',
-    bridge_version: 1,
+    bridge_version: 2,
   };
   const headers = (value: unknown) => ({ 'x-panels-client': JSON.stringify(value) });
   const saved = () =>
@@ -85,7 +90,7 @@ test('declared versions gate writes and accepted device versions survive a datab
         .statusCode,
     ).toBe(200);
     expect(saved()).toEqual([identity]);
-    const newer = { ...identity, version: '0.0.2', bridge_version: 2 };
+    const newer = { ...identity, version: '0.0.2', bridge_version: 3 };
     expect(
       (await app.inject({ method: 'POST', url: '/api/write', headers: headers(newer) })).statusCode,
     ).toBe(200);
@@ -117,6 +122,35 @@ test('declared versions gate writes and accepted device versions survive a datab
     expect(
       (await app.inject({ url: '/api/meta', headers: { 'x-panels-client': '{bad' } })).statusCode,
     ).toBe(400);
+    // Old native clients decode strings but misclassify the renamed status. Refuse
+    // both reads and actions before handlers, while desktop metadata remains usable.
+    const before_old_clients = writes;
+    const old_desktop = headers({ ...identity, bridge_version: 1 });
+    expect((await app.inject({ url: '/api/ticket-status', headers: old_desktop })).statusCode).toBe(
+      426,
+    );
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/write', headers: old_desktop })).statusCode,
+    ).toBe(426);
+    expect((await app.inject({ url: '/api/meta', headers: old_desktop })).statusCode).toBe(200);
+    for (const build of [9, 10]) {
+      const old_ios = { 'x-panels-ios-build': String(build) };
+      expect((await app.inject({ url: '/api/ticket-status', headers: old_ios })).statusCode).toBe(
+        426,
+      );
+      expect(
+        (await app.inject({ method: 'POST', url: '/api/write', headers: old_ios })).statusCode,
+      ).toBe(426);
+    }
+    expect(writes).toBe(before_old_clients);
+    expect(
+      (
+        await app.inject({ url: '/api/ticket-status', headers: { 'x-panels-ios-build': '11' } })
+      ).json(),
+    ).toEqual({ ticket_status: 'agent_owned' });
+    expect(
+      (await app.inject({ url: '/api/ticket-status', headers: headers(latest) })).statusCode,
+    ).toBe(200);
     const legacy_ios = await app.inject({
       url: '/api/meta',
       headers: { 'x-panels-ios-build': '0' },
@@ -142,7 +176,7 @@ test('declared versions gate writes and accepted device versions survive a datab
   try {
     expect(
       reopened.read(list_client_versions).filter((identity) => identity.kind === 'desktop'),
-    ).toEqual([{ ...identity, version: '0.0.3', bridge_version: 2 }]);
+    ).toEqual([{ ...identity, version: '0.0.3', bridge_version: 3 }]);
   } finally {
     reopened.close();
     rmSync(root, { recursive: true, force: true });

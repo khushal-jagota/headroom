@@ -1,3 +1,4 @@
+import { isAgentOwnedStatus } from "../../../server/tickets/logic/status_presentation";
 // The per-Worker-type lifecycle: a derived, memoized view over one served manifest.
 // This is frontend behavior derived from the served worker_types manifest.
 // The retired ui.ts lifecycle constants/functions live here as Lifecycle-first-arg
@@ -217,7 +218,7 @@ export function ticketStageVisualStateFor(
   if (fieldIsPassedFor(lc, fieldName, ticketStage)) return "completed";
 
   if (gatingFieldFor(lc, ticketStage) === fieldName) {
-    if (ticketStatus === "agent") return "current-running";
+    if (isAgentOwnedStatus(ticketStatus)) return "current-running";
     if (ticketStatus === "errored") return "errored";
     if (ticketStatus === "assigned") return "current-assigned";
     if (fieldHasProposal || ticketStatus === "awaiting_approval") {
@@ -244,7 +245,7 @@ export function fieldStageVisualStateFor(
       : detail.agent_state === "errored"
         ? "errored"
         : agentHoldsTicket(detail)
-          ? "agent"
+          ? "agent_owned"
           : detail.ticket_status;
   return ticketStageVisualStateFor(lc, {
     ticketStage: detail.stage,

@@ -47,7 +47,7 @@ export interface DecisionOperationResponse {
 export type NextCeiling = string;
 export type TicketLocale = 'vps' | 'macos';
 export type WorkerStepClaim = 'none' | 'out' | 'errored';
-export type TicketStatus = 'empty' | 'blocked' | 'agent' | 'awaiting_approval' | 'errored';
+export type TicketStatus = 'empty' | 'blocked' | 'agent_owned' | 'awaiting_approval' | 'errored';
 /** What a Ticket needs next, and from whom. The order is the list sort order. */
 export const TICKET_NEEDS = [
   'owner_approval',
