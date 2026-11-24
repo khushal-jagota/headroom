@@ -116,7 +116,6 @@ test('default production startup binds the real installer and environment runtim
     const [mac_context, executor] = mac.mock.calls[0]!;
     expect(inputs).toMatchObject({
       application_root: realpathSync(application_root),
-      node_executable: process.execPath,
     });
     expect(executor).toBeInstanceOf(VpsExecutorRegistry);
     expect(executor!.configured()).toBe(false);

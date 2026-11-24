@@ -6,13 +6,7 @@ import type {
   PublishedUpdate,
   UpdateAttempt,
   UpdateExperience,
-  UpdateExperienceOptions,
 } from '../contracts.ts';
-
-export const MAC_FAILED_DETAIL =
-  'Panels updated, but the Mac did not. It went back to its previous version.';
-export const MAC_UNREACHABLE_DETAIL =
-  'The Mac did not check in during the update. It can be asleep or offline.';
 
 export function instant(value: string): ParsedIsoDatetime {
   const parsed = parseIsoDatetime(value.replaceAll('Z', '+00:00'));
@@ -48,8 +42,6 @@ export function add_seconds(value: ParsedIsoDatetime, seconds: number): ParsedIs
 export function resolve(
   attempt: UpdateAttempt | null,
   available: PublishedUpdate | null,
-  app_sha: string | null,
-  options: UpdateExperienceOptions,
 ): UpdateExperience {
   const idle: UpdateExperience =
     available !== null ? ['available', ['update'], null, null] : ['up_to_date', [], null, null];
@@ -66,19 +58,7 @@ export function resolve(
     if (available.manifest.app_sha !== attempt.to_sha) return idle;
     return ['failed', ['retry'], attempt.detail, null];
   }
-  if (attempt.to_sha !== app_sha || !options.mac_applies || options.mac_phase === 'current')
-    return idle;
-  if (options.mac_phase === 'failed' || options.mac_phase === 'reverted')
-    return ['mac_failed', ['retry_mac'], MAC_FAILED_DETAIL, null];
-  let heard = instant(attempt.updated_at);
-  if (options.mac_reported_at !== null) {
-    const reported = instant(options.mac_reported_at);
-    if (reported.epochMicroseconds > heard.epochMicroseconds) heard = reported;
-  }
-  const silent_after = add_seconds(heard, options.mac_report_seconds);
-  return instant(options.now).epochMicroseconds > silent_after.epochMicroseconds
-    ? ['mac_unreachable', ['retry_mac'], MAC_UNREACHABLE_DETAIL, null]
-    : ['updating', [], null, silent_after.iso];
+  return idle;
 }
 export function deployment_status(
   attempt: UpdateAttempt | null,

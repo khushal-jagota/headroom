@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { UpdateBarrier, with_installer_lifetime } from './update_barrier.ts';
+import { UpdateBarrier, with_installer_lock, release_installer_barrier } from './update_barrier.ts';
 
 test('retains admitted saves and rejects a stale durable cut after cancellation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'panels-update-cut-'));
@@ -46,18 +46,19 @@ test('uses the actual installer lock and preserves a successor marker on termina
     const held = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const installer = with_installer_lifetime(root, 'old', async () => {
+    const installer = with_installer_lock(root, 'old', async () => {
       await held;
+      release_installer_barrier(root, 'old');
       return 0;
     });
     expect(barrier.installer_active('unrelated-record-text')).toBe(true);
-    expect(await with_installer_lifetime(root, 'new', async () => 1)).toEqual({ acquired: false });
+    expect(await with_installer_lock(root, 'new', async () => 1)).toEqual({ acquired: false });
     barrier.freeze('new');
     finish();
     expect(await installer).toEqual({ acquired: true, result: 0 });
     expect(barrier.installer_active('old')).toBe(false);
     expect(readFileSync(barrier.path, 'utf8')).toBe('new\n');
-    await with_installer_lifetime(root, 'new', async () => 0);
+    await with_installer_lock(root, 'new', async () => release_installer_barrier(root, 'new'));
     barrier.refresh();
     expect(barrier.frozen).toBe(false);
   } finally {

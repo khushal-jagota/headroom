@@ -185,11 +185,11 @@ test('environment providers and poll hooks share the server, and both producer g
     });
     expect(declaration.status).toBe(200);
     await declaration.text();
-    // The card's update read must include a device record from a prior request.
+    // This installation has no release provider. It still reports the registered device.
     const updates = await fetch(server.address + '/api/updates');
     expect(updates.status).toBe(200);
     expect(await updates.json()).toMatchObject({
-      state: 'up_to_date',
+      state: 'check_unavailable',
       activity: 'idle',
       client_versions: [client_identity],
     });

@@ -211,18 +211,3 @@ export async function with_installer_lock<T>(
     closeSync(descriptor);
   }
 }
-
-/** Retain the kernel lock through actual installer work, including rollback children. */
-export function with_installer_lifetime<T>(
-  data_directory: string,
-  attempt_id: string,
-  operation: (descriptor: number) => Promise<T>,
-): Promise<{ acquired: false } | { acquired: true; result: T }> {
-  return with_installer_lock(data_directory, attempt_id, async (descriptor) => {
-    try {
-      return await operation(descriptor);
-    } finally {
-      release_installer_barrier(data_directory, attempt_id);
-    }
-  });
-}

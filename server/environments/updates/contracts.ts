@@ -152,13 +152,6 @@ export type UpdateExperience = readonly [
   string | null,
   string | null,
 ];
-export interface UpdateExperienceOptions {
-  mac_applies: boolean;
-  mac_phase: string | null;
-  mac_reported_at: string | null;
-  mac_report_seconds: number;
-  now: string;
-}
 export interface UpdateProvider {
   available(proof_artifact_id?: number): Promise<PublishedUpdate | null>;
   download_artifact(

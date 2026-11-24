@@ -1,20 +1,15 @@
 /** Enroll only the missing local machine of a previously installed home. */
-import { randomBytes } from 'node:crypto';
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readlink,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { link, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Database } from '../core/database/contracts.ts';
+import { plist } from '../executor/mac/platform.ts';
+import { ensure_home_login_link } from '../environments/updates/darwin/jobs.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
-import { enroll_missing_home_machine } from '../machines/executor_credentials.ts';
+import {
+  enroll_missing_home_machine,
+  has_home_credential,
+} from '../machines/executor_credentials.ts';
 import { credential_path, read_credential, write_credential } from '../executor/credential_file.ts';
 import { atomic_write_json } from '../environments/updates/attempts.ts';
 import { selected_release } from '../environments/updates/installer/selection.ts';
@@ -22,17 +17,6 @@ import type { HomeInstallDependencies, HomeInstallRequest } from './contracts.ts
 import { HOME_SERVICE_COMMAND_TIMEOUT_SECONDS } from './configuration.ts';
 
 const absent = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
-
-export function has_home_credential(database: Database): boolean {
-  return database.read((sql) =>
-    Boolean(
-      sql.get<{ credential_sha256: string | null }>(
-        'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
-        [HOME_MACHINE_ID],
-      )?.credential_sha256,
-    ),
-  );
-}
 
 export async function ensure_upgrade_machine(
   root: string,
@@ -53,13 +37,13 @@ export async function ensure_upgrade_machine(
       !/^[0-9a-f]{40}$/.test(record.revision)
     )
       throw new Error('An unfinished local machine enrollment belongs to a different release');
-    if (record.complete === true && has_home_credential(database)) return;
+    if (record.complete === true && database.read(has_home_credential)) return;
     machine_revision = record.revision;
     resume = true;
   } catch (error) {
     if (!absent(error)) throw error;
   }
-  if (!resume && has_home_credential(database)) return;
+  if (!resume && database.read(has_home_credential)) return;
   const machine = join(root, 'machine');
   if (!resume) {
     try {
@@ -83,14 +67,11 @@ export async function ensure_upgrade_machine(
     if (!absent(error)) throw error;
     machine_revision = revision;
     atomic_write_json(pending, { machine_id: HOME_MACHINE_ID, revision: machine_revision });
-    const temporary = await mkdtemp(join(machine, '.stage-'));
+    const temporary = join(machine, '.runtime-installing');
+    await rm(temporary, { recursive: true, force: true });
     try {
-      await deps.prepare_machine(
-        selected_release(root),
-        join(temporary, 'runtime'),
-        deps.execution,
-      );
-      await rename(join(temporary, 'runtime'), runtime);
+      await deps.prepare_machine(selected_release(root), temporary, deps.execution);
+      await rename(temporary, runtime);
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
@@ -125,32 +106,14 @@ export async function ensure_upgrade_machine(
   if (file.format === 'plist-json') {
     const link = plan.links.find((link) => link.target === file.path);
     if (!link) throw new Error('Local Mac machine has no login job link');
-    const scratch = await mkdtemp(join(machine, '.job-'));
-    let expected: string;
-    try {
-      const json = join(scratch, 'machine.json');
-      await writeFile(json, file.content);
-      expected = (
-        await deps.command(
-          ['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', json],
-          deps.execution,
-          HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
-        )
-      ).stdout;
-    } finally {
-      await rm(scratch, { recursive: true, force: true });
-    }
-    await write_owned(file.path, expected, file.mode);
+    await write_owned(file.path, plist(JSON.parse(file.content)), file.mode);
     await mkdir(dirname(link.path), { recursive: true });
-    try {
-      await symlink(link.target, link.path);
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== 'EEXIST' ||
-        (await readlink(link.path)) !== link.target
-      )
-        throw error;
-    }
+    await ensure_home_login_link(
+      deps.account_home,
+      service + '.machine',
+      file.path,
+      deps.execution,
+    );
     const job = await deps.command(
       ['/bin/launchctl', 'print', `gui/${deps.uid}/${service}.machine`],
       deps.execution,
@@ -179,8 +142,11 @@ export async function ensure_upgrade_machine(
 }
 
 async function write_owned(path: string, content: string, mode: number): Promise<void> {
+  // An interrupted write must never leave a truncated OS service file at its final name.
+  const temporary = path + '.' + randomUUID();
+  await writeFile(temporary, content, { flag: 'wx', mode, flush: true });
   try {
-    await writeFile(path, content, { flag: 'wx', mode });
+    await link(temporary, path);
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException).code !== 'EEXIST' ||
@@ -188,5 +154,7 @@ async function write_owned(path: string, content: string, mode: number): Promise
       (await readFile(path, 'utf8')) !== content
     )
       throw error;
+  } finally {
+    await rm(temporary, { force: true });
   }
 }

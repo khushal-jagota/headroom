@@ -143,7 +143,7 @@ async function roll_back(
     signal.throwIfAborted();
     record.record('rollback_service_started');
     signal.throwIfAborted();
-    const healthy = await effects.healthy(from_sha);
+    const healthy = await effects.healthy(from_sha, request.attempt_id);
     signal.throwIfAborted();
     if (!healthy)
       throw new InstallFailed('the previous version did not pass its health check either');
@@ -207,6 +207,16 @@ async function install_locked(
   const record = new InstallationRecord(request),
     attempt = record.claim();
   if (attempt === null) {
+    const existing = record.read();
+    if (
+      existing.attempt_id === request.attempt_id &&
+      (existing.state === 'done' || existing.state === 'failed') &&
+      is_object(existing.steps) &&
+      !Object.hasOwn(existing.steps, 'rollback_failed')
+    ) {
+      // A power loss can separate the durable result from the unlink.
+      release_installer_barrier(request.data_directory, request.attempt_id);
+    }
     io.stderr('This update attempt is not waiting to install; nothing was changed.\n');
     return 2;
   }

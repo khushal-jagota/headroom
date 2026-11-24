@@ -21,7 +21,6 @@ import { installer_unit, selected_installer_environment } from './installation_c
 
 export function create_installer_operations(inputs: {
   readonly application_root: string;
-  readonly node_executable: string;
   readonly child_processes: OwnedChildProcesses;
   readonly signal: AbortSignal;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -48,6 +47,10 @@ export function create_installer_operations(inputs: {
       const manifest = JSON.parse(
         readFileSync(join(inputs.application_root, 'manifest.json'), 'utf8'),
       );
+      if (manifest.runtime_contract?.version !== 2)
+        throw new AppValidationError(
+          'The running installation requires a sealed Node version-2 home release',
+        );
       for (const [file, mode] of [
         ['node/bin/node', constants.X_OK],
         [INSTALLER_ENTRY, constants.R_OK],

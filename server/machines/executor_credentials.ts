@@ -199,13 +199,23 @@ export function register_machine(
 export function issue_home_machine_credential(
   tx: TransactionSql,
   platform: unknown,
+  credential?: string,
 ): MachineCredentialGrant {
   require_platform(platform);
   tx.run(
     'INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
     [HOME_MACHINE_ID, platform],
   );
-  return issue(tx, HOME_MACHINE_ID, null);
+  return issue(tx, HOME_MACHINE_ID, null, credential);
+}
+
+export function has_home_credential(sql: ReadSql): boolean {
+  return Boolean(
+    sql.get<{ credential_sha256: string | null }>(
+      'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
+      [HOME_MACHINE_ID],
+    )?.credential_sha256,
+  );
 }
 
 /** Recovering the first enrollment never rotates a previously issued machine secret. */
@@ -216,19 +226,11 @@ export function enroll_missing_home_machine(
 ): void {
   require_platform(platform);
   if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid home machine credential');
-  const existing = tx.get<{ credential_sha256: string | null }>(
-    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
-    [HOME_MACHINE_ID],
-  );
-  if (existing?.credential_sha256) {
+  if (has_home_credential(tx)) {
     verify_enrolled_executor(tx, HOME_MACHINE_ID, credential);
     return;
   }
-  tx.run(
-    'INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
-    [HOME_MACHINE_ID, platform],
-  );
-  issue(tx, HOME_MACHINE_ID, null, credential);
+  issue_home_machine_credential(tx, platform, credential);
 }
 
 export function replace_credential(tx: TransactionSql, machine_id: string): MachineCredentialGrant {

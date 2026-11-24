@@ -46,7 +46,8 @@ export function read_home_trial(
     const owner = readFileSync(barrier.path, 'utf8').trim();
     if (
       attempt.state === 'installing' &&
-      attempt.to_sha === revision &&
+      (attempt.to_sha === revision ||
+        (attempt.from_sha === revision && attempt.steps?.rollback_app_restored !== undefined)) &&
       owner &&
       attempt.attempt_id === owner
     )

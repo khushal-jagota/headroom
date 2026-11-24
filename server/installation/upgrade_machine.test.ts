@@ -6,11 +6,11 @@ import { createDatabaseFromSeed } from '../core/database/index.ts';
 import { application_schema_seed } from '../core/database/admission.ts';
 import { bootstrap_application } from '../environments/bootstrap.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
-import { verify_enrolled_executor } from '../machines/executor_credentials.ts';
+import { has_home_credential, verify_enrolled_executor } from '../machines/executor_credentials.ts';
 import { prepare_first_machine } from './machine.ts';
 import { create_linux_home_service } from './linux.ts';
 import { home_install_fixture } from './testing/home_fixture.ts';
-import { ensure_upgrade_machine, has_home_credential } from './upgrade_machine.ts';
+import { ensure_upgrade_machine } from './upgrade_machine.ts';
 
 it('resumes a missing local machine after a failed unit start without replacing its credential', async () => {
   const f = await home_install_fixture();
@@ -35,7 +35,7 @@ it('resumes a missing local machine after a failed unit start without replacing 
   try {
     const ensure = () =>
       ensure_upgrade_machine(root, service + '.service', port, revision, db, deps);
-    assert(!has_home_credential(db));
+    assert(!db.read(has_home_credential));
     await assert.rejects(ensure, /simulated unit start failure/);
     const saved = async () =>
       JSON.parse(await readFile(join(root, 'machine/data/machine-credential.json'), 'utf8'))

@@ -30,7 +30,6 @@ export async function prove_retained_installer(
   barrier.freeze(id);
   const operations = create_installer_operations({
     application_root: app,
-    node_executable: join(app, 'node/bin/node'),
     child_processes: execution.child_processes,
     signal: execution.signal,
     environment: {},

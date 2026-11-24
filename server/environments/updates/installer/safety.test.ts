@@ -163,8 +163,9 @@ it('stores the install decision before opening writes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
   const original = InstallationRecord.prototype.record;
   try {
-    for (const rollback of [false, true]) {
-      const current = join(root, rollback ? 'rollback' : 'success');
+    for (const outcome of ['success', 'rollback', 'rollback_failed']) {
+      const rollback = outcome !== 'success';
+      const current = join(root, outcome);
       const data = join(current, 'records');
       const from = 'a'.repeat(40),
         to = 'b'.repeat(40);
@@ -223,9 +224,10 @@ it('stores the install decision before opening writes', async () => {
             async restore() {
               assert.fail('this scenario does not restore a snapshot');
             },
-            async healthy(sha) {
+            async healthy(sha, trial) {
+              assert.equal(trial, 'terminal');
               assert(existsSync(barrier.path), 'barrier released before health finished');
-              return !rollback || sha === from;
+              return !rollback || (sha === from && outcome !== 'rollback_failed');
             },
           },
           { stderr() {} },
@@ -233,8 +235,8 @@ it('stores the install decision before opening writes', async () => {
         );
         assert.equal(code, rollback ? 1 : 0);
         assert.deepEqual(writes, [rollback ? 'failed' : 'done']);
-        assert(healthy_recorded);
-        assert(!existsSync(barrier.path));
+        assert.equal(healthy_recorded, outcome !== 'rollback_failed');
+        assert.equal(existsSync(barrier.path), outcome === 'rollback_failed');
       } finally {
         record.mockRestore();
       }

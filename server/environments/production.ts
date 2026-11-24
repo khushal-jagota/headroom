@@ -143,7 +143,6 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     ),
     installer: create_installer_operations({
       application_root,
-      node_executable: dependencies.node_executable,
       child_processes: context.child_processes,
       signal,
       environment,

@@ -1,3 +1,4 @@
+import { has_home_credential } from '../../machines/executor_credentials.ts';
 import { require_snapshot_space } from './installer/snapshot_space.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
 import { with_installer_lock } from '../update_barrier.ts';
@@ -18,7 +19,6 @@ import { FileUpdateAttemptStore, UpdateConflict, utc_now } from './attempts.ts';
 import { add_seconds, instant, resolve } from './logic/experience.ts';
 import {
   ATTEMPT_OBSERVER_SECONDS,
-  MAC_UPDATE_REPORT_SECONDS,
   STAGED_APP_PREFIX,
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
@@ -331,18 +331,7 @@ export class UpdateService {
       available === null
         ? { stops_agents: false, agents: [], machine_ids: [] }
         : this.interruption(available_machines);
-    const [state, allowed_actions, resolved_detail, deadline_at] = resolve(
-      attempt,
-      available,
-      this.current_app_sha,
-      {
-        mac_applies: false,
-        mac_phase: null,
-        mac_reported_at: null,
-        mac_report_seconds: MAC_UPDATE_REPORT_SECONDS,
-        now: timestamp(this.now()),
-      },
-    );
+    const [state, allowed_actions, resolved_detail, deadline_at] = resolve(attempt, available);
     let detail = resolved_detail;
     // Information only. Running work never refuses or delays an update.
     const interrupted = state === 'available' ? interruption.agents : [];
@@ -564,7 +553,10 @@ export class UpdateService {
       if (!this.active(incarnation)) return;
       // Pending steps need a snapshot. A Mac home takes one on every trial.
       // The installer takes it after it stops the service, when no writer remains.
-      const snapshot_required = steps_pending || this.options.installer.requires_snapshot === true;
+      const snapshot_required =
+        steps_pending ||
+        this.options.installer.requires_snapshot === true ||
+        !this.options.runtime.database.read(has_home_credential);
       if (snapshot_required)
         await require_snapshot_space(this.options.database, this.options.backup_directory);
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;

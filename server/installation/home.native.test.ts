@@ -39,7 +39,7 @@ import { authenticate_loaded_job } from '../environments/updates/darwin/logic/la
 import { MAC_HOME } from '../environments/release/contracts.ts';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
-import { build_native_mini_homes, native_copied_updates } from './testing/darwin_home.native.ts';
+import { build_native_mini_homes, native_retained_updates } from './testing/darwin_home.native.ts';
 import type { AppManifest, ReleaseExecution } from '../environments/release/contracts.ts';
 import { process_inspector } from '../previews/platform.ts';
 import { DarwinWorkerProcesses } from '../platform_runtime/darwin/worker_processes.ts';
@@ -427,7 +427,7 @@ test.skipIf(!admitted)(
               ).toBe(true);
               record.crash_recovery_seconds = (performance.now() - began) / 1000;
               try {
-                await native_copied_updates({
+                await native_retained_updates({
                   root,
                   account,
                   label: service_name,
