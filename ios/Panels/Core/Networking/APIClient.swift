@@ -146,6 +146,10 @@ struct APIClient: Sendable {
     func artifacts(owner: ArtifactOwner, directory: String = "", offset: Int = 0) async throws -> ArtifactPage {
         try await get("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: String(offset))])
     }
+    /// The first page of a file list as this phone last read it.
+    @MainActor func cachedArtifacts(owner: ArtifactOwner, directory: String = "") -> ArtifactPage? {
+        cached("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: "0")])
+    }
 }
 
 enum TicketFilter: String, CaseIterable, Sendable { case active, backlogged, done }
@@ -157,7 +161,7 @@ extension APIClient {
         (path == "/api/workers" || path.hasPrefix("/api/tickets") ||
          path.hasPrefix("/api/managers") || path.hasPrefix("/api/worker-types") ||
          path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" || path == "/api/drivers" ||
-         path.hasPrefix("/api/conversation/conversations/"))
+         path.hasPrefix("/api/conversation/conversations/") || path.hasPrefix("/api/artifact-catalog/ticket/"))
     }
     @MainActor func cached<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> T? {
         cachedRead(path, query: query)?.value
