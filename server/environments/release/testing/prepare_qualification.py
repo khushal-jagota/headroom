@@ -88,7 +88,8 @@ def public_predecessor():
     github(f"releases/assets/{ids['mac-home-build.zip' if MAC else 'build.zip']}", old_build_zip)
     extract(old_build_zip, metadata_name, ROOT / "build/server" / metadata_name)
     old_build_zip.unlink()
-    return old_sha
+    return old_sha, {"release_id": predecessor["id"], "tag": predecessor["tag_name"],
+                     "home_sha256": old_home["archive_sha256"], "machine_sha256": old_machine["archive_sha256"]}
 
 
 def run_artifacts(run_id):
@@ -146,6 +147,8 @@ def main():
         manifest, home_digest, machine, _ = actions_build(prior_ids, baseline)
         old_sha = manifest["app_sha"]
         verify_run_commit(prior, old_sha)
+        prior_evidence = {"native_build_run": prior["id"], "artifact_ids": prior_ids,
+                          "home_sha256": home_digest, "machine_sha256": machine["archive_sha256"]}
         for archive, part, member, expected in [
                 (SERVER_ASSET, "server", "panels-app.tar.gz", home_digest),
                 ("machine.zip", "machine", MACHINE_MEMBER, machine["archive_sha256"])]:
@@ -158,7 +161,7 @@ def main():
         (baseline / metadata).rename(ROOT / "build/server" / metadata)
         (baseline / MACHINE_RECEIPT).rename(ROOT / "build/machine" / MACHINE_RECEIPT)
     else:
-        old_sha = public_predecessor()
+        old_sha, prior_evidence = public_predecessor()
     if manual:
         ids, candidate_run = run_artifacts(os.environ["REPLAY_TO"])
     else:
@@ -212,6 +215,15 @@ def main():
     (FEED / "publication.json").write_text(json.dumps(target))
     (ROOT / "predecessor.sha").write_text(old_sha)
     (ROOT / "candidate.sha").write_text(sha)
+    evidence = ROOT / "evidence"
+    evidence.mkdir(exist_ok=True)
+    (evidence / "qualification-inputs.json").write_text(json.dumps({
+        "mode": "manual rehearsal" if manual else "public predecessor release gate",
+        "platform": PLATFORM, "harness_sha": os.environ["GITHUB_SHA"],
+        "predecessor": {"sha": old_sha, **prior_evidence},
+        "candidate": {"sha": sha, "native_build_run": os.environ.get("REPLAY_TO") or os.environ["GITHUB_RUN_ID"],
+                      "artifact_ids": ids, "home_sha256": home_digest, "machine_sha256": machine["archive_sha256"]}
+    }, indent=2))
     print(f"Predecessor {old_sha}, candidate {sha}, home {home_digest}, machine {machine['archive_sha256']}")
 
 
