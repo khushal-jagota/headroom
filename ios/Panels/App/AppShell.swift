@@ -14,8 +14,10 @@ struct AppShell: View {
     @State private var destination: AppDestination = .review
     @State private var paths: [AppDestination: [AppRoute]] = [:]
     @State private var reviewVisit = 0
-    /// Drag offsets live in this object, so a moving finger redraws the Sidebar, not the shell.
+    /// The Sidebar's offset lives in this object, so a moving finger redraws the Sidebar, not the shell.
     @State private var sidebar = SidebarPresentation()
+    /// The panel's width, from the shell's geometry, for the Sidebar button.
+    @State private var sidebarWidth: CGFloat = 0
 
     private var currentPath: [AppRoute] { paths[destination] ?? [] }
 
@@ -25,14 +27,18 @@ struct AppShell: View {
             ZStack(alignment: .leading) {
                 stack
                     .gesture(SidebarEdgePan(enabled: !sidebar.open && currentPath.isEmpty,
-                                            changed: { edgeDragChanged($0) },
-                                            ended: { edgeDragEnded($0, width: width) }))
+                                            began: edgeDragBegan,
+                                            changed: { sidebar.drag($0, width: width) },
+                                            ended: { edgeDragEnded(velocity: $0, width: width) }))
                 if sidebar.shown {
                     SidebarOverlay(presentation: sidebar, width: width, current: destination, reviewBadge: reviewBadge,
-                                   select: select, close: closeSidebar, reopen: { withAnimation(openMotion) { sidebar.settle(open: true) } })
-                        .transition(.identity)
+                                   select: select, close: closeSidebar,
+                                   beginDrag: sidebar.beginDrag,
+                                   drag: { sidebar.drag($0, width: width) },
+                                   endDrag: { sidebar.endDrag(velocity: $0, width: width, reduceMotion: reduceMotion) })
                 }
             }
+            .onChange(of: width, initial: true) { _, width in sidebarWidth = width }
         }
         .task {
             while !Task.isCancelled {
@@ -82,7 +88,7 @@ struct AppShell: View {
         .onChange(of: destination) { _, _ in Haptics.selection() }
         .onChange(of: paths) { old, new in if old[destination] != new[destination] { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in
-            paths = [:]; reviewSession = ReviewSession(); sidebar.settle(open: false)
+            paths = [:]; reviewSession = ReviewSession(); sidebar.reset()
             if destination != .review { showDestination(.review) }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -134,7 +140,7 @@ struct AppShell: View {
     }
 
     private var sidebarButton: some View {
-        Button { openSidebar() } label: { Image(systemName: "sidebar.left") }
+        Button { openSidebar(width: sidebarWidth) } label: { Image(systemName: "sidebar.left") }
             .accessibilityLabel("Open sidebar")
             .accessibilityIdentifier("sidebar-button")
     }
@@ -177,32 +183,24 @@ struct AppShell: View {
 
     // MARK: Sidebar
 
-    private var openMotion: Animation? { reduceMotion ? nil : .timingCurve(0.2, 0.7, 0.5, 1, duration: 0.22) }
-    private var closeMotion: Animation? { reduceMotion ? nil : .timingCurve(0.4, 0, 1, 1, duration: 0.15) }
-
-    private func openSidebar() {
+    private func openSidebar(width: CGFloat) {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         Haptics.selection()
-        withAnimation(openMotion) { sidebar.settle(open: true) }
+        sidebar.show(width: width, reduceMotion: reduceMotion)
     }
 
     private func closeSidebar() {
-        withAnimation(closeMotion) { sidebar.settle(open: false) }
+        sidebar.hide(reduceMotion: reduceMotion)
     }
 
     /// A drag from the leading screen edge of a root page opens the Sidebar under the finger.
-    private func edgeDragChanged(_ translation: CGFloat) {
-        if !sidebar.dragging {
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        }
-        sidebar.dragging = true
-        sidebar.drag = max(0, translation)
+    private func edgeDragBegan() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        sidebar.beginDrag()
     }
 
-    private func edgeDragEnded(_ predicted: CGFloat, width: CGFloat) {
-        let opens = predicted > width / 3
-        if opens { Haptics.selection() }
-        withAnimation(opens ? openMotion : closeMotion) { sidebar.settle(open: opens) }
+    private func edgeDragEnded(velocity: CGFloat, width: CGFloat) {
+        if sidebar.endDrag(velocity: velocity, width: width, reduceMotion: reduceMotion) { Haptics.selection() }
     }
 
     // MARK: Notifications
@@ -210,7 +208,7 @@ struct AppShell: View {
     /// A Ticket or Goal opens on top of Review; Chief and a Manager open their own destination.
     private func openNotification() {
         guard let destination = notifications.consumeOpen(for: store.baseURL) else { return }
-        sidebar.settle(open: false)
+        sidebar.reset()
         switch destination {
         case .review(let ticketID):
             paths[.review] = ticketID.map { [.ticket($0)] } ?? []
@@ -228,8 +226,9 @@ struct AppShell: View {
 /// pushed pages, where the same edge belongs to the system Back swipe.
 private struct SidebarEdgePan: UIGestureRecognizerRepresentable {
     let enabled: Bool
+    let began: () -> Void
     let changed: (CGFloat) -> Void
-    /// The translation projected a short way ahead by the release velocity.
+    /// The release speed, in points per second.
     let ended: (CGFloat) -> Void
 
     func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
@@ -248,8 +247,9 @@ private struct SidebarEdgePan: UIGestureRecognizerRepresentable {
     func handleUIGestureRecognizerAction(_ recognizer: UIScreenEdgePanGestureRecognizer, context: Context) {
         let translation = recognizer.translation(in: recognizer.view).x
         switch recognizer.state {
-        case .began, .changed: changed(translation)
-        case .ended: ended(translation + 0.15 * recognizer.velocity(in: recognizer.view).x)
+        case .began: began(); changed(translation)
+        case .changed: changed(translation)
+        case .ended: ended(recognizer.velocity(in: recognizer.view).x)
         case .cancelled, .failed: ended(0)
         default: break
         }
