@@ -1578,7 +1578,7 @@ export class ConversationStore
       return {
         value: result,
         payloads: result.written.map((row) => row.payload),
-        always_announce: in_commit !== null || options.always_announce,
+        always_announce: options.always_announce,
       };
     });
   }
