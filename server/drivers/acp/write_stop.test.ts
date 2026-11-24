@@ -24,8 +24,11 @@ function synthetic_child(write_started: () => boolean) {
   const written = new Deferred<void>();
   const entered = new Deferred<void>();
   const response = new Deferred<{ stopReason: 'cancelled' }>();
+  const wire = new AbortController();
+  const closed = new Deferred<void>();
   const client = {
-    signal: new AbortController().signal,
+    signal: wire.signal,
+    closed: closed.promise,
     async request(method: string) {
       if (method === 'session/new')
         return {
@@ -48,6 +51,8 @@ function synthetic_child(write_started: () => boolean) {
       return { written: written.promise, response: response.promise, cancel() {}, write_started };
     },
     close() {
+      wire.abort(new Error('ACP connection closed'));
+      closed.resolve();
       response.resolve({ stopReason: 'cancelled' });
     },
   };

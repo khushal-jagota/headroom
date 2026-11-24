@@ -228,7 +228,10 @@ export class ConversationViewLiveOutput {
   ): void {
     const state = this.#conversations.get(conversation_id);
     if (state !== undefined) {
-      if (payload.kind === 'prompt' && state.turn_key === null) {
+      if (
+        (payload.kind === 'prompt' || payload.kind === 'agent_turn_started') &&
+        state.turn_key === null
+      ) {
         this.#reset_turn(conversation_id, `turn:e${sequence}`);
         if (
           [...(this.#subscriptions.get(conversation_id) ?? [])].some(

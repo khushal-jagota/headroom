@@ -5,6 +5,12 @@ import type { AnyMessage } from '@agentclientprotocol/sdk/unstable';
 import { parse_backend_instance_id } from '../core/identity.ts';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import {
+  AgentMessageCompleted,
+  AgentMessageDelta,
+  BackendStreamEnded,
+  BackgroundTaskStarted,
+  BackgroundTaskEnded,
+  PermissionAskRaised,
   BackendSpawnFailed,
   NeedsRebind,
   PromptWriteFailed,
@@ -12,7 +18,11 @@ import {
   ToolCallFinished,
   TurnEnded,
 } from '../../conversation/backends/contracts.ts';
-import type { BackendEventValue } from '../../conversation/backends/contracts.ts';
+import type {
+  BackendEventSink,
+  BackendEventValue,
+  TurnToken,
+} from '../../conversation/backends/contracts.ts';
 import {
   ConversationAccess,
   PromptDeliveryMode,
@@ -60,11 +70,15 @@ const NEW_SESSION = {
 function scripted(
   flavor_hooks: Partial<AcpFlavor>,
   answer: (method: string, params: unknown) => Answer,
-  options: { hold_prompt_write?: Promise<void> } = {},
+  options: {
+    hold_prompt_write?: Promise<void>;
+    start_agent_turn?: BackendEventSink['start_agent_turn'];
+  } = {},
 ) {
   let input!: ReadableStreamDefaultController<AnyMessage>;
   const writes: AnyMessage[] = [];
   const events: BackendEventValue[] = [];
+  const tokens: (TurnToken | null)[] = [];
   const ended = Promise.withResolvers<TurnEnded>();
   const flavor: AcpFlavor = {
     label: 'Scripted',
@@ -115,7 +129,9 @@ function scripted(
     {
       resolved_start: resolved,
       event_sink: {
+        start_agent_turn: options.start_agent_turn,
         async report(_turn, event) {
+          tokens.push(_turn);
           events.push(event);
           if (event instanceof TurnEnded) ended.resolve(event);
         },
@@ -130,6 +146,7 @@ function scripted(
     resolved,
     writes,
     events,
+    tokens,
     ended: ended.promise,
     requests,
     /** Answer the newest request of that method. */
@@ -495,5 +512,166 @@ test('a tool call is open only while the agent runs it', async () => {
   expect(peer.events.filter((event) => event instanceof ToolCallFinished)).toMatchObject([
     { tool_call_id: 'allowed', tool_call_status: 'completed' },
   ]);
+  await peer.child.stop();
+});
+
+// Risk: idle ACP activity and asks disappeared. The existing peer only proved prompted turns.
+// One in-memory peer proves admission, shared ownership, and an explicit truthful ending.
+test('unsolicited ACP activity and permission share an admitted turn until explicit cancellation', async () => {
+  const token = { conversation_id: 'scripted', turn_number: 2 };
+  const start_agent_turn = vi.fn(async (_reason: string, _signal?: AbortSignal) => token);
+  const peer = scripted({}, ordinary, { start_agent_turn });
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  peer.update({ sessionUpdate: 'usage_update', used: 12, size: 100 });
+  peer.update({ sessionUpdate: 'available_commands_update', availableCommands: [] });
+  await tick();
+  expect(start_agent_turn).not.toHaveBeenCalled();
+  peer.update({
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: 'I woke up.' },
+  });
+  peer.update({
+    sessionUpdate: 'agent_thought_chunk',
+    content: { type: 'text', text: 'Next step' },
+  });
+  peer.update({
+    sessionUpdate: 'tool_call',
+    toolCallId: 'edit',
+    title: 'Edit',
+    status: 'in_progress',
+  });
+  peer.ask('edit');
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof PermissionAskRaised)).toBe(true),
+  );
+  expect(start_agent_turn).toHaveBeenCalledOnce();
+  expect(start_agent_turn.mock.calls[0]?.[0]).toBe('Scripted sent activity without a prompt');
+  expect(peer.requests('session/prompt')).toHaveLength(0);
+  expect(turn_ended(peer)).toBe(false);
+  // Usage checkpoints unsolicited output before Stop revokes in-turn callbacks. It does
+  // not claim that the native turn ended, and Stop must not duplicate the persisted text.
+  peer.update({ sessionUpdate: 'usage_update', used: 30, size: 100 });
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof AgentMessageCompleted)).toBe(true),
+  );
+  expect(turn_ended(peer)).toBe(false);
+  expect(start_agent_turn).toHaveBeenCalledOnce();
+  await peer.child.answer_permission_ask('edit:1', 'deny');
+  await peer.child.cancel_running_turn();
+  expect((await peer.ended).ending).toBe('interrupted');
+  expect(peer.events.filter((event) => event instanceof TurnEnded)).toHaveLength(1);
+  expect(peer.events.filter((event) => event instanceof AgentMessageCompleted)).toEqual([
+    new AgentMessageCompleted({ content: text_message_content('I woke up.') }),
+  ]);
+  expect(peer.tokens.filter((value) => value !== null).every((value) => value === token)).toBe(
+    true,
+  );
+  await peer.child.stop();
+});
+
+// Risk: a busy core can refuse admission. No unowned permission or event can escape that refusal.
+test('refused idle admission cancels a permission without inventing a turn', async () => {
+  const start_agent_turn = vi.fn(async () => null);
+  const peer = scripted({}, ordinary, { start_agent_turn });
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  peer.ask('refused');
+  await vi.waitFor(() =>
+    expect(peer.writes.some((value) => 'id' in value && value.id === 'ask-refused')).toBe(true),
+  );
+  expect(peer.writes.at(-1)).toMatchObject({ result: { outcome: { outcome: 'cancelled' } } });
+  expect(
+    peer.events.some((event) => event instanceof PermissionAskRaised || event instanceof TurnEnded),
+  ).toBe(false);
+  await peer.child.stop();
+});
+
+// Risk: ACP has no idle prompt response. A broken stream must still end an admitted turn once.
+test('an unsolicited turn fails when the ACP stream ends', async () => {
+  const peer = scripted({}, ordinary, {
+    start_agent_turn: async () => ({ conversation_id: 'scripted', turn_number: 2 }),
+  });
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  peer.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Wake' } });
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof AgentMessageDelta)).toBe(true),
+  );
+  peer.end();
+  expect(await peer.ended).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
+  expect(peer.events.filter((event) => event instanceof TurnEnded)).toHaveLength(1);
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof BackendStreamEnded)).toBe(true),
+  );
+  expect(peer.tokens.at(-1)).toBe(null);
+  await peer.child.stop();
+});
+
+// Risk: shutdown can interrupt the core's receipt wait before it admits an unsolicited turn.
+// Reuse the peer to prove stop cancels that wait instead of leaving the ACP reader parked.
+test('shutdown cancels pending unsolicited admission', async () => {
+  let admission_signal: AbortSignal | undefined;
+  const start_agent_turn = vi.fn((_reason: string, signal?: AbortSignal) => {
+    admission_signal = signal;
+    return new Promise<null>((resolve) =>
+      signal?.addEventListener('abort', () => resolve(null), { once: true }),
+    );
+  });
+  const peer = scripted({}, ordinary, { start_agent_turn });
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  peer.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Wake' } });
+  await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+  await peer.child.stop();
+  expect(admission_signal?.aborted).toBe(true);
+  expect(turn_ended(peer)).toBe(false);
+});
+
+// Risk: an async command's tool stays open after its prompt ends. Ordinary finishing formerly
+// hid the live task, and its late completion formerly vanished or opened a spurious agent turn.
+// Reuse the peer for the prompted-to-background boundary and the late idle completion.
+test('only unfinished async tools become background tasks and late completion needs no turn', async () => {
+  const start_agent_turn = vi.fn(async () => null);
+  const peer = scripted(
+    {
+      background_task_description: (update) =>
+        update.sessionUpdate === 'tool_call' ? update.title : null,
+    },
+    ordinary,
+    { start_agent_turn },
+  );
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  await peer.prompt();
+  peer.update({
+    sessionUpdate: 'tool_call',
+    toolCallId: 'short',
+    title: 'Short async command',
+    status: 'in_progress',
+  });
+  peer.update({ sessionUpdate: 'tool_call_update', toolCallId: 'short', status: 'completed' });
+  peer.update({
+    sessionUpdate: 'tool_call',
+    toolCallId: 'long',
+    title: 'Long async command',
+    status: 'in_progress',
+  });
+  peer.reply('session/prompt', { result: { stopReason: 'end_turn' } });
+  await peer.ended;
+  expect(peer.events.filter((event) => event instanceof BackgroundTaskStarted)).toEqual([
+    new BackgroundTaskStarted({ task_id: 'long', task_description: 'Long async command' }),
+  ]);
+  expect(
+    peer.events
+      .filter((event) => event instanceof ToolCallFinished)
+      .map((event) => event.tool_call_id),
+  ).toEqual(['short', 'long']);
+  expect(peer.events.some((event) => event instanceof BackgroundTaskEnded)).toBe(false);
+  peer.update({ sessionUpdate: 'tool_call_update', toolCallId: 'long', status: 'completed' });
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof BackgroundTaskEnded)).toBe(true),
+  );
+  expect(peer.events.at(-1)).toEqual(
+    new BackgroundTaskEnded({ task_id: 'long', task_status: 'completed' }),
+  );
+  expect(peer.tokens.at(-1)).toBe(null);
+  expect(start_agent_turn).not.toHaveBeenCalled();
+  expect(peer.events.filter((event) => event instanceof TurnEnded)).toHaveLength(1);
   await peer.child.stop();
 });
