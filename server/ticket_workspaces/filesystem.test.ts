@@ -1,3 +1,5 @@
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+import { pathToFileURL } from 'node:url';
 import * as workspace_git from './filesystem/shared.ts';
 import { inspect_work_move } from './filesystem/work_move.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -209,15 +211,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     await command(checkout, ['tag', 'blob-proof', blob]);
     await command(checkout, ['push', 'origin', '--tags']);
     const original_git = workspace_git.git;
-    const git_calls = vi
-      .spyOn(workspace_git, 'git')
-      .mockImplementation(async (directory, args, supplied_options, input) => {
-        const result = await original_git(directory, args, supplied_options, input);
-        // Remote advertisement can name an object that this clone does not hold.
-        return args[0] === 'ls-remote'
-          ? { ...result, stdout: result.stdout + `${'f'.repeat(40)}\trefs/heads/unavailable\n` }
-          : result;
-      });
+    const git_calls = vi.spyOn(workspace_git, 'git');
     const began = performance.now();
     expect(await reason_to_keep(path, undefined, undefined, options)).toBeNull();
     console.info(
@@ -225,6 +219,19 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     );
     expect(git_calls.mock.calls.filter((call) => call[1][0] === 'cat-file')).toHaveLength(1);
     git_calls.mockRestore();
+    // If an advertised object cannot be fetched, retain the workspace conservatively.
+    const unavailable = vi
+      .spyOn(workspace_git, 'git')
+      .mockImplementation(async (directory, args, supplied_options, input) => {
+        const result = await original_git(directory, args, supplied_options, input);
+        return args[0] === 'ls-remote'
+          ? { ...result, stdout: result.stdout + `${'f'.repeat(40)}\trefs/heads/unavailable\n` }
+          : result;
+      });
+    expect(await reason_to_keep(path, undefined, undefined, options)).toBe(
+      `remote object verification failed for ${checkout}`,
+    );
+    unavailable.mockRestore();
     for (let index = 0; index < 80; index++)
       rmSync(join(remote, 'refs', 'heads', `advertised-${index}`));
     await command(remote, ['update-ref', '-d', 'refs/heads/published']);
@@ -792,4 +799,85 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   await prepare_workspace(source, ticket, { ...repository, ...returning }, options);
   expect(await command(checkout, ['rev-parse', 'HEAD'])).toBe(returning.published_revision);
   expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('return');
+});
+
+// Risk: cat-file in a cold single-branch partial clone can fetch each advertised ref.
+// Existing populated clones cannot prove this network boundary. Reuse the local bare-origin
+// fixture and inspect Git trace events instead of a new browser or backend host.
+test('a cold partial clone downloads advertised commits once before source proof', async () => {
+  const remote = join(root, 'cold-origin.git'),
+    project = join(root, 'author');
+  mkdirSync(remote);
+  mkdirSync(project);
+  await command(remote, ['init', '--bare']);
+  await command(remote, ['config', 'uploadpack.allowFilter', 'true']);
+  await command(remote, ['config', 'uploadpack.allowAnySHA1InWant', 'true']);
+  await command(project, ['init', '-b', 'main']);
+  await command(project, ['config', 'user.email', 'proof@example.test']);
+  await command(project, ['config', 'user.name', 'Cold proof']);
+  writeFileSync(join(project, 'work.txt'), 'main');
+  await command(project, ['add', '.']);
+  await command(project, ['commit', '-m', 'main']);
+  await command(project, ['remote', 'add', 'origin', remote]);
+  await command(project, ['push', 'origin', 'main']);
+  await command(project, ['switch', '-c', 'unrelated']);
+  writeFileSync(join(project, 'work.txt'), 'unrelated');
+  await command(project, ['commit', '-am', 'unrelated']);
+  await command(project, ['push', 'origin', 'unrelated']);
+  const unrelated = await command(project, ['rev-parse', 'HEAD']);
+  const source = folder(),
+    checkout = join(source, 'worktree');
+  await command(root, [
+    'clone',
+    '--filter=blob:none',
+    '--single-branch',
+    '--branch',
+    'main',
+    pathToFileURL(remote).href,
+    checkout,
+  ]);
+  expect(await command(checkout, ['config', 'remote.origin.promisor'])).toBe('true');
+  // Enumerate local objects without requesting the absent commit (which triggers a fetch).
+  expect(
+    await command(checkout, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']),
+  ).not.toContain(unrelated);
+  const trace = join(root, 'git-proof-trace.jsonl');
+  // Trace2 initializes before repository and command-line configuration is read.
+  const trace_home = join(root, 'trace-home');
+  mkdirSync(trace_home);
+  writeFileSync(join(trace_home, '.gitconfig'), `[trace2]\n eventTarget = ${trace}\n`);
+  const children = new OneShotChildren();
+  const traced_options = {
+    ...options,
+    git_execution: { children, environment: { ...process.env, HOME: trace_home } },
+  };
+  const calls = vi.spyOn(workspace_git, 'git');
+  const began = performance.now();
+  try {
+    expect(await inspect_work_move(source, true, traced_options)).toMatchObject({
+      published_branch: 'main',
+    });
+    const fetches = calls.mock.calls.filter((call) => call[1][0] === 'fetch');
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0]![1]).toContain('--filter=blob:none');
+    expect(fetches[0]![1]).toContain(unrelated);
+    const events = readFileSync(trace, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
+    // Includes Git processes that Git itself spawns, not just adapter invocations.
+    expect(
+      events.filter((event) => event.event === 'start' && event.argv?.includes('fetch')),
+    ).toHaveLength(1);
+    console.info(
+      `Cold partial-clone proof: ${calls.mock.calls.length} Git calls, one fetch, ${(performance.now() - began).toFixed(1)} ms`,
+    );
+  } finally {
+    calls.mockRestore();
+    children.seal();
+    await children.settled();
+  }
+  expect(
+    await command(checkout, ['cat-file', '--batch-all-objects', '--batch-check=%(objectname)']),
+  ).toContain(unrelated);
 });

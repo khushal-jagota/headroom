@@ -164,10 +164,12 @@ async function workspace_safety_problem(
         return `no origin copy can be verified for ${checkout}`;
       const hashes = new Set<string>();
       {
-        const fetched = await git(checkout, ['fetch', '--prune', 'origin'], options),
-          advertised = await git(checkout, ['ls-remote', '--heads', '--tags', 'origin'], options);
-        if (fetched.returncode || advertised.returncode)
-          return `remote verification failed for ${checkout}`;
+        const advertised = await git(
+          checkout,
+          ['ls-remote', '--heads', '--tags', 'origin'],
+          options,
+        );
+        if (advertised.returncode) return `remote verification failed for ${checkout}`;
         const refs = new Map<string, string>();
         advertised_refs.set(checkout, refs);
         for (const line of advertised.stdout.trim().split('\n').filter(Boolean)) {
@@ -176,6 +178,15 @@ async function workspace_safety_problem(
         }
         const revisions = [...new Set(refs.values())];
         if (revisions.length) {
+          // Single-branch partial clones lack unrelated advertised commits. Fetch them together
+          // before object inspection, so cat-file does not lazily fetch each missing ref.
+          // This proof uses the current advertisement, never stale remote-tracking refs.
+          const fetched = await git(
+            checkout,
+            ['fetch', '--filter=blob:none', '--no-tags', 'origin', ...revisions],
+            options,
+          );
+          if (fetched.returncode) return `remote object verification failed for ${checkout}`;
           // Peeling tags and excluding unavailable objects retains the same ancestry proof.
           const checked = await git(
             checkout,
