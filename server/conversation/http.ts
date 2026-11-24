@@ -40,6 +40,10 @@ export type SentPiece =
   | {
       piece: 'video_upload';
       upload_id: string;
+    }
+  | {
+      piece: 'attachment_upload';
+      upload_id: string;
     };
 export interface OwnerSendBody {
   conversation_id: string | null;
@@ -182,6 +186,7 @@ export function parse_owner_send_body(
         ['image', 'SentImagePiece'],
         ['file', 'SentFilePiece'],
         ['video_upload', 'SentVideoUploadPiece'],
+        ['attachment_upload', 'SentAttachmentUploadPiece'],
       ] as const;
       const successful =
         object(value) &&
@@ -190,7 +195,7 @@ export function parse_owner_send_body(
             value.piece === tag &&
             (tag === 'text'
               ? typeof value.text === 'string'
-              : tag === 'video_upload'
+              : tag === 'video_upload' || tag === 'attachment_upload'
                 ? typeof value.upload_id === 'string' &&
                   Object.keys(value).every((k) => ['piece', 'upload_id'].includes(k))
                 : typeof value.data === 'string' &&
@@ -201,8 +206,8 @@ export function parse_owner_send_body(
         );
       if (successful) {
         if (value.piece === 'text') content.push({ piece: 'text', text: value.text as string });
-        else if (value.piece === 'video_upload')
-          content.push({ piece: 'video_upload', upload_id: value.upload_id as string });
+        else if (value.piece === 'video_upload' || value.piece === 'attachment_upload')
+          content.push({ piece: value.piece, upload_id: value.upload_id as string });
         else if (value.piece === 'file')
           content.push({
             piece: 'file',
@@ -236,7 +241,7 @@ export function parse_owner_send_body(
             expected: `'${tag}'`,
           });
         if (tag === 'text') text(value, 'text', path, false, true);
-        else if (tag === 'video_upload') {
+        else if (tag === 'video_upload' || tag === 'attachment_upload') {
           text(value, 'upload_id', path, false, true);
           for (const key of Object.keys(value))
             if (!['piece', 'upload_id'].includes(key))
@@ -324,6 +329,15 @@ export function validated_sent_files(
   }
   return validated;
 }
+/** The inline budget changes representation only, never upload acceptance. */
+export function inline_image_budget(sent: readonly SentPiece[]): { remaining: number } {
+  const bytes = sent.reduce(
+    (total, piece) =>
+      total + (piece.piece === 'image' ? Buffer.byteLength(piece.data, 'base64') : 0),
+    0,
+  );
+  return { remaining: Math.max(0, MAX_CONVERSATION_MESSAGE_IMAGE_BYTES - bytes) };
+}
 export async function conversation_message_content(
   files: ConversationMessageFiles,
   conversation_id: string,
@@ -333,8 +347,9 @@ export async function conversation_message_content(
     video_admission?: Pick<VideoSendAdmission, 'adopt'>;
   } = {},
 ): Promise<MessageContent> {
-  const video_count = sent.filter((p) => p.piece === 'video_upload').length;
-  if (video_count > 1) throw new HttpError(422, 'a message permits only one video');
+  const video_count = sent.filter(
+    (p) => p.piece === 'video_upload' || p.piece === 'attachment_upload',
+  ).length;
   if (video_count && !options.video_admission)
     throw new HttpError(422, 'video upload requires send admission');
   const validated = validated_sent_files(sent);
@@ -344,8 +359,8 @@ export async function conversation_message_content(
       pieces.push(new MessageText({ text: piece.text }));
       continue;
     }
-    if (piece.piece === 'video_upload') {
-      pieces.push(options.video_admission!.adopt(conversation_id));
+    if (piece.piece === 'video_upload' || piece.piece === 'attachment_upload') {
+      pieces.push(options.video_admission!.adopt(piece.upload_id, conversation_id));
       continue;
     }
     const value = validated.get(index)!;

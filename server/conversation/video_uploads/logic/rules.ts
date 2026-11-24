@@ -1,22 +1,26 @@
 /** Pure filename, quota, binding, and expiry decisions. */
-import { extname } from 'node:path';
 import type { UploadDestination } from '../contracts.ts';
 import { VideoUploadError } from '../contracts.ts';
 export function validate_filename(filename: string): void {
   if (
     !filename ||
+    filename !== filename.trim() ||
     [...filename].length > 255 ||
     ['.', '..'].includes(filename) ||
-    [...filename].some((character) => character.codePointAt(0)! < 32) ||
+    [...filename].some(
+      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127,
+    ) ||
     filename.includes('/') ||
-    filename.includes('\\') ||
-    !['.mp4', '.mov', '.webm'].includes(extname(filename).toLowerCase())
+    filename.includes('\\')
   )
-    throw new VideoUploadError('Choose an MP4, MOV, or WebM file with a plain filename.');
+    throw new VideoUploadError('Choose a file with a plain filename.');
 }
 export function require_capacity(used: number, requested: number, limit: number): void {
   if (used + requested > limit)
-    throw new VideoUploadError('Video storage is full. Remove this attachment to continue.', 507);
+    throw new VideoUploadError(
+      'Attachment storage is full. Remove this attachment to continue.',
+      507,
+    );
 }
 export function expiry_eligible(state: string, expires_at: number, now: number): boolean {
   return (
@@ -30,6 +34,6 @@ export function validate_binding(stored: UploadDestination, current: UploadDesti
     stored.id !== current.id ||
     stored.expected_conversation_id !== current.expected_conversation_id
   ) {
-    throw new VideoUploadError('The conversation changed. Remove and attach the video again.', 409);
+    throw new VideoUploadError('The conversation changed. Remove and attach the file again.', 409);
   }
 }

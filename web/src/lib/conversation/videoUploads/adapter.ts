@@ -4,7 +4,7 @@ import type { VideoUploadAdapter, VideoUploadStatus } from "./contracts";
 const ROOT = "/api/conversation/video-uploads";
 async function responseBody(response: Response): Promise<VideoUploadStatus> {
   const body = await response.json();
-  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Video upload failed.");
+  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "File upload failed.");
   return body as VideoUploadStatus;
 }
 export const videoUploadAdapter: VideoUploadAdapter = {
@@ -26,11 +26,11 @@ export const videoUploadAdapter: VideoUploadAdapter = {
         try {
           const body = JSON.parse(request.responseText);
           if (request.status >= 200 && request.status < 300) resolve(body as VideoUploadStatus);
-          else reject(new Error(typeof body.detail === "string" ? body.detail : "Video upload failed."));
-        } catch { reject(new Error("The video service did not return a valid response.")); }
+          else reject(new Error(typeof body.detail === "string" ? body.detail : "File upload failed."));
+        } catch { reject(new Error("The attachment service did not return a valid response.")); }
       };
-      request.onerror = () => { signal.removeEventListener("abort", abort); reject(new Error("The video upload was interrupted. Retry to upload it again.")); };
-      request.onabort = () => { signal.removeEventListener("abort", abort); reject(new Error("The video upload was interrupted.")); };
+      request.onerror = () => { signal.removeEventListener("abort", abort); reject(new Error("The file upload was interrupted. Retry to upload it again.")); };
+      request.onabort = () => { signal.removeEventListener("abort", abort); reject(new Error("The file upload was interrupted.")); };
       signal.addEventListener("abort", abort, {once: true});
       if (signal.aborted) abort();
       else request.send(file);

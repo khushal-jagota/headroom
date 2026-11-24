@@ -178,12 +178,32 @@ test('test_resolved_part_keeps_its_place_while_it_leaves_and_the_gap_closes', as
   await page.setViewportSize({ width: 1280, height: 720 });
   const part = page.locator('[data-deck-part]:has([data-review-item-type="message"])');
   await expect(part.locator('[data-review-mark-read]')).toBeEnabled();
-  const before = await part.evaluate((node) => {
-    const box = node.getBoundingClientRect();
-    const card = node.querySelector('.review-message-card')!.getBoundingClientRect();
-    const keys = document.querySelector('.review-keys')!.getBoundingClientRect();
-    return { left: box.left, top: box.top, height: box.height, cardTop: card.top, cardLeft: card.left, keysTop: keys.top };
-  });
+  const before = await part.evaluate(async (node, timeout) => {
+    const deadline = performance.now() + timeout;
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const item = node.closest('[data-deck-item]') ?? node;
+    const read = () => {
+      const box = node.getBoundingClientRect();
+      const card = node.querySelector('.review-message-card')!.getBoundingClientRect();
+      const keys = document.querySelector('.review-keys')!.getBoundingClientRect();
+      return { left: box.left, top: box.top, height: box.height, cardTop: card.top, cardLeft: card.left, keysTop: keys.top };
+    };
+    let previous = '';
+    let stableFrames = 0;
+    while (performance.now() < deadline) {
+      // Arrival and viewport layout must finish before this test measures a removal.
+      const animations = item.getAnimations({ subtree: true }).filter((animation) =>
+        Number.isFinite(animation.effect?.getComputedTiming().endTime) && animation.playState !== 'finished');
+      await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      await frame();
+      const measured = read();
+      const geometry = JSON.stringify(measured);
+      stableFrames = animations.length === 0 && geometry === previous ? stableFrames + 1 : 0;
+      previous = geometry;
+      if (stableFrames >= 2) return measured;
+    }
+    throw new Error('The mixed Review card did not settle before the removal baseline.');
+  }, WAIT_MS);
 
   await page.evaluate(() => {
     const frames: unknown[] = [];

@@ -967,9 +967,9 @@
     }
   }
 
-  async function submitUserInput(answers: UserInputAnswers): Promise<void> {
+  async function submitUserInput(answers: UserInputAnswers): Promise<boolean> {
     const requestId = userInput?.requestId;
-    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
@@ -979,8 +979,10 @@
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take those answers. You can try again or stop the turn.";
       await refreshView();
+      return fate !== "refused";
     } catch (error) {
       askNote = sentenceFor(error);
+      return false;
     } finally {
       busy = false;
     }
@@ -1145,7 +1147,7 @@
   onSend={(content, mode, picked, context) => send(content, mode, picked, undefined, context)}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
-  onSubmitUserInput={(answers) => void submitUserInput(answers)}
+  onSubmitUserInput={submitUserInput}
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(heldPromptId, forEdit) => discard(heldPromptId, forEdit)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}

@@ -15,6 +15,8 @@
   import { readComposerDraft, writeComposerDraft } from '../lib/conversation/composerDraft';
   import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../lib/conversation/pendingFiles';
   import { pendingImagesAsPieces, restoredPendingImages, releasePendingImages, type PendingConversationImage } from '../lib/conversation/pendingImages';
+  import { pendingUploadsAsPieces, restoredPendingUploads, openAttachmentDraft, clearAttachmentDraft } from '../lib/conversation/videoUploads/uploads';
+  import type { PendingAttachment, UploadDestination } from '../lib/conversation/videoUploads/contracts';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
   import { fateSentence } from '../lib/conversation/composer';
   import { unreadOwnerMessages, reviewMessageHref, reviewReplyEndpoint, reviewReplyReceipt, readReviewDraft, saveReviewDraft, draftStorageKey, attemptStorageKey, type OwnerMessage } from '../lib/review/messages';
@@ -38,6 +40,8 @@
   // The route keys this component by conversation, never by changing attention facts.
   const conversationId = untrack(()=>item.conversation_id);
   const draftKey = draftStorageKey(conversationId);
+  const uploadDestination: UploadDestination = untrack(() => ({ kind: item.owner_kind, id: item.owner_id, expected_conversation_id: conversationId }));
+  let uploads = $state<PendingAttachment[]>([]);
   let text = $state(untrack(()=>readComposerDraft(draftKey)));
   let files = $state.raw<PendingConversationFile[]>([]);
   let images = $state.raw<PendingConversationImage[]>([]);
@@ -56,11 +60,16 @@
   const chief = createQuery(()=>({...queries.chiefSettings(),enabled:item.owner_kind==='chief'}));
   const recapBody = selectedRecap(()=>item.recap_reference,()=>true);
   let recap = $derived(item.owner_kind==='chief' ? chief.data?.recap ?? '' : recapBody.body ?? item.recap);
-  let disabled = $derived(busy || intakeBusy || !ready || retryingUnknown);
-  let hasReply = $derived(Boolean(text.trim() || files.length || images.length));
+  let disabled = $derived(busy || !ready || retryingUnknown);
+  let hasReply = $derived(Boolean(text.trim() || files.length || images.length || uploads.length));
   let through = $derived(events.at(-1)?.sequence ?? 0);
-  $effect(()=>{ onBusy?.(busy || intakeBusy || voiceActive,conversationId); });
-  $effect(()=>{ if(ready) { const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)]; void saveReviewDraft(conversationId,content).then(saved=>{if(!saved)error=new Error('The attachment could not be saved in this browser.');}); } });
+  $effect(()=>{
+    const active = busy || intakeBusy || voiceActive;
+    // The receiver owns other mounted copies of this card. Its reads are not this
+    // instance's dependencies, or their different busy states can wake each other forever.
+    untrack(() => onBusy?.(active, conversationId));
+  });
+  $effect(()=>{ if(ready) { const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)]; void saveReviewDraft(conversationId,content).then(saved=>{if(!saved)error=new Error('The attachment could not be saved in this browser.');}); } });
 
   async function load():Promise<void> {
     error=null;
@@ -79,6 +88,8 @@
       if(destroyed)return;
       const restoredImages=restoredPendingImages(content,nextId); images=restoredImages.images;nextId=restoredImages.nextId;
       const restoredFiles=restoredPendingFiles(content,nextId);files=restoredFiles.files;nextId=restoredFiles.nextId;
+      const restoredUploads=restoredPendingUploads(content,uploadDestination);
+      uploads=openAttachmentDraft(draftKey,restoredUploads);
       attempt=held[0]??null; retryingUnknown=attempt!==null;
       ready=true;
       await load();
@@ -102,12 +113,13 @@
   async function accepted(bound:number) {
     // Keep the field and attachment geometry painted until the leave finishes.
     writeComposerDraft(draftKey,'');
+    clearAttachmentDraft(draftKey);uploads=[];
     await clearAttempt();
     await saveReviewDraft(conversationId,[]);
     await resolve(bound);
   }
   async function send():Promise<void> {
-    if(busy || intakeBusy || !ready || !loaded || !hasReply || voiceActive)return;
+    if(busy || (intakeBusy && !attempt) || !ready || !loaded || (!hasReply && !attempt) || voiceActive)return;
     busy=true;error=null;
     try {
       if(attempt && retryingUnknown) {
@@ -123,9 +135,10 @@
       if(attempt && retryingUnknown) {
         const current=await readConversation(conversationId);
         if(current.held_prompts.some(prompt=>prompt.sender_message_id===attempt?.messageId)) {await accepted(attempt.ownerReadThroughSequence!);return;}
+        if(intakeBusy){error=new Error('The original reply is still unconfirmed. Check delivery again before you send it.');return;}
       }
       if(!attempt) {
-        attempt={...mintOutgoingMessage({content:[...(text.trim()?[{piece:'text' as const,text:text.trim()}]:[]),...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)],senderLabel:'owner',mode:'queue'}),ownerReadThroughSequence:through};
+        attempt={...mintOutgoingMessage({content:[...(text.trim()?[{piece:'text' as const,text:text.trim()}]:[]),...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)],senderLabel:'owner',mode:'queue'}),ownerReadThroughSequence:through};
         if(!await rememberOutgoingMessages(attemptStorageKey(conversationId),[attempt])) {attempt=null;throw new Error('The reply could not be saved in this browser.');}
       }
       const sending=attempt;
@@ -174,8 +187,8 @@
         {#if !replyOnly}<div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>{/if}
-        <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
-          {disabled} sendDisabled={busy || !ready} sending={busy}
+        <ReviewReplyInput bind:uploads {uploadDestination} bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
+          {disabled} sendDisabled={busy || !ready} sending={busy} allowEmpty={attempt!==null}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
         <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error}<ErrorLine {error}/>{/if}

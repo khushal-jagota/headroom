@@ -27,6 +27,7 @@ export interface WorkspaceAdmission {
 }
 const SEND_PATHS = [
   /^\/api\/conversation\/conversations\/[^/]+\/send$/,
+  /^\/api\/conversation\/conversations\/[^/]+\/user-input-answers$/,
   /^\/api\/chief\/conversation\/send$/,
   /^\/api\/tickets\/[^/]+\/conversation\/send$/,
   /^\/api\/managers\/[^/]+\/conversation\/send$/,

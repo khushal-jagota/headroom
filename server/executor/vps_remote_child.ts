@@ -420,6 +420,9 @@ export class MacRemoteChild implements BackendChild {
       user_input_answers: answers.map((answer) => ({
         question_id: answer.question_id,
         answers: [...answer.answers],
+        ...(answer.attachments?.length
+          ? { attachments: answer.attachments.map((piece) => ({ ...piece })) }
+          : {}),
       })),
     });
   }

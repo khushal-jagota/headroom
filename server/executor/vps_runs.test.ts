@@ -803,3 +803,59 @@ test('restart-worker completes for a running Mac Ticket through the real admitte
     await Promise.all([runs.settled(), presence.settled(), mailbox.settled(), f.core.settled()]);
   }
 });
+
+// Gap: adjacent peers ignore unknown fields, so answer attachments must refuse before a pre-28 dispatch.
+test('attachment answers refuse old or unknown executor identity before any native answer', async () => {
+  const { database } = observe(fixture());
+  const mailbox = new SqliteCommandMailbox(database);
+  const presence = new MacPresenceService(database, mailbox, { changes: new ChangeSignal() });
+  const runs = new MacRuns(database, presence, mailbox);
+  const identity = vi.spyOn(presence, 'current_identity');
+  const command: WireValue<'ChildCommand'> = {
+    ...answer,
+    operation: 'answer_user_input',
+    arguments: {
+      kind: 'answer_user_input',
+      request_id: 'q',
+      answers: [
+        {
+          question_id: 'proof',
+          answers: [],
+          attachments: [
+            {
+              stored_file_id: 'f_proof',
+              file_name: 'proof.txt',
+              media_type: 'text/plain',
+              byte_count: 3,
+            },
+          ],
+        },
+      ],
+    },
+  };
+  try {
+    identity.mockReturnValue({
+      protocol_version: 27,
+      spool_format_version: 5,
+      application_revision: 'old',
+      executor_incarnation: answer.child.executor_incarnation,
+      connection_generation: 0,
+    });
+    await expect(runs.save_answer(command)).rejects.toThrow('Update the executor');
+    identity.mockReturnValue(null);
+    await expect(runs.save_answer(command)).rejects.toThrow('Update the executor');
+    identity.mockReturnValue({
+      protocol_version: 28,
+      spool_format_version: 5,
+      application_revision: 'current',
+      executor_incarnation: answer.child.executor_incarnation,
+      connection_generation: 0,
+    });
+    // A current peer passes capability admission and reaches the ordinary core attachment guard.
+    await expect(runs.save_answer(command)).rejects.toThrow('require attached conversations');
+  } finally {
+    const options = { deadline: performance.now() / 1000 + 2 };
+    await Promise.all([runs.stop(options), presence.stop(options), mailbox.stop(options)]);
+    await Promise.all([runs.settled(), presence.settled(), mailbox.settled()]);
+  }
+});

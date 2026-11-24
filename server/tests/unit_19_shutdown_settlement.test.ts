@@ -38,7 +38,6 @@ test('four service deadlines reject without completing their actual settlement',
   const video = new VideoUploadService(f.database, f.database_path, {
     now: () => 100,
     disk_free_bytes: () => 1024,
-    require_probe: () => '/recorded/ffprobe',
     probe_video: async () => 'video/mp4',
     limits: {
       max_video_bytes: 4,
