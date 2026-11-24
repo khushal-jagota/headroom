@@ -19,7 +19,7 @@ struct UpdateCard: View {
                     }
                     machineRows(status.cardMachines, status: status, actionable: connected)
                     if status.state == "available" { warnings(status.warnings) }
-                    if let detail = status.detail, !detail.isEmpty {
+                    if let detail = status.cardDetail, !detail.isEmpty {
                         Text(detail).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     }
                     if connected && status.allowedActions.contains("update") && status.available != nil {

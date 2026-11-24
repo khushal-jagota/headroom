@@ -36,6 +36,17 @@ describe("the update card resolver", () => {
     }
   });
 
+  it("shows the saved install independently of whether the latest release can be checked", () => {
+    const saved = at("check_unavailable", { attempt: { ...attempt, state: "done" }, app_sha: attempt.to_sha });
+    expect(updatePresentation({ ...base, status: saved }).state).toBe("machines");
+    expect(updateCard("machines", saved)).toMatchObject({ word: "Update installed", detail: "Couldn’t confirm the latest version." });
+    expect(updatePresentation({ ...base, status: { ...saved, app_sha: "different" } }).state).toBe("check_unavailable");
+    const unknown = { ...saved, app_sha: "", attempt: { ...attempt, state: "done" as const, to_sha: "" } };
+    expect(updatePresentation({ ...base, status: unknown }).state).toBe("check_unavailable");
+    const failing = { ...saved, machines: [machine("Desk", "failed")] };
+    expect(updateCard("machines", failing)).toMatchObject({ word: "Machine update needs attention", detail: "Couldn’t confirm the latest version." });
+  });
+
   it("shows Updating… at once after a press, before the server answers", () => {
     for (const state of ["available", "failed", "mac_failed", "mac_unreachable"] as const) {
       expect(updatePresentation({ ...base, status: at(state), starting: true }).state).toBe("updating");

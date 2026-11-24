@@ -40,9 +40,10 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   // Panels rolled back, so its failure is the news.
   if (status?.state === "failed") return { state: "failed", dimmed: false };
   if (!status) return { state: null, dimmed: false };
+  const installed = Boolean(status.app_sha) && status.attempt?.state === "done" && status.attempt.to_sha === status.app_sha;
+  if (status.state === "check_unavailable" && installed) return { state: "machines", dimmed: false };
   if (status.state === "up_to_date") {
     const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
-    const installed = status.attempt?.state === "done" && status.attempt.to_sha === status.app_sha;
     return { state: hasTarget || installed ? "machines" : pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
@@ -72,7 +73,9 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
       const rows = status?.machines ?? [];
       const failed = rows.some(row => row.state === "failed" || row.state === "unavailable");
       const updating = rows.some(row => row.state === "updating");
-      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : "Up to date",
+      const latestUnknown = status?.state === "check_unavailable";
+      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : latestUnknown ? "Update installed" : "Up to date",
+        detail: latestUnknown ? "Couldn’t confirm the latest version." : undefined,
         tone: failed ? "wrong" : updating ? "changing" : "done" };
     }
     case "unreachable":
