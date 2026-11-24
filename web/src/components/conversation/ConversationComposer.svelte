@@ -419,7 +419,6 @@
    *  once the draft is empty again, so it never flickers between the two while typing. */
   let draftWraps = $state(false);
   let compact = $derived(!draftWraps && attachments.length === 0 && voiceState.phase === "idle");
-  $effect(() => { if (text === "") draftWraps = false; });
   // The composer stays usable under a waiting ask (owner): the ask is answered in its own
   // shell, and a message still goes as the delivery chip says.
   let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
@@ -930,33 +929,90 @@
 
   let boxElement = $state<HTMLDivElement | null>(null);
 
+  /** The draft's shape is decided here, before Svelte writes the new text and layout to the
+   *  page, so the old positions can still be read when the move is drawn. Words that wrap
+   *  or break grow the box; it returns to one line only when the draft is empty. A change of
+   *  width alone is still found by resizeWritingArea. */
+  $effect.pre(() => {
+    const draft = text;
+    untrack(() => {
+      if (draft === "") { draftWraps = false; return; }
+      const input = inputElement;
+      if (draftWraps || input === null || input.hidden || input.getClientRects().length === 0) return;
+      const style = getComputedStyle(input);
+      if (!Number.isFinite(Number.parseFloat(style.lineHeight))) return;
+      if (textareaMeasurement?.input !== input) {
+        textareaMeasurement?.dispose();
+        textareaMeasurement = createComposerTextareaMeasurement(input);
+      }
+      if (draft.includes("\n") || textareaMeasurement.measure(style, draft).growth > 0) draftWraps = true;
+    });
+  });
+
   /** The box morphs between its shapes (one line, two rows, an ask) rather than jumping: its
-   *  height is read before the change and eased from there to its new natural height. The
-   *  words inside are laid out at once; only the frame travels. */
+   *  height, the draft and every control are read before the change and eased from there to
+   *  where they land, over one duration. The draft's height is settled in the new layout
+   *  before the landing place is read, so nothing moves a second time. */
+  const MORPH_MS = 220;
+  const MORPH_EASING = "cubic-bezier(.2,.7,.3,1)";
   let morphFrom: number | null = null;
-  let morphAnimation: Animation | null = null;
+  let moversFrom = new Map<Element, DOMRect>();
+  let morphAnimations: Animation[] = [];
+  function movers(box: HTMLElement): HTMLElement[] {
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    return [inputElement, ...Array.from(foot?.children ?? [])].filter(
+      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
+    );
+  }
   $effect.pre(() => {
     compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
-    untrack(() => { morphFrom = boxElement?.isConnected ? boxElement.getBoundingClientRect().height : null; });
+    untrack(() => {
+      const box = boxElement?.isConnected ? boxElement : null;
+      morphFrom = box?.getBoundingClientRect().height ?? null;
+      moversFrom = new Map(box === null ? [] : movers(box).map((element) => [element, element.getBoundingClientRect()]));
+    });
   });
   $effect(() => {
     compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
     untrack(() => {
       const box = boxElement;
       const from = morphFrom;
+      const rects = moversFrom;
       morphFrom = null;
+      moversFrom = new Map();
+      for (const animation of morphAnimations) animation.cancel();
+      morphAnimations = [];
+      resizeWritingArea();
       if (box === null || from === null || !box.isConnected) return;
       if (panelTakesTheBox && !animateAskEntrance) return;
       if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-      morphAnimation?.cancel();
       const to = box.getBoundingClientRect().height;
-      if (Math.abs(to - from) < 1) return;
+      // The box's own animation starts first, so each landing place is read with the box at
+      // its starting height. A draft centred in a shrinking box, or controls hung from its
+      // bottom, are then drawn from exactly where they stood.
       box.style.overflow = "clip";
-      const animation = box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)" });
-      morphAnimation = animation;
-      const release = (): void => { if (morphAnimation === animation) { box.style.removeProperty("overflow"); morphAnimation = null; } };
-      animation.onfinish = release;
-      animation.oncancel = release;
+      const grow = Math.abs(to - from) < 1 ? null
+        : box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: MORPH_MS, easing: MORPH_EASING });
+      const slides = movers(box).flatMap((element) => {
+        const before = rects.get(element);
+        if (before === undefined) return [];
+        const after = element.getBoundingClientRect();
+        const dx = before.left - after.left;
+        const dy = before.top - after.top;
+        return Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 ? [] : [element.animate(
+          [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }],
+          { duration: MORPH_MS, easing: MORPH_EASING }
+        )];
+      });
+      const running = grow === null ? slides : [grow, ...slides];
+      morphAnimations = running;
+      const release = (): void => {
+        if (morphAnimations !== running) return;
+        box.style.removeProperty("overflow");
+        morphAnimations = [];
+      };
+      if (running.length === 0) release();
+      else void Promise.all(running.map((animation) => animation.finished)).then(release, release);
     });
   });
 
