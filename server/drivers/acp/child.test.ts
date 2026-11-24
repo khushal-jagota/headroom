@@ -548,6 +548,14 @@ test('unsolicited ACP activity and permission share an admitted turn until expli
   expect(start_agent_turn.mock.calls[0]?.[0]).toBe('Scripted sent activity without a prompt');
   expect(peer.requests('session/prompt')).toHaveLength(0);
   expect(turn_ended(peer)).toBe(false);
+  // Usage checkpoints unsolicited output before Stop revokes in-turn callbacks. It does
+  // not claim that the native turn ended, and Stop must not duplicate the persisted text.
+  peer.update({ sessionUpdate: 'usage_update', used: 30, size: 100 });
+  await vi.waitFor(() =>
+    expect(peer.events.some((event) => event instanceof AgentMessageCompleted)).toBe(true),
+  );
+  expect(turn_ended(peer)).toBe(false);
+  expect(start_agent_turn).toHaveBeenCalledOnce();
   await peer.child.answer_permission_ask('edit:1', 'deny');
   await peer.child.cancel_running_turn();
   expect((await peer.ended).ending).toBe('interrupted');

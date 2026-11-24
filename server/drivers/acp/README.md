@@ -20,7 +20,7 @@ What every child of this base does, whatever its flavor:
 
 ## Flavor hooks
 
-`flavor.ts` holds the contract. `launch(start)` may be asynchronous, so a flavor can check its agent first: Antigravity checks the agy CLI floor there, from the kept verdict, as Codex and Claude do before each launch. Anything it throws fails the start as `BackendSpawnFailed`. Each optional hook exists because the Antigravity flavor uses it against agy 1.5.10:
+`flavor.ts` holds the contract. `launch(start)` may be asynchronous, so a flavor can check its agent first: Antigravity checks the agy CLI floor there, from the kept verdict, as Codex and Claude do before each launch. Anything it throws fails the start as `BackendSpawnFailed`. Each optional hook serves an observed Antigravity behavior:
 
 - `background_task_description(update)`: Antigravity identifies explicit async commands from `rawInput.CommandLine` and `WaitMsBeforeAsync`. Only candidates still open when their prompt ends become background tasks. agy 1.5.14 wakes itself on completion, so its driver declares that capability. The live subagent probe returned only a launch acknowledgment and agent prose, not a reliable task lifecycle; subagents remain ordinary tool calls.
 - `requires_sign_in(error)`: a signed-out agent does not start (`BackendSpawnFailed`, not a lost session) and a signed-out prompt fails its turn, each with the flavor's sign-in text.
@@ -44,3 +44,5 @@ Strict whole-update validation uses the SDK's exported JSON schema before best-e
 ## Evidence
 
 The connection tests prove ordered split-frame handling, parked permissions and actual response writes, independent request timeout, broken-write settlement, which requests had begun their write when the wire failed, and unchanged import environment. Launcher tests prove startup/shutdown races, failed-reader cleanup, and stdin errors. The fast-exit test needs one synthetic Node child because memory streams cannot prove OS child exit versus buffered output. `child.test.ts` runs the real child against a scripted ACP peer for each hook and for these base rules: idle death asks for a rebind, a prompt whose write began is not sent again, model before effort, the put-back after a refused effort, the abandoned turn, and when a tool call is open. Composing a message before the selection changes, the wrapping of a flavor's launch error and the stop-time log guard have no test of their own.
+
+For an unsolicited turn, a usage update checkpoints the message pieces received so far into the durable transcript. It does not finish the turn. This preserves the reply before a later Stop revokes in-turn callbacks.

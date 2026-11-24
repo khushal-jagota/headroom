@@ -218,6 +218,9 @@ export class AcpEvents {
         break;
       }
       case 'usage_update':
+        // agy reports usage after unsolicited output. Persist the available message pieces
+        // as a checkpoint, without treating usage as evidence that the turn ended.
+        if (turn.agent_outcome !== null) await this.flush(turn);
         await this.sink.report(
           turn.token,
           new TokenUsageReported({
