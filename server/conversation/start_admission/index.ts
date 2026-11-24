@@ -165,10 +165,10 @@ export class AutomaticStartAdmission {
         return false;
       const supervisor = entries.some((entry) => entry.request.work_class === 'supervisor');
       if (!supervisor) {
+        // Each machine keeps its last start slot for a supervisor.
         if (
-          destination === HOME_MACHINE_ID &&
           [...active.values()].filter((entry) => entry.request.work_class === 'worker').length >=
-            this.limit - 1
+          this.limit - 1
         )
           return false;
         if (

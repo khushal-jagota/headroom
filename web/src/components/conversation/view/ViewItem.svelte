@@ -1,13 +1,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  let { displayKey = null, registerDisplayNode, itemKey, marker = false, assistantContinuation = false, tool = false, toolContinuation = false, children }: {
+  let { displayKey = null, registerDisplayNode, itemKey, rhythm = undefined, children }: {
       displayKey?: string | null;
       registerDisplayNode?: (key:string,node:HTMLElement)=>(()=>void);
       itemKey: string;
-      marker?: boolean;
-      assistantContinuation?: boolean;
-      tool?: boolean;
-      toolContinuation?: boolean;
+      /** Where this item stands in the thread's rhythm; the stylesheet turns it into the
+       *  gap above it (.chat-thread-content > [data-conversation-transcript] > [data-rhythm]). Absent takes the block gap. */
+      rhythm?: 'first' | 'turn' | 'meta' | 'block' | 'row' | 'none';
       children: Snippet;
   } = $props();
   function register(node: HTMLElement, key: string | null) {
@@ -18,50 +17,21 @@
 <!-- A row is as tall as what it contains. It carries no provisional height, because a
      height that is only right once the row has been looked at makes the thread's own
      size a function of where the reader has already been. -->
-<div use:register={displayKey} data-conversation-view-key={itemKey} data-conversation-display-key={displayKey ?? undefined} class:marker class:assistant-continuation={assistantContinuation} class:tool class:tool-continuation={toolContinuation}>
+<div use:register={displayKey} data-conversation-view-key={itemKey} data-conversation-display-key={displayKey ?? undefined} data-rhythm={rhythm} class:marker={rhythm === 'none'}>
   {@render children()}
 </div>
 
 <style>
   /* The thread's flex alignment for rows rendered through display: contents
      transcript containers. */
-  div { display: flex; flex-direction: column; }
+  div { display: flex; flex-direction: column; min-width: 0; }
   /* An active flow skeleton temporarily owns the row's layout. Keep its children
      in the same flex column until readiness restores display: contents. */
   div > :global(.skeleton-region[data-active]:not(.skeleton-region--fill):not(.skeleton-region--inline)) {
     display: flex;
     flex-direction: column;
   }
-  /* A structural head takes no height and no share of the thread's flex gap. It
-     requests its own bounded scope from the action inside it. */
-  .marker { height: 0; margin-block-start: calc(var(--space-5) * -1); }
-  /* These are the same relationships as the unwrapped transcript. They follow
-     admitted logical neighbors, including when a neighbor's body is unmounted. */
-  .assistant-continuation { position: relative; margin-block-start: var(--space-4); }
-  .assistant-continuation::before {
-    content: "";
-    position: absolute;
-    inset-block-start: calc(var(--space-3) * -1);
-    inset-inline-start: 0;
-    inline-size: var(--space-6);
-    border-block-start: var(--border-hairline) solid var(--text-faintest);
-    opacity: 0.55;
-    pointer-events: none;
-  }
-  .tool {
-    position: relative;
-    min-width: 0;
-    max-width: 100%;
-    margin-inline-start: var(--space-3);
-    padding-inline-start: var(--space-3);
-  }
-  .tool-continuation { margin-block-start: calc(var(--space-1) - var(--space-5)); }
-  .tool-continuation::before {
-    content: "";
-    position: absolute;
-    inset-block-start: calc(var(--space-1) * -1);
-    inset-inline-start: calc(var(--border-hairline) * -1);
-    block-size: var(--space-1);
-    pointer-events: none;
-  }
+  /* An item that draws nothing takes no height and no gap. It may still hold an action
+     that asks for its own bounded scope. */
+  .marker { height: 0; }
 </style>

@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Panels
 
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
@@ -41,7 +42,7 @@ import XCTest
         try assertSharedDecisionBody(legacyShape, named: name)
     }
     private func setupDecision() async throws -> (ReviewDecision, APIClient, ReviewItem) {
-        for kind in ["cache", "draft", "outbox"] {
+        for kind in ["cache", "draft", "attachments", "outbox"] {
             for entry in try LocalStore.shared.records(server: "https://review.invalid", kind: kind) {
                 try LocalStore.shared.remove(server: "https://review.invalid", kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
             }
@@ -60,6 +61,19 @@ import XCTest
         await decision.load(item: item, api: api)
         XCTAssertTrue(decision.ready)
         return (decision, api, item)
+    }
+
+    /// The card never names the connection: a dropped read keeps the loaded proposal
+    /// ready, with no error under its buttons, and Approve still saves at once.
+    func testDroppedTicketReadShowsNoErrorAndKeepsTheCardReady() async throws {
+        let (decision, api, item) = try await setupDecision()
+        ReviewStub.state.failNextTicketRead()
+        await decision.load(item: item, api: api)
+        XCTAssertNil(decision.error)
+        XCTAssertTrue(decision.ready)
+        let saved = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
+        XCTAssertTrue(saved)
+        XCTAssertNil(decision.error)
     }
 
     func testReadOnlyApprovalIgnoresLegacyEditsAndCarriesExactRevisionAndNextGate() async throws {
@@ -107,7 +121,6 @@ import XCTest
         let (decision, api, _) = try await setupDecision()
         let ticket = try XCTUnwrap(decision.ticket)
         let proposal = try XCTUnwrap(decision.proposal)
-        XCTAssertTrue(decision.approvalStages.contains { $0.id == ticket.stage }, "Review exposes the current stage as a scope choice when the server offers it")
         let policy = try APIClient.decoder().decode(ReviewWorkerManifest.self, from: Data("""
         {"stages":[{"id":"earlier","label":"Earlier"},{"id":"waiting","label":"Waiting"},{"id":"next","label":"Next"},{"id":"done","label":"Done"}],"advance":{"waiting":"next"},"fields":[],"ceiling_range":["earlier","waiting","next","done"]}
         """.utf8))
@@ -115,10 +128,11 @@ import XCTest
         XCTAssertFalse(policy.selectionApprovesPending(ceiling: "waiting", waitingStage: "waiting"))
         XCTAssertTrue(policy.selectionApprovesPending(ceiling: "next", waitingStage: "waiting"))
         XCTAssertTrue(policy.selectionApprovesPending(ceiling: "done", waitingStage: "waiting"))
+        XCTAssertEqual(policy.approvalStages(after: "waiting").map(\.id), ["next", "done"], "The approve sheet offers only stages that approve the waiting proposal")
         decision.revisionDraft = "Keep this proposal note"
         let readCount = ReviewStub.state.scopeTicketReads.count
         let chief = Principal(kind: "chief", id: "chief")
-        let current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage, holder: chief, online: true)
+        let current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage, holder: chief)
         decision.acceptScopeRead(current)
         XCTAssertEqual(current.ceiling, ticket.stage)
         XCTAssertEqual(current.ceilingHolder, chief)
@@ -126,9 +140,6 @@ import XCTest
         XCTAssertEqual(decision.revisionDraft, "Keep this proposal note")
         XCTAssertFalse(decision.resolved)
         XCTAssertTrue(decision.ready)
-        XCTAssertFalse(decision.scopeChange.needsCheck)
-        XCTAssertTrue(decision.scopeChange.holdingProposal, "Keep the confirmation visible when a reviewer transfer removes the live queue card")
-        XCTAssertTrue(decision.scopeChange.message?.contains("No proposal approval was sent") == true)
         XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount + 1)
         let readRequest = try XCTUnwrap(ReviewStub.state.scopeTicketReads.last)
         XCTAssertEqual(readRequest.cachePolicy, .reloadIgnoringLocalCacheData)
@@ -137,83 +148,12 @@ import XCTest
         XCTAssertEqual(scopeWrite.httpMethod, "PATCH")
         let scopeBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(scopeWrite.httpBody)) as? [String: Any])
         XCTAssertEqual(Set(scopeBody.keys), Set(["ceiling", "ceiling_holder"]))
-        decision.scopeChange.releasePresentation()
-        XCTAssertFalse(decision.scopeChange.holdingProposal)
-        // Changing only the reviewer omits the ceiling, but compares its captured absolute value.
-        let reviewerOnly = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
-            holder: Principal(kind: "owner", id: "owner"), online: true)
+        // Changing only the reviewer omits the ceiling.
+        let reviewerOnly = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil, holder: Principal(kind: "owner", id: "owner"))
         XCTAssertEqual(reviewerOnly.ceiling, current.ceiling)
         let reviewerWrite = try XCTUnwrap(ReviewStub.state.writes.last)
         let reviewerBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(reviewerWrite.httpBody)) as? [String: Any])
         XCTAssertNil(reviewerBody["ceiling"])
-        XCTAssertEqual(decision.scopeChange.choice?.ceiling, current.ceiling)
-        XCTAssertTrue(ReviewStub.state.protectedWrites.isEmpty)
-        XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
-    }
-
-    func testOfflineScopeKeepsChoiceAndNoteWithoutDispatchOrReplay() async throws {
-        let (decision, api, _) = try await setupDecision()
-        let ticket = try XCTUnwrap(decision.ticket)
-        decision.revisionDraft = "Keep these words offline"
-        let readCount = ReviewStub.state.scopeTicketReads.count
-        do {
-            _ = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage,
-                holder: Principal(kind: "chief", id: "chief"), online: false)
-            XCTFail("An offline scope change must not dispatch")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("Not sent while offline")) }
-        XCTAssertEqual(decision.scopeChange.choice?.server, "https://review.invalid")
-        XCTAssertEqual(decision.scopeChange.choice?.ceiling, ticket.stage)
-        XCTAssertEqual(decision.scopeChange.choice?.holder, Principal(kind: "chief", id: "chief"))
-        XCTAssertEqual(decision.revisionDraft, "Keep these words offline")
-        XCTAssertFalse(decision.resolved)
-        XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount)
-        XCTAssertTrue(ReviewStub.state.writes.isEmpty)
-        XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
-        await Task.yield()
-        XCTAssertTrue(ReviewStub.state.writes.isEmpty, "There is no replay observer for ordinary scope choices")
-    }
-
-    func testUncertainScopeUsesFreshComparisonAndExplicitCheckNeverResends() async throws {
-        let (decision, api, _) = try await setupDecision()
-        let ticket = try XCTUnwrap(decision.ticket)
-        let chief = Principal(kind: "chief", id: "chief")
-        decision.revisionDraft = "Keep this note through an uncertain settings answer"
-        // The fixture applies the PATCH, drops its answer, then drops the first fresh read.
-        ReviewStub.state.configureScope(mode: "appliedDrop", failNextRead: true)
-        do {
-            _ = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage, holder: chief, online: true)
-            XCTFail("A lost read cannot confirm scope")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("not confirmed")) }
-        XCTAssertTrue(decision.scopeChange.needsCheck)
-        XCTAssertEqual(ReviewStub.state.writes.count, 1)
-        let current = try await decision.scopeChange.check(online: true)
-        XCTAssertEqual(current.ceilingHolder, chief)
-        XCTAssertFalse(decision.scopeChange.needsCheck)
-        XCTAssertTrue(decision.scopeChange.message?.contains("Current settings match") == true)
-        XCTAssertEqual(ReviewStub.state.writes.count, 1, "An explicit check must only GET")
-        XCTAssertEqual(ReviewStub.state.scopeTicketReads.last?.cachePolicy, .reloadIgnoringLocalCacheData)
-        // A later explicit choice whose PATCH answer is lost must not claim a mismatched read succeeded.
-        ReviewStub.state.configureScope(mode: "unappliedDrop", failNextRead: false)
-        do {
-            _ = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
-                holder: Principal(kind: "owner", id: "owner"), online: true)
-            XCTFail("Different current settings cannot confirm this choice")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("do not match")) }
-        XCTAssertTrue(decision.scopeChange.needsCheck)
-        do {
-            _ = try await decision.scopeChange.check(online: true)
-            XCTFail("A read-only mismatch remains unconfirmed")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("not confirmed")) }
-        XCTAssertEqual(ReviewStub.state.writes.count, 2)
-        XCTAssertTrue(decision.scopeChange.canRetry, "A fresh mismatch permits a new explicit user attempt")
-        ReviewStub.state.configureScope(mode: "success", failNextRead: false)
-        _ = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
-            holder: Principal(kind: "owner", id: "owner"), online: true)
-        XCTAssertEqual(ReviewStub.state.writes.count, 3, "Only the explicit attempt dispatches another PATCH")
-        XCTAssertFalse(decision.scopeChange.needsCheck)
-        XCTAssertEqual(decision.revisionDraft, "Keep this note through an uncertain settings answer")
-        XCTAssertFalse(decision.resolved)
-        XCTAssertEqual(decision.proposal?.revision, ticket.pendingProposal?.revision)
         XCTAssertTrue(ReviewStub.state.protectedWrites.isEmpty)
         XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
     }
@@ -297,7 +237,7 @@ import XCTest
         let staleGesture = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(staleGesture) // Saved locally; the protected server compares this exact revision.
         await settle(api)
-        XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .changed)
+        XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .failed)
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
     }
@@ -314,7 +254,7 @@ import XCTest
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
         try assertProtectedDecisionBody(body, named: "send_back", decision: "send_back", field: "wireframe")
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
-        XCTAssertEqual(work.state, .changed)
+        XCTAssertEqual(work.state, .failed)
         let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
         XCTAssertEqual(command.message, "  Clarify the transition.\n ")
         XCTAssertNil(work.proposal); XCTAssertNil(work.approval); XCTAssertNil(work.guidance)
@@ -326,16 +266,16 @@ import XCTest
         let server = LocalStore.server(api.baseURL)
         for (id, ticketID, field, revision, created, state) in [
             ("success", item.ticketId, proposal.field, proposal.revision, proposal.createdAt, PendingWork.State.sent),
-            ("field", item.ticketId, "other-field", proposal.revision, proposal.createdAt, .changed),
-            ("revision", item.ticketId, proposal.field, proposal.revision + 10, proposal.createdAt, .changed),
-            ("time", item.ticketId, proposal.field, proposal.revision, proposal.createdAt + 100, .changed),
-            ("ticket", "other-ticket", proposal.field, proposal.revision, proposal.createdAt, .changed),
+            ("field", item.ticketId, "other-field", proposal.revision, proposal.createdAt, .failed),
+            ("revision", item.ticketId, proposal.field, proposal.revision + 10, proposal.createdAt, .failed),
+            ("time", item.ticketId, proposal.field, proposal.revision, proposal.createdAt + 100, .failed),
+            ("ticket", "other-ticket", proposal.field, proposal.revision, proposal.createdAt, .failed),
         ] {
             let other = TicketProposal(field: field, body: "Other", proposedBy: "worker", createdAt: created, revision: revision)
             try Outbox.shared.save(PendingWork(id: id, created: .now, kind: .sendBack, state: state,
                 note: "Unrelated \(id)", ticketID: ticketID, proposal: other), server: server)
         }
-        try Outbox.shared.save(PendingWork(id: "foreign", created: .now, kind: .sendBack, state: .changed,
+        try Outbox.shared.save(PendingWork(id: "foreign", created: .now, kind: .sendBack, state: .failed,
             note: "Other server", ticketID: item.ticketId, proposal: proposal), server: server + "-foreign")
         defer { try? LocalStore.shared.remove(server: server + "-foreign", kind: "outbox", id: "foreign") }
         let restored = ReviewDecision()
@@ -351,6 +291,32 @@ import XCTest
 
     }
 
+    /// Risk: a refused decision's card comes back without the note and pictures Khushal
+    /// wrote, as when its proposal no longer waits and the card is rebuilt from the refusal.
+    func testRefusedDecisionBringsBackItsNoteAndAttachments() async throws {
+        let (decision, api, item) = try await setupDecision()
+        let proposal = try XCTUnwrap(decision.proposal)
+        decision.revisionDraft = "Please split the screens"
+        let attached = await decision.noteAttachments.attach(Data("Notes for the worker".utf8), type: .plainText, fileName: "notes.txt")
+        XCTAssertTrue(attached)
+        ReviewStub.state.failWrites = true
+        let saved = await decision.sendBack(api: api, message: decision.revisionDraft)
+        XCTAssertTrue(saved)
+        await settle(api)
+        let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        XCTAssertEqual(work.state, .failed)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertEqual(command.attachments?.map(\.fileName), ["notes.txt"], "The pictures and files travel in the frozen decision")
+        // The refused card, rebuilt from the refusal alone.
+        let refused = ReviewItem(reviewItemType: "proposal", ticketId: item.ticketId, field: item.field, title: item.title,
+                                 waitingSince: proposal.createdAt, proposalRevision: proposal.revision)
+        let restored = ReviewDecision()
+        restored.restoreRefusedNote(api: api, item: refused)
+        XCTAssertEqual(restored.revisionDraft, "Please split the screens")
+        XCTAssertEqual(restored.noteAttachments.attachments.map(\.fileName), ["notes.txt"])
+        XCTAssertEqual(restored.noteAttachments.attachments.first?.mediaType, "text/plain")
+    }
+
     func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {
         let (decision, api, _) = try await setupDecision()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -362,7 +328,7 @@ import XCTest
             expectedProposalRevision: proposal.revision, message: "Keep these words")
         let body = try APIClient.encodeReviewDecision(command)
         try Outbox(store: LocalStore(url: url)).save(PendingWork(id: "restored", created: .now,
-            kind: .sendBack, state: .sending, ticketID: decision.ticket!.id,
+            kind: .sendBack, state: .waiting, ticketID: decision.ticket!.id,
             protectedDecisionBody: body, protectedProposalCreatedAt: proposal.createdAt), server: server)
         let restored = Outbox(store: LocalStore(url: url))
         // Restored attempted work looks up its operation before any current proposal read.
@@ -374,7 +340,7 @@ import XCTest
         XCTAssertEqual(posted["expected_proposal_revision"] as? Int, proposal.revision)
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         let saved = try XCTUnwrap(Outbox(store: LocalStore(url: url)).entries(server).first)
-        XCTAssertEqual(saved.state, .changed)
+        XCTAssertEqual(saved.state, .failed)
         XCTAssertEqual(saved.note, "Not sent · the visible proposal changed; read it again before sending it back")
         XCTAssertEqual(saved.protectedDecisionBody, body)
         XCTAssertNil(saved.guidance)
@@ -515,7 +481,7 @@ import XCTest
     private func settle(_ api: APIClient) async {
         await Outbox.shared.drain(api: api)
         for _ in 0..<100 {
-            if !Outbox.shared.entries("https://review.invalid").contains(where: { [.waiting, .sending].contains($0.state) }) { return }
+            if !Outbox.shared.entries("https://review.invalid").contains(where: { $0.state == .waiting }) { return }
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Outbox did not finish the stub request")
@@ -555,53 +521,6 @@ import XCTest
         decision.refreshVoiceDraft()
         XCTAssertEqual(decision.revisionDraft, "Recovered recording")
     }
-
-    func testSkipIsLocalAndNewProposalIdentityReturns() {
-        func card(_ parts: ReviewItem...) -> ReviewCard { ReviewCard(id: "ticket:a", ticketId: "a", parts: parts) }
-        let old = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 1)
-        let new = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 2)
-        var queue = ReviewQueue()
-        queue.skip(card(old))
-        XCTAssertNil(queue.current(in: [card(old)]))
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 1)
-        XCTAssertEqual(queue.skippedCount(in: [card(new)]), 0, "A removed or replaced ask cannot be revisited")
-        XCTAssertEqual(queue.current(in: [card(new)])?.id, "ticket:a")
-        queue.revisit()
-        XCTAssertEqual(queue.current(in: [card(old)])?.id, "ticket:a")
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0)
-        queue.skip(card(old))
-        queue.resolve(old)
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0, "An ask resolved during refresh cannot be revisited")
-    }
-
-    /// One Ticket card holds a proposal and a message. Skip takes the whole card and
-    /// counts once; deciding one part leaves the card current until the other is handled.
-    func testTicketCardSkipsAndResolvesAsOneEntry() {
-        let proposal = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "plan", title: "A", waitingSince: 2)
-        let message = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 1, conversationId: "c", ownerKind: "ticket", ownerId: "a")
-        let ticket = ReviewCard(id: "ticket:a", ticketId: "a", parts: [proposal, message])
-        let chief = ReviewItem(reviewItemType: "message", title: "Chief", waitingSince: 3, conversationId: "chief", ownerKind: "chief")
-        let lone = ReviewCard(id: chief.id, parts: [chief])
-        var queue = ReviewQueue()
-        queue.skip(ticket)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
-        XCTAssertEqual(queue.skippedCount(in: [ticket, lone]), 1)
-        XCTAssertEqual(queue.skippedCardCount, 1)
-        queue.revisit()
-        queue.resolve(proposal)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, ticket.id)
-        XCTAssertEqual(queue.pending(ticket).map(\.id), [message.id])
-        queue.resolve(message)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
-        // A new part on a skipped card brings the card back with every waiting part.
-        let later = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 4, conversationId: "d", ownerKind: "ticket", ownerId: "a")
-        let first = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal])
-        var skipped = ReviewQueue()
-        skipped.skip(first)
-        let grown = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal, later])
-        XCTAssertEqual(skipped.current(in: [grown])?.id, grown.id)
-        XCTAssertEqual(skipped.pending(grown).count, 2)
-    }
 }
 
 private final class ReviewStubState: @unchecked Sendable {
@@ -613,12 +532,11 @@ private final class ReviewStubState: @unchecked Sendable {
     private var operationResponse: (Int, Data)?
     private var operationRequests: [URLRequest] = []
     private var operationReceipts: [String: Data] = [:]
-    private var scopeMode = "success"
     private var failNextScopeRead = false
     private var ticketReadRequests: [URLRequest] = []
     var scopeTicketReads: [URLRequest] { lock.withLock { ticketReadRequests } }
-    func configureScope(mode: String, failNextRead: Bool) {
-        lock.withLock { scopeMode = mode; failNextScopeRead = failNextRead }
+    func failNextTicketRead() {
+        lock.withLock { failNextScopeRead = true }
     }
     var protectedWrites: [URLRequest] { lock.withLock { operationRequests.filter { $0.httpMethod == "POST" } } }
     var protectedRequests: [URLRequest] { lock.withLock { operationRequests } }
@@ -631,7 +549,7 @@ private final class ReviewStubState: @unchecked Sendable {
         set { lock.withLock { failing = newValue } }
     }
     func reset(ticket: Data, manifest: Data) {
-        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:]; scopeMode = "success"; failNextScopeRead = false; ticketReadRequests = [] }
+        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:]; failNextScopeRead = false; ticketReadRequests = [] }
     }
     func bumpRevision() {
         lock.withLock {
@@ -656,13 +574,11 @@ private final class ReviewStubState: @unchecked Sendable {
             if request.httpMethod == "PATCH" {
                 recorded.append(request)
                 let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                if scopeMode != "unappliedDrop" {
-                    var object = try! JSONSerialization.jsonObject(with: ticket) as! [String: Any]
-                    if let ceiling = body["ceiling"] { object["ceiling"] = ceiling }
-                    object["ceiling_holder"] = body["ceiling_holder"]
-                    ticket = try! JSONSerialization.data(withJSONObject: object)
-                }
-                return scopeMode == "success" ? (200, Data("{}".utf8)) : (-1, Data())
+                var object = try! JSONSerialization.jsonObject(with: ticket) as! [String: Any]
+                if let ceiling = body["ceiling"] { object["ceiling"] = ceiling }
+                object["ceiling_holder"] = body["ceiling_holder"]
+                ticket = try! JSONSerialization.data(withJSONObject: object)
+                return (200, Data("{}".utf8))
             }
             if request.httpMethod == "GET", request.url!.path == "/api/tickets" {
                 ticketReadRequests.append(request)

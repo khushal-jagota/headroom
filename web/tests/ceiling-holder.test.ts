@@ -5,10 +5,13 @@ describe("holder role wording and identity", () => {
   it("uses approved roles with the assigned manager identity as detail", () => {
     expect(holderOptionsFor(parent)).toEqual([
       { value:"owner", label:"User" },
-      { value:"si_parent", label:"Manager", detail:"Actual outcome title" },
-      { value:"chief", label:"Chief" }
+      { value:"si_parent", label:"Manager", detail:"Actual outcome title" }
     ]);
     expect(holderLabelFor(parent, {kind:"manager", id:"si_parent"})).toBe("Manager");
+  });
+  it("offers the Chief only on a Ticket under no Manager, yet shows a stale Chief holder", () => {
+    expect(holderOptionsFor(parent).map((option) => option.value)).not.toContain("chief");
+    expect(holderOptionsFor(parent, {kind:"chief", id:"chief"}).map((option) => option.value)).toContain("chief");
   });
   it("keeps foreign managers identifiable and omits Worker choices", () => {
     expect(holderLabelFor(parent, {kind:"manager", id:"si_other"})).toBe("Manager · si_other");

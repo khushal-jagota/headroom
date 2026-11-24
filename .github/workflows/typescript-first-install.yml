@@ -1,0 +1,177 @@
+name: First server and machine installation
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "server/installation/**"
+      - "server/environments/release/**"
+      - "scripts/panels_install*"
+      - "server/environments/mac_executor/**"
+      - ".github/workflows/typescript-first-install.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Full bootstrap and second machine (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 70
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Prepare the native host and a fresh installation account
+        run: |
+          set -euo pipefail
+          umask 077
+          FIRST_INSTALL_ROOT="$RUNNER_TEMP/first-install-proof"
+          echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$FIRST_INSTALL_ROOT/browsers" >> "$GITHUB_ENV"
+          mkdir -p "$FIRST_INSTALL_ROOT"/{build,evidence,tmp,inputs,build-home}
+          echo "TMPDIR=$FIRST_INSTALL_ROOT/tmp/" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y patchelf binutils libicu-dev pkg-config
+            sudo loginctl enable-linger "$(id -un)"
+            sudo systemctl start "user@$(id -u).service"
+            echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+          else
+            test "$(uname -m)" = arm64
+            brew install icu4c pkgconf
+            launchctl print "gui/$(id -u)" > "$FIRST_INSTALL_ROOT/evidence/login-session.log"
+          fi
+          scripts/dev npm --prefix server ci
+          python3 scripts/panels_install_test.py
+      - name: Prepare Chromium for the requested Apple Silicon visual evidence
+        if: runner.os == 'macOS'
+        run: |
+          browser_setup_started=$SECONDS
+          node server/node_modules/playwright/cli.js install chromium
+          printf 'seconds=%s\n' "$((SECONDS-browser_setup_started))" > "$FIRST_INSTALL_ROOT/evidence/browser-setup-time.txt"
+      - name: Build the real native server and machine packages from this revision
+        run: |
+          set -euo pipefail
+          umask 077
+          build_started=$SECONDS
+          # Builds use private data and provider folders; installation later uses the real account.
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            HOME="$FIRST_INSTALL_ROOT/build-home" TMPDIR="$TMPDIR" \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_SHA="$GITHUB_SHA" \
+            GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" \
+            GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            FIRST_INSTALL_ROOT="$FIRST_INSTALL_ROOT" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=0 \
+            PLAN_CONFIG_PATH="$FIRST_INSTALL_ROOT/build-home/config.yaml" \
+            PLAN_DB_PATH="$FIRST_INSTALL_ROOT/build-home/planner.db" \
+            PLAN_DATA_DIR="$FIRST_INSTALL_ROOT/build-home/data" \
+            PLAN_LOGS_DIR="$FIRST_INSTALL_ROOT/build-home/logs" \
+            PLAN_BACKUP_DIR="$FIRST_INSTALL_ROOT/build-home/backups" \
+            PLAN_WORKSPACE_ROOT="$FIRST_INSTALL_ROOT/build-home/workspaces" \
+            PLAN_TICKET_FILES_DIR="$FIRST_INSTALL_ROOT/build-home/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$FIRST_INSTALL_ROOT/build-home/tickets" \
+            PLAN_DISPATCHER_LOCK_PATH="$FIRST_INSTALL_ROOT/build-home/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$FIRST_INSTALL_ROOT/build-home/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$FIRST_INSTALL_ROOT/build-home/lifecycle.lock" \
+            bash --noprofile --norc -euo pipefail <<'BUILD'
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          if [ "$(uname -s)" = Linux ]; then
+            node --input-type=module -e 'import{writeFileSync}from"node:fs";const r=process.env.FIRST_INSTALL_ROOT;for(const [name,extra]of[["server",{public_cli_entrypoint:"server/cli/main.ts"}],["machine",{}]])writeFileSync(r+"/"+name+"-build.json",JSON.stringify({source_root:process.env.GITHUB_WORKSPACE,requested_sha:process.env.GITHUB_SHA,output_directory:r+"/build/"+name,...extra}));'
+            node server/environments/release/publication_main.ts "$FIRST_INSTALL_ROOT/server-build.json"
+            node server/environments/linux_executor/build_main.ts "$FIRST_INSTALL_ROOT/machine-build.json"
+          else
+            git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$FIRST_INSTALL_ROOT/inputs"
+            NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix server ci
+            mkdir "$FIRST_INSTALL_ROOT/inputs-repeat"
+            git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$FIRST_INSTALL_ROOT/inputs-repeat"
+            NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs-repeat/scripts/dev" npm --prefix server ci
+            NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix agent_backends install
+            "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix web ci
+            "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix web run build
+            node server/environments/release/mac_home_main.ts \
+              --source "$GITHUB_WORKSPACE" --revision "$GITHUB_SHA" \
+              --output "$FIRST_INSTALL_ROOT/build/server" \
+              --node-modules "$FIRST_INSTALL_ROOT/inputs/server/node_modules" \
+              --agent-backends "$FIRST_INSTALL_ROOT/inputs/agent_backends" \
+              --web-dist "$FIRST_INSTALL_ROOT/inputs/web/dist" \
+              --public-cli-entrypoint server/cli/main.ts
+            node server/executor/mac/packaging/launcher_main.ts \
+              --output "$FIRST_INSTALL_ROOT/launcher/Panels TypeScript.app" --sign -
+            node_distribution=$(node -p 'require("node:path").dirname(require("node:path").dirname(require("node:fs").realpathSync(process.execPath)))')
+            node server/executor/mac/packaging/publication_main.ts \
+              --source "$FIRST_INSTALL_ROOT/inputs" --revision "$GITHUB_SHA" \
+              --node-distribution "$node_distribution" \
+              --node-modules "$FIRST_INSTALL_ROOT/inputs/server/node_modules" \
+              --repeat-node-modules "$FIRST_INSTALL_ROOT/inputs-repeat/server/node_modules" \
+              --output "$FIRST_INSTALL_ROOT/build/machine" \
+              --launcher-app "$FIRST_INSTALL_ROOT/launcher/Panels TypeScript.app" \
+              --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
+          BUILD
+          printf 'seconds=%s\n' "$((SECONDS-build_started))" > "$FIRST_INSTALL_ROOT/evidence/build-time.txt"
+      # A run by hand keeps the built packages for a few days, so an operator can install a
+      # branch revision with --archive and --receipt. Only the packages and receipts.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: first-install-packages-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/first-install-proof/build/server/*.tar.gz
+            ${{ runner.temp }}/first-install-proof/build/server/*.json
+            ${{ runner.temp }}/first-install-proof/build/machine/*.tar.gz
+            ${{ runner.temp }}/first-install-proof/build/machine/*.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Run the full install command and join a second machine instance
+        run: node server/installation/testing/first_install_proof.ts
+      - name: Prove cross-release update and rollback without a compatible host Node
+        if: runner.os == 'macOS'
+        env:
+          PANELS_NATIVE_HOME_TEST: "1"
+          NATIVE_EVIDENCE: ${{ runner.temp }}/first-install-proof/evidence/native-update
+          MAC_HOME_BUILD_METADATA: ${{ runner.temp }}/first-install-proof/build/server/mac-home-build.json
+          MAC_HOME_PRODUCTION_INPUTS: ${{ runner.temp }}/first-install-proof/inputs
+        run: |
+          mkdir -p "$NATIVE_EVIDENCE"
+          # Reuse this runner and its prepared production inputs for the existing
+          # sealed A-to-B update and failed-candidate rollback proof. Each phase
+          # records elapsed time. No extra browser, machine or native host is added.
+          scripts/dev npm --prefix server run test -- installation/home.native.test.ts \
+            --reporter=junit --outputFile "$NATIVE_EVIDENCE/update.xml"
+      - name: Preserve only proof evidence and build receipts
+        if: always()
+        run: |
+          mkdir -p "$FIRST_INSTALL_ROOT/evidence/build"
+          for directory in "$FIRST_INSTALL_ROOT/build/server" "$FIRST_INSTALL_ROOT/build/machine"; do
+            if [ -d "$directory" ]; then
+              find "$directory" -maxdepth 1 -type f -name '*.json' -exec cp {} "$FIRST_INSTALL_ROOT/evidence/build/" \;
+            fi
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: first-install-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/first-install-proof/evidence/
+          if-no-files-found: error
+          retention-days: 14

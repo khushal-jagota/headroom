@@ -183,3 +183,12 @@ function compareVersions(left: readonly number[], right: readonly number[]): num
   }
   return 0;
 }
+
+/** Opens the composer's model picker of the pane that holds `from`, where another model is
+ *  chosen. A status that names another model as its next step offers this. */
+export function openComposerModelPicker(from: Element | null): void {
+  const trigger = from?.closest("[data-conversation-pane]")?.querySelector<HTMLButtonElement>("[data-conversation-model-picker] button[data-conversation-picker-trigger]");
+  if (!trigger) return;
+  trigger.focus();
+  trigger.click();
+}

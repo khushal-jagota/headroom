@@ -1,6 +1,6 @@
 // Maintained by hand. It mirrors server/conversation/views/contracts.ts.
 export const VIEW_PROTOCOL_VERSION = 1;
-export const VIEW_PROJECTION_VERSION = 4;
+export const VIEW_PROJECTION_VERSION = 5;
 
 export type ConversationViewLens = "focus" | "full";
 

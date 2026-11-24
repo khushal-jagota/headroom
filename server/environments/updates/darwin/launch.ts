@@ -52,7 +52,7 @@ export async function launch_darwin_installer(
   const directory = join(identity.root, 'data/update-agent');
   const copy = join(identity.root, 'data', 'update-installer-' + attempt_id);
   const expected = [
-    identity.installer_node,
+    join(copy, 'runtime/node/bin/node'),
     join(copy, 'runtime/server/environments/updates/installer/main.ts'),
     join(copy, 'request.json'),
   ];

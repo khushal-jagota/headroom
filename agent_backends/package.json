@@ -5,7 +5,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "latest",
-    "@openai/codex": "latest"
+    "@anthropic-ai/claude-code": "2.1.330",
+    "@openai/codex": "0.171.0"
   }
 }

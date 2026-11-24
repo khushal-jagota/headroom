@@ -77,8 +77,9 @@ struct NavigationChief: Sendable {
     let signal: NavigationSignal
 }
 
-/// Review cards as web/src/lib/types.ts NavigationReviewItem: a Ticket card holds its
-/// proposal and its unread conversations; other owners' messages stand alone.
+/// Review entries as web/src/lib/types.ts NavigationReviewItem: a Ticket holds its
+/// proposal, its unread conversations and its ask; a Manager's or the Chief's conversation
+/// holds its unread run and its ask. The phone shows each part as its own card.
 struct NavigationReviewProposal: Equatable, Sendable {
     let ticketId: String
     let field: String
@@ -98,35 +99,35 @@ struct NavigationReviewMessage: Equatable, Sendable {
     let recap: String
     let ownerReadThroughSequence: Int
 }
-enum NavigationReviewCard: Equatable, Sendable {
-    case ticket(id: String, title: String, waitingSince: Double, proposal: NavigationReviewProposal?, messages: [NavigationReviewMessage])
-    case message(NavigationReviewMessage)
-
-    var waitingSince: Double {
-        switch self { case .ticket(_, _, let waiting, _, _): waiting; case .message(let message): message.waitingSince }
-    }
-    /// The review window's member key for this card.
-    var member: RecordKey {
-        switch self {
-        case .ticket(let id, _, _, _, _): RecordKey(kind: "ticket", id: id)
-        case .message(let message): RecordKey(kind: "address", id: message.addressId)
-        }
-    }
-    fileprivate var sortType: String { if case .message = self { "message" } else { "ticket" } }
-    fileprivate var sortIdentity: String {
-        switch self { case .ticket(let id, _, _, _, _): id; case .message(let message): message.conversationId }
-    }
+/// An ask that stops the owner's running turn. Only the owner's current conversation can wait on one.
+struct NavigationReviewAsk: Equatable, Sendable {
+    let conversationId: String
+    let ownerKind: String
+    let ownerId: String
+    let title: String
+    let recap: String
+    let waitingSince: Double
+}
+/// One review-window entry, keyed as the window keys it: a Ticket, or a Manager's or the
+/// Chief's conversation address.
+struct NavigationReviewEntry: Equatable, Sendable {
+    let member: RecordKey
+    var waitingSince: Double
+    var proposal: NavigationReviewProposal?
+    var messages: [NavigationReviewMessage] = []
+    var ask: NavigationReviewAsk?
+    fileprivate var sortType: String { member.kind == "ticket" ? "ticket" : "message" }
+    fileprivate var sortIdentity: String { member.kind == "ticket" ? member.id : messages.first?.conversationId ?? ask?.conversationId ?? member.id }
 }
 
 extension NavigationPresentation {
-    /// The Review badge: the view's card count, less the cards that a decision not yet
-    /// sent will clear. A Ticket card that also holds a message stays in Review after its
-    /// proposal is decided, so it stays counted. Callers supply only exact known
-    /// proposal identities in the current Review window; outside cards stay counted.
+    /// The Review badge: the view's entry count, less the entries that a decision not yet
+    /// sent will clear. A Ticket that also holds a message or an ask stays in Review after
+    /// its proposal is decided, so it stays counted. Callers supply only exact known
+    /// proposal identities in the current Review window; outside entries stay counted.
     func reviewBadge(count: Int, pendingDecisionTickets: Set<String>) -> Int {
-        let staying = Set(review.compactMap { card -> String? in
-            if case .ticket(let id, _, _, _, let messages) = card, !messages.isEmpty { return id }
-            return nil
+        let staying = Set(review.compactMap { entry -> String? in
+            entry.member.kind == "ticket" && (!entry.messages.isEmpty || entry.ask != nil) ? entry.member.id : nil
         })
         return max(0, count - pendingDecisionTickets.subtracting(staying).count)
     }
@@ -140,7 +141,11 @@ struct NavigationPresentation: Sendable {
     let managers: [NavigationManager]
     let managersById: [String: NavigationManager]
     let chief: NavigationChief?
-    let review: [NavigationReviewCard]
+    let review: [NavigationReviewEntry]
+    /// Asks the view cannot confirm: a saved view keeps no runtime facts. The review
+    /// window admits a member for an ask alone, so a member with nothing else waiting
+    /// shows the ask it can only be waiting on.
+    let reviewAskCandidates: [RecordKey: NavigationReviewAsk]
 
     init(_ records: [ViewRecord]) {
         var conversations: [String: ViewConversationValue] = [:]
@@ -153,7 +158,7 @@ struct NavigationPresentation: Sendable {
         var addresses: [(String, ViewAddressValue)] = []
         var chiefRecord: ViewChiefValue?
         var reviewTicketOrder: [String] = []
-        var reviewTickets: [String: (title: String, waitingSince: Double, proposal: NavigationReviewProposal?, messages: [NavigationReviewMessage])] = [:]
+        var reviewTickets: [String: NavigationReviewEntry] = [:]
 
         for record in records {
             switch record {
@@ -167,7 +172,7 @@ struct NavigationPresentation: Sendable {
                     let proposal = NavigationReviewProposal(ticketId: id, field: gating, title: row.title, waitingSince: created,
                                                             proposalField: proposalField, proposalRevision: row.proposalRevision ?? 0)
                     if reviewTickets[id] == nil { reviewTicketOrder.append(id) }
-                    reviewTickets[id] = (row.title, created, proposal, [])
+                    reviewTickets[id] = NavigationReviewEntry(member: RecordKey(kind: "ticket", id: id), waitingSince: created, proposal: proposal)
                 }
             case .manager(let id, let value):
                 if rawManagersById[id] == nil { rawManagers.append((id, value)) } else if let index = rawManagers.firstIndex(where: { $0.0 == id }) { rawManagers[index] = (id, value) }
@@ -220,7 +225,8 @@ struct NavigationPresentation: Sendable {
 
         // Exact address membership; current addresses win, then identity. The canonical
         // address is chosen before the owner filter and never falls back to a former owner.
-        var reviewItems: [NavigationReviewCard] = []
+        var reviewAddresses: [String: NavigationReviewEntry] = [:]
+        var reviewAddressOrder: [String] = []
         var reviewConversations: Set<String> = []
         let ordered = addresses.sorted { ($0.1.current ? 0 : 1, $0.0) < ($1.1.current ? 0 : 1, $1.0) }
         for (addressId, address) in ordered {
@@ -250,20 +256,60 @@ struct NavigationPresentation: Sendable {
             if address.ownerKind == "ticket" {
                 if reviewTickets[address.ownerId] == nil {
                     reviewTicketOrder.append(address.ownerId)
-                    reviewTickets[address.ownerId] = (title, waiting, nil, [])
+                    reviewTickets[address.ownerId] = NavigationReviewEntry(member: RecordKey(kind: "ticket", id: address.ownerId), waitingSince: waiting)
                 }
-                // A card represents the oldest thing waiting; the proposal keeps its own stamp.
+                // An entry is placed by the oldest thing waiting; the proposal keeps its own stamp.
                 reviewTickets[address.ownerId]!.messages.append(message)
                 reviewTickets[address.ownerId]!.waitingSince = min(reviewTickets[address.ownerId]!.waitingSince, waiting)
             } else {
-                reviewItems.append(.message(message))
+                reviewAddressOrder.append(addressId)
+                reviewAddresses[addressId] = NavigationReviewEntry(member: RecordKey(kind: "address", id: addressId), waitingSince: waiting, messages: [message])
             }
         }
-        reviewItems += reviewTicketOrder.map { id in
-            let card = reviewTickets[id]!
-            return .ticket(id: id, title: card.title, waitingSince: card.waitingSince, proposal: card.proposal, messages: card.messages)
+        // An ask waits on the owner while its running turn is stopped on it, as the server's
+        // askWaitingSince reads it. A Ticket's ask joins its entry; a Manager's or the Chief's
+        // joins the entry of its conversation's canonical address.
+        var askCandidates: [RecordKey: NavigationReviewAsk] = [:]
+        func addAsk(kind: String, id: String, conversationId: String?, title: String, recap: String) {
+            guard let conversationId, let conversation = conversations[conversationId] else { return }
+            let awaiting = knowledge[conversationId]?.awaitingAnswer
+            guard awaiting != false else { return }
+            // An ask raised before the record held its time waits last, as on the server.
+            let ask = NavigationReviewAsk(conversationId: conversationId, ownerKind: kind, ownerId: id, title: title, recap: recap,
+                                          waitingSince: conversation.latestAskAt ?? ReviewItem.unknownAskTime)
+            let member: RecordKey
+            if kind == "ticket" { member = RecordKey(kind: "ticket", id: id) }
+            else {
+                guard let canonical = ordered.first(where: { $0.1.conversationId == conversationId }) else { return }
+                member = RecordKey(kind: "address", id: canonical.0)
+            }
+            guard awaiting == true else { askCandidates[member] = ask; return }
+            if kind == "ticket" {
+                if reviewTickets[id] == nil {
+                    reviewTicketOrder.append(id)
+                    reviewTickets[id] = NavigationReviewEntry(member: member, waitingSince: ask.waitingSince)
+                }
+                reviewTickets[id]!.ask = ask
+                reviewTickets[id]!.waitingSince = min(reviewTickets[id]!.waitingSince, ask.waitingSince)
+            } else {
+                if reviewAddresses[member.id] == nil {
+                    reviewAddressOrder.append(member.id)
+                    reviewAddresses[member.id] = NavigationReviewEntry(member: member, waitingSince: ask.waitingSince)
+                }
+                reviewAddresses[member.id]!.ask = ask
+                reviewAddresses[member.id]!.waitingSince = min(reviewAddresses[member.id]!.waitingSince, ask.waitingSince)
+            }
         }
-        review = reviewItems.sorted { ($0.waitingSince, $0.sortType, $0.sortIdentity) < ($1.waitingSince, $1.sortType, $1.sortIdentity) }
+        for (id, row) in rawTickets where row.integrityError == nil && row.stage != "done" && !row.isBacklogged {
+            addAsk(kind: "ticket", id: id, conversationId: row.conversationId, title: row.title, recap: row.recap)
+        }
+        for (id, row) in rawManagers where !row.settled {
+            addAsk(kind: "manager", id: id, conversationId: row.conversationId, title: row.title, recap: row.recap ?? "")
+        }
+        if let chiefRecord { addAsk(kind: "chief", id: "chief", conversationId: chiefRecord.conversationId, title: chiefRecord.label, recap: "") }
+        review = (reviewAddressOrder.map { reviewAddresses[$0]! } + reviewTicketOrder.map { reviewTickets[$0]! })
+            .sorted { ($0.waitingSince, $0.sortType, $0.sortIdentity) < ($1.waitingSince, $1.sortType, $1.sortIdentity) }
+        reviewAskCandidates = askCandidates
 
         self.tickets = tickets
         ticketsById = Dictionary(tickets.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })

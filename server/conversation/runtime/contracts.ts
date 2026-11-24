@@ -38,6 +38,8 @@ export interface Message {
   readonly delivery_uncertain: boolean;
   readonly system_generated: boolean;
   readonly dispatch_memory_note?: boolean;
+  /** The earlier row this message resends; carried onto its prompt row. */
+  readonly reconciles_sequence?: number | null;
 }
 export interface SenderAdmission {
   readonly message: Message;
@@ -109,7 +111,7 @@ export interface ConversationCoreOptions {
   readonly delivery_model_refusal: (
     backend: BackendInstanceId,
     model: string,
-    ticket_id: string | null,
+    conversation_id: string,
   ) => string | null;
   readonly execution_refusal: (
     conversation_id: string,
@@ -150,20 +152,8 @@ export interface DeliveryServices {
   ): Promise<void>;
   readonly options: ConversationCoreOptions;
   readonly shutting_down: boolean;
-  make_sink(
-    state: import('./state.ts').ConversationState,
-    options?: { supervised_launch?: boolean },
-  ): CoreBackendEventSink;
+  make_sink(state: import('./state.ts').ConversationState): CoreBackendEventSink;
   ensure_local_custody(state: import('./state.ts').ConversationState): Promise<void>;
-  record_local_child_preparation(
-    state: import('./state.ts').ConversationState,
-    child: BackendChild,
-    sink: CoreBackendEventSink,
-  ): Promise<void>;
-  check_local_child_started(
-    state: import('./state.ts').ConversationState,
-    turn: TurnToken,
-  ): Promise<boolean>;
   persist<T>(
     state: import('./state.ts').ConversationState,
     work: () => T,

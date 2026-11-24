@@ -20,10 +20,13 @@ export function holderOptionsFor(
     { value: "owner", label: "User" }
   ];
   if (manager) options.push({ value: manager.id, label: "Manager", detail: manager.title });
-  options.push({ value: "chief", label: "Chief" });
+  // The server accepts the Chief only on a Ticket with no Manager.
+  if (!manager) options.push({ value: "chief", label: "Chief" });
   const current = holderValue(holder);
-  if (holder?.kind === "manager" && !options.some((option) => option.value === current)) {
-    options.push({ value: current, label: "Manager", detail: holder.id });
+  if (!options.some((option) => option.value === current)) {
+    if (holder?.kind === "manager") options.push({ value: current, label: "Manager", detail: holder.id });
+    // A stale Chief holder stays visible; the server hands such a Ticket back to the user.
+    if (holder?.kind === "chief") options.push({ value: "chief", label: "Chief" });
   }
   return options;
 }

@@ -186,7 +186,7 @@ export function parse_installer_file_manifest(
   target: RuntimeTarget = LINUX_HOME,
 ): InstallerFileManifest {
   const darwin = target.system === 'darwin';
-  if (target.role !== 'home' || target.architecture !== (darwin ? 'arm64' : 'x86_64'))
+  if ((darwin && target.role !== 'home') || target.architecture !== (darwin ? 'arm64' : 'x86_64'))
     fail('unsupported installer recipe target');
   const source_files = darwin ? DARWIN_HOME_INSTALLER_SOURCE_FILES : INSTALLER_SOURCE_FILES;
   const package_roots = darwin ? DARWIN_HOME_INSTALLER_PACKAGE_ROOTS : INSTALLER_PACKAGE_ROOTS;
@@ -232,8 +232,8 @@ export function parse_installer_file_manifest(
     else fail('invalid installer recipe entry');
   }
   if (
-    !source_files.every((path) =>
-      files.some((entry) => entry.path === path && entry.kind === 'file'),
+    ![...source_files, ...(target.role === 'home' ? ['node/bin/node', 'node/LICENSE'] : [])].every(
+      (path) => files.some((entry) => entry.path === path && entry.kind === 'file'),
     )
   )
     fail('installer recipe omits its frozen source closure');
@@ -314,6 +314,7 @@ function selected_recipe(
   root: string,
   source_sha: string,
   fence: () => void,
+  target: RuntimeTarget,
 ): InstallerFileManifest {
   const metadata = native_metadata(root),
     selected = new Map<string, InstallerRecipeEntry>();
@@ -403,6 +404,10 @@ function selected_recipe(
         fail('copied native license is not regular');
     } else if (name.startsWith('runtime/lib/')) fail('copied native provider lacks provenance');
   }
+  if (target.role === 'home') {
+    native('node/bin/node');
+    add('node/LICENSE');
+  }
   for (const entry of records.values())
     if (packages.some((root) => entry.path.startsWith(root + '/'))) native(entry.path);
   if (darwin) {
@@ -430,19 +435,20 @@ function selected_recipe(
       runtime_inventory_sha256: metadata.hash,
       files: [...selected.values()],
     },
-    darwin ? MAC_HOME : LINUX_HOME,
+    target,
   );
 }
 export async function write_installer_file_manifest(
   root: string,
   source_sha: string,
   execution: ReleaseExecution,
+  target: RuntimeTarget,
 ): Promise<void> {
   validate_app_sha(source_sha);
   const fence = () => assert_release_execution(execution);
   fence();
   root = root_path(root);
-  const recipe = selected_recipe(root, source_sha, fence);
+  const recipe = selected_recipe(root, source_sha, fence, target);
   const path = source_path(root, INSTALLER_RECIPE_PATH, true);
   try {
     if (!lstatSync(path).isFile()) fail('installer recipe target must be regular');
@@ -531,21 +537,6 @@ function replaceable_applications(current_root: string): readonly string[] {
   }
   return roots;
 }
-function external_node(request: InstallerRequest): string {
-  if (!isAbsolute(request.node_executable)) fail('installer Node must be absolute');
-  const node = realpathSync(request.node_executable);
-  if (!lstatSync(node).isFile()) fail('installer Node must be a file');
-  accessSync(node, constants.X_OK);
-  for (const app of replaceable_applications(request.current_root)) {
-    try {
-      inside(app, node);
-    } catch {
-      continue;
-    }
-    fail('installer Node resolves inside a replaceable application');
-  }
-  return node;
-}
 export function copy_installer_runtime(
   application_root: string,
   request: InstallerRequest,
@@ -556,8 +547,7 @@ export function copy_installer_runtime(
   for (const path of [request.current_root, request.database, request.data_directory])
     assert_installer_path(path);
   installer_attempt_id(request.attempt_id);
-  const root = root_path(application_root),
-    node = external_node(request);
+  const root = root_path(application_root);
   const recipe_target =
     parse_optional_runtime_contract(read_json(root, RUNTIME_CONTRACT_PATH))?.system === 'darwin'
       ? MAC_HOME
@@ -575,7 +565,7 @@ export function copy_installer_runtime(
     metadata.hash !== recipe.runtime_inventory_sha256
   )
     fail('installer recipe identity or inventory changed');
-  if (!isDeepStrictEqual(recipe, selected_recipe(root, recipe.source_sha, fence)))
+  if (!isDeepStrictEqual(recipe, selected_recipe(root, recipe.source_sha, fence, recipe_target)))
     fail('installer recipe does not match the complete selected closure');
   const data = root_path(request.data_directory),
     attempt = join(data, 'update-installer-' + request.attempt_id);
@@ -612,6 +602,7 @@ export function copy_installer_runtime(
       }
     verify(work, recipe.files, fence);
     fence();
+    const node = join(runtime, 'node/bin/node');
     replace_existing_json(request_path, { ...request, node_executable: node });
     sync_directory(work);
     renameSync(work, runtime);

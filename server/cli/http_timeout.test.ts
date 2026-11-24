@@ -34,8 +34,17 @@ function invocation(args: string[], url: string) {
 test('CLI reports a response read timeout distinctly from an unavailable server', async () => {
   const limits = { connect_ms: 1000, write_ms: 1000, read_ms: 30 };
   const sockets = new Set<import('node:net').Socket>();
+  const identities: unknown[] = [];
   await with_server(
     (req, res) => {
+      const identity = JSON.parse(String(req.headers['x-panels-client']));
+      expect(identity).toMatchObject({
+        kind: 'cli',
+        device_id: expect.any(String),
+        version: expect.any(String),
+      });
+      expect(identity.device_id).toMatch(/^[a-f0-9]{64}$/);
+      identities.push(identity);
       sockets.add(req.socket);
       req.socket.once('close', () => sockets.delete(req.socket));
       req.resume();
@@ -81,6 +90,8 @@ test('CLI reports a response read timeout distinctly from an unavailable server'
       expect(payload.error.code).toBe('connection');
       expect(payload.error.message).toContain('timed out');
       expect(payload.error.message).toContain('may still be running');
+      expect(identities).toHaveLength(2);
+      expect(identities[1]).toEqual(identities[0]);
       for (const socket of sockets) socket.destroy();
     },
   );

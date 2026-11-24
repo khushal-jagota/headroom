@@ -1,5 +1,8 @@
 /** Protocol-22 Mac client. Each request retains its loop's independent session owner. */
+import type { ServerLinkAdmission } from '../../../server_link/contracts.ts';
 import type { WorkerSetupReport } from '../../wire.generated.ts';
+import { CLIENT_IDENTITY_HEADER } from '../../../client_versions/contracts.ts';
+import type { ClientIdentity } from '../../../client_versions/contracts.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -13,6 +16,7 @@ import type {
   LeaseRequest,
   LiveEventBatch,
   LiveReadRequest,
+  JsonObject,
   WorkspaceIdentity,
   WorkspaceState,
   WorkspaceStatesReply,
@@ -36,6 +40,7 @@ const AUTHENTICATION_HEADERS = new Set([
   'X-Panels-Executor-ID',
   'X-Panels-Executor-Credential',
   'X-Panels-Executor-Platform',
+  CLIENT_IDENTITY_HEADER,
 ]);
 const CERTIFICATE_ERRORS = new Set([
   'CERT_HAS_EXPIRED',
@@ -94,7 +99,12 @@ function granted_credential(body: Uint8Array): string {
 }
 export class MacHttpClient {
   readonly sessions: HttpSessions;
-  readonly server_url: string;
+  readonly server_link: ServerLinkAdmission | undefined;
+  private readonly initial_server_url: string;
+  /** An HTTPS origin, or the local link's socket path. */
+  get server_url(): string {
+    return this.sessions.address;
+  }
   private request_headers: Readonly<Record<string, string>>;
   private readonly identity: Readonly<ExecutorIdentity>;
   constructor(
@@ -103,16 +113,24 @@ export class MacHttpClient {
     identity: ExecutorIdentity,
     options: MacHttpOptions = {},
   ) {
-    this.server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
+    this.server_link = options.server_link;
+    this.initial_server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
     this.identity = { ...identity };
     this.request_headers = Object.freeze({
+      [CLIENT_IDENTITY_HEADER]: JSON.stringify({
+        kind: 'machine',
+        device_id: executor_id,
+        version: identity.application_revision,
+        protocol_version: identity.protocol_version,
+        outbox_format: identity.spool_format_version,
+      } satisfies ClientIdentity),
       'X-Panels-Executor-ID': executor_id,
       'X-Panels-Executor-Incarnation': identity.executor_incarnation,
       'X-Panels-Executor-Protocol': String(identity.protocol_version),
       'X-Panels-Executor-Platform': process.platform,
       'Accept-Encoding': 'identity',
     });
-    this.sessions = new HttpSessions(this.server_url, CONNECTORS, options);
+    this.sessions = new HttpSessions(this.initial_server_url, CONNECTORS, options);
   }
   get headers(): Readonly<Record<string, string>> {
     return this.request_headers;
@@ -247,6 +265,38 @@ export class MacHttpClient {
     );
     if (reply.status !== 200) throw http_error(reply.status, reply.body);
     return decode_bounded(reply.body, 'ItemBatchReply', { limit: settings.MAX_ITEM_BATCH_BYTES });
+  }
+  async preview(request: JsonObject, signal?: AbortSignal): Promise<JsonObject> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'POST',
+      path: '/api/executor/previews',
+      body: Buffer.from(JSON.stringify(request)),
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal,
+    });
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    return decode_bounded(reply.body, 'JsonObject');
+  }
+  preview_channel(generation: string, port: number) {
+    return this.sessions.websocket(
+      `/api/executor/previews/${generation}/connect?port=${port}`,
+      this.headers,
+    );
+  }
+  async backend_secret(id: string, signal?: AbortSignal): Promise<string> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'GET',
+      path: `/api/executor/backend-secrets/${encodeURIComponent(id)}`,
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal,
+    });
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    const value = decode_bounded(reply.body, 'JsonObject');
+    if (typeof value.return_url !== 'string')
+      throw new ExecutorValidationError('The sign-in return address is unavailable.');
+    return value.return_url;
   }
   async read(request: LiveReadRequest, signal?: AbortSignal) {
     const reply = await this.json({

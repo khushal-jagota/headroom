@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createVoiceCapture, type VoiceCaptureDeps, type VoiceRecorderLike, type VoiceTranscriptionResult } from "../src/lib/conversation/voiceCapture";
+import { createVoiceCapture, VOICE_LEVEL_HISTORY, type VoiceCaptureDeps, type VoiceRecorderLike, type VoiceTranscriptionResult } from "../src/lib/conversation/voiceCapture";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -86,5 +86,32 @@ describe("voice capture refusal and abandonment", () => {
       expect(f.capture.state().phase).toBe("recording");
       f.capture.cancel();
     }
+  });
+});
+
+describe("voice level bars", () => {
+  it("records recent loudness while a meter listens, and closes it when the take ends", async () => {
+    let tick: () => void = () => {};
+    const close = vi.fn();
+    const loudness = [0.2, 0.8];
+    const recorder: VoiceRecorderLike = { start: vi.fn(), stop: vi.fn(), ondataavailable: null, onstop: null };
+    const capture = createVoiceCapture({ onState: vi.fn(), onTranscript: vi.fn() }, {
+      getStream: async () => ({ getTracks: () => [] }),
+      makeRecorder: () => recorder,
+      now: () => 0,
+      startTicker: (next) => { tick = next; return () => {}; },
+      acquireWakeLock: () => () => {},
+      openMeter: () => ({ read: () => loudness.shift() ?? 0, close })
+    });
+    await capture.startRecording();
+    expect(capture.state()).toEqual({ phase: "recording", elapsedMs: 0, levels: [] });
+    tick();
+    tick();
+    expect(capture.state()).toMatchObject({ levels: [0.2, 0.8] });
+    for (let index = 0; index < VOICE_LEVEL_HISTORY + 5; index += 1) tick();
+    const state = capture.state();
+    expect(state.phase === "recording" ? state.levels?.length : -1).toBe(VOICE_LEVEL_HISTORY);
+    capture.cancel();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

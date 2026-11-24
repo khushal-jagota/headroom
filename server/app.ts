@@ -1,7 +1,10 @@
+import { initialize_server_location, read_server_location } from './server_link/data.ts';
+import { install_server_link } from './server_link/http.ts';
 import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
+import type { PreparedPreviewRoutes } from './previews/routes.ts';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -36,7 +39,11 @@ export interface AppServices {
   areas?: readonly Area[];
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
+  waitingScreensRoot?: () => string | null;
   executor?: VpsExecutorRegistry | null;
+  /** More executor routes that authenticate machines themselves, such as the server move. */
+  executorRoutes?: readonly FastifyPluginAsync[];
+  previews?: PreparedPreviewRoutes;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
   const app = Fastify({
@@ -51,13 +58,16 @@ export async function createApp(config: Config, services: AppServices): Promise<
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
+  initialize_server_location(services.database);
   installCompatibility(app);
+  install_server_link(app, () => services.database.read((sql) => read_server_location(sql)!));
   installMiddleware(
     app,
     config,
     services.workspaceAdmission,
     request_lifetime,
     services.updateBarrier,
+    { database: services.database, clock },
   );
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot
@@ -69,14 +79,24 @@ export async function createApp(config: Config, services: AppServices): Promise<
             : configuredRoot,
       )
     : fileURLToPath(new URL('../', import.meta.url));
-  await registerCoreRoutes(app, config, clock, changes, root, services.database);
+  await registerCoreRoutes(
+    app,
+    config,
+    clock,
+    changes,
+    root,
+    services.database,
+    services.waitingScreensRoot,
+  );
   app.register(
     create_executor_routes({
       config,
       database: services.database,
       registry: services.executor ?? null,
+      previews: services.previews,
     }),
   );
+  for (const routes of services.executorRoutes ?? []) app.register(routes);
   app.get('/api/executor/health', async (request, reply) => {
     const machine_id =
       new URL(request.url, 'http://executor').searchParams.getAll('machine_id').at(-1) ||

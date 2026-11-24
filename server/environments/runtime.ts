@@ -1,5 +1,9 @@
 /** Per-server composition. External release and executor operations remain explicit. */
 import { dirname, join } from 'node:path';
+import { list_machines } from '../machines/data.ts';
+import { read_presence } from '../executor/vps_presence_store.ts';
+import { judge_presence } from '../executor/logic/presence.ts';
+import { now_ms } from '../executor/clock.ts';
 import { executor_platform } from '../machines/executor_credentials.ts';
 import { UpdateBarrier } from './update_barrier.ts';
 import { notify_update_failure } from './updates/failure_notice.ts';
@@ -31,10 +35,8 @@ import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
 import type { StatusOptions } from './vps_status/contracts.ts';
 import { create_vps_status_dependencies } from './vps_status/probes.ts';
-import { layout_for } from './ticket_scratch/collect.ts';
-import { clean_for_database } from '../ticket_workspaces/cleanup.ts';
-import { snapshot_ticket_scratch, prune_ticket_scratch } from '../conversation/worker_scratch.ts';
-import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
+import { create_server_move } from '../server_move/composition.ts';
+import type { ServerPackageSource } from '../server_move/packages/cache.ts';
 
 export interface EnvironmentOperations {
   app_root: string;
@@ -46,6 +48,8 @@ export interface EnvironmentOperations {
   create_mac(context: MacUpdateCompositionContext): MacUpdateComposition;
   collector: CollectorFactory | null;
   collect_status(config: Config, options: StatusOptions): Promise<VpsStatusSnapshot>;
+  /** The release host for another platform's server package, when one is configured. */
+  server_packages?(): ServerPackageSource | null;
 }
 /** The concrete composition exposes its existing Mac service for executor routes. */
 export interface ComposedEnvironmentRuntime extends EnvironmentRuntime {
@@ -67,33 +71,6 @@ export async function createEnvironmentRuntime(
     database,
     operations.service_unit,
   );
-  const scratch_layout = config.test_mode
-    ? null
-    : await layout_for(config.ticket_scratch_root, config.ticket_scratch_database, database);
-  const scratch = config.test_mode
-    ? null
-    : create_ticket_scratch_runtime({
-        layout: scratch_layout,
-        db_path: database,
-        test_mode: config.test_mode,
-        changes: context.changes,
-        now_unix: () => context.clock.nowUnix(),
-        assert_database_owned: context.require_runtime_ownership,
-        clean_workspaces: (db, now, options) =>
-          clean_for_database(db, now, {
-            ...options,
-            extra_roots: scratch_layout?.folders ?? [],
-            git_execution: { children: context.one_shot_children, environment: process.env },
-            snapshot_ticket_scratch,
-            prune_ticket_scratch,
-            retire_local_children: (ticket_id, identity, operation) => {
-              const system = context.conversationSystem;
-              return system?.retire_local_workspace === undefined
-                ? { reason: 'Conversation runtime is unavailable' }
-                : system.retire_local_workspace(ticket_id, identity, operation);
-            },
-          }),
-      });
   const metrics = new MetricsRuntime({
     path: await store_path(database),
     config: load_metrics_config(),
@@ -101,11 +78,50 @@ export async function createEnvironmentRuntime(
   });
   const attempts = new FileUpdateAttemptStore(attempt_path(data_directory), () => changes.emit());
   const provider = installed === null ? null : operations.provider();
+  const move = create_server_move({
+    config,
+    database: context.database,
+    data_directory,
+    database_path: database,
+    update_barrier,
+    update_running: () => {
+      const attempt = attempts.read();
+      return (
+        (attempt !== null && attempt.state !== 'done' && attempt.state !== 'failed') ||
+        update_barrier.frozen ||
+        update_barrier.installer_active(attempt?.attempt_id ?? '')
+      );
+    },
+    conversation: () => context.conversationSystem ?? null,
+    package_source: config.test_mode ? null : (operations.server_packages?.() ?? null),
+    emit_change: () => changes.emit(),
+  });
   let updates: UpdateService;
   const mac = operations.create_mac({
     root: join(data_directory, 'mac-updates'),
     platform_for: (machine_id) =>
       context.database.read((sql) => executor_platform(sql, machine_id)),
+    machines: () =>
+      context.database.read((sql) =>
+        list_machines(sql)
+          .filter((machine) =>
+            Boolean(
+              sql.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [
+                machine.machine_id,
+              ]),
+            ),
+          )
+          .map((machine) => {
+            const presence = read_presence(sql, machine.machine_id);
+            return {
+              machine_id: machine.machine_id,
+              name: machine.name,
+              platform: executor_platform(sql, machine.machine_id),
+              present: judge_presence(presence, now_ms()).presence === 'present',
+              identity: presence?.identity ?? null,
+            };
+          }),
+      ),
     linux_registered: () =>
       context.database.read((sql) =>
         Boolean(
@@ -139,6 +155,7 @@ export async function createEnvironmentRuntime(
     installer: operations.installer,
     mac: mac.operations,
     update_barrier,
+    install_refusal: () => move.coordinator.update_refusal(),
     // A test-mode server must never instantiate a provider transport.
     ...(config.test_mode
       ? {}
@@ -161,7 +178,7 @@ export async function createEnvironmentRuntime(
     mac_updates: mac.service,
     update_barrier,
     recover_update_barrier() {
-      if (!update_barrier.frozen) return;
+      if (!update_barrier.frozen || update_barrier.move_hold !== null) return;
       const generation = update_barrier.generation;
       const attempt_id = attempts.read()?.attempt_id ?? '';
       if (updates.owns_preparation(attempt_id)) return;
@@ -176,11 +193,15 @@ export async function createEnvironmentRuntime(
       });
     },
     update_attempt_id: () => attempts.read()?.attempt_id ?? '',
+    waiting_screens_root: () => updates.ready_screens_root(),
     reopen_update_work(attempt_id) {
       updates.reopen_trial_work(attempt_id);
     },
+    executor_routes: [move.executor_routes],
+    server_move_notice: (machine_id) => move.coordinator.notice(machine_id),
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, mac.reads) },
+      { prefix: '/api', routes: move.owner_routes },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
       {
         prefix: '/api',
@@ -199,7 +220,10 @@ export async function createEnvironmentRuntime(
       },
     ],
     resourceProviders: [new DeploymentResources(deployment)],
-    before_worker_readiness_poll: () => updates.poll(),
+    before_worker_readiness_poll: () => {
+      const updating = updates.poll();
+      return move.coordinator.holds_work() || updating;
+    },
     start() {
       if (starting) return starting;
       if (closing) return Promise.reject(new Error('Environment runtime is shut down'));
@@ -209,7 +233,6 @@ export async function createEnvironmentRuntime(
         if (closing) return;
         await metrics.start();
         if (!closing) updates.start();
-        if (!closing) scratch?.start();
       });
       return starting;
     },
@@ -221,7 +244,7 @@ export async function createEnvironmentRuntime(
           () => metrics.settled(),
           () => updates.settled(),
           () => mac.service.settled(),
-          () => scratch?.settled(),
+          () => move.coordinator.settled(),
         ];
         for (const actual of actuals) {
           try {
@@ -249,7 +272,7 @@ export async function createEnvironmentRuntime(
       for (const stop of [
         () => metrics.stop(options),
         () => updates.stop(options),
-        () => scratch?.close(options),
+        () => move.coordinator.stop(),
       ]) {
         try {
           drains.push(
@@ -269,7 +292,7 @@ export async function createEnvironmentRuntime(
         metrics.settled(),
         updates.settled(),
         mac.service.settled(),
-        scratch?.settled(),
+        move.coordinator.settled(),
         starting?.catch(() => {}),
       ]).then(() => {}),
   };

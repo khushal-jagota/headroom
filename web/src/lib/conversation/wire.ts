@@ -1,9 +1,11 @@
+import { clientFetch } from "../clientIdentity";
 import type { BackendScopeRequest } from "./modelResolutionWire";
 import type { ProviderOptionDescriptor } from "../usage/contracts/model";
 export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 
 import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
+import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -202,6 +204,8 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
+  /** The newest key request still waiting on the owner. */
+  pending_credential_request?: CredentialRequestRowBody | null;
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -507,6 +511,9 @@ export type OwnerSendBody = {
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
+  /** A resend of a refused message: that row's sequence, so the refused bubble folds away
+   *  once this prompt is recorded. */
+  reconciles_sequence?: number;
 } & SenderMintedPromptFields;
 
 /** What a conversation started for an owner right now would run on.
@@ -524,6 +531,7 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  machine_id?: string;
   workspace_folder?: string | null;
   workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;
@@ -566,7 +574,7 @@ export async function mutateCredentialRequest(
 ): Promise<import('./view/contracts').CredentialRequestRowBody> {
   let response: Response;
   try {
-    response = await fetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
+    response = await clientFetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
       method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     });
   } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
@@ -588,7 +596,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   let response: Response;
   try {
-    response = await fetch(`${CONVERSATION_BASE}${path}`, init);
+    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init);
   } catch {
     throw new ConversationWireError("The server could not be reached.", 0);
   }
@@ -611,6 +619,13 @@ function detailSentence(raw: string, status: number): string {
     if (parsed && typeof parsed === "object" && "detail" in parsed) {
       const detail = (parsed as { detail: unknown }).detail;
       if (typeof detail === "string" && detail !== "") return detail;
+    }
+    // Routes that raise a planner error answer in its envelope, `{error: {message}}`. Its
+    // message is the sentence the server meant to send, so it is read the same way.
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const error = (parsed as { error: unknown }).error;
+      const message = error && typeof error === "object" && "message" in error ? (error as { message: unknown }).message : null;
+      if (typeof message === "string" && message !== "") return message;
     }
   } catch {
     // Not JSON. The status is all the server said.
@@ -721,11 +736,14 @@ export function answerUserInput(
  */
 export function discardHeldPrompt(
   conversationId: string,
-  senderMessageId: string
+  senderMessageId: string,
+  /** The person took the message back into the composer to edit it: the record keeps no
+   *  "Discarded" row for it. */
+  forEdit = false
 ): Promise<{ discarded: boolean }> {
   return request<{ discarded: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}`
-      + `/held-prompts/${encodeURIComponent(senderMessageId)}`,
+      + `/held-prompts/${encodeURIComponent(senderMessageId)}${forEdit ? "?for=edit" : ""}`,
     { method: "DELETE" }
   );
 }
@@ -751,17 +769,22 @@ export async function readScopedBackends(
   return answer.backends;
 }
 
-export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {
+export function backendMachinePath(path: string, machineId?: string): string {
+  return machineId === undefined ? path : `${path}${path.includes("?") ? "&" : "?"}machine_id=${encodeURIComponent(machineId)}`;
+}
+
+export async function readBackends(refresh = false, machineId?: string): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
-    `/backends${refresh ? "?refresh=true" : ""}`
+    backendMachinePath(`/backends${refresh ? "?refresh=true" : ""}`, machineId)
   );
   return answer.backends;
 }
 
 export function updateBackend(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<BackendUpdateResult> {
-  return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
+  return request<BackendUpdateResult>(backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/update`, machineId), {
     method: "POST"
   });
 }
@@ -786,28 +809,31 @@ export type BackendSignIn = {
 };
 
 export function startBackendSignIn(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in`, machineId),
     { method: "POST" }
   );
 }
 
 export function readBackendSignIn(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn | null }> {
   return request<{ sign_in: BackendSignIn | null }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in`
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in`, machineId)
   );
 }
 
 export function cancelBackendSignIn(
   backendKey: ConversationBackendKey,
-  sessionId: string
+  sessionId: string,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`, machineId),
     { method: "DELETE" }
   );
 }
@@ -817,16 +843,17 @@ export function cancelBackendSignIn(
 export function submitBackendSignInReturnUrl(
   backendKey: ConversationBackendKey,
   sessionId: string,
-  returnUrl: string
+  returnUrl: string,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`, machineId),
     postJson({ return_url: returnUrl })
   );
 }
 
-export function refreshBackends(): Promise<BackendsRefreshResult> {
-  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
+export function refreshBackends(machineId?: string): Promise<BackendsRefreshResult> {
+  return request<BackendsRefreshResult>(backendMachinePath("/backends/refresh", machineId), { method: "POST" });
 }
 
 export function setBackendModelEnabled(

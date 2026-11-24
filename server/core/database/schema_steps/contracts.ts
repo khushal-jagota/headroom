@@ -2,6 +2,13 @@
 import { open_backend_keys_step } from './ts_0001_open_backend_keys.ts';
 import { project_repository_step } from './ts_0002_project_repository.ts';
 import { ticket_worker_setups_step } from './ts_0003_ticket_worker_setups.ts';
+import { drop_ideas_step } from './ts_0004_drop_ideas.ts';
+import { client_versions_step } from './ts_0005_client_versions.ts';
+import { machine_backend_state_step } from './ts_0007_machine_backend_state.ts';
+import { server_link_step } from './ts_0006_server_link.ts';
+import { conversation_machine_step } from './ts_0008_conversation_machine.ts';
+import { work_moves_step } from './ts_0009_work_moves.ts';
+import { answer_receipt_index_step } from './ts_0010_answer_receipt_index.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -28,6 +35,13 @@ export const SCHEMA_STEPS: readonly SchemaStep[] = [
   open_backend_keys_step,
   project_repository_step,
   ticket_worker_setups_step,
+  drop_ideas_step,
+  client_versions_step,
+  server_link_step,
+  machine_backend_state_step,
+  conversation_machine_step,
+  work_moves_step,
+  answer_receipt_index_step,
 ];
 
 /** The steps a database at `current` still needs to reach `head`. */

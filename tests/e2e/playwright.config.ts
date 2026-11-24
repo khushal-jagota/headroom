@@ -7,6 +7,8 @@ const evidence = process.env.BROWSER_EVIDENCE_DIR;
 export default defineConfig({
   testDir: '.',
   testMatch: '**/*.spec.ts',
+  // desktop.config.ts runs the desktop app checks.
+  testIgnore: 'desktop/**',
   // Every test starts its own server, so tests share nothing but the built web app.
   fullyParallel: true,
   workers: 2,

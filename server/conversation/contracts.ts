@@ -4,6 +4,7 @@ import type { StartRequest } from './start_admission/contracts.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PlannerError } from '../core/contracts.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
@@ -103,6 +104,8 @@ export class ConversationStartRequest {
   readonly workspace_folder: string | null;
   readonly access: ConversationAccess | null;
   readonly workspace_path_policy: WorkspacePathPolicy;
+  /** The machine that runs this conversation, fixed at its start like the backend. */
+  readonly machine_id: string;
   constructor(values: {
     conversation_id: string;
     model: string;
@@ -112,8 +115,10 @@ export class ConversationStartRequest {
     workspace_folder?: string | null;
     access?: ConversationAccess | null;
     workspace_path_policy?: WorkspacePathPolicy;
+    machine_id?: string;
   }) {
     this.conversation_id = values.conversation_id;
+    this.machine_id = values.machine_id ?? HOME_MACHINE_ID;
     this.model = values.model;
     this.backend_key = values.backend_key === undefined ? null : values.backend_key;
     this.reasoning_effort = values.reasoning_effort === undefined ? null : values.reasoning_effort;
@@ -308,6 +313,9 @@ export interface SendOptions {
   reasoning_effort_is_set?: boolean;
   sender_message_id?: string | null;
   sent_at_unix_milliseconds?: number | null;
+  /** A resend of a refused (or unconfirmed) message names that row's sequence; the
+   *  recorded prompt carries it, and the view folds the earlier row away. */
+  reconciles_sequence?: number | null;
   sender?: Principal | null;
   recipient?: Principal | null;
   recovery_references?: readonly DeploymentRecoveryReference[];
@@ -338,7 +346,7 @@ export interface ConversationSystem {
   readonly workspace_admission: WorkspaceAdmission;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
   /** Work that an owner update interrupts. Information only. */
-  update_interrupted_work(): readonly string[];
+  update_interrupted_work(machine_ids?: readonly string[]): readonly string[];
   /** A trial app starts with admission closed. This opens it when the installer ends. */
   reopen_after_update(): void;
   run_with_workspace_admission(
@@ -364,7 +372,12 @@ export interface ConversationSystem {
     held_prompt_id: string,
     mode: HeldPromptPromotionMode,
   ): Promise<HeldPromptPromotionFate | null>;
-  discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean>;
+  /** ``withdrawn_for_edit``: the person took the message back to edit it (no transcript row). */
+  discard_held_prompt(
+    conversation_id: string,
+    held_prompt_id: string,
+    withdrawn_for_edit?: boolean,
+  ): Promise<boolean>;
   kill(conversation_id: string): Promise<void>;
   kill_for_restart(
     conversation_id: string,

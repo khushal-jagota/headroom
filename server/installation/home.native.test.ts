@@ -1,6 +1,8 @@
 /** Hosted service-manager proof. The mini app is not a sealed release/admission proof. */
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
+import * as service_environment from './environment.ts';
 import { randomUUID } from 'node:crypto';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import { realpathSync } from 'node:fs';
 import {
   chmod,
@@ -25,6 +27,7 @@ import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
+import { HOME_COMMAND } from './configuration.ts';
 import type { HomeInstallDependencies, HomeServicePlan, HomeCommand } from './contracts.ts';
 import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts';
 import { observe_promise } from '../core/promise_observer.ts';
@@ -85,7 +88,22 @@ test.skipIf(!admitted)(
     if (!evidence) throw new Error('Native home proof requires an evidence directory');
     const base = await realpath(await mkdtemp(join(tmpdir(), 'p7home-')));
     const account = system === 'linux' ? userInfo().homedir : join(base, 'account');
+    const command_link = join(account, HOME_COMMAND);
     await mkdir(join(base, 'account'), { mode: 0o700 });
+    const incompatible_node_log = join(base, 'unexpected-host-node');
+    if (system === 'darwin') {
+      // The same native host proves update and rollback without a compatible account Node.
+      // Service PATH must continue to prefer the release's runtime after each app swap.
+      await mkdir(join(account, '.local/bin'), { recursive: true });
+      await writeFile(
+        join(account, '.local/bin/node'),
+        '#!/bin/sh\necho incompatible-host-node >> ' +
+          shell_quote(incompatible_node_log) +
+          '\nexit 91\n',
+        { mode: 0o700 },
+      );
+    }
+
     const report: Record<string, unknown> = {
       system,
       architecture: process.arch,
@@ -94,6 +112,19 @@ test.skipIf(!admitted)(
       cases: [],
     };
     const cases = report.cases as Record<string, unknown>[];
+    const original_environment = service_environment.home_service_environment;
+    const hostile_path =
+      system === 'darwin'
+        ? vi
+            .spyOn(service_environment, 'home_service_environment')
+            .mockImplementation(async (...args) => {
+              const environment = await original_environment(...args);
+              return {
+                ...environment,
+                PATH: join(account, '.local/bin') + ':' + environment.PATH,
+              };
+            })
+        : undefined;
     const build_processes = new ChildProcesses();
     let mini_builds: Awaited<ReturnType<typeof build_native_mini_homes>> | undefined;
     let case_children_settled = true;
@@ -160,7 +191,11 @@ test.skipIf(!admitted)(
             current.ino !== root_identity.ino
           )
             throw new Error('Native fixture installation root changed');
-          for (const file of [...(plan?.files ?? []), ...(plan?.links ?? [])]) {
+          for (const file of [
+            ...(plan?.files ?? []),
+            ...(plan?.links ?? []),
+            { path: command_link },
+          ]) {
             if (retained.has(file.path)) continue;
             const stat = await lstat(file.path);
             retained.set(file.path, {
@@ -213,6 +248,7 @@ test.skipIf(!admitted)(
           archive: mini_builds?.a.archive ?? join(base, 'mini-app-fixture'),
           archive_sha256: mini_builds?.a.archive_sha256 ?? 'b'.repeat(64),
           revision: mini_builds?.a.manifest.app_sha ?? revision,
+          update_token: 'native-proof-update-token',
         };
         Object.assign(record, { root, service: service_name, port: request.port });
         const inspector = process_inspector();
@@ -235,13 +271,14 @@ test.skipIf(!admitted)(
           environment: { PATH: process.env.PATH, PLAN_SERVER_URL: 'http://127.0.0.1:1' },
           execution: execution(),
           command,
-          warning: (message) => {
-            throw new Error(message);
-          },
           service: async (value, host) => {
             plan = await (system === 'darwin'
               ? create_darwin_home_service(value, host)
               : create_linux_home_service(value, host));
+            if (system === 'darwin') {
+              const job = JSON.parse(plan.files[0]!.content);
+              expect(job.EnvironmentVariables.PATH.split(':')[0]).toBe(join(account, '.local/bin'));
+            }
             return plan;
           },
           extract: async (_archive, destination, digest, sha, scope) => {
@@ -289,6 +326,18 @@ test.skipIf(!admitted)(
             record.database_initialization =
               system === 'darwin' ? 'real candidate child' : 'injected mini-app boundary';
           },
+          // This service-custody fixture retains its mini application boundary. The separate
+          // full-command hosted proof covers actual machine enrollment and protocol traffic.
+          prepare_machine: async (_candidate, runtime) => {
+            await mkdir(join(runtime, 'server/installation'), { recursive: true });
+            await mkdir(join(runtime, 'node/bin'), { recursive: true });
+            await cp(process.execPath, join(runtime, 'node/bin/node'));
+            await writeFile(
+              join(runtime, 'server/installation/machine_main.ts'),
+              "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n",
+            );
+          },
+          machine_healthy: async () => {},
           healthy: async (port, sha, signal) => {
             await wait_for(async () => {
               try {
@@ -332,7 +381,7 @@ test.skipIf(!admitted)(
                 root,
                 uid: deps.uid,
                 label: service_name,
-                installer_node: await realpath(process.execPath),
+                installer_node: join(root, 'app/node/bin/node'),
               });
               const old = await observe(),
                 began = performance.now(),
@@ -390,7 +439,13 @@ test.skipIf(!admitted)(
                   births,
                   record,
                 });
+                await expect(lstat(incompatible_node_log)).rejects.toMatchObject({
+                  code: 'ENOENT',
+                });
+                record.host_node =
+                  'incompatible account Node never executed during install, update, or rollback';
               } catch (error) {
+                record.update_failure = error instanceof Error ? error.stack : String(error);
                 retain_resources = true;
                 throw error;
               }
@@ -458,9 +513,13 @@ test.skipIf(!admitted)(
                 : undefined,
             );
             await check_home_port(request.port);
+            // Failed copied-update proofs deliberately retain files for diagnosis.
+            // Their original failure must survive this finalizer.
+            if (!retain_resources)
+              await expect(lstat(command_link)).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(sentinel, 'utf8')).toBe('unrelated sentinel');
             clean = true;
-            record.cleanup_verified = true;
+            record.cleanup_verified = !retain_resources;
           } finally {
             commands.seal();
             processes.seal();
@@ -509,6 +568,7 @@ test.skipIf(!admitted)(
         report.build_cleanup_error = String(error);
         throw error;
       } finally {
+        hostile_path?.mockRestore();
         report.fixture_root = base;
         await mkdir(evidence, { recursive: true });
         await writeFile(

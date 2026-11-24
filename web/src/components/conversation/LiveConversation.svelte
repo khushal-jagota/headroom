@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import type { ConversationViewStatus } from "../../lib/conversation/view/contracts";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
@@ -22,14 +23,19 @@
    * a person has to get themselves out of before they can type.
    */
   import {SvelteSet} from "svelte/reactivity";
-  import { onMount, tick, untrack, type Snippet } from "svelte";
+  import { onMount, setContext, tick, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
+  import { statusForAsks } from "../../lib/conversation/askEntrance";
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import { ATTACHMENT_NOT_READ_BACK, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
+  import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     heldPromptIsInLens,
+    conversationLensPreference,
+    rememberConversationLensPreference,
     type ConversationLens
   } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -40,6 +46,7 @@
   import { queryClient } from "../../lib/queryClient";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
+  import SystemLine from "./SystemLine.svelte";
   import {
     afterTheRecordHasBeenRead,
     anOutgoingMessageIsWaitingOnTheRecord,
@@ -58,12 +65,15 @@
     reserveRecalledOutgoingMessages,
     tellWhenAWaitRunsOut,
     theServerRefusedTheSend,
+    theMachineIsOfflineRefusal,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
   import {
     liveAskFrom,
     liveUserInputFrom,
+    ASK_CARD_CONTEXT,
+    type AskCardReading
   } from "../../lib/conversation/transcript";
   import {
     answerPermissionAsk,
@@ -101,6 +111,7 @@
     startValues = null,
     runningBackendKey = $bindable(),
     conversationState = $bindable(null),
+    waitingOnPage = null,
     composerPlaceholder,
     emptyState,
     sendMessage,
@@ -109,8 +120,14 @@
     historyOwner,
     pastConversations = [],
     selectedPastConversationId = $bindable(null),
-    workerSetup = null
+    workerSetup = null,
+    title = null,
+    subtitle = null
   }: {
+    /** Who this conversation is with, for the pane's top bar. */
+    title?: string | null;
+    /** Who is doing the work, said quietly after the title ("Debugging worker"). */
+    subtitle?: string | null;
     /** The conversation to show, or null for a caller that has not started one. */
     locale?: TicketLocale;
     machineId?: string;
@@ -140,6 +157,8 @@
      *  conversation writes back when the person moves it. Nothing here reads it — it goes
      *  straight through to the pane, which is where the state is drawn. */
     conversationState?: ConversationState | null;
+    /** A proposal on the page awaits the person's approval (see ConversationPane). */
+    waitingOnPage?: "approval" | null;
     composerPlaceholder?: string;
     emptyState?: Snippet;
     /** Hand a message to whoever owns this conversation, and say what became of it. A
@@ -162,22 +181,24 @@
   let view = $state<ConversationView | null>(null);
   // Ticket suggestions use the same resolved workspace as ordinary creation.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
-  const pickerQuery = createQuery(() => ({
-    ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
-    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined
-  }), () => queryClient);
-  let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
-  async function retryScopedChoices(): Promise<void> {
-    if (pickerTicketId === null) return;
-    await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
-      [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
-  }
-
   const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
   const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
   let remote = $derived(locale === "macos");
   const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
+  const pickerQuery = createQuery(() => ({
+    ...queries.ticketBackends(pickerTicketId ?? "", [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
+    // A Mac Panels cannot reach cannot list its models: the read would only be refused (409)
+    // again on every change. It reads when the Mac is back.
+    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined && !activityUncertain
+  }), () => queryClient);
+  let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
+  async function retryScopedChoices(): Promise<void> {
+    if (pickerTicketId === null) return;
+    await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
+      [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
+  }
+
   $effect(() => {
     healthQuery.dataUpdatedAt;
     if (remote && openedId) untrack(() => void refreshView());
@@ -201,11 +222,18 @@
   let fateNoteMessageId = $state<string | null>(null);
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
+  /** A send from the dock that the machine turned away: its words stay in the composer, and
+   *  this reason stands under it, because the bubble that says so is in the closed
+   *  transcript. Cleared by the next send and by opening the conversation. */
+  let dockedUndeliveredReason = $state<string | null>(null);
+  $effect(() => { if (conversationState !== "rest") dockedUndeliveredReason = null; });
   let askNote = $state<string | null>(null);
   let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
-  let lens = $state<ConversationLens>("focus");
+  // Focus or Full is one reading preference for this browser: it opens the way it was left.
+  let lens = $state<ConversationLens>(conversationLensPreference());
+  $effect(() => { rememberConversationLensPreference(lens); });
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -225,30 +253,72 @@
    *  page puts an id in the address before anything has been started under it. Only the
    *  record answering is a conversation. */
   let started = $derived(view !== null);
+  /** Known to hold nothing yet: no conversation has been started here, or the record
+   *  answered and has no events at all. Loading is neither, so nothing shows meanwhile. */
+  let nothingSaidYet = $derived(
+    (!started && (conversationId ?? null) === null && !ownerLoading)
+    || (reader !== null && reader.status !== null && !reader.loading && reader.coverage === 0
+      && reader.pages.every(page => page.items.length === 0))
+  );
   let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
     item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
   let visibleRows = $derived(rows);
+  /** The replaced reader, while its successor for the same conversation has no status yet. */
+  let replacedReader=$state.raw<{id:string;status:ConversationViewStatus|null}|null>(null);
+  let askStatus=$derived(statusForAsks(reader,replacedReader));
   let ask = $derived.by(()=>{
-    if(reader?.status?.pending_permission===null)return null;
+    if(askStatus?.pending_permission===null)return null;
     const row=liveAskFrom(visibleRows);if(row!==null)return row;
     const pending=view?.pending_permission_ask;
-    return pending&&pending.ask_id===reader?.status?.pending_permission?.request_id ? {askId:pending.ask_id,title:pending.title,detail:pending.detail,options:pending.options}:null;
+    return pending&&pending.ask_id===askStatus?.pending_permission?.request_id ? {askId:pending.ask_id,title:pending.title,detail:pending.detail,options:pending.options}:null;
   });
   let userInput = $derived.by(()=>{
-    if(reader?.status?.pending_user_input===null)return null;
+    if(askStatus?.pending_user_input===null)return null;
     const row=liveUserInputFrom(visibleRows);if(row!==null)return row;
     const pending=view?.pending_user_input;
-    return pending&&pending.request_id===reader?.status?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
+    return pending&&pending.request_id===askStatus?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
   let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
-    reader?.status?.pending_permission?.request_id === ask?.askId));
+    askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
-    reader?.status?.pending_user_input?.request_id === userInput?.requestId));
-  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).map(row => ({answerId:row.key,sentence:executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate)})));
+    askStatus?.pending_user_input?.request_id === userInput?.requestId));
+  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).flatMap(row => { const sentence = executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate); return sentence === null ? [] : [{answerId:row.key,sentence}]; }));
   let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
     (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
   let userInputNote = $derived((askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
     (remote && !userInputAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
+  // The transcript leaves a waiting ask to its card, and needs to know when that card is
+  // the one saying its availability on this machine is unknown.
+  setContext<AskCardReading>(ASK_CARD_CONTEXT, {
+    saysAvailabilityUnknown: (kind, id) => kind === "permission"
+      ? ask?.askId === id && permissionNote === EXECUTOR_ASK_UNCERTAIN
+      : userInput?.requestId === id && userInputNote === EXECUTOR_ASK_UNCERTAIN
+  });
+  // What the composer has picked, so a refused message sent again from the thread runs
+  // under the model the person is looking at — the one its next step asks them to choose.
+  let composerSelection: ComposerRunSelection | null = null;
+  // Resend on a message the conversation turned away: the same words and kept files, read
+  // back from the conversation, as a new message. Queued behind a running turn, started
+  // otherwise, as the composer would send it.
+  setContext<ResendRecordedMessage>(RESEND_RECORDED_MESSAGE, {
+    available: () => !readOnly,
+    resend: async (recordedIn, content, refusedSequence) => {
+      if (readOnly || recordedIn !== openedId) return false;
+      let pieces: SentMessagePiece[];
+      try {
+        pieces = await sentPiecesFromRecorded(recordedIn, content);
+      } catch (error) {
+        errorNote = error instanceof Error ? error.message : ATTACHMENT_NOT_READ_BACK;
+        return false;
+      }
+      return send(pieces, running ? "queue" : "steer", {
+        model: composerSelection?.pickedModel ?? null,
+        reasoningEffort: composerSelection?.pickedReasoningEffort ?? null,
+        backendKey: null,
+        ...(composerSelection?.effortIsSet === undefined ? {} : { effortIsSet: composerSelection.effortIsSet })
+      }, undefined, undefined, refusedSequence);
+    }
+  });
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -497,6 +567,8 @@
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
   function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
+    // Read before closing: a closed reader forgets its status.
+    replacedReader=reader===null?null:{id:reader.id,status:statusForAsks(reader,replacedReader)};
     closeStream();
     let lastCoverage=-1;
     const local=new ConversationViewReader(id,lens,transcript,()=>{
@@ -618,7 +690,8 @@
     mode: PromptDeliveryMode,
     picked: RunValues,
     displayMessageId?: string,
-    sendContext?: ComposerSendContext
+    sendContext?: ComposerSendContext,
+    reconcilesSequence?: number
   ): Promise<boolean> {
     if (readOnly) return false;
     if (sendContext?.destination && (sendContext.destination.kind !== uploadOwner?.kind || sendContext.destination.id !== uploadOwner?.id)) {
@@ -627,6 +700,7 @@
     }
     errorNote = null;
     fateNote = null;
+    dockedUndeliveredReason = null;
     // Save the words before transport, but draw them only after their destination is known.
     const message = { ...mintOutgoingMessage({
       content,
@@ -636,7 +710,8 @@
       pickedReasoningEffort: picked.reasoningEffort,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
-    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
+    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}),
+      ...(reconcilesSequence === undefined ? {} : {reconcilesSequence}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -720,6 +795,16 @@
       // The correlated record already settled this send. A later transport failure
       // cannot return its words to the composer or undo that committed destination.
       if (committedMessageIds.has(message.messageId)) return true;
+      // The machine the conversation runs on is away: the message stays in the thread,
+      // not delivered, with its reason, rather than going back with the server's words.
+      const machineOffline = theMachineIsOfflineRefusal(error);
+      if (machineOffline !== null) {
+        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId
+          ? {...candidate, knownFate: "machine_offline" as const, refusal: machineOffline} : candidate));
+        if (conversationState !== "rest") return true;
+        dockedUndeliveredReason = machineOffline.reason;
+        return false;
+      }
       errorNote = sentenceFor(error);
       if (theServerRefusedTheSend(error)) {
         await stopDrawing(message.messageId);
@@ -826,11 +911,15 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(heldPromptId: string): Promise<void> {
+  async function discard(heldPromptId: string, forEdit = false): Promise<void> {
     if (readOnly || openedId === null) return;
     errorNote = null;
     try {
-      await discardHeldPrompt(openedId, heldPromptId);
+      const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
+      await discardHeldPrompt(openedId, heldPromptId, forEdit);
+      // Taken back to edit: the record keeps no row for it, so nothing else takes this
+      // tab's copy off the screen. Its words are in the composer now.
+      if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
       await refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
@@ -993,6 +1082,9 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
+  onPreviewRunSelection={(selection) => { composerSelection = selection; }}
+  title={title ?? null}
+  subtitle={subtitle ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
@@ -1033,8 +1125,11 @@
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
+  {waitingOnPage}
+  recordedCredentialRequest={view?.pending_credential_request ?? null}
   fateNote={visibleFateNote}
   errorNote={errorNote ?? pickerReadError}
+  undeliveredReason={dockedUndeliveredReason}
   {connectionTrouble}
   {readOnly}
   {historyOwner}
@@ -1052,12 +1147,12 @@
   onAnswer={(optionId) => void answer(optionId)}
   onSubmitUserInput={(answers) => void submitUserInput(answers)}
   onCancelTurn={() => void stop()}
-  onDiscardHeldPrompt={(heldPromptId) => discard(heldPromptId)}
+  onDiscardHeldPrompt={(heldPromptId, forEdit) => discard(heldPromptId, forEdit)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}
   onStopDrawingHeldPrompt={(senderMessageId) => void stopDrawing(senderMessageId)}
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
-  emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
+  emptyState={beforeThereIsAConversation}
   showRunPicker={started || emptyState === undefined}
 />
 
@@ -1066,5 +1161,15 @@
 {#snippet beforeThereIsAConversation()}
   {#if !started && emptyState}
     {@render emptyState()}
+  {:else if !emptyState && !readOnly && nothingSaidYet}
+    <!-- B8: an empty conversation says so in one system line, centred in the empty area
+         over the composer in its usual place. The first message takes it away. -->
+    <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare>
+      <SystemLine align="center">No messages yet</SystemLine>
+    </div>
   {/if}
 {/snippet}
+
+<style>
+  .conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }
+</style>

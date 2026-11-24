@@ -10,7 +10,11 @@ export class GatewayOutbox {
   constructor(store: OutboxStore) {
     this.store = store;
   }
-  async add(write: CliWrite, submission_id: string, ticket_id: string): Promise<QueuedEnvelope> {
+  async add(
+    write: CliWrite,
+    submission_id: string,
+    ticket_id: string | null,
+  ): Promise<QueuedEnvelope> {
     const existing = this.store.lookup(submission_id);
     if (existing !== null) return row_envelope(this.store.sender_id, existing);
     const encoded = Buffer.from(
@@ -28,8 +32,8 @@ export class GatewayOutbox {
         row_envelope(this.store.sender_id, row);
       },
     );
-    // The write is queued. The Ticket's files follow separately and never delay it.
-    this.store.note_ticket_activity(ticket_id);
+    // The write is queued. A Ticket's files follow separately and never delay it.
+    if (ticket_id !== null) this.store.note_ticket_activity(ticket_id);
     return row_envelope(this.store.sender_id, row);
   }
   lookup(submission_id: string) {

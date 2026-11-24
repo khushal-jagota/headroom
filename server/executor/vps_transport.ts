@@ -6,8 +6,6 @@ import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
-import { IncomingMessage } from 'node:http';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -15,6 +13,8 @@ import type { BackendEventValue } from '../conversation/backends/contracts.ts';
 import { retained_open_runs } from '../conversation/runtime/remote.ts';
 import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
+import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
@@ -24,9 +24,16 @@ import { SqliteCommandMailbox } from './vps_mailbox.ts';
 import { MacPresenceService } from './vps_presence.ts';
 import { MacRuns } from './vps_runs.ts';
 import { MacInbox } from './vps_inbox.ts';
-import { InboxStore } from './data/inbox.ts';
+import {
+  agent_request_context,
+  agent_response_json,
+  inject_agent_request,
+} from './vps_agent_writes.ts';
+import { InboxStore, require_manager_files_machine } from './data/inbox.ts';
+import { current_agent_owner } from './data/child_custody.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
+import { VpsBackendControlRelay } from './backend_control_relay.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { as_object, decode_event_arguments } from './protocol.ts';
 import {
@@ -50,16 +57,6 @@ import {
   MAX_LIVE_EVENTS_PER_BATCH,
 } from './configuration.ts';
 
-const READABLE_PATHS = [
-  '/api/tickets',
-  '/api/managers',
-  '/api/sprint',
-  '/api/projects',
-  '/api/worker-types',
-  '/api/skills',
-  '/files/sprint-items/',
-  '/files/managers/',
-];
 const LIVE_METHODS = new Set([
   'agent_message_delta',
   'model_thinking_happened',
@@ -84,6 +81,7 @@ export class VpsExecutor {
   readonly runs: MacRuns;
   readonly inbox: MacInbox;
   readonly catalog: VpsCatalogRelay;
+  readonly backend_controls: VpsBackendControlRelay;
   readonly message_files: ConversationMessageFiles;
   readonly files: VpsFiles;
   app!: FastifyInstance;
@@ -114,6 +112,7 @@ export class VpsExecutor {
     const staging = new FileStaging(options.db_path, this.machine_id);
     this.inbox = new MacInbox(new InboxStore(database, staging), clock, this.runs);
     this.catalog = new VpsCatalogRelay(database, this.runs, this.presence, this.mailbox);
+    this.backend_controls = new VpsBackendControlRelay(this.mailbox, this.presence);
     this.message_files = new ConversationMessageFiles(options.db_path);
     this.files = new VpsFiles(options.db_path, this.inbox, this.mailbox, this.message_files, {
       signal: options.media_signal,
@@ -144,8 +143,35 @@ export class VpsExecutor {
   ): void {
     this.bind_conversations(conversations);
     this.app = app;
+    this.inbox.agent_writes.app = app;
     this.update_barrier = update_barrier;
     this.mailbox.start_admission = conversations.start_admission;
+    this.presence.returned = async () => {
+      this.catalog.connected();
+      // A server start skips the recovery of a Ticket whose machine is away. When the machine
+      // connects, for example the server's own machine code after the switch, it runs now.
+      void this.recover_waiting_turns(conversations).catch((error: unknown) => {
+        if (!is_shutdown_business_cancellation(error))
+          console.error(`Recovery for machine ${this.machine_id} failed`, error);
+      });
+    };
+  }
+  private async recover_waiting_turns(conversations: SqliteProcessConversationSystem) {
+    // A Ticket's turn follows its Ticket's machine; the Chief's, a Manager's or any other
+    // conversation's turn follows the machine its conversation records.
+    const conversation_ids = this.database.read((sql) =>
+      sql
+        .all<{ conversation_id: string }>(
+          "SELECT DISTINCT d.source_conversation_id AS conversation_id FROM deploy_interruptions d WHERE d.recovery_state='awaiting_action'",
+        )
+        .map((row) => row.conversation_id)
+        .filter((id) => conversation_machine_id(sql, id) === this.machine_id),
+    );
+    if (conversation_ids.length === 0) return;
+    await recover_conversations(conversations, this.database, {
+      conversation_ids,
+      signal: conversations.shutdown_signal,
+    });
   }
   bind_updates(service: MacUpdateServiceContract): void {
     this.updates = service;
@@ -346,8 +372,19 @@ export class VpsExecutor {
               'WHERE w.ticket_id=? AND w.machine_id=? AND w.workspace_id=? AND i.machine_id=? LIMIT 1',
             [state.ticket_id, workspace.machine_id, workspace.workspace_id, this.machine_id],
           );
-          if (proof === undefined)
-            throw new PlannerError('agent_forbidden', 'workspace belongs to another machine');
+          // The Ticket is this machine's. A workspace that the server registered before
+          // the switch to machine code stays with the server's own cleanup.
+          if (proof === undefined) return { authorized: false };
+          // An adopted workspace can still hold a process that the server started before the
+          // switch. Its record must be retired before the folder goes.
+          if (
+            !options.replay &&
+            tx.get(
+              "SELECT 1 FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
+              [workspace.machine_id, workspace.workspace_id],
+            ) !== undefined
+          )
+            return { authorized: false };
           return {
             authorized: options.replay
               ? has_committed_retirement(tx, state, workspace)
@@ -436,7 +473,9 @@ export class VpsExecutor {
           identity.executor_incarnation,
           this.machine_id,
         );
-        this.require_ticket_owner(sql, manifest.owner_id);
+        if (manifest.scope === 'manager')
+          require_manager_files_machine(sql, manifest.owner_id, this.machine_id);
+        else this.require_ticket_owner(sql, manifest.owner_id);
       });
   }
   save_ticket_file(
@@ -477,6 +516,30 @@ export class VpsExecutor {
     this.admit();
     return this.files.input_file(identity, command_id, stored_file_id);
   }
+  check_preview_current(identity: ExecutorIdentity): void {
+    this.database.read((sql) =>
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      ),
+    );
+  }
+  preview_ticket(identity: ExecutorIdentity, child: WireValue<'ChildReference'>): string {
+    this.admit();
+    this.database.read((sql) => {
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      );
+      require_incarnation_owner(sql, child.executor_incarnation, this.machine_id);
+    });
+    const principal = this.runs.authority(child);
+    if (principal.kind !== 'ticket')
+      throw new PlannerError('agent_forbidden', 'Previews require a Ticket');
+    return principal.id;
+  }
   async read(
     identity: ExecutorIdentity,
     read: WireValue<'LiveReadRequest'>,
@@ -492,12 +555,16 @@ export class VpsExecutor {
     });
     if (read.path === '/api/executor/capabilities') {
       this.runs.authority(read.child);
-      return { ticket_send_back: true };
+      return { ticket_send_back: true, cli_request: true };
     }
-    if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))
-      throw new PlannerError('validation', 'unsupported executor read');
-    const principal = this.runs.authority(read.child);
-    const params = new URLSearchParams();
+    if (!read.path.startsWith('/') || read.path.startsWith('//'))
+      throw new PlannerError('validation', 'an executor read path must be a server path');
+    // Ordinary route authority judges the read, as for a local agent.
+    this.runs.authority(read.child);
+    const principal = this.database.read((sql) => current_agent_owner(sql, read.child));
+    const target = new URL(read.path, 'http://executor');
+    // The path can carry its own query, as `panels api` sends it.
+    const params = new URLSearchParams(target.search);
     for (const [name, value] of Object.entries(read.params)) {
       const values = Array.isArray(value) ? value : [value];
       for (const element of values)
@@ -514,35 +581,22 @@ export class VpsExecutor {
                   : JSON.stringify(element),
         );
     }
-    const target = new URL(read.path, 'http://executor');
     target.search = params.toString();
     const controller = new AbortController();
     const answer = await observe_promise(
-      this.app.inject({
-        method: 'GET',
-        url: target.pathname + target.search,
-        signal: controller.signal,
-        Request: class extends IncomingMessage {
-          get [IN_PROCESS_REQUEST_CONTEXT]() {
-            return { principal, conversationId: read.child.conversation_id };
-          }
-        },
-      }),
+      inject_agent_request(
+        this.app,
+        agent_request_context(principal, read.child.conversation_id),
+        { method: 'GET', url: target.pathname + target.search, body: null },
+        controller.signal,
+      ),
       LIVE_READ_SERVER_LIMIT_SECONDS * 1000,
     );
     if (!answer.completed) {
       controller.abort();
       throw new PlannerError('retry_later', 'the read took too long');
     }
-    const response = answer.value;
-    try {
-      const value = JSON.parse(response.rawPayload.toString('utf8'));
-      return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? (value as WireValue<'JsonObject'>)
-        : { data: value };
-    } catch {
-      return { text: response.body };
-    }
+    return agent_response_json(answer.value.statusCode, answer.value.body, answer.value.headers);
   }
   async live(
     identity: ExecutorIdentity,
@@ -592,25 +646,31 @@ export class VpsExecutor {
       const drain = (async () => {
         // Admitted saves can still enqueue run bookkeeping from their committed results.
         const retained = await Promise.allSettled(pending);
-        const services = [this.runs, this.catalog, this.inbox, this.files, this.presence];
+        const services = [
+          this.runs,
+          this.catalog,
+          this.backend_controls,
+          this.inbox,
+          this.files,
+          this.presence,
+        ];
         for (const service of services) void service.stop(options).catch(() => {});
-        // Catalog cancellation owns a final waiting-row withdrawal through the mailbox.
-        const mailbox_drain = this.catalog
-          .settled()
-          .catch(() => {})
-          .then(async () => {
-            const results = await Promise.allSettled([
-              Promise.resolve().then(() => this.mailbox.stop(options)),
-              this.mailbox.settled(),
-            ]);
-            const errors = results.flatMap((result) =>
-              result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
-                ? [result.reason]
-                : [],
-            );
-            if (errors.length)
-              throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
-          });
+        // Catalog and backend cancellation own their final mailbox withdrawals.
+        const mailbox_drain = Promise.allSettled([
+          this.catalog.settled(),
+          this.backend_controls.settled(),
+        ]).then(async () => {
+          const results = await Promise.allSettled([
+            Promise.resolve().then(() => this.mailbox.stop(options)),
+            this.mailbox.settled(),
+          ]);
+          const errors = results.flatMap((result) =>
+            result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
+              ? [result.reason]
+              : [],
+          );
+          if (errors.length) throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
+        });
         const results = [
           ...retained,
           ...(await Promise.allSettled([

@@ -13,6 +13,12 @@ import { scalar_text as scalar } from './text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
 import { join_command, require_released_revision } from '../installation/join_command.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import type {
+  WorkMoveRequest,
+  WorkMoveResult,
+  WorkMoveBatchResult,
+} from '../work_moves/contracts.ts';
 
 type Body = Record<string, any>;
 const quote = (value: string, slash = false): string => {
@@ -634,6 +640,49 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
           )
           .join('\n'),
       );
+    case 'machine move-work': {
+      if (
+        [v.ticket_id != null, v.manager_id != null, v.chief, v.everything].filter(Boolean)
+          .length !== 1
+      )
+        return fail_validation(
+          inv,
+          'Choose exactly one of --ticket, --manager, --chief or --everything',
+        );
+      let results: WorkMoveResult[];
+      if (v.everything) {
+        const result: WorkMoveBatchResult = await send(inv, 'POST', '/api/work-moves/everything', {
+          json_body: { machine_id: v.machine_id },
+        });
+        data = result;
+        results = result.results;
+      } else {
+        const body: WorkMoveRequest = {
+          machine_id: v.machine_id,
+          owner: v.chief
+            ? { kind: 'chief' }
+            : v.ticket_id != null
+              ? { kind: 'ticket', id: v.ticket_id }
+              : { kind: 'manager', id: v.manager_id },
+        };
+        const result: WorkMoveResult = await send(inv, 'POST', '/api/work-moves', {
+          json_body: body,
+        });
+        data = result;
+        results = [result];
+      }
+      const output = emit(
+        data,
+        as_json,
+        results
+          .map(
+            (result) =>
+              `${result.title}: ${result.error ? `${result.moved ? 'Moved, but ' : ''}${result.error}` : result.moved ? 'Moved' : 'Already on this machine'}`,
+          )
+          .join('\n'),
+      );
+      return results.some((result) => result.error !== null) ? { ...output, exit_code: 1 } : output;
+    }
     case 'machine register':
       data = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       return emit(data, true, '');
@@ -652,7 +701,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       } catch (error) {
         return fail_validation(inv, (error as Error).message);
       }
-      const grant = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
+      if (v.server_machine === (v.name != null))
+        return fail_validation(inv, 'Give a machine name or --server-machine, not both');
+      const grant = v.server_machine
+        ? await send(inv, 'POST', `/api/machines/${quote(HOME_MACHINE_ID)}/credential`)
+        : await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       const credential = grant.credential;
       let command: string;
       try {
@@ -662,7 +715,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       }
       return raw(
         [
-          "Use this same home's trusted HTTPS origin. Check the address before you share the credential.",
+          "Use this same home's trusted HTTPS origin, or its local executor link socket on the home's own account. Check the address before you share the credential.",
           'On the new machine, use an authenticated GitHub CLI and run:',
           command,
           'At the private credential prompt, paste this value:',

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Panels iPhone — Final Review Page (Editorial)</title>
+<style>
+  :root {
+    --surface-canvas: #080809;
+    --surface-1: #121212;
+    --surface-2: #1a1a1a;
+    --surface-input: #2a2a2a;
+
+    --border-subtle: rgba(255, 255, 255, 0.08);
+
+    --tone-strong: #f2f2f4;
+    --tone-primary: #dadade;
+    --tone-secondary: #9898a0;
+    --tone-muted-hero: #8a8a93;
+    --tone-tertiary: #82828a;
+
+    --accent-bright: #9aadd2;
+    --accent-bright-hover: #a8bae0;
+    --surface-ink: #111318;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Inter, system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--surface-canvas);
+    color: var(--tone-primary);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
+  }
+
+  button { font-family: inherit; color: inherit; border: none; background: none; padding: 0; cursor: pointer; }
+
+  /* Top Controls Bar */
+  .topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: rgba(13, 13, 15, 0.92);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .topbar-left { display: flex; flex-direction: column; gap: 2px; }
+  .topbar-title { font-size: 15px; font-weight: 600; color: var(--tone-strong); letter-spacing: -0.01em; }
+  .topbar-sub { font-size: 12.5px; color: var(--tone-tertiary); }
+
+  .seg-group {
+    display: inline-flex; align-items: center; gap: 2px;
+    background: var(--surface-2); border: 1px solid var(--border-subtle);
+    border-radius: 9px; padding: 3px; flex-wrap: wrap;
+  }
+  .seg-btn {
+    font-size: 12.5px; font-weight: 500; color: var(--tone-secondary);
+    padding: 5px 11px; border-radius: 6.5px; white-space: nowrap;
+    transition: background 110ms ease, color 110ms ease;
+  }
+  .seg-btn:hover { color: var(--tone-strong); }
+  .seg-btn.active { background: var(--surface-input); color: var(--tone-strong); font-weight: 600; }
+
+  /* 4-State Grid */
+  .grid {
+    max-width: 1720px;
+    margin: 0 auto;
+    padding: 28px 24px 48px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(310px, 1fr));
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 1420px) {
+    .grid { grid-template-columns: repeat(2, minmax(320px, 410px)); justify-content: center; }
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: minmax(0, 393px); justify-content: center; padding: 18px 12px 40px; }
+  }
+
+  .option-col { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .option-meta {
+    width: 100%; max-width: 393px; height: 64px;
+    display: flex; flex-direction: column; gap: 3px; padding: 0 4px;
+  }
+  .option-kicker {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--accent-bright);
+  }
+  .option-name { font-size: 16px; font-weight: 600; color: var(--tone-strong); letter-spacing: -0.012em; }
+  .option-desc { font-size: 13px; line-height: 1.4; color: var(--tone-tertiary); }
+
+  /* Scaled iPhone Frame */
+  .phone-slot { width: 100%; max-width: 393px; aspect-ratio: 415 / 874; position: relative; }
+  .phone-scale-inner { position: absolute; top: 0; left: 0; width: 415px; height: 874px; transform-origin: top left; }
+
+  .iphone-bezel {
+    width: 415px; height: 874px; padding: 11px; border-radius: 56px;
+    background: linear-gradient(145deg, #27272c 0%, #161619 52%, #222227 100%);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.12);
+    position: relative;
+  }
+  .iphone-screen {
+    width: 393px; height: 852px; border-radius: 46px;
+    background: var(--surface-1); overflow: hidden; position: relative;
+    display: flex; flex-direction: column; color: var(--tone-primary);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  /* iOS Status Bar & Top Nav */
+  .ios-statusbar {
+    height: 54px; flex-shrink: 0; display: flex; align-items: flex-end; justify-content: space-between;
+    padding: 0 26px 10px 28px; position: relative; pointer-events: none;
+  }
+  .ios-island {
+    position: absolute; top: 11px; left: 50%; transform: translateX(-50%);
+    width: 122px; height: 35px; border-radius: 20px; background: #000;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  .ios-time { font-size: 15px; font-weight: 600; color: var(--tone-strong); font-variant-numeric: tabular-nums; }
+  .ios-status-icons { display: flex; align-items: center; gap: 6px; color: var(--tone-strong); font-size: 12px; font-weight: 600; }
+
+  .ios-navbar {
+    min-height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 2px 14px 4px 12px;
+  }
+  .ios-bar-btn {
+    min-height: 34px; padding: 0 12px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border-subtle);
+    font-size: 13.5px; font-weight: 500; color: var(--tone-primary);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ios-bar-btn.icon-only { width: 36px; height: 36px; padding: 0; }
+
+  .ios-home-indicator {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    width: 134px; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, 0.24);
+    pointer-events: none; z-index: 5;
+  }
+
+  /* Editorial Final Review Screen */
+  .ed-stage {
+    flex: 1; min-height: 0; position: relative;
+    padding: 224px 20px 36px;
+    display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start;
+    text-align: left;
+  }
+  .ed-line1 {
+    font-size: 31px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.12;
+    color: var(--tone-strong); margin: 0; font-variant-numeric: tabular-nums;
+  }
+  .ed-line2 {
+    font-size: 31px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.12;
+    color: var(--tone-muted-hero); margin: 2px 0 0; font-variant-numeric: tabular-nums;
+  }
+  .ed-cta {
+    margin-top: 24px;
+    min-height: 46px; border-radius: 12px; padding: 0 22px;
+    background: #272727; color: #f0f0f2;
+    border: none;
+    font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 100ms ease, transform 80ms ease;
+  }
+  .ed-cta:hover { background: #303030; }
+  .ed-cta:active { transform: scale(0.98); background: #333333; }
+  .ed-working {
+    position: absolute; left: 20px; bottom: 12px;
+    font-size: 13.5px; font-weight: 400; color: var(--tone-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Fixed Bottom Chief Composer */
+  .decision-dock {
+    flex-shrink: 0; padding: 6px 20px 26px;
+    display: flex; flex-direction: column;
+  }
+  .note-box {
+    background: var(--surface-input); border-radius: 12px;
+    padding: 4px 6px 4px 10px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .composer-tool-btn {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center; color: var(--tone-secondary); flex-shrink: 0;
+  }
+  .note-placeholder { flex: 1; font-size: 15px; color: var(--tone-tertiary); padding: 7px 2px; }
+  .composer-send-circle {
+    width: 32px; height: 32px; border-radius: 99px; flex-shrink: 0;
+    display: grid; place-items: center;
+    background: rgba(255, 255, 255, 0.11); color: var(--tone-tertiary);
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-title">Final Review Page — Refined Editorial Layout</div>
+    <div class="topbar-sub">Larger two-tone editorial display, crisp Back to review button, plain working line (no dot) that can also be omitted cleanly.</div>
+  </div>
+
+  <div class="seg-group" role="group" aria-label="Working line toggle">
+    <button class="seg-btn active" id="w-show" onclick="setShowWorking(true)">With "4 agents working right now"</button>
+    <button class="seg-btn" id="w-hide" onclick="setShowWorking(false)">Without working line</button>
+  </div>
+</header>
+
+<main class="grid" id="optionsGrid"></main>
+
+<script>
+let showWorking = true;
+
+function setShowWorking(val) {
+  showWorking = val;
+  document.getElementById('w-show').classList.toggle('active', val);
+  document.getElementById('w-hide').classList.toggle('active', !val);
+  render();
+}
+
+function phoneShell(middleHtml) {
+  return `
+    <div class="phone-slot">
+      <div class="phone-scale-inner">
+        <div class="iphone-bezel">
+          <div class="iphone-screen">
+            <div class="ios-statusbar">
+              <span class="ios-time">9:41</span>
+              <div class="ios-island"></div>
+              <div class="ios-status-icons">
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.8"/><rect x="4.3" y="5" width="3" height="6" rx="0.8"/><rect x="8.6" y="2.5" width="3" height="8.5" rx="0.8"/><rect x="13" y="0" width="3" height="11" rx="0.8"/></svg>
+                <span>5G</span>
+                <svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.7" y="1" width="19.6" height="10" rx="2.6" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.2"/><rect x="2.5" y="2.8" width="15" height="6.4" rx="1.2" fill="currentColor"/><path d="M22 4.2v3.6" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.4" stroke-linecap="round"/></svg>
+              </div>
+            </div>
+
+            <div class="ios-navbar">
+              <button class="ios-bar-btn icon-only" aria-label="Sidebar">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+              </button>
+              <button class="ios-bar-btn">Open Chief</button>
+            </div>
+
+            ${middleHtml}
+
+            <div class="decision-dock">
+              <div class="note-box">
+                <span class="composer-tool-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+                <span class="note-placeholder">Message Chief…</span>
+                <span class="composer-tool-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+                <span class="composer-send-circle"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+              </div>
+            </div>
+
+            <div class="ios-home-indicator"></div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function render() {
+  const states = [
+    {
+      kicker: 'State 1',
+      name: 'New + Skipped',
+      desc: 'New items arrived while skipped items remain.',
+      line1: '3 to review.',
+      line2: '1 new, 2 skipped.',
+      cta: 'Back to review',
+      working: showWorking ? '4 agents working right now' : ''
+    },
+    {
+      kicker: 'State 2',
+      name: 'Skipped Only',
+      desc: 'User skipped items on this pass.',
+      line1: '2 skipped.',
+      line2: 'Nothing new.',
+      cta: 'Review skipped',
+      working: showWorking ? '4 agents working right now' : ''
+    },
+    {
+      kicker: 'State 3',
+      name: 'Clear · Agents Active',
+      desc: 'Nothing left to review while agents work.',
+      line1: 'All clear.',
+      line2: 'Nothing to review.',
+      cta: '',
+      working: showWorking ? '4 agents working right now' : ''
+    },
+    {
+      kicker: 'State 4',
+      name: 'Clear · Idle',
+      desc: 'Nothing left to review and no active agents.',
+      line1: 'All clear.',
+      line2: 'Nothing to review.',
+      cta: '',
+      working: ''
+    }
+  ];
+
+  document.getElementById('optionsGrid').innerHTML = states.map(s => `
+    <section class="option-col">
+      <div class="option-meta">
+        <span class="option-kicker">${s.kicker}</span>
+        <div class="option-name">${s.name}</div>
+        <div class="option-desc">${s.desc}</div>
+      </div>
+      ${phoneShell(`
+        <div class="ed-stage">
+          <h2 class="ed-line1">${s.line1}</h2>
+          <div class="ed-line2">${s.line2}</div>
+          ${s.cta ? `<button class="ed-cta">${s.cta}</button>` : ''}
+          ${s.working ? `<div class="ed-working ${s.cta ? '' : 'no-cta'}">${s.working}</div>` : ''}
+        </div>
+      `)}
+    </section>
+  `).join('');
+
+  scalePhones();
+}
+
+function scalePhones() {
+  document.querySelectorAll('.phone-slot').forEach(slot => {
+    const inner = slot.querySelector('.phone-scale-inner');
+    const scale = slot.clientWidth / 415;
+    inner.style.transform = `scale(${scale.toFixed(4)})`;
+  });
+}
+
+window.addEventListener('resize', scalePhones);
+render();
+</script>
+</body>
+</html>

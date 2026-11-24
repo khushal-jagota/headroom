@@ -203,6 +203,35 @@ export class MacCatalog {
     );
     return task;
   }
+  backend_result(
+    command_id: string,
+    request: import('../../wire.generated.ts').BackendRequest,
+  ): Promise<CanonicalCatalogResult> {
+    if (this.closed)
+      return Promise.reject(new ServerLifecycleError('Machine backend controls are stopped.'));
+    this.ensure_worker();
+    const task = Promise.resolve().then(async () => {
+      const backend_result = (await this.dependencies.backend_request?.(
+        request,
+        this.cancellation.signal,
+      )) ?? { error: { status: 503, message: 'Machine backend controls are unavailable.' } };
+      const descriptor = await this.call<CatalogResultDescriptor>({
+        operation: 'encode',
+        command_id,
+        snapshot: null,
+        backend_result,
+      });
+      const result = new Result(this, descriptor);
+      this.results.add(result);
+      return result;
+    });
+    this.reads.add(task);
+    void task.then(
+      () => this.release_read(task),
+      () => this.release_read(task),
+    );
+    return task;
+  }
   private release_read(task: Promise<CanonicalCatalogResult>): void {
     this.reads.delete(task);
     this.maybe_stop_worker();

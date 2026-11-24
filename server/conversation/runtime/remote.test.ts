@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { expect, test, vi } from 'vitest';
 import { setup } from '../../tests/conversation_core_fixture.ts';
@@ -8,6 +9,9 @@ import { FileStaging } from '../../executor/vps_files.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { as_object } from '../../executor/protocol.ts';
 import {
+  AgentMessageDelta,
+  ModelThinkingHappened,
+  ToolCallProgress,
   BackendPermissionAsk,
   BackendPromptAccepted,
   BackendUserInputRequest,
@@ -559,6 +563,69 @@ test('a retained remote child takes prompts and steers without a live instance h
     expect(calls.at(-1)).toBe('steer');
   } finally {
     vi.restoreAllMocks();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+  }
+});
+
+// Gap: durable delivery of formerly live-only events needs a receipt before its
+// transient frame, so an answer lost after commit cannot publish that frame twice.
+test('remote transient frames publish once after their durable receipt without transcript rows', async () => {
+  const publish_frame = vi.fn();
+  const f = setup({ core: { publish_frame } });
+  const identity = {
+    executor_incarnation: 'inc',
+    protocol_version: PROTOCOL_VERSION,
+    spool_format_version: 5,
+    application_revision: 'fixture',
+    connection_generation: 0,
+  };
+  f.database.write((tx) =>
+    tx.run('INSERT INTO mac_executor_presence(machine_id,executor_incarnation) VALUES(?,?)', [
+      ORIGINAL_MAC_MACHINE_ID,
+      identity.executor_incarnation,
+    ]),
+  );
+  try {
+    await f.start();
+    await f.send();
+    const token = f.core.runtime_turn('core')!.token;
+    const inbox = new InboxStore(f.database, new FileStaging(f.database_path));
+    const before = f.database.read((sql) => sql.all('SELECT * FROM conversation_events'));
+    const events = [
+      new AgentMessageDelta({ text_delta: 'offline output' }),
+      new ModelThinkingHappened(),
+      new ToolCallProgress({ tool_call_id: 'tool', detail: 'offline progress' }),
+    ];
+    for (const [index, event] of events.entries()) {
+      const envelope: WireValue<'QueuedEnvelope'> = {
+        conversation_id: 'core',
+        sender_id: 'sender',
+        submission_id: `live-${index}`,
+        sequence: index + 1,
+        kind: 'backend_event',
+        payload: {},
+        file_dependencies: [],
+      };
+      const take = () =>
+        f.core.take_backend_event(token, event, {
+          in_commit: (tx, apply) => {
+            const [receipt, taken] = inbox.accept_in_transaction(tx, envelope, apply, 100, {
+              identity,
+            });
+            return { result: as_object(receipt, 'AcceptanceReceipt'), taken, written: [] };
+          },
+        });
+      const first = await take();
+      expect(first.taken).toBe(true);
+      expect(first.result.disposition).toBe('accepted');
+      expect(publish_frame).toHaveBeenCalledTimes(index + 1);
+      const replay = await take();
+      expect(replay.taken).toBe(false);
+      expect(replay.result).toEqual(first.result);
+      expect(publish_frame).toHaveBeenCalledTimes(index + 1);
+    }
+    expect(f.database.read((sql) => sql.all('SELECT * FROM conversation_events'))).toEqual(before);
+  } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });

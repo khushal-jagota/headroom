@@ -67,18 +67,3 @@ enum GoalPresentation {
         }
     }
 }
-
-extension GoalJSON {
-    /// Paths are native editor locations, never sent as a new backend contract.
-    func replacing(path: [String], with value: GoalJSON) -> GoalJSON {
-        guard let first = path.first else { return value }
-        let rest = Array(path.dropFirst())
-        if case .array(var items) = self, let index = Int(first), items.indices.contains(index) {
-            items[index] = items[index].replacing(path: rest, with: value); return .array(items)
-        }
-        if case .object(var fields) = self, let child = fields[first] {
-            fields[first] = child.replacing(path: rest, with: value); return .object(fields)
-        }
-        return self
-    }
-}

@@ -11,16 +11,35 @@ struct APIError: LocalizedError, Sendable {
 }
 
 /// A failed request is not proof that the server itself cannot be reached.
-struct ServerReadFailure: Sendable {
+struct ServerReadFailure: LocalizedError, Sendable {
     let isServerUnreachable: Bool
+    /// A passing transport failure: no network, a dropped connection, a timeout or a
+    /// cancel. TLS, ATS and malformed URL or response errors do not pass by themselves.
+    let cannotReach: Bool
     let message: String
+    /// What a screen may say about a failed read. The app shows no connection
+    /// state, so a read that could not reach the server says nothing.
+    var note: String? { cannotReach ? nil : message }
+    /// The host lookups are here too: the server is reached over Tailscale, and when
+    /// Tailscale drops, its MagicDNS name stops resolving. That is the same as offline.
+    static let passingCodes: Set<URLError.Code> = [.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff,
+        .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .cancelled]
+    static func isPassing(_ error: any Error) -> Bool {
+        if error is CancellationError { return true }
+        let error = error as NSError
+        return error.domain == NSURLErrorDomain && passingCodes.contains(URLError.Code(rawValue: error.code))
+    }
+    var errorDescription: String? { message }
+    static func note(_ error: any Error) -> String? { ServerReadFailure(error).note }
 
     init(_ error: any Error) {
+        if let failure = error as? ServerReadFailure { self = failure; return }
         if let error = error as? URLError {
             isServerUnreachable = [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet].contains(error.code)
         } else {
             isServerUnreachable = false
         }
+        cannotReach = Self.isPassing(error)
         message = error.localizedDescription
     }
 }
@@ -56,6 +75,7 @@ struct APIClient: Sendable {
         }
         var request = URLRequest(url: target)
         request.setValue(NativeBuildGate.build, forHTTPHeaderField: "X-Panels-iOS-Build")
+        request.setValue(try NativeClientIdentity.header(), forHTTPHeaderField: "X-Panels-Client")
         return request
     }
 
@@ -122,7 +142,6 @@ struct APIClient: Sendable {
     func manager(_ id: String) async throws -> ManagerDetail { try await get("/api/managers/\(id)/workspace") }
     func chief() async throws -> ChiefDetail { try await get("/api/workers/chief-of-staff/settings") }
     func chiefConversation() async throws -> ConversationReference { try await get("/api/chief/conversation") }
-    func ideas() async throws -> IdeasResponse { try await get("/api/ideas") }
     func deployment() async throws -> DeploymentStatus { try await get("/api/deployment-status") }
     func artifacts(owner: ArtifactOwner, directory: String = "", offset: Int = 0) async throws -> ArtifactPage {
         try await get("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: String(offset))])
@@ -192,4 +211,27 @@ enum NativeBuildGate {
     }
     static func requiresUpdate(_ url: URL) -> Bool { UserDefaults.standard.bool(forKey: key(url)) }
     static func requireUpdate(_ url: URL) { UserDefaults.standard.set(true, forKey: key(url)) }
+}
+
+/// An installation identifier, independent of notification permission and credentials.
+private enum NativeClientIdentity {
+    private static let deviceID: String = {
+        let key = "panels.client.deviceID"
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let created = UUID().uuidString
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+    }()
+
+    private struct Identity: Encodable {
+        let kind = "ios"
+        let device_id: String
+        let version: String
+        let build: Int?
+    }
+
+    static func header() throws -> String {
+        let identity = Identity(device_id: deviceID, version: NativeBuildGate.build, build: Int(NativeBuildGate.build))
+        return String(decoding: try JSONEncoder().encode(identity), as: UTF8.self)
+    }
 }

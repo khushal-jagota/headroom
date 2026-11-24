@@ -270,12 +270,14 @@ export function unidentifiedWriteRefusal(
   if (caller.kind !== 'unidentified') return null;
   const media = (request.headers['content-type'] ?? '').split(';')[0]!.toLowerCase();
   const json = !media || media === 'application/json' || /^application\/.+\+json$/.test(media);
-  if (
-    route === '/api/messages/send' &&
-    json &&
-    object(object(request.body).target).kind === 'chief'
-  )
-    return null;
+  return unidentifiedCommandRefusal(route === '/api/messages/send' && json ? request.body : null);
+}
+/**
+ * The one write that a caller without a Panels identity may make is a message to the Chief.
+ * `message_body` is the body of a message send, and null for any other write.
+ */
+export function unidentifiedCommandRefusal(message_body: unknown): PlannerError | null {
+  if (object(object(message_body).target).kind === 'chief') return null;
   return new PlannerError(
     'agent_forbidden',
     'this request has no Panels identity, so it can only read and send a message to the Chief. For a direct API operation, use `panels api METHOD PATH --input-json -`; the CLI sends the conversation credential automatically. An agent without a launch credential resumes through its Panels conversation. Khushal uses the Panels web app or the iOS app.',

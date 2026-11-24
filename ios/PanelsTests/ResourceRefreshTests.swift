@@ -12,9 +12,20 @@ import XCTest
         for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
             XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
         }
+        // The app shows no connection state: a passing transport failure leaves no note.
+        for code in [URLError.timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet] {
+            XCTAssertNil(ServerReadFailure.note(URLError(code)), "\(code)")
+            XCTAssertNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
+        }
+        // A failure that will not pass by itself shows on a screen with nothing loaded.
+        for code in [URLError.secureConnectionFailed, .serverCertificateUntrusted, .clientCertificateRequired,
+                     .appTransportSecurityRequiresSecureConnection, .badURL, .unsupportedURL, .badServerResponse, .cannotDecodeRawData] {
+            XCTAssertNotNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
+        }
         let failure = ServerReadFailure(APIError(status: 503, message: "Request failed on the reachable server."))
         XCTAssertFalse(failure.isServerUnreachable)
         XCTAssertEqual(failure.message, "Request failed on the reachable server.")
+        XCTAssertEqual(failure.note, "Request failed on the reachable server.", "A server that refused the read still says why")
         XCTAssertFalse(ServerReadFailure(NSError(domain: NSPOSIXErrorDomain, code: URLError.cannotFindHost.rawValue)).isServerUnreachable)
     }
 
@@ -31,6 +42,7 @@ import XCTest
         XCTAssertTrue(store.serverUnreachable)
         XCTAssertTrue(store.errors["Navigation"]?.isServerUnreachable == true)
         XCTAssertNotNil(store.review, "The unavailable screen must not delete the saved view")
+        XCTAssertNil(store.errors["Navigation"]?.note, "Review and Workspace show no note for a server they cannot reach")
         RefreshProtocol.state.withLock { $0.failure = .badServerResponse }
         await store.refresh()
         XCTAssertFalse(store.serverUnreachable, "Other request failures retain the current refresh behavior")
@@ -57,7 +69,8 @@ import XCTest
         let shared = ResourceOwner(api: api)
         let handle = shared.handle(ChiefResources.settings)
         await handle.refresh()
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
+        XCTAssertNil(handle.error, "A timeout leaves no note on screen")
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths }, ["/api/resource-body"], "A timeout gets one request, not another ordinary GET")
         RefreshProtocol.state.withLock { $0.paths = []; $0.failure = nil; $0.supportsVersions = false }
         await handle.refresh()
@@ -208,6 +221,68 @@ import XCTest
         await new.value
     }
 
+    /// Risk: a pull while a stream is open must still land fresh data, and the overload of
+    /// an earlier version must not return: a replacement stream closes the stream it
+    /// replaces once its snapshot lands, so two are open only during that wait.
+    func testPullOpensFreshStreamAndClosesTheOldOneWhenItsSnapshotLands() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        defer { run.cancel() }
+        func open() -> Int { RefreshProtocol.state.withLock { $0.openStreams } }
+        func opened() -> Int { RefreshProtocol.state.withLock { $0.events.count } }
+        try await until { store.view?.contentVersion == "1" && store.connection == "Following changes" }
+
+        let pull = Task { await store.pull() }
+        // The new stream opens beside the followed one, which keeps the view live meanwhile.
+        try await until { open() == 2 }
+        XCTAssertEqual(store.view?.contentVersion, "1")
+        await pull.value
+        XCTAssertEqual(store.view?.contentVersion, "2", "The pull ends on the new stream's snapshot")
+        try await until { open() == 1 }
+
+        // Pulls in quick succession share one new stream.
+        async let first: () = store.pull()
+        async let second: () = store.pull()
+        _ = await (first, second)
+        XCTAssertEqual(opened(), 3)
+        XCTAssertEqual(store.view?.contentVersion, "3")
+        try await until { open() == 1 }
+
+        // A new return order changes what the review window holds, so it opens a stream at
+        // once; a skipped key alone only feeds the server's summary and waits for the next.
+        let skipped = RecordKey(kind: "ticket", id: "a")
+        store.setReviewHistory(ReviewHistory(skipped: [skipped], priority: [skipped]))
+        try await until { store.view?.contentVersion == "4" }
+        store.setReviewHistory(ReviewHistory(skipped: [skipped, RecordKey(kind: "conversation", id: "c")], priority: [skipped]))
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(opened(), 4)
+        try await until { open() == 1 }
+
+        // Offline, the new stream fails at once: the pull ends then, and the followed stream stays.
+        RefreshProtocol.state.withLock { $0.failStreams = true }
+        let started = ContinuousClock.now
+        await store.pull()
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
+        XCTAssertEqual(store.view?.contentVersion, "4")
+        XCTAssertEqual(open(), 1)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.maxOpenStreams }, 2)
+        XCTAssertEqual(store.connection, "Following changes")
+    }
+
+    /// Risk: a run that ends must not leave the view marked as following. Otherwise the
+    /// next open trusts a stream that is gone, and a refresh does not reconnect.
+    func testEndedRunClosesItsStreamAndNoLongerReadsAsFollowing() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        try await until { store.connection == "Following changes" }
+        run.cancel()
+        await run.value
+        XCTAssertEqual(store.connection, "Connecting")
+        try await until { RefreshProtocol.state.withLock { $0.openStreams } == 0 }
+    }
+
     private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
         let deadline = ContinuousClock.now + limit
         while !condition() {
@@ -234,6 +309,9 @@ import XCTest
 
 private struct RefreshFixture {
     struct EventsRequest { let generation: Int; let selected: String? }
+    /// Each fixture marks the sessions made for it. A store from an earlier test that
+    /// still opens a stream is not this test's store, so its stream is not counted.
+    let token = UUID().uuidString
     var paths: [String] = []
     var events: [EventsRequest] = []
     var revision = "1"
@@ -243,6 +321,12 @@ private struct RefreshFixture {
     var healthFailure: URLError.Code?
     var sections: [String] = []
     var holdCancellationStreams = false
+    /// Every events stream sends one snapshot and stays open; streams after the first
+    /// delay it, so the replaced stream can be seen still open meanwhile.
+    var pullStreams = false
+    var openStreams = 0
+    var failStreams = false
+    var maxOpenStreams = 0
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
         ["scope": "s", "schema_version": 11, "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "e", "revision": revision]
@@ -304,6 +388,11 @@ private struct RefreshFixture {
              "authority": Self.authority, "upserts": upserts, "evictions": evictions, "windows": Self.windows(windowRequests, members: members),
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
         }
+        if failStreams { throw URLError(.notConnectedToInternet) }
+        if pullStreams {
+            let frame = try Self.frame(snapshot(String(events.count), working: false, updated: 1))
+            return ([(events.count == 1 ? 0 : 0.3, [frame])], false)
+        }
         if holdCancellationStreams {
             // No delayed gap or snapshot can advance this cancellation test's phases.
             if events.count == 1 {
@@ -361,6 +450,7 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     static var session: URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RefreshProtocol.self]
+        config.httpAdditionalHeaders = ["X-Refresh-Fixture": state.withLock { $0.token }]
         return URLSession(configuration: config)
     }
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "refresh.invalid" }
@@ -375,8 +465,19 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         if url.path == "/api/navigation/view/events" {
+            // A stream from another test's store stays open, silent and uncounted.
+            guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == Self.state.withLock({ $0.token }) else {
+                client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
+                return
+            }
             do {
-                let (schedule, finish) = try Self.state.withLock { $0.paths.append(url.path); return try $0.events(url) }
+                let (schedule, finish) = try Self.state.withLock {
+                    $0.paths.append(url.path)
+                    let events = try $0.events(url)
+                    $0.openStreams += 1; $0.maxOpenStreams = max($0.maxOpenStreams, $0.openStreams)
+                    return events
+                }
+                countedStream.withLock { $0 = true }
                 client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
                 for (index, step) in schedule.enumerated() {
                     DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
@@ -399,7 +500,11 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    override func stopLoading() { stopped.withLock { $0 = true } }
+    private let countedStream = OSAllocatedUnfairLock(initialState: false)
+    override func stopLoading() {
+        stopped.withLock { $0 = true }
+        if countedStream.withLock({ counted in defer { counted = false }; return counted }) { Self.state.withLock { $0.openStreams -= 1 } }
+    }
 }
 
 /// These cases exercise shared admission, not a second HTTP host. The controlled
@@ -610,7 +715,8 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(handle.value, "3", "A→B→A does not restore an old generation's authority")
         await transport.failReads(); await handle.refresh()
         XCTAssertEqual(handle.value, "3", "A failed refresh retains admitted live content")
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
+        XCTAssertNil(handle.error, "A read that cannot reach the server keeps the content with no note")
         let invalidOwner = ResourceOwner(api: APIClient(baseURL: URL(string: "https://bad.invalid")!), transport: ResourceTransport(
             versions: { _, _ in throw URLError(.timedOut) },
             read: { _, _, _ in ResourceRead(data: Data("42".utf8), epoch: "e", revision: "r") }))
@@ -762,7 +868,7 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         handle.acquire()
         await handle.refresh(); await handle.entry.restoring?.value
         XCTAssertNil(handle.value, "Revisiting offline cannot restore the disk body discarded after a terminal failure")
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
         handle.release()
         await transport.recover(); await handle.refresh()
         XCTAssertEqual(handle.value, "1", "A successful fresh body can admit content again")

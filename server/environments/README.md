@@ -9,8 +9,8 @@ Atomic replacement preserves unknown fields as native JSON values. GitHub IDs us
 A lock wait blocks Node's event loop.
 Strict UTF-8 reads treat invalid bytes and BOM input as an unreadable record.
 
-The provider reads GitHub publications. It checks the repository, workflow, branch, event, conclusion,
-SHA, pinned artifacts, Mac artifact, expiry, and runtime metadata. Downloads stream with a 60-second timeout for each network read.
+The provider reads permanent GitHub Release assets and their publication manifest. It checks the repository, workflow provenance,
+source revision, pinned assets, and runtime metadata. Legacy attempts retain Actions artifact reads and expiration checks. Downloads stream with a 60-second timeout for each network read.
 Disk writes consume no read deadline. Proof ZIP reads check size and CRC.
 Credentials stay outside records and public errors. Installation requires a running SHA, canonical installed app root, and this server's own unit.
 
@@ -20,7 +20,7 @@ The final save barrier lives outside SQLite and rollback snapshots. It retains a
 The installer holds a separate lifetime lock through installation and rollback. Startup with that lock and a durable barrier admits health checks while normal producers wait.
 An abandoned attempt releases only its own admission generation. Bounded probes retry recovery even when no file changes.
 Preparation audits current definitions, skills, and Tickets through the existing write door before the transition to `preparing`.
-All six routes require the owner and retain configured Mac health/update reads. Deployment body and revision share one captured read.
+All update routes require the owner. The server attempt and each registered machine have separate states and retries. The legacy Mac health field remains available. [The update API](updates/README.md) documents the contract for clients. Deployment body and revision share one captured read.
 
 Startup and owner actions can schedule advancement; the readiness hook supplies later polls.
 A 250 ms observer watches for external attempt-file changes.

@@ -11,7 +11,6 @@ import {
   readable_path,
   readable_file,
 } from './declarations.ts';
-import { PROVISION_SKILLS_HOME_OPTIONS } from '../environments/command_contracts.ts';
 
 export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand {
   const root = new CliCommand([], 'Operate the local planner server.');
@@ -37,6 +36,16 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       option('as_json', '--json', boolean, { default: false }),
     ],
     true,
+  );
+  command('legacy-agents', 'Inspect agents from an old Panels build.');
+  command(
+    'legacy-agents dry-run',
+    'Read startup retirement candidates without source writes or target signals.',
+    [
+      option('database_path', '--database-path <PATH>', readable_path('any', false), {
+        required: true,
+      }),
+    ],
   );
   command('attention', 'Read where owner involvement went over selected dates.');
   command(
@@ -260,20 +269,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
     option('json_output', '--json', boolean, { default: false }),
   ]);
-  command(
-    'environment provision-skills',
-    'Reconcile Panels skills into each production agent home.',
-    [
-      option('database_parent', '--database-parent <DIRECTORY>', readable_path('directory', true), {
-        required: true,
-      }),
-      ...PROVISION_SKILLS_HOME_OPTIONS.map(({ cli_option, destination }) =>
-        option(destination, `${cli_option} <DIRECTORY>`, readable_path('directory', false), {
-          required: true,
-        }),
-      ),
-    ],
-  );
   command('environment remove', 'Remove the stopped staging environment.', [
     option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
     option('instance_id', '--instance-id <TEXT>', text, {}),
@@ -393,6 +388,9 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   command('executor retry', 'Inspect the original submission. Never repeat or replace its write.', [
     argument('submission_id', '<SUBMISSION_ID>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
+  ]);
+  command('executor server-address', 'Check and save the HTTPS address of this machine’s server.', [
+    option('url', '--url <URL>', text, { required: true }),
   ]);
   command('executor run', '', [
     option('executor_id', '--executor-id <TEXT>', text, { required: true }),
@@ -1157,14 +1155,31 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   command('machine list', 'List stable destination identities and their current availability.', [
     option('as_json', '--json', boolean, { default: false }),
   ]);
+  command('machine move-work', 'Move work to a machine with a fresh conversation. Owner only.', [
+    argument('machine_id', '<MACHINE_ID>', text, {}),
+    option('ticket_id', '--ticket <TEXT>', text, {}),
+    option('manager_id', '--manager <TEXT>', text, {}),
+    option('chief', '--chief', boolean, { default: false }),
+    option('everything', '--everything', boolean, { default: false }),
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
   command('machine register', 'Register an extra machine and print its credential once.', [
     argument('name', '<NAME>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
   ]);
-  command('machine join-command', 'Register a machine and print its private join command.', [
-    argument('name', '<NAME>', text, {}),
-    option('home_url', '--home <TEXT>', text, { required: true }),
-  ]);
+  command(
+    'machine join-command',
+    "Register a machine and print its private join command. With --server-machine, issue the home identity to the machine code on the server's own machine instead.",
+    [
+      argument('name', '[NAME]', text, {}),
+      option('home_url', '--home <TEXT>', text, { required: true }),
+      option('server_machine', '--server-machine', boolean, {
+        default: false,
+        description:
+          "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. This replaces the earlier home credential, so machine code that holds it is cut off until it gets the new one.",
+      }),
+    ],
+  );
   command(
     'machine replace-credential',
     'Revoke the old credential and print its replacement once.',

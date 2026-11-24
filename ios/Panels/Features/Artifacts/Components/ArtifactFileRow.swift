@@ -60,13 +60,6 @@ struct ArtifactFileRow: View {
         .accessibilityHint("Opens artifact")
         .accessibilityAction(named: "Share") { Task { await share() } }
         .accessibilityAction(named: "Copy link") { copyLink() }
-        .contextMenu {
-            Button("Open", systemImage: "arrow.up.right.square") { if let target { open(target) } }
-            Button("Share…", systemImage: "square.and.arrow.up") { Task { await share() } }
-            Button("Copy link", systemImage: "link") { copyLink() }
-        } preview: {
-            if let target { NavigationStack { ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false) }.environment(store).frame(width: 320, height: 420) }
-        }
         .sheet(isPresented: $sharing) { if let shareDocument { ArtifactShareSheet(document: shareDocument) } }
         .alert("Couldn't share file", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }
     }

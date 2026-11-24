@@ -9,6 +9,8 @@ import { buildClock } from '../core/clock.ts';
 import { OWNER, CHIEF, PlannerError, type Principal } from '../core/contracts.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { routes } from './routes.ts';
+import { authenticate_executor } from './executor_credentials.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
 test('join command refuses invalid admission before issuance and registers after the grant commits', async () => {
   const database = fixture();
@@ -83,6 +85,51 @@ test('join command refuses invalid admission before issuance and registers after
     expect(result.command).not.toContain(result.credential);
     expect(ensure).toHaveBeenCalledExactlyOnceWith(result.machine_id);
     expect(count()).toBe(before + 1);
+  } finally {
+    await app.close();
+  }
+});
+
+// The switch hinges on this: machine code on the server's machine takes the home identity.
+test('the home identity gets a credential that the server accepts, and a new one replaces it', async () => {
+  const database = fixture();
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(database),
+  });
+  const app = Fastify();
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof PlannerError) reply.code(error.statusCode).send(error.toPayload());
+    else reply.send(error);
+  });
+  const ensure = vi.fn(async () => {});
+  app.decorate('executor_registry', { ensure } as unknown as VpsExecutorRegistry);
+  await app.register(routes, {
+    database,
+    config,
+    clock: buildClock(config),
+    identity: () => ({ principal: OWNER, conversationId: null }),
+  });
+  const issue = async () => {
+    const reply = await app.inject({
+      method: 'POST',
+      url: `/machines/${HOME_MACHINE_ID}/credential`,
+    });
+    expect(reply.statusCode).toBe(200);
+    return reply.json() as { machine_id: string; credential: string };
+  };
+  const authenticate = (credential: string) =>
+    database.write((tx) => authenticate_executor(tx, HOME_MACHINE_ID, credential, null));
+  try {
+    const first = await issue();
+    expect(first.machine_id).toBe(HOME_MACHINE_ID);
+    expect(ensure).toHaveBeenCalledWith(HOME_MACHINE_ID);
+    expect(authenticate(first.credential)).toBe(HOME_MACHINE_ID);
+    const second = await issue();
+    expect(authenticate(second.credential)).toBe(HOME_MACHINE_ID);
+    expect(() => authenticate(first.credential)).toThrow(
+      'Executor credential is required or invalid',
+    );
   } finally {
     await app.close();
   }

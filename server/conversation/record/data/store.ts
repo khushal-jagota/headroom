@@ -1,20 +1,18 @@
 import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
+import { conversation_machine_id } from '../../../machines/conversation_machine.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
-import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import type {
   LocalChildCustodyRow,
   RecordedSourceSettlement,
 } from '../../local_child_custody_contracts.ts';
 import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
 import type { TurnToken } from '../../backends/contracts.ts';
-import { BackendSpawnFailed } from '../../backends/contracts.ts';
 import { AUTOMATIC_COMPACTION_MINIMUM_INPUT_TOKENS } from '../../runtime/configuration.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
 import * as custody from './child_custody.ts';
 import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../../child_custody.ts';
-import * as supervision_records from '../../../worker_supervision/records.ts';
 import {
   release_worker_step_claim,
   read_ticket,
@@ -183,7 +181,10 @@ export class ConversationStorePrimitives {
     this.integer_now = options.integer_now ?? (() => Math.floor(Date.now() / 1000));
     this.transaction_participant = options.transaction_participant ?? null;
   }
-  create_conversation(start: ResolvedConversationStart): ConversationRecord {
+  create_conversation(
+    start: ResolvedConversationStart,
+    machine_id: string = HOME_MACHINE_ID,
+  ): ConversationRecord {
     const value = record_from_start(start, this.integer_now());
     try {
       this.database.write((tx) => {
@@ -192,7 +193,7 @@ export class ConversationStorePrimitives {
             'workspace_path_policy,role_text,identity_environment_variables,access,vendor_session_cursor,' +
             'composer_catalog,latest_sequence,latest_agent_activity_at,latest_agent_activity_sequence,' +
             'automatically_compacted_through_sequence,automatic_compaction_attempted_through_sequence,' +
-            'owner_read_through_sequence,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'owner_read_through_sequence,created_at,machine_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
           [
             value.conversation_id,
             value.backend_key,
@@ -212,9 +213,9 @@ export class ConversationStorePrimitives {
             value.automatic_compaction_attempted_through_sequence,
             value.owner_read_through_sequence,
             value.created_at,
+            machine_id,
           ],
         );
-        custody.write_never_started(tx, value.conversation_id);
       });
     } catch (error) {
       if (
@@ -256,17 +257,14 @@ export class ConversationStorePrimitives {
     return this.database;
   }
   automatic_start_request(identity: string, conversation_id: string): StartRequest {
-    return this.database.read((sql) => {
-      const row = sql.get<{ machine_id: string }>(
-        'SELECT machine_id FROM tickets WHERE conversation_id=?',
-        [conversation_id],
-      );
-      return {
-        identity,
-        work_class: row ? 'worker' : 'supervisor',
-        destination: row?.machine_id ?? HOME_MACHINE_ID,
-      };
-    });
+    return this.database.read((sql) => ({
+      identity,
+      work_class:
+        sql.get('SELECT 1 FROM tickets WHERE conversation_id=?', [conversation_id]) === undefined
+          ? 'supervisor'
+          : 'worker',
+      destination: conversation_machine_id(sql, conversation_id) ?? HOME_MACHINE_ID,
+    }));
   }
   reserve_turn(conversation_id: string, requests: readonly StartRequest[] = []): number {
     return this.database.write(
@@ -294,8 +292,6 @@ export class ConversationStorePrimitives {
           randomUUID().replaceAll('-', ''),
           epoch.epoch,
         ]);
-        if (!this.blocked_local_conversations.has(conversation_id))
-          custody.bind_current_turn(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
@@ -394,6 +390,21 @@ export class ConversationStorePrimitives {
           "AND kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded','message_to_owner') " +
           'ORDER BY sequence DESC LIMIT 1',
         [conversation_id, sender_message_id],
+      );
+      return row === undefined ? null : stored_event(row);
+    });
+  }
+  /** The saved answer row that carries this operation ID, if any. */
+  answer_operation_outcome(
+    conversation_id: string,
+    operation_id: string,
+  ): StoredConversationEvent | null {
+    return this.database.read((sql) => {
+      const row = sql.get<EventRow>(
+        `SELECT ${EVENT_COLUMNS} FROM conversation_events ` +
+          "WHERE conversation_id=? AND json_extract(payload,'$.operation_id')=? " +
+          "AND kind IN ('permission_answered','user_input_answered') ORDER BY sequence DESC LIMIT 1",
+        [conversation_id, operation_id],
       );
       return row === undefined ? null : stored_event(row);
     });
@@ -528,71 +539,6 @@ export class ConversationStore
   readonly #settled_recorded_turns = new Map<string, TurnToken>();
   #reconciliation_prepared = false;
 
-  async record_child_custody(
-    conversation_id: string,
-    generation: string,
-    identity: LocalChildIdentity | null = null,
-    options: { retired?: boolean } = {},
-  ): Promise<void> {
-    return this.#settlement.retain_recording(
-      (async () => {
-        const current =
-          !options.retired && identity === null
-            ? await this.#participants.local_child_custody?.host_boot_identity()
-            : null;
-        if (!options.retired && identity === null && (!current?.host || !current.boot))
-          throw new BackendSpawnFailed(
-            'Cannot establish the host and boot identity before agent startup',
-          );
-        await this.#settlement.write_recording(() =>
-          this.#write_custody((tx) => {
-            if (options.retired) custody.write_retired(tx, conversation_id, generation);
-            else if (identity === null)
-              custody.write_pending(tx, conversation_id, generation, current!);
-            else {
-              custody.write_started(tx, conversation_id, generation, identity);
-              const recorded = custody.read(tx, conversation_id);
-              if (
-                recorded === undefined ||
-                recorded.generation !== generation ||
-                recorded.state !== 'started' ||
-                recorded.pid !== identity.pid ||
-                recorded.birth !== identity.birth ||
-                recorded.boot !== identity.boot ||
-                recorded.unit !== identity.unit ||
-                recorded.supervision_record !== identity.supervision_record
-              )
-                throw new BackendSpawnFailed('The agent process identity could not be saved');
-            }
-          }),
-        );
-      })(),
-    );
-  }
-  async record_child_supervision(
-    conversation_id: string,
-    generation: string,
-    path: string,
-  ): Promise<void> {
-    return this.#settlement.retain_recording(
-      (async () => {
-        const record = await supervision_records.read(path);
-        if (record.conversation_id !== conversation_id)
-          throw new Error('Worker supervision record does not own this conversation');
-        await this.#settlement.write_recording(() =>
-          this.#write_custody((tx) =>
-            custody.write_supervision(tx, conversation_id, generation, path),
-          ),
-        );
-      })(),
-    );
-  }
-  local_child_supervision_record(conversation_id: string, generation: string): string | null {
-    return this.database.read((sql) => {
-      const row = custody.read(sql, conversation_id);
-      return row?.generation === generation ? row.supervision_record : null;
-    });
-  }
   async has_recorded_source(conversation_id: string): Promise<boolean> {
     return this.database.read((sql) => custody.read(sql, conversation_id) !== undefined);
   }
@@ -608,19 +554,6 @@ export class ConversationStore
             custody.is_ticket_conversation(sql, conversation_id) === proof.ticket_worker))
       );
     });
-  }
-  async check_local_child_started(
-    conversation_id: string,
-    generation: string,
-    turn_number: number,
-  ): Promise<boolean> {
-    return this.database.read(
-      (sql) =>
-        sql.get(
-          "SELECT 1 FROM conversation_child_custody c JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch WHERE c.conversation_id=? AND c.generation=? AND c.state='started' AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' AND o.turn_number=?",
-          [conversation_id, generation, turn_number],
-        ) !== undefined,
-    );
   }
   async recorded_source_block_reason(conversation_id: string): Promise<string> {
     // A marked pending row without a record never spawned, so no reboot is needed for it.
@@ -790,6 +723,39 @@ export class ConversationStore
     return this.#settlement.retain_recording(
       (async () => {
         this.#startup_source_proofs.clear();
+        // One-release upgrade cleanup only. Delete this path after every home runs one
+        // start of this release. New conversations never create physical custody rows.
+        const legacy = this.database.read((sql) =>
+          sql
+            .all<LocalChildCustodyRow>(
+              "SELECT * FROM conversation_child_custody WHERE state!='retired'",
+            )
+            .map((row) => ({
+              row,
+              ticket_worker: custody.is_ticket_conversation(sql, row.conversation_id),
+            })),
+        );
+        const inspector = this.#participants.local_child_custody;
+        for (const { row, ticket_worker } of legacy) {
+          let proven =
+            (await inspector?.retirement_row_proven(row, undefined, ticket_worker)) === true;
+          if (!proven && row.state === 'launch_pending' && row.supervision_record !== null)
+            proven = (await inspector?.stop_supervision(row.supervision_record)) === true;
+          const identity = custody.identity(row);
+          if (!proven && row.state === 'started' && identity !== null)
+            proven =
+              (await inspector?.stop_recorded_child(
+                identity,
+                row.host,
+                undefined,
+                ticket_worker,
+              )) === true;
+          if (proven)
+            this.#write_custody((tx) => {
+              if (custody.same(custody.read(tx, row.conversation_id), row))
+                custody.write_retired(tx, row.conversation_id, row.generation);
+            });
+        }
         const candidates = this.database.read((sql) =>
           read_unresolved_turns(sql, { include_custody_unavailable: true }),
         );
@@ -1489,14 +1455,20 @@ export class ConversationStore
   update_work_metadata(): ReadonlyMap<string, readonly [string, string]> {
     return this.database.read((sql) => {
       const result = new Map<string, readonly [string, string]>();
+      for (const row of sql.all<{
+        conversation_id: string;
+        backend_key: string;
+        machine_id: string;
+      }>('SELECT conversation_id,backend_key,machine_id FROM conversations'))
+        result.set(row.conversation_id, [`${row.backend_key} conversation`, row.machine_id]);
       for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
         'SELECT conversation_id,title,machine_id FROM tickets WHERE conversation_id IS NOT NULL',
       ))
         result.set(row.conversation_id, [row.title, row.machine_id]);
-      for (const row of sql.all<{ conversation_id: string; title: string }>(
-        "SELECT a.conversation_id,m.title FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id WHERE a.conversation_id IS NOT NULL",
+      for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
+        "SELECT a.conversation_id,m.title,c.machine_id FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id JOIN conversations c ON c.conversation_id=a.conversation_id",
       ))
-        result.set(row.conversation_id, [row.title, HOME_MACHINE_ID]);
+        result.set(row.conversation_id, [row.title, row.machine_id]);
       return result;
     });
   }
@@ -1713,7 +1685,7 @@ export class ConversationStore
 export function ensure_started_conversation_record(
   tx: TransactionSql,
   start: ResolvedConversationStart,
-  options: { created_at: number },
+  options: { created_at: number; machine_id: string },
 ): void {
   const identity = identity_environment_json(
     start.role_materials?.identity_environment_variables ?? [],
@@ -1725,11 +1697,12 @@ export function ensure_started_conversation_record(
     start.role_materials?.role_text ?? null,
     identity,
     start.access,
+    options.machine_id,
   ];
   tx.run(
     'INSERT OR IGNORE INTO conversations (conversation_id,backend_key,model,reasoning_effort,' +
-      'workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,created_at) ' +
-      'VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,created_at,machine_id) ' +
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [
       start.conversation_id,
       start.backend_key,
@@ -1741,6 +1714,7 @@ export function ensure_started_conversation_record(
       identity,
       start.access,
       options.created_at,
+      options.machine_id,
     ],
   );
   const row = tx.get<
@@ -1752,9 +1726,9 @@ export function ensure_started_conversation_record(
       | 'role_text'
       | 'identity_environment_variables'
       | 'access'
-    >
+    > & { machine_id: string }
   >(
-    'SELECT backend_key,workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access ' +
+    'SELECT backend_key,workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,machine_id ' +
       'FROM conversations WHERE conversation_id=?',
     [start.conversation_id],
   );
@@ -1768,6 +1742,7 @@ export function ensure_started_conversation_record(
           row.role_text,
           row.identity_environment_variables,
           row.access,
+          row.machine_id,
         ];
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(

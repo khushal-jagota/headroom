@@ -275,3 +275,49 @@ test('proposal guidance is explicit and final approval omits onward scope', asyn
     request.mockRestore();
   }
 });
+
+// Distinct risk: ambiguous selectors must not turn an individual move into a bulk move.
+// The stubbed HTTP boundary also preserves partial failure in JSON and process exit status.
+test('machine move-work sends an explicit owner and reports partial failures', async () => {
+  const result = {
+    owner: { kind: 'chief' },
+    title: 'Chief',
+    machine_id: 'second',
+    moved: true,
+    error: 'The new conversation did not start.',
+  };
+  const request = vi.spyOn(http, 'send').mockResolvedValue(result);
+  const environment = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
+  try {
+    const ambiguous = await run(
+      ['machine', 'move-work', 'second', '--chief', '--everything'],
+      environment,
+    );
+    expect(ambiguous.exit_code).not.toBe(0);
+    expect(request).not.toHaveBeenCalled();
+    const individual = await run(
+      ['machine', 'move-work', 'second', '--chief', '--json'],
+      environment,
+    );
+    expect(request).toHaveBeenLastCalledWith(expect.anything(), 'POST', '/api/work-moves', {
+      json_body: { owner: { kind: 'chief' }, machine_id: 'second' },
+    });
+    expect(individual.exit_code).toBe(1);
+    expect(JSON.parse(individual.stdout)).toEqual(result);
+    request.mockResolvedValueOnce({
+      results: [{ ...result, moved: false, error: 'Push work first.' }],
+    });
+    const batch = await run(['machine', 'move-work', 'second', '--everything'], environment);
+    expect(request).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'POST',
+      '/api/work-moves/everything',
+      {
+        json_body: { machine_id: 'second' },
+      },
+    );
+    expect(batch).toMatchObject({ exit_code: 1, stdout: 'Chief: Push work first.\n' });
+  } finally {
+    request.mockRestore();
+  }
+});

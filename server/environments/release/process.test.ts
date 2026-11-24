@@ -1,3 +1,4 @@
+import { LINUX_HOME } from './contracts.ts';
 /** Real child closure cannot be proved by a mocked process result. */
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -218,7 +219,12 @@ test('builder isolates npm configuration and retains its deadline through final 
     // Deliberately stop at the web build, before native package compilation.
     pending = build_exported_app(
       source,
-      { requested_sha: sha, candidate_app: candidate, install_dependencies: true },
+      {
+        requested_sha: sha,
+        candidate_app: candidate,
+        install_dependencies: true,
+        target: LINUX_HOME,
+      },
       { public_cli_entrypoint: 'server/cli/main.ts' },
       execution,
     );
@@ -237,7 +243,12 @@ test('builder isolates npm configuration and retains its deadline through final 
     };
     pending = build_exported_app(
       source,
-      { requested_sha: sha, candidate_app: candidate, install_dependencies: false },
+      {
+        requested_sha: sha,
+        candidate_app: candidate,
+        install_dependencies: false,
+        target: LINUX_HOME,
+      },
       { public_cli_entrypoint: 'server/cli/main.ts' },
       execution,
     );

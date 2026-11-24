@@ -59,7 +59,7 @@
  <GoalContent {goal}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
- {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
+ {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?(holderLabel==='Manager'?'Message this manager…':`Message ${holderLabel}…`):'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
 </ManagerFrame>
 {/if}
 <style>

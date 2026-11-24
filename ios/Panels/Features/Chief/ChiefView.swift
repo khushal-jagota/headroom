@@ -2,40 +2,34 @@ import SwiftUI
 
 struct ChiefView: View {
     let editOwner: PageSessionRoute
-    var openConversationID: String?
     @Environment(AppStore.self) private var store
     private var resource: ResourceHandle<ChiefRoster> { store.resources.handle(ChiefResources.roster) }
     private var chief: ChiefRosterEntry? { resource.value?.chiefOfStaff }
     private var error: String? { resource.error }
-    @State private var actions = AgentPageActions()
-    @State private var swipeLog = ChiefSwipeLog.shared
-    @State private var isVisible = false
-    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                AgentPageControls {
-                    AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await load(); await store.refresh() }
-                }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: store.chiefSignal ?? chief?.conversationSignal)
-                    AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await load(); await store.refresh() }, actions: actions)
+                    AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "")
                 }
                 if chief != nil { HolderContent(holder: .chief, editOwner: editOwner) }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
-                .background(ChiefSwipeObservation(enabled: swipeLog.isEnabled && isVisible && scenePhase == .active))
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil) { await load(); await store.refresh() }
+            }
+        }
         .panelsScreen()
-        .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .chief, conversationID: nil, refreshError: error, retry: { await load() })
         .resourceDemand(resource)
         .task(id: store.baseURL.absoluteString + (store.chiefStamp() ?? "")) { await resource.refresh() }
         .navigationDemand("chief", windows: [NavigationScope.children(of: .chief)])
         .panelsRefreshable { await load() }
-        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
+        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
         .accessibilityIdentifier("chief-screen")
-        .onAppear { isVisible = true }
-        .onDisappear { isVisible = false }
     }
 
     private func load() async { await resource.refresh() }

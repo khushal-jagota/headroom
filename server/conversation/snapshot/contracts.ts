@@ -105,6 +105,9 @@ export interface BackendHttpRuntime {
   readonly backend_ids: readonly BackendInstanceId[];
   /** The backend's sign-in, or null when Panels cannot sign it in. */
   sign_in(backend_key: string): DriverSignInController | null;
+  readonly machine_backends?: (
+    machine_id: string,
+  ) => import('../../executor/backend_control_relay.ts').MachineBackendControls | null;
   readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
   /** The drivers this build carries, in registry order. GET /api/drivers lists them. */
   readonly drivers: readonly CardDriver[];

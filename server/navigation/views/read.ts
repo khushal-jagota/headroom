@@ -214,7 +214,12 @@ export function readContent(sql: ReadSql, value: ViewRequest): [Continuity, View
       if (item.kind === 'ticket') key = ['ticket', item.id];
       else {
         const conversation = record(sql, ['conversation', item.id]);
-        if (!conversation?.attention.durable.message_for_owner) continue;
+        // A card held in history is a conversation with a message or an ask waiting.
+        if (
+          !conversation?.attention.durable.message_for_owner &&
+          !conversation?.attention.current.awaiting_answer
+        )
+          continue;
         const addressId = canonicalReviewAddress(sql, item.id);
         const address = addressId === null ? null : record(sql, ['address', addressId]);
         if (address === null || addressId === null) continue;

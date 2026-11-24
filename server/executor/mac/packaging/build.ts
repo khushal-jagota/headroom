@@ -1,6 +1,5 @@
 /** Assemble caller-supplied native inputs. Never download, execute, sign or install them. */
 import {
-  chmod,
   cp,
   lstat,
   mkdir,
@@ -14,15 +13,18 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
-import { hash_archive } from '../../../environments/release/archive.ts';
-import { ARCHIVE_GZIP_LEVEL } from '../../../environments/release/configuration.ts';
+import { hash_archive, write_hardlinks_as_files } from '../../../environments/release/archive.ts';
+import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
+import {
+  ARCHIVE_GZIP_LEVEL,
+  PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES,
+} from '../../../environments/release/configuration.ts';
 import { path_is_within } from '../../../core/path_containment.ts';
-import { mac_installation_assets } from '../platform.ts';
+import { mac_launcher_bundle, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import {
   MAC_RUNTIME_ARCHIVE_NAME,
   MAX_MAC_RUNTIME_ARCHIVE_BYTES,
   MAX_MAC_RUNTIME_EXPANDED_BYTES,
-  validate_executor_launch,
 } from '../configuration.ts';
 import { MAC_STATIC_FILES, MAC_REQUIRED_FILES, MAC_RUNTIME_CONSOLE } from './configuration.ts';
 
@@ -32,10 +34,8 @@ export interface MacPackageOptions {
   readonly production_node_modules: string;
   readonly output: string;
   readonly revision: string;
-  readonly home: string;
-  readonly executor_id: string;
-  readonly server_url: string;
-  readonly backend_path: string;
+  /** The signed `Panels TypeScript.app`. It travels in the archive, covered by its digest. */
+  readonly launcher_app: string;
 }
 export async function macho_arm64(path: string, executable = false): Promise<void> {
   const info = await lstat(path);
@@ -53,6 +53,20 @@ export async function macho_arm64(path: string, executable = false): Promise<voi
       throw new Error(`Expected thin Darwin arm64 Mach-O: ${path}`);
   } finally {
     await file.close();
+  }
+}
+/** A launcher app is checked for its shape here. Its signature is checked where code may run. */
+async function mac_launcher_app(app: string): Promise<void> {
+  if (basename(app) !== 'Panels TypeScript.app' || !(await lstat(app)).isDirectory())
+    throw new Error('The launcher input must be a Panels TypeScript.app directory.');
+  const info = await readFile(join(app, 'Contents/Info.plist'), 'utf8');
+  if (!info.includes(`<string>${mac_launcher_bundle().bundle_id}</string>`))
+    throw new Error('The launcher app has a different bundle identity.');
+  await macho_arm64(join(app, 'Contents/MacOS/Panels'), true);
+  for (const path of await paths(app)) {
+    const entry = await lstat(path);
+    if (!entry.isFile() && !entry.isDirectory())
+      throw new Error(`The launcher app contains an unsupported entry: ${path}`);
   }
 }
 export async function paths(root: string): Promise<string[]> {
@@ -79,13 +93,13 @@ export async function node_version(root: string): Promise<string> {
 export async function build_mac_package(options: MacPackageOptions) {
   if (!/^[0-9a-f]{40}$/.test(options.revision))
     throw new Error('An exact source revision is required.');
-  validate_executor_launch(options.executor_id, options.revision, options.server_url);
   const source = await realpath(options.source_root),
     node = await realpath(options.node_distribution),
-    modules = await realpath(options.production_node_modules);
+    modules = await realpath(options.production_node_modules),
+    launcher = await realpath(options.launcher_app);
   if (!isAbsolute(options.output)) throw new Error('Package output must be absolute.');
   const output = join(await realpath(dirname(options.output)), basename(options.output));
-  if ([source, node, modules].some((root) => path_is_within(root, output)))
+  if ([source, node, modules, launcher].some((root) => path_is_within(root, output)))
     throw new Error('Package output must be outside its inputs.');
   await macho_arm64(join(node, 'bin/node'), true);
   const version = await node_version(node);
@@ -107,8 +121,7 @@ export async function build_mac_package(options: MacPackageOptions) {
   for (const path of MAC_REQUIRED_FILES)
     if (!(await lstat(join(source, path))).isFile())
       throw new Error(`Missing runtime source: ${path}`);
-  const { home, revision, executor_id, server_url, backend_path } = options;
-  const assets = mac_installation_assets({ home, revision, executor_id, server_url, backend_path });
+  await mac_launcher_app(launcher);
   await mkdir(output, { mode: 0o700 });
   const runtime = join(output, 'runtime');
   await mkdir(runtime);
@@ -129,6 +142,7 @@ export async function build_mac_package(options: MacPackageOptions) {
   await cp(modules, join(runtime, 'server/node_modules'), {
     recursive: true,
     verbatimSymlinks: true,
+    filter: (path) => !PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES.includes(relative(modules, path)),
   });
   await mkdir(join(runtime, 'node/bin'), { recursive: true });
   await cp(join(node, 'bin/node'), join(runtime, 'node/bin/node'));
@@ -138,6 +152,10 @@ export async function build_mac_package(options: MacPackageOptions) {
     await cp(join(source, path), join(runtime, path));
   }
   await cp(join(source, 'server/skills/seeds'), join(runtime, 'server/skills/seeds'), {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
+  await cp(launcher, join(runtime, MAC_RUNTIME_LAUNCHER_APP), {
     recursive: true,
     verbatimSymlinks: true,
   });
@@ -185,31 +203,34 @@ export async function build_mac_package(options: MacPackageOptions) {
   }
   if (expanded > MAX_MAC_RUNTIME_EXPANDED_BYTES)
     throw new Error('Mac runtime exceeds its expanded size limit.');
-  for (const [name, file] of Object.entries(assets.files)) {
-    const path = join(output, 'assets', name);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, file.text, { mode: file.mode });
-    await chmod(path, file.mode);
-  }
-  await cp(
-    join(source, 'ops/mac-executor/typescript-installation.md'),
-    join(output, 'INSTALLATION.md'),
+  const build_id = await digest_machine_build(runtime);
+  const marker = JSON.parse(await readFile(join(runtime, 'mac-runtime.json'), 'utf8'));
+  await writeFile(
+    join(runtime, 'mac-runtime.json'),
+    JSON.stringify({ ...marker, build_id }) + '\n',
   );
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
   // Every top-level entry of the assembled runtime: a driver's release files
   // may add one beside server/, and with none there is no src/ to archive.
   await create_tar(
-    { cwd: runtime, file: archive, gzip: { level: ARCHIVE_GZIP_LEVEL }, portable: true },
+    {
+      cwd: runtime,
+      file: archive,
+      gzip: { level: ARCHIVE_GZIP_LEVEL },
+      portable: true,
+      onWriteEntry: write_hardlinks_as_files,
+    },
     (await readdir(runtime)).sort(),
   );
   if ((await stat(archive)).size > MAX_MAC_RUNTIME_ARCHIVE_BYTES)
     throw new Error('Mac runtime exceeds its archive size limit.');
   const result = {
     application_revision: options.revision,
+    build_id,
+    launcher_sha256: await digest_machine_build(join(runtime, MAC_RUNTIME_LAUNCHER_APP)),
     node_version: version,
     node_sha256: await hash_archive(join(runtime, 'node/bin/node')),
     archive_sha256: await hash_archive(archive),
-    paths: assets.paths,
   };
   await writeFile(join(output, 'build.json'), JSON.stringify(result, null, 2) + '\n');
   return result;

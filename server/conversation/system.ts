@@ -77,7 +77,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly start_admission: AutomaticStartAdmission;
   readonly retiring_workspace_tickets = new Set<string>();
   readonly retiring_workspace_conversations = new Set<string>();
-  readonly local_child_generations = new WeakMap<BackendChild, string>();
   worker_cleanup_recheck:
     ((source: ChildReference, ticket_id: string) => Promise<CleanupResult>) | null = null;
   readonly deferred_start_conversations = new Set<string>();
@@ -372,21 +371,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   drain_held_prompts(state: ConversationState): Promise<void> {
     return send.drain_held_prompts(this, state);
   }
-  make_sink(
-    state: ConversationState,
-    options?: { supervised_launch?: boolean },
-  ): CoreBackendEventSink {
-    return backend_events.make_sink(this, state, options);
-  }
-  record_local_child_preparation(
-    state: ConversationState,
-    child: BackendChild,
-    sink: CoreBackendEventSink,
-  ): Promise<void> {
-    return child_lifecycle.record_local_child_preparation(this, state, child, sink);
-  }
-  check_local_child_started(state: ConversationState, turn: TurnToken): Promise<boolean> {
-    return child_lifecycle.check_local_child_started(this, state, turn);
+  make_sink(state: ConversationState): CoreBackendEventSink {
+    return backend_events.make_sink(this, state);
   }
   _confirm_local_child_stopped(state: ConversationState, child: BackendChild): Promise<void> {
     return child_lifecycle._confirm_local_child_stopped(this, state, child);
@@ -599,31 +585,50 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       ? own_settlement(state, controls.promote_held_prompt(this, state, held_prompt_id, mode))
       : null;
   }
-  async discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean> {
+  async discard_held_prompt(
+    conversation_id: string,
+    held_prompt_id: string,
+    withdrawn_for_edit = false,
+  ): Promise<boolean> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, controls.discard_held_prompt(this, state, held_prompt_id))
+      ? own_settlement(
+          state,
+          controls.discard_held_prompt(this, state, held_prompt_id, withdrawn_for_edit),
+        )
       : false;
   }
   async answer_permission_ask(
     conversation_id: string,
     ask_id: string,
     option_id: string,
+    operation_id: string | null = null,
   ): Promise<AnswerFate> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, answers.answer_permission_ask(this, state, ask_id, option_id))
+      ? own_settlement(
+          state,
+          answers.answer_permission_ask(this, state, ask_id, option_id, operation_id),
+        )
       : AnswerFate.refused;
   }
   async answer_user_input(
     conversation_id: string,
     request_id: string,
     values: readonly import('./events.ts').UserInputAnswer[],
+    operation_id: string | null = null,
   ): Promise<AnswerFate> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, answers.answer_user_input(this, state, request_id, values))
+      ? own_settlement(
+          state,
+          answers.answer_user_input(this, state, request_id, values, operation_id),
+        )
       : AnswerFate.refused;
+  }
+  /** The saved fate of an answer sent with this operation ID, or null if none was saved. */
+  answer_receipt(conversation_id: string, operation_id: string): AnswerFate | null {
+    return answers.answer_receipt(this, conversation_id, operation_id);
   }
   pending_permission_ask_ids(conversation_id: string): Promise<ReadonlySet<string>> {
     return queries.pending_permission_ask_ids(this, conversation_id);
@@ -672,8 +677,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     return queries.workspace_activity(this);
   }
-  update_interrupted_work(): readonly string[] {
-    return update_preparation.update_interrupted_work(this);
+  update_interrupted_work(machine_ids?: readonly string[]): readonly string[] {
+    return update_preparation.update_interrupted_work(this, machine_ids);
   }
   reopen_after_update(): void {
     update_preparation.reopen_after_update(this);

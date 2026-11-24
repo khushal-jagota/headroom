@@ -1,18 +1,11 @@
 // Gap: lower workspace and wire tests do not prove Project repository storage, home conversation
 // workspace preparation from Project records, or remote MacRuns StartRun repository propagation.
 // Reuses ticket_fixture and a temporary bare Git remote without launching a provider process.
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { expect, test } from 'vitest';
-import {
-  configure_conversation_start,
-  start_ticket_conversation,
-  worker_resolve,
-} from '../runtime/conversation_start.ts';
+import { configure_conversation_start, worker_resolve } from '../runtime/conversation_start.ts';
 import { createProject, readProject, updateProject } from '../projects/data/index.ts';
-import { git } from '../ticket_workspaces/filesystem/shared.ts';
-import { filesRoot } from '../files/logic/paths.ts';
-import { ConversationStartRequest, type ConversationSystem } from '../conversation/contracts.ts';
+import { ConversationStartRequest } from '../conversation/contracts.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import { MacPresenceService } from '../executor/vps_presence.ts';
 import { SqliteCommandMailbox } from '../executor/vps_mailbox.ts';
@@ -20,34 +13,6 @@ import { MacRuns } from '../executor/vps_runs.ts';
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { create, fixture, fixture_path, now } from './ticket_fixture.ts';
-
-async function bare_remote(root: string): Promise<string> {
-  const remote = join(root, 'origin.git');
-  const source = join(root, 'source');
-  mkdirSync(remote, { recursive: true });
-  mkdirSync(source, { recursive: true });
-  for (const [cwd, args] of [
-    [remote, ['init', '--bare']],
-    [remote, ['symbolic-ref', 'HEAD', 'refs/heads/staging']],
-    [source, ['init', '-b', 'staging']],
-    [source, ['config', 'user.email', 'proof@example.test']],
-    [source, ['config', 'user.name', 'Synthetic proof']],
-  ] as const) {
-    const result = await git(cwd, [...args]);
-    expect(result.returncode, result.stderr).toBe(0);
-  }
-  writeFileSync(join(source, 'marker.txt'), 'from-project\n');
-  for (const args of [
-    ['add', '.'],
-    ['commit', '-m', 'init'],
-    ['remote', 'add', 'origin', remote],
-    ['push', 'origin', 'staging'],
-  ]) {
-    const result = await git(source, args);
-    expect(result.returncode, result.stderr).toBe(0);
-  }
-  return remote;
-}
 
 test('Project stores repository_url and default_branch with branch-requires-url validation', () => {
   const database = fixture();
@@ -77,73 +42,6 @@ test('Project stores repository_url and default_branch with branch-requires-url 
   );
   expect(cleared.repository_url).toBeNull();
   expect(cleared.default_branch).toBeNull();
-});
-
-test('Home start clones from Project repository_url regardless of folder_path and fails cleanly on bad remote', async () => {
-  const database = fixture();
-  const db_path = fixture_path(database);
-  const root = join(dirname(db_path), 'repo-proof');
-  const remote = await bare_remote(root);
-  const non_git_folder = join(root, 'empty-folder');
-  mkdirSync(non_git_folder, { recursive: true });
-  configure_conversation_start(database, { db_path, workspace_root: root });
-
-  const project = database.write((tx) =>
-    createProject(
-      tx,
-      {
-        name: 'ClonedProject',
-        summary: '',
-        folder_path: non_git_folder,
-        repository_url: remote,
-        default_branch: 'staging',
-      },
-      now,
-    ),
-  );
-  const ticket = create(database, { project_id: project.id });
-  const started: ConversationStartRequest[] = [];
-  const fake_system = {
-    async start_conversation(request: ConversationStartRequest) {
-      started.push(request);
-    },
-    async kill() {},
-  } as unknown as ConversationSystem;
-
-  const values = worker_resolve(database, ticket);
-  const linked = await start_ticket_conversation(fake_system, database, ticket, values, {
-    conversation_id: 'conv_cloned',
-    now,
-  });
-  expect(linked.made_here).toBe(true);
-  expect(started).toHaveLength(1);
-  const worktree = join(filesRoot(db_path, 'ticket'), ticket.id, 'worktree');
-  expect(existsSync(join(worktree, 'marker.txt'))).toBe(true);
-
-  const broken = database.write((tx) =>
-    createProject(
-      tx,
-      {
-        name: 'BrokenProject',
-        summary: '',
-        repository_url: join(root, 'missing.git'),
-        default_branch: 'main',
-      },
-      now,
-    ),
-  );
-  const broken_ticket = create(database, { project_id: broken.id });
-  await expect(
-    start_ticket_conversation(
-      fake_system,
-      database,
-      broken_ticket,
-      worker_resolve(database, broken_ticket),
-      { conversation_id: 'conv_broken', now },
-    ),
-  ).rejects.toThrow('Cannot prepare the Ticket workspace');
-  expect(existsSync(join(filesRoot(db_path, 'ticket'), broken_ticket.id, 'worktree'))).toBe(false);
-  expect(started).toHaveLength(1);
 });
 
 test('MacRuns populates StartRun.workspace_repository from the Ticket effective Project', async () => {
@@ -269,6 +167,8 @@ test('MacRuns populates StartRun.workspace_repository from the Ticket effective 
     expect(parsed.child_command.arguments.workspace_repository).toEqual({
       repository_url: 'https://github.com/khushal-jagota/Wren.git',
       default_branch: 'main',
+      published_branch: null,
+      published_revision: null,
     });
   } finally {
     const deadline = performance.now() / 1000 + 2;

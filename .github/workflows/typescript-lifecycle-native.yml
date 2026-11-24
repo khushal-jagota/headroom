@@ -8,30 +8,10 @@ on:
     - cron: '17 */4 * * *'
   workflow_dispatch:
     inputs:
-      build_mac_package:
-        description: Build a test TypeScript Mac package with synthetic installation values
+      prove_first_install:
+        description: Run only the complete first-install proof on Linux and Apple Silicon
         type: boolean
         default: false
-      target_home:
-        description: Synthetic target HOME for the test package
-        required: false
-        type: string
-        default: /Users/panels-test
-      executor_id:
-        description: Synthetic executor identity for the test package
-        required: false
-        type: string
-        default: test-executor
-      server_url:
-        description: Synthetic HTTPS peer URL, never contacted
-        required: false
-        type: string
-        default: https://panels.invalid
-      backend_path:
-        description: Synthetic command PATH for the test package
-        required: false
-        type: string
-        default: /usr/bin:/bin
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -41,7 +21,12 @@ permissions:
   contents: read
 
 jobs:
+  first-install:
+    if: github.event_name == 'workflow_dispatch' && inputs.prove_first_install
+    uses: ./.github/workflows/typescript-first-install.yml
+
   linux-executor:
+    if: ${{ !inputs.prove_first_install }}
     name: Linux executor sealed archive and relocation (Node 22)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -142,6 +127,7 @@ jobs:
           if-no-files-found: warn
 
   darwin-locks:
+    if: ${{ !inputs.prove_first_install }}
     name: Darwin arm64 lifecycle, archive, and Worker process ABI (Node 22)
     runs-on: macos-15
     timeout-minutes: 45
@@ -223,7 +209,7 @@ jobs:
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
+              boundary: "Archive sequences, Worker identity, home APP custody, preview/metrics ABI, authenticated machine preview and control paths, and first-home installation against owned synthetic LaunchAgents. No provider or live installation.",
               hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -234,8 +220,15 @@ jobs:
           scripts/dev npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts \
             previews/darwin.native.test.ts skills/account.test.ts \
+            tests/preview_transport.test.ts tests/machine_backend_cards.test.ts \
+            previews/machine.test.ts tests/remote_preview_retention.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
+          # Reuse this host for the native machine preview. Other cases in this file
+          # exercise the server's Linux-only file intake and belong to the Linux suite.
+          scripts/dev npm --prefix server run test -- executor/app_transport.test.ts \
+            -t 'machine code on the home account' --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/machine-preview.xml"
           # Build the home from separate production inputs, then prove the sealed archive after relocation.
           home_inputs="$TMPDIR/mac-home-inputs"
           home_output="$TMPDIR/mac-home-output"
@@ -268,86 +261,3 @@ jobs:
           name: lifecycle-native-darwin-arm64-node-22
           path: ${{ runner.temp }}/lifecycle-native-evidence
           if-no-files-found: warn
-
-  mac-package:
-    name: Build a test Mac package with synthetic installation values
-    if: github.event_name == 'workflow_dispatch' && inputs.build_mac_package
-    # macos-14 retired on 2026-11-02. The Manager approved standard macos-15 arm64.
-    # https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/
-    runs-on: macos-15
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Require the test package target
-        env:
-          TARGET_MAC_HOME: ${{ inputs.target_home }}
-          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
-          TARGET_SERVER_URL: ${{ inputs.server_url }}
-          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
-        run: |
-          set -euo pipefail
-          : "${TARGET_MAC_HOME:?Package target HOME is required}"
-          : "${TARGET_EXECUTOR_ID:?Package executor ID is required}"
-          : "${TARGET_SERVER_URL:?Package HTTPS peer is required}"
-          : "${TARGET_BACKEND_PATH:?Package backend PATH is required}"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-          architecture: arm64
-      - name: Assemble the native Node package
-        env:
-          TARGET_MAC_HOME: ${{ inputs.target_home }}
-          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
-          TARGET_SERVER_URL: ${{ inputs.server_url }}
-          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
-        run: |
-          set -euo pipefail
-          umask 077
-          package_root="$RUNNER_TEMP/typescript-mac-package"
-          mkdir "$package_root"
-          mkdir "$package_root/source" "$package_root/home" "$package_root/tmp" "$package_root/npm-cache"
-          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$package_root/source"
-          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
-            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" \
-            HOME="$package_root/home" TMPDIR="$package_root/tmp" npm_config_cache="$package_root/npm-cache" \
-            PLAN_SERVER_URL=https://127.0.0.1:9 PLAN_TEST_MODE=0 \
-            PACKAGE_ROOT="$package_root" TARGET_MAC_HOME="$TARGET_MAC_HOME" \
-            TARGET_EXECUTOR_ID="$TARGET_EXECUTOR_ID" TARGET_SERVER_URL="$TARGET_SERVER_URL" \
-            TARGET_BACKEND_PATH="$TARGET_BACKEND_PATH" \
-            bash --noprofile --norc -euo pipefail <<'BUILD'
-          node --input-type=module -e 'if(process.platform!=="darwin"||process.arch!=="arm64"||Number(process.versions.node.split(".")[0])!==22||Number(process.versions.node.split(".")[1])<18)throw Error("Darwin arm64 Node22 >=22.18 required");console.log({node:process.versions.node,platform:process.platform,architecture:process.arch});'
-          node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
-          # NODE_ENV=production selects npm ci's production omission mode.
-          # The exported source gets its own production dependency tree.
-          NODE_ENV=production "$PACKAGE_ROOT/source/scripts/dev" npm --prefix server ci
-          node "$PACKAGE_ROOT/source/server/executor/mac/packaging/main.ts" \
-            --source "$PACKAGE_ROOT/source" \
-            --node-distribution "$node_distribution" \
-            --node-modules "$PACKAGE_ROOT/source/server/node_modules" \
-            --output "$PACKAGE_ROOT/output" \
-            --revision "$GITHUB_SHA" \
-            --home "$TARGET_MAC_HOME" \
-            --executor-id "$TARGET_EXECUTOR_ID" \
-            --server-url "$TARGET_SERVER_URL" \
-            --backend-path "$TARGET_BACKEND_PATH"
-          printf '%s\n' 'TEST BUILD: synthetic installation values. Real installation values require the owner Mac session.' > "$PACKAGE_ROOT/output/TEST-BUILD.txt"
-          BUILD
-      - name: Upload runtime archive and installation assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: panels-typescript-mac-test-build-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/typescript-mac-package/output/panels-mac-runtime.tar.gz
-            ${{ runner.temp }}/typescript-mac-package/output/build.json
-            ${{ runner.temp }}/typescript-mac-package/output/TEST-BUILD.txt
-            ${{ runner.temp }}/typescript-mac-package/output/INSTALLATION.md
-            ${{ runner.temp }}/typescript-mac-package/output/assets/
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0

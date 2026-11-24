@@ -2,25 +2,41 @@ import { render } from "svelte/server";
 import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 import { describe, expect, it, vi } from "vitest";
 import { canonicalShellHash } from "../src/lib/shellRouting";
-import { nestedHref, parseUtilityPath, prefixHref } from "../src/lib/utilityAddress";
+import { parseSettingsPath, settingsHref } from "../src/lib/settings/address";
 
 describe("historical shell addresses", () => {
+  // Every Settings address from before the redesign lands on its new section or detail page.
   it.each([
     ["#/backlog", "#/workspace"],
     ["#/backlog?project=old", "#/workspace"],
-    ["#/notifications", "#/settings/notifications"],
-    ["#/config", "#/settings/config"],
-    ["#/config/workers/type%2Fwith%20space", "#/settings/config/workers/type%2Fwith%20space"],
-    ["#/config/chief-of-staff", "#/settings/config/chief-of-staff"],
-    ["#/config/worker-skill", "#/settings/config/worker-skill"],
-    ["#/config/manager", "#/settings/config/manager"],
     ["#/workspace/item/si_existing?view=items", "#/workspace/manager/si_existing?view=managers"],
-    ["#/workers", "#/settings/config"],
-    ["#/workers?legacy=true", "#/settings/config?legacy=true"],
+    ["#/settings/config", "#/settings/general"],
+    ["#/settings/config/chief-of-staff", "#/settings/agents/chief-of-staff"],
+    ["#/settings/config/manager", "#/settings/agents/manager"],
+    ["#/settings/config/worker-skill", "#/settings/agents/worker-skill"],
+    ["#/settings/config/workers/type%2Fwith%20space", "#/settings/workers/type%2Fwith%20space"],
+    ["#/settings/vps", "#/settings/diagnostics"],
+    ["#/vps", "#/settings/diagnostics"],
+    ["#/notifications", "#/settings/notifications"],
     ["#/notifications?legacy=true", "#/settings/notifications?legacy=true"],
-    ["#/workers/coding", "#/settings/config/workers/coding"],
-    ["#/agents/workers/coding", "#/settings/config/workers/coding"],
-    ["#/agents/worker-skill", "#/settings/config/worker-skill"],
+    ["#/config", "#/settings/general"],
+    ["#/config/chief-of-staff", "#/settings/agents/chief-of-staff"],
+    ["#/config/manager", "#/settings/agents/manager"],
+    ["#/config/worker-skill", "#/settings/agents/worker-skill"],
+    ["#/config/workers/coding", "#/settings/workers/coding"],
+    ["#/workers", "#/settings/workers"],
+    ["#/workers?legacy=true", "#/settings/workers?legacy=true"],
+    ["#/workers/coding", "#/settings/workers/coding"],
+    ["#/agents/workers/coding", "#/settings/workers/coding"],
+    ["#/agents/worker-skill", "#/settings/agents/worker-skill"],
+    ["#/backends/config", "#/settings/agents"],
+    ["#/backends/config/manager", "#/settings/agents/manager"],
+    ["#/backends/config/workers/coding", "#/settings/workers/coding"],
+    ["#/workspace/utility/settings", "#/settings"],
+    ["#/workspace/utility/settings/notifications?view=managers", "#/settings/notifications?view=managers"],
+    ["#/workspace/utility/settings/config/workers/coding", "#/settings/workers/coding"],
+    ["#/workspace/utility/settings/vps", "#/settings/diagnostics"],
+    ["#/workspace/utility/usage/config/chief-of-staff", "#/settings/agents/chief-of-staff"],
     ["#/agents/chief-of-staff", "#/workspace/chief-of-staff"],
     ["#/agents", "#/workspace"]
   ])("redirects %s without losing its destination", (old, current) => {
@@ -48,50 +64,32 @@ it("uses the unavailable screen for archived calendar routes", () => {
   }
 });
 
-it("preserves the bare Home redirect to Chief", () => {
-  for (const hash of ["", "#", "#/day"]) {
+it("opens the review queue for the bare address and keeps the old Home alias on Chief", () => {
+  for (const [hash, target] of [["", "#/review"], ["#", "#/review"], ["#/day", "#/workspace/chief-of-staff"]]) {
     const replace = vi.fn();
     vi.stubGlobal("window", { location: { hash, replace } });
     try {
       expect(render(AppWithQueryClient).body).not.toContain("no such screen");
-      expect(replace).toHaveBeenCalledWith("#/workspace/chief-of-staff");
+      expect(replace).toHaveBeenCalledWith(target);
     } finally {
       vi.unstubAllGlobals();
     }
   }
 });
 
-// The Settings rules used to live inline in the shell router, where the pane could not
-// reach them. They moved so both roots read one copy, and they had no test of their own.
-describe("where a utility screen can be", () => {
-  it("defaults Settings to Config and accepts Notifications", () => {
-    expect(parseUtilityPath("settings", [])).toEqual({
-      utility: "settings", settings: { section: "config", roleKind: "index" }
-    });
-    expect(parseUtilityPath("settings", ["notifications"])).toEqual({
-      utility: "settings", settings: { section: "notifications", roleKind: "index" }
-    });
-    expect(parseUtilityPath("settings", ["config", "workers", "coding"])).toEqual({
-      utility: "settings", settings: { section: "config", roleKind: "worker", roleId: "coding" }
-    });
+describe("where a Settings page can be", () => {
+  it("opens General on the bare address without choosing it", () => {
+    expect(parseSettingsPath([])).toEqual({ section: "general", detail: null, chosen: false });
+    expect(parseSettingsPath(["notifications"])).toEqual({ section: "notifications", detail: null, chosen: true });
+    expect(parseSettingsPath(["agents", "manager"])).toEqual({ section: "agents", detail: "manager", chosen: true });
+    expect(parseSettingsPath(["workers", "type%2Fwith%20space"])).toEqual({ section: "workers", detail: "type/with space", chosen: true });
+    expect(settingsHref("workers", "type/with space")).toBe("#/settings/workers/type%2Fwith%20space");
   });
 
   it.each([
-    ["settings", ["unknown"]],
-    ["settings", ["notifications", "detail"]],
-    ["settings", ["config", "unknown"]],
-    ["settings", ["config", "sprint-item-supervisor"]],
-    ["usage", ["unknown"]],
-    ["ideas", ["anything"]]
-  ] as const)("refuses %s/%j", (utility, path) => {
-    expect(parseUtilityPath(utility, path as unknown as string[])).toBeNull();
-  });
-
-  it("builds a page address by appending, and nothing at all for the default", () => {
-    const href = prefixHref("#/settings");
-    expect(href([])).toBe("#/settings");
-    expect(href(["config", "workers", "coding"])).toBe("#/settings/config/workers/coding");
-    expect(nestedHref(href, ["config"])(["chief-of-staff"]))
-      .toBe("#/settings/config/chief-of-staff");
+    [["unknown"]], [["config"]], [["notifications", "detail"]], [["agents", "unknown"]],
+    [["workers", "coding", "extra"]], [["vps"]]
+  ])("refuses %j", path => {
+    expect(parseSettingsPath(path)).toBeNull();
   });
 });

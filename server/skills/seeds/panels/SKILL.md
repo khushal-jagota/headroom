@@ -24,7 +24,8 @@ The workspace has these pieces:
 - An **manager** holds shared intent, Workers, artifacts, and a conversation.
 - **Chief** is a special manager and an explicit Worker assignment destination.
 - A **Worker** is one Ticket with one coherent job and a registered lifecycle.
-- An **idea** is a possibility that is not committed work.
+- An **idea** is a possibility that is not committed work. The Chief keeps ideas as
+  Markdown files in `ideas/` in its home folder. Panels does not store them.
 
 Ordinary Managers keep their former Manager IDs and supervisor conversations.
 Workers name Chief or an ordinary manager explicitly. Assignment, Project, approval
@@ -65,11 +66,11 @@ at whatever is still open.
 
 The user is your manager.
 
-Send Khushal a message only when he needs to decide or do something. Give only the context that explains that decision or action. Do not accompany it with an account of completed work.
+Send the owner a message only when they need to decide or do something. Give only the context that explains that decision or action. Do not accompany it with an account of completed work.
 
-Do not volunteer progress, completion, or a reminder that he holds a gate. Put the current state in the recap. Panels already shows gates and notifications.
+Do not volunteer progress, completion, or a reminder that they hold a gate. Put the current state in the recap. Panels already shows gates and notifications.
 
-If Khushal speaks to you, reply to him. A direct answer is ordinary conversation and needs no permission.
+If the owner speaks to you, reply to them. A direct answer is ordinary conversation and needs no permission.
 
 Give the context that makes the thing make sense. Nothing that only details it. Before you
 send, write the one line that is the content, then keep only what someone needs to
@@ -88,7 +89,7 @@ exactly what they are and preserve direct user guidance.
 Never refer to anything by its internal ID in user-facing communication. Use its
 human-readable name or title instead; keep IDs only in tools and other internal operations.
 
-Khushal reads only what an agent sends with `panels send-message`. A turn's own prose, a
+The owner reads only what an agent sends with `panels send-message`. A turn's own prose, a
 final response, and a status summary are runtime output that no one else reads. An unsent
 question is an unasked question. Never report that you raised, asked, or discussed a point
 that exists only in your own output.
@@ -113,7 +114,7 @@ SELF-CHECK before returning: scan for contractions, "has been", "should", ", mak
 
 A Ticket owns its documents, images, evidence, and scratch. Panels clears its files seven days after it ends. New activity on an ended Ticket starts a fresh seven-day wait. Its stage text and proposals remain, but links to cleared files expire.
 
-Use the artifact directory in the Worker prompt. On the VPS, it is inside `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/artifacts/`. On the Mac, it is inside the executor's local Ticket folder. Panels transfers public Mac artifacts to the VPS. Use served links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Keep code, dependencies, and scratch in the supplied `worktree/`. The checkout is private and is not served, transferred as artifacts, or backed up. Do not infer paths from the current directory.
+Use the artifact directory in the Worker prompt. It is on the machine that runs the Ticket, and Panels transfers artifacts to the server. Use served links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Keep code, dependencies, and scratch in the supplied `worktree/`. The checkout is private and is not served, transferred as artifacts, or backed up. Do not infer paths from the current directory.
 
 Artifacts complement the ticket record. Brief, success condition, what changes, plan, implementation, consequences, and recaps remain concise canonical Markdown, with links to richer work when it helps.
 
@@ -140,7 +141,7 @@ The command groups describe both the object being changed and the operation's au
 
 Skill text is a row in this Panels, and the row is what you read. The repository tree
 `server/skills/seeds` seeds a fresh install only, so an edit there reaches nobody. Skill
-writes are owner-only: write the exact text and hand it to Khushal or the Chief.
+writes are owner-only: write the exact text and hand it to the owner or the Chief.
 
 ## Continuation and schedules
 

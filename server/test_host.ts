@@ -1,3 +1,4 @@
+import { HOME_MACHINE_ID } from './execution_identity.ts';
 import { sourceTestArea } from './measure_sources/testing/routes.ts';
 import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
@@ -21,6 +22,7 @@ import { create_backend_runtime } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
 import { BackendStateStore } from './conversation/backend_state.ts';
+import { seed_machine_lease } from './machines/testing/lease.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -49,6 +51,9 @@ await startServer({
     const snapshots = new TicketModelSnapshots();
     snapshots.model = 'gpt-6.1-sol';
     snapshots.models = ['gpt-6.1-sol'];
+    // A capture rig can list realistic models per backend; e2e keeps the single scripted model.
+    const backend_models = process.env.PANELS_TEST_BACKEND_MODELS;
+    if (backend_models) snapshots.backend_models = JSON.parse(backend_models);
     runtime.backend_snapshots = snapshots;
     return runtime;
   },
@@ -56,7 +61,6 @@ await startServer({
   createConversationCore: conversationSystem
     ? undefined
     : (context) => {
-        registry.bind_runtime(context.worker_supervision);
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,
@@ -86,11 +90,11 @@ await startServer({
                 clock.nowUnix(),
               ),
           ),
-          delivery_model_refusal: (backend_key, model_id, ticket_id) =>
+          delivery_model_refusal: (backend_key, model_id, conversation_id) =>
             new BackendStateStore(database).delivery_model_refusal(
               backend_key,
               model_id,
-              ticket_id,
+              conversation_id,
             ),
         });
       },
@@ -110,6 +114,9 @@ await startServer({
         ]),
   ],
   beforePublication(database) {
+    // This host runs the home's Tickets on scripted local children. Production runs them
+    // through the home's machine code, which readiness requires to be present.
+    database.write((tx) => seed_machine_lease(tx, HOME_MACHINE_ID), { changeSignal: 'silent' });
     // Rebuild copied Python projections through the actual TS writer. Comparing
     // copied rows alone would leave writer drift hidden behind the fixture oracle.
     // This existing test-host bootstrap seam produces no HTTP event writes.

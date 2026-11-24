@@ -3,31 +3,18 @@
 // another machine, that every surface reads it, or that restart-worker refuses it.
 // Reuses ticket_fixture, the bare-remote pattern from project_repository.test.ts and its
 // standalone MacRuns start; no provider process starts.
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
-import { text_message_content } from '../conversation/message_content.ts';
-import {
-  configure_conversation_start,
-  send_to_ticket_conversation,
-  start_ticket_conversation,
-  worker_resolve,
-} from '../runtime/conversation_start.ts';
-import { createProject } from '../projects/data/index.ts';
-import { git } from '../ticket_workspaces/filesystem/shared.ts';
-import { PromptDeliveryStarted, type ConversationSystem } from '../conversation/contracts.ts';
+import { configure_conversation_start, worker_resolve } from '../runtime/conversation_start.ts';
 import { OWNER, PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { TestClock } from '../core/clock.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
-import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { require_restartable } from '../tickets/worker_restart.ts';
-import {
-  close_home_worker_setups,
-  WORKER_SETUP_RESTART_REFUSAL_SECONDS,
-} from '../ticket_workspaces/worker_setup.ts';
+import { WORKER_SETUP_RESTART_REFUSAL_SECONDS } from '../ticket_workspaces/worker_setup.ts';
 import { add_work_attention } from '../work_attention.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import { createSignalNavigationRuntime } from '../navigation/index.ts';
@@ -86,129 +73,6 @@ function restart_refusal(database: Database, ticket_id: string): string | null {
     return error.message;
   }
 }
-async function bare_remote(root: string): Promise<string> {
-  const remote = join(root, 'origin.git'),
-    source = join(root, 'source');
-  mkdirSync(remote, { recursive: true });
-  mkdirSync(source, { recursive: true });
-  for (const [cwd, args] of [
-    [remote, ['init', '--bare', '-b', 'main']],
-    [source, ['init', '-b', 'main']],
-    [
-      source,
-      [
-        '-c',
-        'user.email=p@example.test',
-        '-c',
-        'user.name=p',
-        'commit',
-        '--allow-empty',
-        '-m',
-        'init',
-      ],
-    ],
-    [source, ['push', remote, 'main']],
-  ] as const) {
-    const result = await git(cwd, [...args]);
-    expect(result.returncode, result.stderr).toBe(0);
-  }
-  return remote;
-}
-
-test('Home declares its setup, every surface reads it, restart refuses it, and every end closes it', async () => {
-  const database = navigated_fixture();
-  const db_path = fixture_path(database);
-  const root = join(dirname(db_path), 'setup-proof');
-  configure_conversation_start(database, { db_path, workspace_root: root });
-  const remote = await bare_remote(root);
-  const project = database.write((tx) =>
-    createProject(
-      tx,
-      { name: 'Setup', summary: '', repository_url: remote, default_branch: 'main' },
-      now,
-    ),
-  );
-  const ticket = create(database, { project_id: project.id });
-  one_minute_into_setup();
-  let seen_while_starting: unknown = null;
-  let seen_while_sending: {
-    navigation: unknown;
-    attention: unknown;
-    refusal: string | null;
-  } | null = null;
-  const system = {
-    async start_conversation() {
-      // The workspace is ready and the Worker launch is next.
-      seen_while_starting = setup_row(database, ticket.id);
-    },
-    async send() {
-      // The first prompt is on its way: setup is still open, and every surface reads it.
-      seen_while_sending = {
-        navigation: navigation_setup(database, ticket.id),
-        attention: await attention(database, ticket.id),
-        refusal: restart_refusal(database, ticket.id),
-      };
-      return new PromptDeliveryStarted();
-    },
-    async kill() {},
-  } as unknown as ConversationSystem;
-
-  await send_to_ticket_conversation(system, database, ticket.id, text_message_content('opener'), {
-    conversation_id: null,
-    created_conversation_id: 'conv_home',
-    sender_label: 'test',
-    now,
-  });
-  expect(seen_while_starting).toMatchObject({
-    conversation_id: 'conv_home',
-    machine_id: HOME_MACHINE_ID,
-    step: 'starting_worker',
-    began_at: now,
-  });
-  const open = { step: 'starting_worker', began_at: now, machine_id: HOME_MACHINE_ID };
-  expect(seen_while_sending).toEqual({
-    navigation: open,
-    attention: { agent_state: 'setting_up', worker_setup: open },
-    refusal: 'Still setting up since 2026-07-04 12:00:00 UTC (starting Worker)',
-  });
-  // The first prompt landed, so the send path closed Home's setup.
-  expect(setup_row(database, ticket.id)).toBeNull();
-  expect(navigation_setup(database, ticket.id)).toBeNull();
-  expect((await attention(database, ticket.id)).agent_state).toBe('idle');
-  expect(restart_refusal(database, ticket.id) ?? '').not.toMatch(/Still setting up/);
-
-  // A failed workspace preparation closes the setup with the failure.
-  const broken = database.write((tx) =>
-    createProject(
-      tx,
-      {
-        name: 'Broken',
-        summary: '',
-        repository_url: join(root, 'missing.git'),
-        default_branch: 'main',
-      },
-      now,
-    ),
-  );
-  const failing = create(database, { project_id: broken.id });
-  await expect(
-    start_ticket_conversation(system, database, failing, worker_resolve(database, failing), {
-      conversation_id: 'conv_failing',
-      now,
-    }),
-  ).rejects.toThrow('Cannot prepare the Ticket workspace');
-  expect(setup_row(database, failing.id)).toBeNull();
-
-  // A server restart ends every Home setup, because it ran inside the old process.
-  await start_ticket_conversation(system, database, ticket, worker_resolve(database, ticket), {
-    conversation_id: 'conv_interrupted',
-    now,
-  });
-  expect(setup_row(database, ticket.id)).not.toBeNull();
-  database.write(close_home_worker_setups);
-  expect(setup_row(database, ticket.id)).toBeNull();
-});
-
 test('Restart Worker refuses a setup only within its bound, so a stuck setup cannot block it', async () => {
   const database = navigated_fixture();
   const ticket = create(database);

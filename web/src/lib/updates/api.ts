@@ -1,3 +1,4 @@
+import { clientFetch } from "../clientIdentity";
 import { get, writable } from "svelte/store";
 import { PlannerFetchError } from "../api";
 import { queryClient } from "../queryClient";
@@ -5,7 +6,8 @@ import { UPDATE_STARTING_LIMIT_MS } from "./config";
 import type { InstallUpdateBody, UpdateStatus } from "./contracts";
 
 /** One owner press, mapped to its contract route. */
-export type UpdateActionRequest = { action: "install" | "retry" | "retry_mac" };
+export type UpdateActionRequest = { action: "install" | "retry" | "retry_mac" }
+  | { action: "retry_machine"; machine_id: string };
 
 /** The server answer a press that starts an update was made against, until the answer moves.
  * Both card mounts read it, so the card shows Updating… at once. An attempt can be
@@ -25,6 +27,11 @@ export function updateActionRoute(status: UpdateStatus, request: UpdateActionReq
   if (request.action === "install") {
     if (!status.available) throw new Error("This update is no longer available.");
     return { path: "/api/updates/install", body: { app_sha: status.available.app_sha } };
+  }
+  if (request.action === "retry_machine") {
+    const machine = status.machines.find(row => row.machine_id === request.machine_id);
+    if (!machine?.can_retry || !machine.attempt_id) throw new Error("This machine update is no longer available to retry.");
+    return { path: `/api/updates/attempts/${encodeURIComponent(machine.attempt_id)}/machines/${encodeURIComponent(machine.machine_id)}/retry` };
   }
   if (!status.attempt) throw new Error("This update changed. Close this dialog and try again.");
   const attempt = `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}`;
@@ -48,12 +55,14 @@ export async function performUpdateAction(status: UpdateStatus, request: UpdateA
   const { path, body } = updateActionRoute(status, request);
   const pressedAgainst = answerKey(status);
   pressInFlight = true;
-  updateStarting.set(pressedAgainst);
-  setTimeout(() => { if (get(updateStarting) === pressedAgainst) updateStarting.set(null); }, UPDATE_STARTING_LIMIT_MS);
+  if (request.action !== "retry_machine") {
+    updateStarting.set(pressedAgainst);
+    setTimeout(() => { if (get(updateStarting) === pressedAgainst) updateStarting.set(null); }, UPDATE_STARTING_LIMIT_MS);
+  }
   try {
     let response: Response;
     try {
-      response = await fetch(path, {
+      response = await clientFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Panels-App-SHA": status.app_sha },
         body: body === undefined ? undefined : JSON.stringify(body)

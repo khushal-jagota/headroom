@@ -32,7 +32,7 @@ struct TicketStepRow: View {
                     if let error = fieldResource.error {
                         LoadErrorView(message: error) { await fieldResource.refresh() }
                     }
-                    DecisionMarkdown(source: fieldResource.value?.value ?? presentation.ticket.fieldValues[field.id] ?? "", baseURL: store.baseURL, emphasizesFirstParagraph: false)
+                    PanelsMarkdown(source: fieldResource.value?.value ?? presentation.ticket.fieldValues[field.id] ?? "", baseURL: store.baseURL)
                 }.padding(.vertical, 12).padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(PanelsTheme.Web.recessed, in: RoundedRectangle(cornerRadius: 8))

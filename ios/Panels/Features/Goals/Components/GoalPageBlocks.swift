@@ -18,33 +18,33 @@ private struct GoalPageBlock: View {
     @ViewBuilder var body: some View {
         switch block.type {
         case "tickets": if let holder { HolderTickets(holder: holder) }
-        case "text": edit(block["text"].text, "Text", ["text"], markdown: true).panelsScaledFont(size: 18)
+        case "text": text(block["text"].text, markdown: true)
         case "chart": GoalChart(block: block, session: session)
         case "checklist": GoalChecklist(block: block, session: session, supplementary: true)
         case "grid": GoalPageBlocks(blocks: block["blocks"].array, session: session)
         case "section":
             VStack(alignment: .leading, spacing: 20) {
-                edit(block["title"].text, "Section title", ["title"]).panelsScaledFont(size: 20, weight: .medium)
-                if let summary = block["summary"].string { edit(summary, "Section summary", ["summary"]).font(.footnote).foregroundStyle(PanelsTheme.Goal.faint) }
+                text(block["title"].text).panelsScaledFont(size: 20, weight: .medium)
+                if let summary = block["summary"].string { text(summary).font(.footnote).foregroundStyle(PanelsTheme.Goal.faint) }
                 if block["views"].array.isEmpty { GoalPageBlocks(blocks: block["blocks"].array, session: session) } else { views }
             }
         case "segmented": views
-        case "table": GoalPageTable(block: block, session: session)
+        case "table": GoalPageTable(block: block)
         case "callout":
             VStack(alignment: .leading, spacing: 12) {
-                if let title = block["title"].string { edit(title, "Callout title", ["title"]).fontWeight(.medium) }
-                edit(block["text"].text, "Callout text", ["text"]).foregroundStyle(PanelsTheme.muted)
+                if let title = block["title"].string { text(title).fontWeight(.medium) }
+                text(block["text"].text).foregroundStyle(PanelsTheme.muted)
             }.modifier(GoalPanel()).overlay(alignment: .leading) { Capsule().fill(PanelsTheme.Goal.tone(block["tone"].text)).frame(width: 2).padding(.vertical, 24) }
         case "metrics":
             VStack(spacing: 16) {
                 ForEach(Array(block["items"].array.enumerated()), id: \.offset) { index, item in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            edit(item["label"].text, "Metric label", ["items", String(index), "label"]).panelsScaledFont(size: 15)
-                            if let change = item["change"].string { edit(change, "Metric change", ["items", String(index), "change"]).panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.tone(item["tone"].text)).padding(6).background(PanelsTheme.Goal.raised, in: Capsule()) }
+                            text(item["label"].text).panelsScaledFont(size: 15)
+                            if let change = item["change"].string { text(change).panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.tone(item["tone"].text)).padding(6).background(PanelsTheme.Goal.raised, in: Capsule()) }
                         }
-                        edit(item["value"].text, "Metric value", ["items", String(index), "value"]).panelsScaledFont(size: 30, relativeTo: .title, weight: .medium)
-                        if let hint = item["hint"].string { edit(hint, "Metric hint", ["items", String(index), "hint"]).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
+                        text(item["value"].text).panelsScaledFont(size: 30, relativeTo: .title, weight: .medium)
+                        if let hint = item["hint"].string { text(hint).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
                     }.modifier(GoalPanel())
                 }
             }
@@ -52,27 +52,27 @@ private struct GoalPageBlock: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(Array(block["items"].array.enumerated()), id: \.offset) { index, item in
                     VStack(alignment: .leading, spacing: 8) {
-                        edit(item["label"].text, "Property label", ["items", String(index), "label"]).font(.caption).foregroundStyle(PanelsTheme.Goal.faint)
-                        edit(item["value"].text, "Property value", ["items", String(index), "value"]).font(.subheadline)
+                        text(item["label"].text).font(.caption).foregroundStyle(PanelsTheme.Goal.faint)
+                        text(item["value"].text).font(.subheadline)
                     }
                 }
             }
         case "status":
             HStack(spacing: 8) {
                 Circle().fill(PanelsTheme.Goal.tone(block["tone"].text)).frame(width: 6, height: 6)
-                edit(block["label"].text, "Status label", ["label"]).panelsScaledFont(size: 15, weight: .medium)
+                text(block["label"].text).panelsScaledFont(size: 15, weight: .medium)
             }.foregroundStyle(PanelsTheme.Goal.tone(block["tone"].text))
         case "rows":
             VStack(spacing: 0) {
                 ForEach(Array(block["items"].array.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            edit(item["title"].text, "Row title", ["items", String(index), "title"]).panelsScaledFont(size: 15, weight: .medium)
-                            if let detail = item["detail"].string { edit(detail, "Row detail", ["items", String(index), "detail"]).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.faint) }
+                            text(item["title"].text).panelsScaledFont(size: 15, weight: .medium)
+                            if let detail = item["detail"].string { text(detail).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.faint) }
                         }
                         VStack(alignment: .trailing, spacing: 6) {
-                            if let status = item["status"].string { edit(status, "Row status", ["items", String(index), "status"]).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.tone(item["tone"].text)) }
-                            if let meta = item["meta"].string { edit(meta, "Row meta", ["items", String(index), "meta"]).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.faint) }
+                            if let status = item["status"].string { text(status).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.tone(item["tone"].text)) }
+                            if let meta = item["meta"].string { text(meta).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Goal.faint) }
                         }.frame(maxWidth: 120)
                     }.padding(.vertical, 16)
                     if index < block["items"].array.count - 1 { Divider() }
@@ -81,8 +81,8 @@ private struct GoalPageBlock: View {
         default: EmptyView()
         }
     }
-    private func edit(_ value: String, _ label: String, _ path: [String], markdown: Bool = false) -> some View {
-        GoalEditableText(value: value, label: label, session: session, blockID: block.id, path: path, markdown: markdown, multiline: true)
+    @ViewBuilder private func text(_ value: String, markdown: Bool = false) -> some View {
+        if markdown { PanelsMarkdown(source: value, baseURL: session.baseURL, textSize: .reading) } else { GoalReadText(value: value) }
     }
     private var views: some View {
         let views = block["views"].array
@@ -90,17 +90,11 @@ private struct GoalPageBlock: View {
         return VStack(alignment: .leading, spacing: 24) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 20) {
-                    ForEach(Array(views.enumerated()), id: \.element.id) { index, view in
+                    ForEach(views, id: \.id) { view in
                         VStack(spacing: 4) {
                             Button(view["label"].text) { selectedView = view.id }
                                 .panelsScaledFont(size: 13, weight: .medium).foregroundStyle(current?.id == view.id ? PanelsTheme.strong : PanelsTheme.Goal.faint)
                                 .accessibilityAddTraits(current?.id == view.id ? .isSelected : [])
-                                .contextMenu {
-                                    Button("Edit view label") { session.textDrafts[block.id + ":views." + String(index) + ".label"] = .init(text: view["label"].text, revision: session.revision) }
-                                }
-                            if session.textDrafts[block.id + ":views." + String(index) + ".label"] != nil {
-                                edit(view["label"].text, "View label", ["views", String(index), "label"])
-                            }
                             Rectangle().fill(current?.id == view.id ? PanelsTheme.muted : .clear).frame(height: 1)
                         }
                     }
@@ -111,11 +105,10 @@ private struct GoalPageBlock: View {
     }
 }
 
-/// Phone table: one outer frame, editable headers and rows, original row identity
+/// Phone table: one outer frame, headers and rows, original row identity
 /// survives sorting. Deliberate owner exception to the web's nested table frame.
 private struct GoalPageTable: View {
     let block: GoalJSON
-    let session: PageSession
     @State private var sortColumn: Int?
     @State private var ascending = true
     private var rows: [(Int, GoalJSON)] {
@@ -138,14 +131,14 @@ private struct GoalPageTable: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let caption = block["caption"].string {
-                GoalEditableText(value: caption, label: "Table caption", session: session, blockID: block.id, path: ["caption"]).panelsScaledFont(size: 17, weight: .medium)
+                GoalReadText(value: caption).panelsScaledFont(size: 17, weight: .medium)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 0) {
                     GridRow {
                         ForEach(Array(block["columns"].array.enumerated()), id: \.offset) { index, column in
                             HStack(spacing: 6) {
-                                GoalEditableText(value: column.text, label: "Column \(index + 1)", session: session, blockID: block.id, path: ["columns", String(index)])
+                                GoalReadText(value: column.text)
                                 Button { if sortColumn == index { ascending.toggle() } else { sortColumn = index; ascending = true } } label: { Image(systemName: sortColumn == index ? (ascending ? "arrow.up" : "arrow.down") : "arrow.up.arrow.down") }.accessibilityLabel("Sort by " + column.text)
                             }.fixedSize().font(.caption).padding(.vertical, 10)
                                 .accessibilityIdentifier("table-column-" + block.id + "-" + String(index))
@@ -165,17 +158,23 @@ private struct GoalPageTable: View {
                 }
             }.accessibilityIdentifier("goal-table-" + block.id)
             if rows.isEmpty {
-                GoalEditableText(value: block["empty_message"].string ?? "No rows", label: "Empty message", session: session, blockID: block.id, path: ["empty_message"], editable: !block["empty_message"].isNull).font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
+                GoalReadText(value: block["empty_message"].string ?? "No rows").font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
             }
         }.modifier(GoalPanel(padding: 16))
     }
     private func cellView(_ cell: GoalJSON, rowIndex: Int, column: Int) -> some View {
         HStack(spacing: 4) {
             if block["cell_tones"].array.indices.contains(rowIndex), block["cell_tones"].array[rowIndex].array.indices.contains(column), let tone = block["cell_tones"].array[rowIndex].array[column].string { Circle().fill(PanelsTheme.Goal.tone(tone)).frame(width: 4, height: 4) }
-            GoalEditableText(value: cell.text, label: "Row \(rowIndex + 1), column \(column + 1)", session: session, blockID: block.id, path: ["rows", String(rowIndex), String(column)])
+            GoalReadText(value: cell.text)
                 .panelsScaledFont(size: column == 0 || column == readingColumn ? 13 : 11, weight: column == 0 ? .medium : .regular)
                 .foregroundStyle(column == 0 || column == readingColumn ? PanelsTheme.strong : PanelsTheme.Goal.faint)
                 .monospacedDigit()
         }
     }
+}
+
+/// One Goal text field, shown as plain text.
+struct GoalReadText: View {
+    let value: String
+    var body: some View { Text(value).frame(maxWidth: .infinity, alignment: .leading) }
 }

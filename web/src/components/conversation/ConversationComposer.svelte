@@ -28,23 +28,21 @@
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
+  import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
+  import ComposerAttachments from "./composer/ComposerAttachments.svelte";
+  import ComposerAddMenu from "./composer/ComposerAddMenu.svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
+  import SystemLine from "./SystemLine.svelte";
   import {
-    orderedComposerAttachments, attachmentExtension, attachmentByteLabel,
+    orderedComposerAttachments, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
-  import {
-    controlsBelowTheDraft,
-    createDraftLineMeasurement,
-    moveBetweenDraftRows,
-    DRAFT_ROWS_MOTION_MS
-  } from "./composer/draftRows";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
-  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
-  import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import UserInputQuestionPanel from "./UserInputQuestionPanel.svelte";
+  import ConversationCredentialRequestCard from "./ConversationCredentialRequestCard.svelte";
+  import type { CredentialRequestRowBody } from "../../lib/conversation/view/contracts";
   import {
     beginComposerSend,
     restoreRefusedComposerSend,
@@ -55,6 +53,7 @@
   import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
+    composerPlaceholderFor,
     resolveComposerRunControls
   } from "../../lib/conversation/runControls/logic/runSelection";
   import type {
@@ -63,8 +62,8 @@
     ComposerRunSelection,
     ComposerRunSelectionIntent
   } from "../../lib/conversation/runControls/contracts";
-  import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
+  import { askShape } from "../../lib/conversation/composer";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
@@ -89,7 +88,6 @@
   } from "../../lib/conversation/pendingFiles";
   import type {
     ComposerCatalogEntry,
-    ComposerCatalogEntryKind,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
@@ -108,8 +106,10 @@
     backendKey = null,
     conversationExists = false,
     running = false,
+    animateAskEntrance = false,
     ask = null,
     userInput = null,
+    credentialRequest = null,
     askNote = null,
     userInputNote = null,
     permissionAvailable = true,
@@ -128,6 +128,7 @@
     supportsSteer = false,
     fateNote = null,
     errorNote = null,
+    undeliveredReason = null,
     placeholder = "Message the agent...",
     disabled = false,
     showRunPicker = true,
@@ -154,6 +155,8 @@
      *  has a live process behind it and cannot be moved to another. */
     conversationExists?: boolean;
     running?: boolean;
+    /** Only an ask that arrives live in the visible pane earns an entrance. */
+    animateAskEntrance?: boolean;
     ask?: {
       askId: string;
       title: string;
@@ -164,6 +167,9 @@
       requestId: string;
       questions: readonly UserInputQuestion[];
     } | null;
+    /** A key the agent asked for and the person has not yet given or refused. It is asked
+     *  where the other asks are, in the composer's place, and the box gives way to it. */
+    credentialRequest?: CredentialRequestRowBody | null;
     askNote?: string | null;
     userInputNote?: string | null;
     permissionAvailable?: boolean;
@@ -193,6 +199,8 @@
     supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
+    /** Why the words in the field were not delivered: one system line under the box. */
+    undeliveredReason?: string | null;
     placeholder?: string;
     disabled?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
@@ -344,12 +352,44 @@
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
 
-  let takenOver = $derived(ask !== null || userInput !== null);
-  let inputDisabled = $derived(disabled || takenOver || attachmentIntakesInFlight > 0);
+  let takenOver = $derived(ask !== null || userInput !== null || credentialRequest !== null);
+  /** A pending key request is drawn in the box only when no question or permission ask
+   *  outranks it; those are answered first, and the request waits its turn. */
+  let credentialInTheBox = $derived(userInput === null && ask === null && credentialRequest !== null);
+  /** The asks that bring their own actions, so the box draws none of its own under them. */
+  // Every ask draws its own answers in its shell's footer, so the box's own foot gives way to it.
+  let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
+  // v6: no waiting line above an ask: the ask card's own label is the one waiting label.
+  /** The question on screen, when it takes an own answer: the composer is then the one place
+   *  to write it, right under the question, and its send answers. */
+  let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
+  /** v10 (4): asks have no confirm pill: each option row is the action. The free-text well
+   *  keeps its own round send. Only a question that takes several answers waits for that
+   *  send to go on once something is chosen (questionCommitReady). */
+  let questionCommitReady = $state(false);
+  let questionTakesOwnAnswer = $state(false);
+  /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
+   *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
+  let askWaiting = $derived<"answers" | "holds" | null>(
+    !panelTakesTheBox
+      ? null
+      : userInput !== null && questionTakesOwnAnswer && attachments.length === 0
+        ? "answers"
+        : "holds"
+  );
+  /** One line until there is more to hold than one line: the add button, the draft, the run
+   *  chips, the microphone and send/stop share a single row. Words that wrap, a line break,
+   *  an attachment or a voice take grow it into its two rows; it goes back to one line only
+   *  once the draft is empty again, so it never flickers between the two while typing. */
+  let draftWraps = $state(false);
+  let compact = $derived(!draftWraps && attachments.length === 0 && voiceState.phase === "idle");
+  $effect(() => { if (text === "") draftWraps = false; });
+  // The composer stays usable under a waiting ask (owner): the ask is answered in its own
+  // shell, and a message still goes as the delivery chip says.
+  let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
   /** Browser recording capability controls availability. The question panel and
    *  permission ask always outrank voice. */
-  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
-  let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
+  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
   let addMenuElement = $state<HTMLDivElement | null>(null);
@@ -364,7 +404,7 @@
   // The foot this menu lives in is replaced whole by a question or a permission ask.
   // A menu that is not on the screen must not still be holding the Escape key.
   $effect(() => {
-    if (userInput !== null || takenOver || inputDisabled) addMenuOpen = false;
+    if (inputDisabled) addMenuOpen = false;
   });
 
   $effect(() => {
@@ -395,9 +435,12 @@
     inputDisabled,
     hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
     sendsInFlight,
-    deliveryMode
+    deliveryMode,
+    supportsSteer,
+    askWaiting
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
+  let shownPlaceholder = $derived(composerPlaceholderFor({ askWaiting, mode: runControlsView.deliveryMode, running, base: placeholder }));
   $effect(() => {
     const selection = runSelection;
     if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
@@ -540,11 +583,27 @@
 
   async function send(): Promise<void> {
     await intakeTail;
+    // v10 (4): a question that takes several answers goes on from the well's send once
+    // something is chosen and nothing is written.
+    if (userInput !== null && questionPanel !== null && questionCommitReady && text.trim() === "" && attachments.length === 0) {
+      questionPanel.commit();
+      return;
+    }
+    // Words written under a question that takes an own answer are that answer: they go to
+    // the question, not into the turn, and leave the box once taken.
+    if (askWaiting === "answers" && questionPanel !== null && text.trim() !== "") {
+      if (questionPanel.answerWith(text.trim())) {
+        text = "";
+        cursorAt = 0;
+        return;
+      }
+    }
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
     const capturedRetryContext = restoredSendContext;
     restoredSendContext = null;
-    const capturedMode = deliveryMode;
+    // The mode the controls show, which is the person's choice only while a turn runs.
+    const capturedMode = runControlsView.deliveryMode;
     const capturedConversationId = conversationId;
     const capturedDestination = uploadDestination ? {...uploadDestination} : undefined;
     const attempt = beginComposerSend(
@@ -626,7 +685,7 @@
   function intakeFiles(
     files: Iterable<File> | ArrayLike<File> | null | undefined
   ): Promise<void> {
-    if (disabled || takenOver) return Promise.resolve();
+    if (disabled) return Promise.resolve();
     const chosen: File[] = [];
     for (const file of Array.from(files ?? [])) {
       if (!isVideoFile(file.name)) { chosen.push(file); continue; }
@@ -691,7 +750,7 @@
         }
         published = true;
         intakeError = rejected
-          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
+          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, log, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
           : null;
       } finally {
         // Until published these URLs belong to this intake, including a later read failure.
@@ -759,12 +818,6 @@
       void tick().then(() => returnFocusToTheField());
     } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
     videoChanged();
-  }
-  /** Shows the first frame of a video still held in memory; the browser draws it, nothing is uploaded. */
-  function localFrame(node: HTMLVideoElement, file: File) {
-    const url = URL.createObjectURL(file);
-    node.src = `${url}#t=0.1`;
-    return { destroy: () => URL.revokeObjectURL(url) };
   }
   function videoProgress(video: PendingVideo): string {
     return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
@@ -874,44 +927,6 @@
     readWhereTheCursorIs();
   }
 
-  function catalogEntriesForTrigger(
-    entries: readonly ComposerCatalogEntry[],
-    trigger: "/" | "$" | "@" | null
-  ): ComposerCatalogEntry[] {
-    const kinds: readonly ComposerCatalogEntryKind[] = trigger === "/"
-      ? ["command"]
-      : trigger === "$"
-        ? ["skill"]
-        : trigger === "@"
-          ? ["app", "plugin"]
-          : [];
-    return entries.filter((entry) => kinds.includes(entry.kind));
-  }
-
-  /** Prefix matches come before contains matches, alphabetically within each group. */
-  function catalogEntriesMatching(
-    entries: readonly ComposerCatalogEntry[],
-    typed: string,
-    trigger: "/" | "$" | "@" | null
-  ): ComposerCatalogEntry[] {
-    const wanted = typed.toLowerCase();
-    const searchable = (entry: ComposerCatalogEntry): string => {
-      const displayText = entry.display_text.toLowerCase();
-      return trigger !== null && displayText.startsWith(trigger)
-        ? displayText.slice(trigger.length)
-        : displayText;
-    };
-    const byDisplayText = (one: ComposerCatalogEntry, other: ComposerCatalogEntry): number =>
-      one.display_text.localeCompare(other.display_text);
-    const startsWithIt = entries.filter((entry) =>
-      searchable(entry).startsWith(wanted)
-    );
-    const containsIt = entries.filter(
-      (entry) => !searchable(entry).startsWith(wanted) && searchable(entry).includes(wanted)
-    );
-    return [...startsWithIt.sort(byDisplayText), ...containsIt.sort(byDisplayText)];
-  }
-
   /** Replace the active token with the entry's exact insertion text. */
   async function takeTheCatalogEntry(entry: ComposerCatalogEntry): Promise<void> {
     const underway = catalogTokenUnderway;
@@ -968,11 +983,16 @@
     cursorAt = input.value.length;
   }
 
+  /** The recording's level bars, newest at the right: the meter's recent levels, with the
+   *  start of a take (and a browser that cannot measure) drawn as a quiet flat line. */
+  const VOICE_BAR_COUNT = 24;
+  function voiceBars(levels: readonly number[] | undefined): number[] {
+    const recent = (levels ?? []).slice(-VOICE_BAR_COUNT);
+    return [...Array<number>(VOICE_BAR_COUNT - recent.length).fill(0), ...recent];
+  }
+
   // A question panel or permission ask arriving mid-voice takes the composer: whatever
   // voice was doing is cancelled rather than left running under a surface it cannot show.
-  $effect(() => {
-    if (takenOver && voiceState.phase !== "idle") voice?.cancel();
-  });
 
   let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
 
@@ -987,6 +1007,7 @@
       textareaMeasurement = createComposerTextareaMeasurement(input);
     }
     const size = textareaMeasurement.measure(style);
+    if (!draftWraps && (size.growth > 0 || input.value.includes("\n"))) draftWraps = true;
     const height = `${size.height}px`;
     const host = input.closest<HTMLElement>(".ticket-page, .manager-page") ?? input.closest<HTMLElement>("[data-conversation-pane]");
     host?.style.setProperty("--composer-growth", `${size.growth}px`);
@@ -994,11 +1015,77 @@
     if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
   }
 
-  // --- the draft's row ------------------------------------------------------------------------
-  /** The composer that is one row at rest: in a conversation layer, holding only the line. */
-  const ONE_ROW_COMPOSER =
-    ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
   let boxElement = $state<HTMLDivElement | null>(null);
+
+  /** The box morphs between its shapes (one line, two rows, an ask) rather than jumping: its
+   *  height is read before the change and eased from there to its new natural height. The
+   *  words inside are laid out at once; only the frame travels. */
+  let morphFrom: number | null = null;
+  let morphAnimation: Animation | null = null;
+  $effect.pre(() => {
+    compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
+    untrack(() => { morphFrom = boxElement?.isConnected ? boxElement.getBoundingClientRect().height : null; });
+  });
+  $effect(() => {
+    compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
+    untrack(() => {
+      const box = boxElement;
+      const from = morphFrom;
+      morphFrom = null;
+      if (box === null || from === null || !box.isConnected) return;
+      if (panelTakesTheBox && !animateAskEntrance) return;
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      morphAnimation?.cancel();
+      const to = box.getBoundingClientRect().height;
+      if (Math.abs(to - from) < 1) return;
+      box.style.overflow = "clip";
+      const animation = box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)" });
+      morphAnimation = animation;
+      const release = (): void => { if (morphAnimation === animation) { box.style.removeProperty("overflow"); morphAnimation = null; } };
+      animation.onfinish = release;
+      animation.oncancel = release;
+    });
+  });
+
+  // --- popovers --------------------------------------------------------------------------------
+  /** Every popover the composer opens (add, catalog, model, delivery) opens from the box's top
+   *  edge, at its trigger, and floats over whatever stands above the box (the queue tray, the
+   *  task pill, the transcript's last lines) on the raised plane, its ring and shadow setting it
+   *  off. Nothing steps aside for it, so nothing jumps when it opens or closes. A composer that
+   *  has had to scroll draws its popovers in its own flow (app.css). */
+  const DISMISSIBLE_POPOVERS = ".listbox-picker-panel, .chat-add-menu";
+  /** A press outside an open menu only closes it. Its click would otherwise land on whatever the
+   *  menu was floating over (a queued message's Send now, the task pill, the resting dock's
+   *  background that opens the conversation), so that one click is held back. The press is
+   *  noted before the menu's own outside-press handler closes it (window capture runs first),
+   *  and every press or key starts the note again, so a press that never became a click never
+   *  holds back a later one. The catalog is left out: it follows the draft as it is typed. */
+  let swallowNextClick = false;
+  function notePressOutsideAPopover(event: PointerEvent): void {
+    swallowNextClick = false;
+    const box = boxElement;
+    if (box === null || !(event.target instanceof Node)) return;
+    const open = box.querySelector<HTMLElement>(DISMISSIBLE_POPOVERS);
+    const owner = open?.parentElement;
+    if (!open || !owner || owner.contains(event.target)) return;
+    swallowNextClick = true;
+  }
+  function holdBackTheDismissingClick(event: MouseEvent): void {
+    if (!swallowNextClick) return;
+    swallowNextClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  // --- keyboard focus -----------------------------------------------------------------------------
+  /** Whether the last thing the person did was on the keyboard rather than a pointer. A field
+   *  reached with the keyboard draws the focus ring (a 2px accent edge); one pressed into keeps
+   *  the quiet 1px edge, since the caret already shows where the pointer went. */
+  let lastInputWasKeyboard = false;
+  let keyboardFocus = $state(false);
+  function inputModality(event: KeyboardEvent | PointerEvent): void {
+    lastInputWasKeyboard = event.type === "keydown";
+  }
 
   /** Whether focus now arriving in the field is the composer handing it back. */
   let returningFocus = false;
@@ -1018,7 +1105,24 @@
       if (!destroyed && !inputDisabled && (active === null || active === document.body)) returnFocusToTheField();
     });
   });
+  /** v11 (4): a queued message taken back to edit: its words come into the field, after
+   *  anything already written there, and the cursor waits at their end. They were queued,
+   *  so the composer sends them with Queue again unless the person picks another mode. */
+  export function takeBackQueuedWords(words: string): void {
+    deliveryMode = "queue";
+    const settled = text.trimEnd();
+    text = settled === "" ? words : `${settled}\n\n${words}`;
+    recordDraftChange();
+    void tick().then(() => {
+      const input = inputElement;
+      if (destroyed || input === null) return;
+      returnFocusToTheField();
+      input.setSelectionRange(input.value.length, input.value.length);
+      cursorAt = input.value.length;
+    });
+  }
   function fieldFocused(): void {
+    keyboardFocus = lastInputWasKeyboard;
     readWhereTheCursorIs();
     if (!returningFocus) onFieldChosen?.();
   }
@@ -1044,100 +1148,14 @@
     input.focus();
     onFieldChosen?.();
   }
-  /** Whether the controls are on their own row under the draft. Written to the box as
-   *  data-composer-controls-below in the same step as it is decided, so the layout can be
-   *  read before and after it and the move drawn between the two. */
-  let controlsBelow = false;
-  let draftRowsMoving: Animation[] = [];
-  let draftLine: ReturnType<typeof createDraftLineMeasurement> | null = null;
-  /** On the one row, what lies between the add button and the next control that is not
-   *  the draft: the grid's two column gaps and the draft's own inset. Read whenever the one
-   *  row is showing; the columns are the same with the controls below, so it still holds. */
-  let oneRowGutter = 8;
-  let draftRowsKey: string | null = null;
-  /** Whether the last placement found the composer in the shape that has a one row. A box
-   *  coming back to that shape (an attachment removed, a voice take ended) has never been
-   *  drawn in either layout, so it is placed, not moved. */
-  let inOneRowShape = false;
-
-  function roomBesideControls(box: HTMLElement, input: HTMLTextAreaElement): number | null {
-    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
-    const add = foot?.querySelector<HTMLElement>(":scope > .chat-add") ?? null;
-    if (foot === null || add === null) return null;
-    const following = Array.from(foot.children).filter(
-      (element) => element !== add && element.getClientRects().length > 0
-    );
-    if (following.length === 0) return null;
-    const between = Math.min(...following.map((element) => element.getBoundingClientRect().left))
-      - add.getBoundingClientRect().right;
-    if (!controlsBelow) oneRowGutter = between - input.clientWidth;
-    return between - oneRowGutter;
-  }
-
-  /** Put the controls beside the draft or under it, as the draft and its room now need. A
-   *  move the person made by writing is animated; the first placement, a different draft, a
-   *  return to this shape and a change of width are simply placed. */
-  function placeDraftRow(animate: boolean): void {
-    const box = boxElement;
-    const input = inputElement;
-    if (box === null || input === null || input.hidden || !box.matches(ONE_ROW_COMPOSER)) {
-      inOneRowShape = false;
-      return;
-    }
-    if (!inOneRowShape) animate = false;
-    inOneRowShape = true;
-    const room = roomBesideControls(box, input);
-    if (room === null) return;
-    const style = getComputedStyle(input);
-    const draftWidth = text === "" || text.includes("\n")
-      ? 0
-      : (draftLine ??= createDraftLineMeasurement(document)).measure(text, style);
-    const next = controlsBelowTheDraft({
-      controlsBelow,
-      text,
-      draftWidth,
-      roomBesideControls: room
-    });
-    if (next === controlsBelow) return;
-    const change = (): void => {
-      controlsBelow = next;
-      box.toggleAttribute("data-composer-controls-below", next);
-      resizeWritingArea();
-    };
-    if (!animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      for (const animation of draftRowsMoving) animation.cancel();
-      draftRowsMoving = [];
-      change();
-      return;
-    }
-    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
-    const controls = Array.from(foot?.children ?? []).filter(
-      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
-    );
-    draftRowsMoving = moveBetweenDraftRows(box, [input, ...controls], draftRowsMoving, change, {
-      duration: DRAFT_ROWS_MOTION_MS,
-      easing: style.getPropertyValue("--motion-ease").trim() || "ease-out"
-    });
-  }
-
   // Effects run after Svelte has written values and hidden-state changes into the DOM.
   $effect(() => {
     text;
     userInput;
+    credentialRequest;
     voiceState.phase;
     attachments.length;
-    const key = draftKey;
-    const writing = draftRowsKey === key;
-    draftRowsKey = key;
-    placeDraftRow(writing);
-    const heightBefore = inputElement?.style.height;
     resizeWritingArea();
-    // A line gained or lost while the box is still growing: the box takes its new height
-    // now rather than at the end of the move.
-    if (draftRowsMoving.length > 0 && inputElement?.style.height !== heightBefore) {
-      for (const animation of draftRowsMoving) animation.cancel();
-      draftRowsMoving = [];
-    }
   });
 
   $effect(() => {
@@ -1153,10 +1171,7 @@
       // Write on the next frame, outside observer delivery. Even one intentional height
       // change to an observed input can otherwise report undelivered observations.
       cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => {
-        placeDraftRow(false);
-        resizeWritingArea();
-      });
+      resizeFrame = requestAnimationFrame(resizeWritingArea);
     });
     observer.observe(input);
     return () => {
@@ -1167,6 +1182,48 @@
         textareaMeasurement = null;
       }
     };
+  });
+
+  /** v7 motion: the composer grows into an ask (and back) over 220 ms ease-out, and the ask's
+   *  contents fade in over 120 ms. Reduced motion skips both. */
+  let heightBeforeTheAsk = 0;
+  let askShownBefore = false;
+  $effect.pre(() => {
+    panelTakesTheBox;
+    heightBeforeTheAsk = boxElement?.getBoundingClientRect().height ?? 0;
+  });
+  $effect(() => {
+    const shown = panelTakesTheBox;
+    const box = boxElement;
+    if (box === null || shown === askShownBefore) { askShownBefore = shown; return; }
+    askShownBefore = shown;
+    if (shown && !animateAskEntrance) return;
+    if (typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const from = heightBeforeTheAsk;
+    const to = box.getBoundingClientRect().height;
+    if (from <= 0 || Math.abs(to - from) < 1 || typeof box.animate !== "function") return;
+    box.animate([{ height: `${from}px`, overflow: "clip" }, { height: `${to}px`, overflow: "clip" }], { duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" });
+    if (shown) box.querySelector<HTMLElement>(".chat-ask")?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease-out" });
+  });
+
+  /** v6: menus open with their bottom 8px above the composer's top edge. Each menu's anchor
+   *  (+, the model chip, the Steer chip) learns how far it stands under that edge. */
+  function liftMenus(): void {
+    const box = boxElement;
+    if (box === null) return;
+    const top = box.getBoundingClientRect().top;
+    for (const anchor of box.querySelectorAll<HTMLElement>(".chat-add, [data-conversation-model-picker], [data-conversation-send-mode]"))
+      anchor.style.setProperty("--c2-menu-lift", `${Math.max(0, anchor.getBoundingClientRect().top - top)}px`);
+  }
+  $effect(() => {
+    const box = boxElement;
+    if (box === null) return;
+    const observer = new ResizeObserver(() => liftMenus());
+    observer.observe(box);
+    const mutations = new MutationObserver(() => liftMenus());
+    mutations.observe(box, { childList: true, subtree: true });
+    liftMenus();
+    return () => { observer.disconnect(); mutations.disconnect(); };
   });
 
   onMount(() => {
@@ -1183,14 +1240,16 @@
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
-      draftLine?.dispose();
-      draftLine = null;
     };
   });
 </script>
 
 <svelte:window
+  onkeydowncapture={(event) => { swallowNextClick = false; inputModality(event); }}
+  onpointerdowncapture={notePressOutsideAPopover}
+  onclickcapture={holdBackTheDismissingClick}
   onpointerdown={(event) => {
+    inputModality(event);
     if (!addMenuOpen) return;
     const pressed = event.target;
     if (pressed instanceof Node && addMenuElement?.contains(pressed)) return;
@@ -1205,45 +1264,41 @@
   <div class="chat-box-stack">
     {#each localSends as entry (entry.context.messageId)}
       <article class="chat-local-send" data-local-video-send={entry.context.messageId} aria-label="Local pending message">
-        <p>{entry.attempt.draftBeforeSend.text}</p>
+        {#if entry.attempt.draftBeforeSend.text}<p class="chat-local-send-text">{entry.attempt.draftBeforeSend.text}</p>{/if}
         {#each entry.attempt.draftBeforeSend.pendingVideos ?? [] as video}
-          <div>{video.fileName} · <span role="status">{videoProgress(video)}</span></div>
+          <div class="chat-local-send-file">{video.fileName} · <span role="status">{videoProgress(video)}</span></div>
           {#if video.phase === "failed" && video.file && entry.phase === "waiting"}
-            <button type="button" onclick={() => void transfers.start(video)}>Retry</button>
+            <button type="button" class="cv-btn cv-btn--ghost" onclick={() => void transfers.start(video)}>Retry</button>
           {/if}
         {/each}
-        <div role="status">{entry.error || (entry.phase === "dispatching" ? "Sending…" : entry.phase === "interrupted" ? "Kept in this browser · review before sending" : "Pending in this browser · not sent yet")}</div>
+        <div class="chat-local-send-state" role="status">{entry.error || (entry.phase === "dispatching" ? "Sending…" : entry.phase === "interrupted" ? "Kept in this browser · review before sending" : "Pending in this browser · not sent yet")}</div>
         {#if entry.phase !== "dispatching"}
-          {#if entry.phase === "failed" && !entry.needsReconciliation}
-            <button type="button" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
-          {/if}
-          <button type="button" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
-          {#if entry.attempt.draftBeforeSend.pendingVideos?.length}
-            <button type="button" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
-          {/if}
+          <div class="chat-local-send-actions">
+            {#if entry.phase === "failed" && !entry.needsReconciliation}
+              <button type="button" class="cv-btn cv-btn--secondary" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
+            {/if}
+            <button type="button" class="cv-btn cv-btn--ghost" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
+            {#if entry.attempt.draftBeforeSend.pendingVideos?.length}
+              <button type="button" class="cv-btn cv-btn--ghost" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
+            {/if}
+          </div>
         {/if}
       </article>
     {/each}
-    <HeldPromptStack
-      rows={heldPromptRows}
-      {conversationId}
-      {supportsSteer}
-      {running}
-      onDiscard={onDiscardHeldPrompt}
-      onPromote={onPromoteHeldPrompt}
-      onStopDrawing={onStopDrawingHeldPrompt}
-      onSendAgain={onSendHeldPromptAgain}
-    />
-
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
       class="chat-box"
       bind:this={boxElement}
       class:drag={draggingAttachments}
-      class:has-ask={takenOver}
+      class:has-attachments={attachments.length > 0}
+      class:keyboard-focus={keyboardFocus}
+      class:is-voice={voiceState.phase !== "idle"}
+      class:is-compact={compact}
+      class:has-ask={panelTakesTheBox}
+      class:has-key-request={credentialInTheBox}
       data-conversation-box
-      data-conversation-taken-over={takenOver ? "true" : undefined}
+      data-conversation-box-shape={compact ? "line" : "grown"}
       role="group"
       aria-label="Conversation composer"
       ondragenter={onDragEnter}
@@ -1253,103 +1308,68 @@
       onmousedown={keepTheFieldFocused}
       onclick={focusTheFieldFromTheBox}
     >
-      {#if userInput}
-        <UserInputQuestionPanel
-          request={userInput}
-          busy={disabled}
-          answerAvailable={userInputAvailable}
-          note={userInputNote}
-          onSubmit={(answers) => onSubmitUserInput?.(answers)}
-          onCancelTurn={() => onCancelTurn?.()}
-        />
-      {:else if takenOver && ask}
-        <PermissionAskCard
-          ask={ask}
-          answerAvailable={permissionAvailable}
-          busy={disabled}
-          note={askNote}
-          onAnswer={(optionId) => onAnswer?.(optionId)}
-        />
+      <!-- A waiting ask is the composer while it waits: the same frame takes the ask's title,
+           body and answers. Questions and permission asks keep a reply line. Key requests
+           end at their Decline and Save key actions. -->
+      {#if panelTakesTheBox}
+      <div class="chat-ask" class:animate-ask={animateAskEntrance} data-conversation-ask-dock data-conversation-taken-over="true">
+        {#if userInput}
+          <UserInputQuestionPanel
+            bind:this={questionPanel}
+            bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            bind:commitReady={questionCommitReady}
+            framed={false}
+            ownAnswer={attachments.length === 0 ? text : ""}
+            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
+            onWriteOwnAnswer={() => inputElement?.focus()}
+            request={userInput}
+            onStop={undefined}
+            busy={disabled}
+            answerAvailable={userInputAvailable}
+            note={userInputNote}
+            onSubmit={(answers) => onSubmitUserInput?.(answers)}
+          />
+        {:else if takenOver && ask}
+          <PermissionAskCard
+            docked
+            ask={ask}
+            framed={false}
+            answerAvailable={permissionAvailable}
+            busy={disabled}
+            note={askNote}
+            onStop={undefined}
+            onAnswer={(optionId) => onAnswer?.(optionId)}
+          />
+        {:else if credentialInTheBox && credentialRequest}
+          <ConversationCredentialRequestCard request={credentialRequest} framed={false} onStop={undefined} />
+        {/if}
+      </div>
       {/if}
+      {#if !credentialInTheBox}
+      <ComposerAttachments {attachments} {inputDisabled} {videoProgress}
+        onChooseAgain={() => fileInput?.click()}
+        onRetry={(video) => void transfers.start(video)}
+        onRemove={(attachment) => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
+      />
 
-      {#if catalogMenuIsOpen}
-        <ComposerCatalogMenu
-          entries={matchingCatalogEntries}
-          activeIndex={activeCatalogEntryIndex}
-          anyEntriesAtAll={eligibleCatalogEntries.length > 0}
-          onChoose={(entry) => void takeTheCatalogEntry(entry)}
-          onHighlight={(index) => (activeCatalogEntryIndex = index)}
-          pointerReallyMoved={() => pointerReallyMoved}
-        />
-      {/if}
-
-      {#if userInput === null && attachments.length > 0}
-        <div class="chat-attachments" data-conversation-attachments aria-label="Attached and waiting to send">
-          {#each attachments as attachment (`${attachment.kind}-${attachment.value.id}`)}
-            {@const item = attachment.value}
-            <div
-              class="chat-att"
-              class:img={attachment.kind === "image"}
-              class:file={attachment.kind === "file" || attachment.kind === "video"}
-              class:video={attachment.kind === "video"}
-              data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
-              data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
-              data-chat-file-preview={attachment.kind === "file" ? "" : undefined}
-              data-chat-file-name={attachment.kind === "file" ? item.fileName : undefined}
-              title={`${item.fileName || "pasted image"} · ${item.mediaType} · ${attachmentByteLabel(item.byteCount)}`}
-            >
-              {#if attachment.kind === "image"}
-                <img src={attachment.value.previewUrl} alt="" />
-              {:else if attachment.kind === "video"}
-                <span class="chat-att-thumb" aria-hidden="true">
-                  {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
-                  <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
-                </span>
-                <span class="chat-att-words"><span class="chat-att-name">{item.fileName}</span>
-                  <span class="chat-att-meta" role="status">{videoProgress(attachment.value)}</span>
-                </span>
-                {#if attachment.value.phase === "interrupted" || (attachment.value.phase === "failed" && !attachment.value.file)}
-                  <button type="button" onclick={() => fileInput?.click()}>Choose video again</button>
-                {/if}
-                {#if attachment.value.phase === "failed" && attachment.value.file}
-                  <button type="button" onclick={() => void transfers.start(attachment.value)}>Retry</button>
-                {/if}
-              {:else}
-                <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(item.fileName)}</span>
-                <span class="chat-att-words">
-                  <span class="chat-att-name">{item.fileName}</span>
-                  <span class="chat-att-meta">{item.mediaType} · {attachmentByteLabel(item.byteCount)}</span>
-                </span>
-              {/if}
-              <button
-                type="button"
-                class="chat-att-x"
-                data-chat-image-remove={attachment.kind === "image" ? "" : undefined}
-                data-chat-file-remove={attachment.kind === "file" ? "" : undefined}
-                aria-label={`Remove ${attachment.kind} ${item.fileName || "pasted image"}`}
-                title="Remove"
-                disabled={inputDisabled}
-                onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
-              >×</button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      {#if userInput === null && voiceState.phase !== "idle"}
-        <!-- Every voice state keeps the composer's shape: this centred line is the main
-             area, and the actions stay down in the foot bar. -->
-        <div class="chat-voice-mid" data-conversation-voice={voiceState.phase}>
+      <!-- A voice take stands where the words go: its level and its clock, on the draft's row,
+           at the draft's height, so the composer keeps its size. -->
+      {#if voiceState.phase !== "idle"}
+        <div class="chat-voice-line" data-conversation-voice={voiceState.phase}>
           {#if voiceState.phase === "recording"}
-            <span class="live-text-shimmer">recording</span>
-            <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
-          {:else if voiceState.phase === "transcribing"}
-            <span class="live-text-shimmer">transcribing</span>
-          {:else}
-            <span class="chat-voice-fail">
-              transcription failed · kept
-              <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
+            <span class="chat-voice-word cv-visually-hidden" role="status">Recording</span>
+            <span class="chat-voice-bars" aria-hidden="true">
+              {#each voiceBars(voiceState.levels) as level, index (index)}
+                <span class="chat-voice-bar" style:--voice-level={level}></span>
+              {/each}
             </span>
+            <span class="chat-voice-clock">{formatVoiceTime(voiceState.elapsedMs)}</span>
+          {:else if voiceState.phase === "transcribing"}
+            <span class="chat-voice-word chat-voice-shimmer" role="status">Transcribing…</span>
+            <span class="chat-voice-clock">{formatVoiceTime(voiceState.keptMs)}</span>
+          {:else}
+            <span class="chat-voice-word chat-voice-failed" role="status">Transcription failed. The recording is kept.</span>
+            <span class="chat-voice-clock">{formatVoiceTime(voiceState.keptMs)}</span>
           {/if}
         </div>
       {/if}
@@ -1358,145 +1378,82 @@
         class="chat-ta"
         data-conversation-input
         rows="1"
-        placeholder={livePlaceholder}
+        placeholder={shownPlaceholder}
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={userInput !== null || voiceState.phase !== "idle"}
+        hidden={voiceState.phase !== "idle"}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
         onclick={fieldPressed}
         onfocus={fieldFocused}
-        onblur={() => (theCursorIsInTheBox = false)}
+        onblur={() => { theCursorIsInTheBox = false; keyboardFocus = false; }}
         onpaste={onPaste}
       ></textarea>
 
-      {#if userInput === null}
-      <div class="chat-foot" class:has-ask={takenOver}>
-        {#if takenOver && ask}
-          <PermissionAskActions
-            ask={ask}
-            answerAvailable={permissionAvailable}
-            busy={disabled}
-            onAnswer={(optionId) => onAnswer?.(optionId)}
-            onCancelTurn={() => onCancelTurn?.()}
+      <div class="chat-foot">
+        <!-- The catalog floats over the box from inside its foot, so opening it never changes
+             what the box holds and the box keeps its one layout. -->
+        {#if catalogMenuIsOpen}
+          <ComposerCatalogMenu
+            entries={matchingCatalogEntries}
+            activeIndex={activeCatalogEntryIndex}
+            anyEntriesAtAll={eligibleCatalogEntries.length > 0}
+            onChoose={(entry) => void takeTheCatalogEntry(entry)}
+            onHighlight={(index) => (activeCatalogEntryIndex = index)}
+            pointerReallyMoved={() => pointerReallyMoved}
           />
-        {:else if voiceState.phase !== "idle"}
-          <!-- The X on the left undoes whatever voice is doing; the right-hand slot is the
-               one going-forward action of the state: stop, or retry. -->
+        {/if}
+        {#if voiceState.phase !== "idle"}
+          <!-- A voice take keeps the controls' row: Cancel where the + is, and its one
+               going-forward action where send is. Cancelling is not a danger, so it is a ghost. -->
           <button
             type="button"
-            class="chat-voice-cancel"
+            class="cv-btn cv-btn--ghost chat-voice-x"
             data-voice-cancel
             aria-label={voiceState.phase === "recording"
               ? "Cancel recording"
               : voiceState.phase === "transcribing"
                 ? "Cancel transcription"
                 : "Discard recording"}
+            title={voiceState.phase === "recording" ? "Cancel recording" : voiceState.phase === "transcribing" ? "Cancel transcription" : "Discard recording"}
             onclick={() => voice?.cancel()}
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
+            <span>{voiceState.phase === "failed" ? "Discard" : "Cancel"}</span>
           </button>
-          {#if voiceState.phase === "recording"}
-            <button
-              type="button"
-              class="chat-voice-stop"
-              data-voice-stop
-              aria-label="Stop recording and transcribe"
-              onclick={() => voice?.stopRecording()}
-            ><span class="chat-voice-square"></span></button>
-          {:else if voiceState.phase === "failed"}
-            <button
-              type="button"
-              class="chat-voice-retry"
-              data-voice-retry
-              onclick={() => voice?.retry()}
-            >retry</button>
-          {/if}
+          <span class="chat-voice-go">
+            {#if voiceState.phase === "recording"}
+              <button
+                type="button"
+                class="chat-send on"
+                data-voice-stop
+                aria-label="Stop recording and transcribe"
+                title="Stop recording and transcribe"
+                onclick={() => voice?.stopRecording()}
+              ><span class="chat-send-fill" aria-hidden="true"></span></button>
+            {:else if voiceState.phase === "failed"}
+              <button
+                type="button"
+                class="cv-btn cv-btn--primary chat-voice-again"
+                data-voice-retry
+                onclick={() => voice?.retry()}
+              >Retry</button>
+            {/if}
+          </span>
         {:else}
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
-          <div class="chat-add" bind:this={addMenuElement}>
-            <button
-              type="button"
-              class="chat-image chat-add-btn"
-              class:on={pendingImages.length + pendingFiles.length + pendingVideos.length > 0}
-              data-conversation-add
-              aria-haspopup="menu"
-              aria-expanded={addMenuOpen}
-              aria-label="Add a picture, a file, a photo, or a command"
-              title="Add a picture, a file, a photo, or a command"
-              disabled={inputDisabled}
-              onclick={() => (addMenuOpen = !addMenuOpen)}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-            {#if addMenuOpen}
-              <div class="chat-add-menu" role="menu">
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-image
-                  data-conversation-image-count={pendingImages.length || undefined}
-                  onclick={() => { addMenuOpen = false; imageInput?.click(); }}
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
-                  </svg>
-                  <span>Picture</span>
-                  {#if pendingImages.length > 0}<span class="chat-add-count">{pendingImages.length}</span>{/if}
-                </button>
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-file
-                  data-conversation-file-count={pendingFiles.length || undefined}
-                  onclick={() => { addMenuOpen = false; fileInput?.click(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
-                  </svg>
-                  <span>File</span>
-                  {#if pendingFiles.length > 0}<span class="chat-add-count">{pendingFiles.length}</span>{/if}
-                </button>
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-camera
-                  onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M3 8.5h4l1.5-2h7L17 8.5h4v10H3zM12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
-                  </svg>
-                  <span>Take a picture</span>
-                </button>
-                <!-- The cursor stays in the box: everything this does is done to what is
-                     being written there. -->
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-slash
-                  onmousedown={(event) => event.preventDefault()}
-                  onclick={() => { addMenuOpen = false; void startWritingACommand(); }}
-                >
-                  <span class="chat-add-glyph" aria-hidden="true">/</span>
-                  <span>Write a command</span>
-                </button>
-              </div>
-            {/if}
-          </div>
+          <!-- v14 (2): an ask has no Stop of its own. Its bottom row is the answer well only (pen,
+               draft, microphone, send); while a turn is open the header's "..." menu leads
+               with "Stop the agent". -->
+          <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
+            disabled={inputDisabled} imageCount={pendingImages.length} fileCount={pendingFiles.length}
+            onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
+            onCommand={() => void startWritingACommand()}
+          />
           <input
             bind:this={cameraInput}
             class="chat-image-input"
@@ -1538,8 +1495,8 @@
                 onclick={() => void voice?.startRecording()}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                  <rect x="9" y="3.5" width="6" height="11" rx="3" />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5" />
                 </svg>
               </button>
             {/if}
@@ -1551,6 +1508,8 @@
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
+              asking={panelTakesTheBox}
+              askCommitReady={userInput !== null && questionCommitReady && text.trim() === "" && attachments.length === 0}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1558,97 +1517,297 @@
         {/if}
       </div>
       {/if}
+      <!-- While something is dragged over it, the whole box becomes the place to drop: one
+           opaque face over everything in it, so no word of the draft or the controls shows
+           through the instruction, and the box keeps its size. -->
       <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
-        Drop images or files to attach
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
+        </svg>
+        <span>Drop to attach</span>
       </div>
     </div>
   </div>
 
   {#if intakeError || errorNote}
-    <div class="chat-receipt" role="alert" data-conversation-error>{intakeError ?? errorNote}</div>
+    <div class="chat-receipt" role="alert" data-conversation-error>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5h.01M10.3 4.2 2.8 17.5A2 2 0 0 0 4.5 20.5h15a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" /></svg>
+      <span>{intakeError ?? errorNote}</span>
+    </div>
+  {:else if undeliveredReason}
+    <SystemLine mark="failure" role="alert" data-conversation-undelivered-note="">Not delivered<span aria-hidden="true">{" · "}</span>{undeliveredReason}</SystemLine>
   {:else if fateNote}
     <div class="c2-fate" data-conversation-fate>{fateNote}</div>
   {/if}
 </section>
 
 <style>
-  /* One affordance where three used to be, at the size a finger can find. */
-  .chat-add { position: relative; display: inline-flex; }
-  .chat-add-menu {
-    position: absolute;
-    inset-block-end: calc(100% + var(--space-2));
-    inset-inline-start: 0;
-    z-index: 5;
-    min-width: 224px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: var(--space-1);
-    background: var(--surface-2);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-md);
-    box-shadow: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
-  }
-  .chat-add-item {
-    display: flex;
+  /* --- the stack ----------------------------------------------------------------------------- */
+  .c2-composer { display: grid; gap: var(--cv-s2); }
+
+  /* --- the few buttons the composer draws itself -------------------------------------------- */
+  :global(.c2-composer .cv-btn) {
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    min-height: 32px;
-    padding: var(--space-2) var(--space-3);
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--type-md);
-    text-align: left;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 var(--cv-s3);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+    font-weight: var(--cv-weight-label);
+    white-space: nowrap;
     cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-add-item:hover,
-  .chat-add-item:focus-visible { color: var(--text-strong); background: var(--surface-1); }
-  .chat-add-item svg {
-    width: 20px;
-    height: 20px;
+  :global(.c2-composer .cv-btn--small) { height: 28px; padding: 0 10px; }
+  /* The conversation's one primary style (app.css, .cv-button--primary). */
+  :global(.c2-composer .cv-btn--primary) { border-radius: 18px; background: #f2f2f2; color: #121212; }
+  :global(.c2-composer .cv-btn--primary:hover) { background: #ffffff; }
+  :global(.c2-composer .cv-btn--secondary) { background: var(--cv-control); color: var(--cv-t1); }
+  :global(.c2-composer .cv-btn--secondary:hover) { background: var(--cv-control-hover); }
+  :global(.c2-composer .cv-btn--ghost) { background: transparent; color: var(--cv-t2); }
+  :global(.c2-composer .cv-btn--ghost:hover) { background: var(--cv-control); color: var(--cv-t1); }
+  :global(.c2-composer .cv-btn svg) { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  :global(.c2-composer .cv-btn:focus-visible),
+  :global(.c2-composer .chat-att-x:focus-visible) {
+    outline: var(--cv-focus-width) solid var(--cv-accent);
+    outline-offset: var(--cv-focus-offset);
+  }
+  .cv-visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* A message only this browser holds (a video still uploading, a send to be checked): a quiet
+     note over the composer, its words in the body tone, its state a step quieter. */
+  .chat-local-send {
+    display: grid;
+    gap: var(--cv-s1);
+    padding: var(--cv-s3) var(--cv-s4);
+    border-radius: var(--cv-r-lg);
+    background: var(--cv-well);
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  .chat-local-send-text { margin: 0; white-space: pre-wrap; color: var(--cv-t1); font-size: var(--cv-type-ui); line-height: var(--cv-leading-ui); }
+  .chat-local-send-file { color: var(--cv-t2); }
+  .chat-local-send-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s1); margin: var(--cv-s1) 0 0 calc(var(--cv-s3) * -1); }
+
+  /* --- drag over: the whole shell becomes the place to drop ---------------------------------- */
+  /* The shell takes the accent wash and the words "Drop to attach" stand alone in its middle;
+     what it holds is covered, at the same size, so nothing moves and no edge changes colour. */
+  .chat-box.drag { border-color: transparent; }
+  .chat-drop-label {
+    inset: -1px;
+    gap: var(--cv-s2);
+    border-radius: inherit;
+    background: linear-gradient(var(--cv-accent-wash), var(--cv-accent-wash)), var(--cv-raised);
+    color: var(--cv-t1);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-ui);
+    line-height: var(--cv-leading-ui);
+    font-weight: var(--cv-weight-label);
+    z-index: 45;
+  }
+  .chat-drop-label svg {
+    width: 18px;
+    height: 18px;
     flex: none;
     fill: none;
-    stroke: currentColor;
-    stroke-width: 1.35;
+    stroke: var(--cv-accent);
+    stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .chat-add-glyph {
-    width: 20px;
+
+  /* --- a voice take: level and clock on the draft's row, Cancel and Stop on the controls' ---- */
+  .chat-voice-line {
+    display: flex;
+    align-items: center;
+    gap: var(--cv-s3);
+    min-width: 0;
+    height: 24px;
+    padding: 0 var(--cv-s2);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+    color: var(--cv-t2);
+  }
+  .chat-voice-word { flex: none; white-space: nowrap; }
+  .chat-voice-failed { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-danger); }
+  /* Transcribing is the one moving word: a slow light passing along it. */
+  .chat-voice-shimmer {
+    background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, #fafafa 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+            background-clip: text;
+    color: transparent;
+    animation: chat-voice-shimmer var(--cv-shimmer) linear infinite;
+  }
+  @keyframes chat-voice-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  .chat-voice-bars {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px;
+    overflow: hidden;
+  }
+  .chat-voice-bar {
     flex: none;
-    text-align: center;
-    font-family: var(--font-mono);
-    color: var(--text-faint);
+    width: 2px;
+    height: max(2px, calc(var(--voice-level, 0) * 22px));
+    border-radius: 1px;
+    background: var(--cv-t2);
+    transition: height var(--cv-dur-fast) linear;
   }
-  .chat-add-count {
+  .chat-voice-clock {
+    flex: none;
     margin-inline-start: auto;
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    color: var(--accent-bright);
+    font-variant-numeric: tabular-nums;
+    color: var(--cv-t3);
+  }
+  .chat-voice-x { margin-inline-start: calc(var(--cv-s1) * -1); padding-inline: var(--cv-s2) var(--cv-s3); }
+  .chat-voice-go { flex: none; margin-inline-start: auto; display: flex; align-items: center; }
+  @media (prefers-reduced-motion: reduce) {
+    .chat-voice-bar { transition: none; }
+    .chat-voice-shimmer { animation: none; color: var(--cv-t2); background: none; }
   }
 
-  .c2-composer { display: grid; gap: var(--space-2); }
-  .chat-local-send { padding: var(--space-3); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-muted); font-size: var(--type-sm); }
-  .chat-local-send p { white-space: pre-wrap; margin: 0 0 var(--space-2); color: var(--text-strong); }
-  .chat-local-send button { margin-top: var(--space-2); margin-right: var(--space-2); }
+  /* --- one line, two rows, an ask: the box's three shapes ------------------------------------ */
+  /* At rest the composer is one line, 52 tall (9 + 32 + 9 inside its 1px edge): add, the
+     draft, the run chips, the microphone and send/stop on a single row inside the one frame.
+     Its foot gives its controls to that row (display: contents), so nothing is drawn twice and
+     nothing is re-made between shapes. Grown to two rows, or wearing the keyboard's focus, the
+     box has the lighter edge and no outer ring. */
+  .chat-box.is-compact {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--cv-s1);
+    min-height: 52px;
+    box-sizing: border-box;
+    padding: 9px;
+  }
+  .chat-box.keyboard-focus, .chat-box:not(.is-compact) { border-color: var(--cv-control-edge); outline: none; }
+  .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
+  .chat-box.is-compact > .chat-foot { display: contents; }
+  .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
+  .chat-box.is-compact > .chat-foot > :global(.chat-add) { order: 0; }
+  .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
+  /* 8px between each control on the right (model, delivery, microphone, send/stop), on the
+     line and grown alike: the model chip adds 4 to the row's 4px gap. */
+  .chat-box:not(.has-ask) > .chat-foot > :global(.chat-submit) { gap: var(--cv-s2); }
+  .chat-box:not(.has-ask) > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-end: var(--cv-s1); }
+  .chat-box.is-compact .chat-ta::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* An ask is a band on top of the box, not a replacement for it: the input keeps its
-     resting height underneath, so the composer stays exactly the size it always was. */
-  :global(.chat-box.has-ask) { padding-top: 0; }
+  /* An ask is the composer while it waits: the same object, grown upward. The ask's header,
+     question and tiles stand in the frame on a 16px inset, and the composer's own line is its
+     last row: a pen, the draft, the microphone and the ask's send in the send slot. No add, no
+     model, no mode chip and no Stop under it. */
+  .chat-box.has-ask, .chat-box.has-ask.is-compact { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
+  .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
+  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
+  .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
+  .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
+  .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
+  /* The ask's own-answer line is one well (#141414, radius 20, at least 40 high) that reads as
+     an input: the draft, the microphone and the round send share its fill, joined edge to
+     edge, each drawing its share of the well's 1px edge and the last piece closing it. The send
+     slot gives its pieces to the line (display: contents) so they sit inside the well; the
+     send is its last piece (40 wide, the 32 round drawn 4px in from the well's edges). The line
+     stands on the tiles' edges (8px further in than the box's own padding) and as far off the
+     box's foot as the tiles are off its sides. */
+  .chat-box.has-ask.is-compact { column-gap: 0; padding-block-end: var(--cv-s4); }
+  .chat-box.has-key-request, .chat-box.has-key-request.is-compact { padding-block-end: var(--cv-s4); }
+  .chat-box.has-key-request > .chat-ask { margin-block-end: 0; }
+  .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }
+  .chat-box.has-ask.is-compact > .chat-ta {
+    align-self: stretch;
+    padding-block: var(--cv-s2);
+    margin-inline-start: var(--cv-s2);
+    padding-inline: var(--cv-s3) var(--cv-s2);
+    border-radius: 20px 0 0 20px;
+    background: #141414;
+    box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
+  }
+  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { border-radius: 0 20px 20px 0; box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) {
+    align-self: stretch;
+    width: 32px;
+    height: auto;
+    min-height: 40px;
+    border-radius: 0;
+    background: #141414;
+    box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333;
+  }
+  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { width: 40px; padding-inline-end: var(--cv-s1); border-radius: 0 20px 20px 0; box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic:hover:not(:disabled)) { background: #141414; color: var(--cv-t1); }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send),
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send:hover:not(:disabled)) {
+    align-self: stretch;
+    width: 40px;
+    height: auto;
+    min-height: 40px;
+    margin: 0 var(--cv-s2) 0 0;
+    padding: 0 var(--cv-s1) 0 0;
+    border-radius: 0 20px 20px 0;
+    background: #141414;
+    box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
+  }
+  /* Grown to two rows, the draft itself is the well and the send stands on its own. */
+  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; box-shadow: inset 0 0 0 1px #333; }
+  .chat-box.has-ask:not(.is-compact) :global(.chat-ask-send) { background: none; }
+  /* The ask's send round: the composer's send, with nothing to send a quiet control fill. */
+  :global(.chat-ask-send-round) {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--cv-control);
+    color: #9a9a9a;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  :global(.chat-ask-send.on .chat-ask-send-round) { background: #f2f2f2; color: #121212; }
+  :global(.chat-ask-send.on:hover:not(:disabled) .chat-ask-send-round) { background: #ffffff; }
+  :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */
   :global(.chat-send.is-sending:disabled) {
-    background: var(--surface-2);
-    color: var(--accent-bright);
+    background: var(--cv-control);
+    color: var(--cv-t1);
     opacity: 1;
   }
   .c2-fate {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    padding-inline: var(--cv-s2);
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
+  }
+
+  /* --- popovers -------------------------------------------------------------------------------- */
+  /* A menu opens from the control that opened it, as a native dropdown does: its bottom 8px
+     above the composer's top edge (--c2-menu-lift is how far each anchor stands under that
+     edge, measured), its edge on the button's edge (the add menu from +'s left, the model and
+     delivery pickers from their chips' right). It overlays what is above and never moves it.
+     Their height is capped by the room over the composer (app.css, the dock). */
+  .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
+  .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
+    left: auto;
+    right: 0;
+    bottom: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
   }
 </style>

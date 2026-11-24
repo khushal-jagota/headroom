@@ -249,6 +249,9 @@ export class PromptDiscardedEventPayload {
   readonly recipient: Principal | null;
   readonly recovery_references: readonly DeploymentRecoveryReference[];
   readonly suppression_reason: string | null;
+  /** The person took the queued message back into the composer to edit it. Its words
+   *  live on in the composer, so the transcript draws no "Discarded" for it. */
+  readonly withdrawn_for_edit: boolean;
   constructor(values: {
     content: MessageContent;
     sender_label: string;
@@ -258,6 +261,7 @@ export class PromptDiscardedEventPayload {
     recipient?: Principal | null;
     recovery_references?: readonly DeploymentRecoveryReference[];
     suppression_reason?: string | null;
+    withdrawn_for_edit?: boolean;
   }) {
     this.content = values.content;
     this.sender_label = values.sender_label;
@@ -271,6 +275,7 @@ export class PromptDiscardedEventPayload {
       values.recovery_references === undefined ? [] : values.recovery_references;
     this.suppression_reason =
       values.suppression_reason === undefined ? null : values.suppression_reason;
+    this.withdrawn_for_edit = values.withdrawn_for_edit === true;
   }
 }
 
@@ -377,16 +382,20 @@ export class PermissionAnsweredEventPayload {
   readonly option_id: string;
   readonly fate: AnswerFate;
   readonly answer_id: string | null;
+  /** The caller's own name for this answer. A repeat with the same name gets this row back. */
+  readonly operation_id: string | null;
   constructor(values: {
     ask_id: string;
     option_id: string;
     fate?: AnswerFate;
     answer_id?: string | null;
+    operation_id?: string | null;
   }) {
     this.ask_id = values.ask_id;
     this.option_id = values.option_id;
     this.fate = values.fate === undefined ? AnswerFate.applied : values.fate;
     this.answer_id = values.answer_id === undefined ? null : values.answer_id;
+    this.operation_id = values.operation_id ?? null;
   }
 }
 
@@ -414,16 +423,20 @@ export class UserInputAnsweredEventPayload {
   readonly answers: readonly UserInputAnswer[];
   readonly fate: AnswerFate;
   readonly answer_id: string | null;
+  /** The caller's own name for this answer. A repeat with the same name gets this row back. */
+  readonly operation_id: string | null;
   constructor(values: {
     request_id: string;
     answers: readonly UserInputAnswer[];
     fate?: AnswerFate;
     answer_id?: string | null;
+    operation_id?: string | null;
   }) {
     this.request_id = values.request_id;
     this.answers = values.answers;
     this.fate = values.fate === undefined ? AnswerFate.applied : values.fate;
     this.answer_id = values.answer_id === undefined ? null : values.answer_id;
+    this.operation_id = values.operation_id ?? null;
   }
 }
 

@@ -162,3 +162,30 @@ describe('mixed review presentation',()=>{
     } finally {collection.destroy();}
   });
 });
+
+describe('ask review presentation',()=>{
+  it('puts an asking Ticket on its card, and a Manager or Chief ask on a card of its own, until it is not waiting',()=>{
+    const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
+    const asking=(id:string,at:number|null,waiting=true)=>{const row=conversation(id,0,false,false);row.value.latest_ask_at=at;row.value.attention.current!.awaiting_answer=waiting;return row;};
+    const source:NavigationRecord[]=[ticket,asking('a-conversation',5),
+      {kind:'manager',id:'parent',value:{...(records[2] as Extract<NavigationRecord,{kind:'manager'}>).value,conversation_id:'parent-conversation'}},asking('parent-conversation',3),
+      {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'chief-conversation'}},asking('chief-conversation',null),
+      {kind:'address',id:'parent-address',value:{owner_kind:'manager',owner_id:'parent',conversation_id:'parent-conversation',current:true,parent_kind:null,parent_id:null}},
+      {kind:'address',id:'chief-address',value:{owner_kind:'chief',owner_id:'chief',conversation_id:'chief-conversation',current:true,parent_kind:null,parent_id:null}},
+      records[3]];
+    try {
+      collection.publishSnapshot(currentSnapshot({...continuity,records:source}),'asks');
+      const view=knowledge.accept(collection.getPublication()!);
+      // Oldest first. An ask raised before the record held its time waits last.
+      expect(presentationFor(view).review.items).toMatchObject([
+        {review_item_type:'ask',conversation_id:'parent-conversation',address_id:'parent-address',owner_kind:'manager',owner_id:'parent',waiting_since:3},
+        {review_item_type:'ticket',ticket_id:'a',proposal:null,messages:[],ask:{conversation_id:'a-conversation',address_id:null,owner_kind:'ticket',waiting_since:5}},
+        {review_item_type:'ask',conversation_id:'chief-conversation',address_id:'chief-address',owner_kind:'chief',waiting_since:Number.MAX_SAFE_INTEGER},
+      ]);
+      const answered=source.map(row=>row.kind==='conversation' ? asking(row.id,row.value.latest_ask_at ?? null,false) : row);
+      expect(presentationFor(knowledge.accept({...collection.getPublication()!,records:answered})).review.items).toEqual([]);
+      const done=source.map(row=>row.kind==='ticket' && !('integrity_error' in row.value) ? {...row,value:{...row.value,stage:'done'}} : row);
+      expect(presentationFor(knowledge.accept({...collection.getPublication()!,records:done})).review.items.map(item=>item.review_item_type)).toEqual(['ask','ask']);
+    } finally {collection.destroy();}
+  });
+});

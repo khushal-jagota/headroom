@@ -13,6 +13,8 @@ import { ConversationMessageFiles } from '../conversation/record/message_files.t
 import { FILE_TRANSFER_STALL_SECONDS } from './configuration.ts';
 import { ExecutorValidationError } from './protocol.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { require_manager_files_machine } from './data/inbox.ts';
 import { FileCleanupError, copy_verified, directory_descriptor, unlink_at } from './files.ts';
 
 const faults = vi.hoisted(() => ({
@@ -126,7 +128,7 @@ function world() {
   });
   const owned = file_fixture(database, path);
   worlds.push(owned);
-  return { ...owned, path };
+  return { ...owned, path, database };
 }
 function contains(error: unknown, original: unknown): boolean {
   return (
@@ -457,4 +459,49 @@ test('a synced Ticket file is served once its bytes match, and leaves on removal
   expect(readdirSync(dirname(dirname(served)))).toEqual([]);
   await service.remove_ticket_file(file, authorize);
   expect(readdirSync(service.staging)).toEqual([]);
+});
+
+// Gap: the Ticket case above proves the served layout of a Ticket only. A Manager's paths start
+// inside its artifacts folder, and only the machine of its current conversation may send them;
+// between a reset and the next conversation the file waits rather than being refused for good.
+test("a synced Manager file lands in the Manager's artifacts folder, only from its machine", async () => {
+  const { service, path, database } = world();
+  database.write((tx) => {
+    tx.run("INSERT INTO projects(id,name,created_at,updated_at) VALUES('project','Project',0,0)");
+    tx.run(
+      "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,created_at,updated_at) VALUES ('m_one','Manager','project','codex','gpt-6.1-sol',1,1)",
+    );
+    tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES ('manager_m_one','c')");
+  });
+  const owner = (machine_id: string) => () =>
+    database.read((sql) => require_manager_files_machine(sql, 'm_one', machine_id));
+  const file = {
+    ...manifest,
+    scope: 'manager' as const,
+    owner_id: 'm_one',
+    relative_path: 'report/a.txt',
+  };
+  const send = (authorize: () => void) =>
+    service.save_ticket_file(
+      file.sha256,
+      file,
+      content.byteLength,
+      Readable.from([content]),
+      authorize,
+    );
+  const artifacts = join(dirname(path), 'files/sprint-items/m_one/artifacts');
+  await expect(send(owner(ORIGINAL_MAC_MACHINE_ID))).rejects.toMatchObject({
+    code: 'agent_forbidden',
+  });
+  expect(existsSync(artifacts)).toBe(false);
+  await send(owner(HOME_MACHINE_ID));
+  expect(readFileSync(join(artifacts, 'report/a.txt'))).toEqual(Buffer.from(content));
+  await service.remove_ticket_file(file, owner(HOME_MACHINE_ID));
+  // The emptied folder goes. The artifacts folder itself stays.
+  expect(readdirSync(artifacts)).toEqual([]);
+  // After a reset the Manager has no conversation yet. Its machine sends the file again later.
+  database.write((tx) =>
+    tx.run("UPDATE agents SET conversation_id=NULL WHERE agent_key='manager_m_one'"),
+  );
+  await expect(send(owner(HOME_MACHINE_ID))).rejects.toMatchObject({ code: 'retry_later' });
 });

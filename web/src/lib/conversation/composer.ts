@@ -24,6 +24,8 @@ import type {
 import type { ConversationBackendKey } from "./wire";
 import type { ProviderOptionDescriptor, SelectProviderOptionDescriptor } from "../usage/contracts/model";
 import type { OutgoingMessage } from "./outgoing";
+import type { TranscriptRow } from "./transcript";
+import type { ConversationViewItem, CredentialRequestRowBody } from "./view/contracts";
 import { refusalSentence } from "./transcript";
 import { latestMessageOutcomes } from "./messageOutcome";
 
@@ -43,7 +45,7 @@ export type AskAction =
 
 export const CANCEL_TURN_ACTION: AskAction = {
   act: "cancel_turn",
-  label: "Cancel turn",
+  label: "Stop turn",
   emphasis: "cancel",
   supplied: true
 };
@@ -64,7 +66,7 @@ function isAllowOnce(option: PermissionAskOption): boolean {
 
 /** Every answer this ask offers, in escalating order, with the anchors guaranteed.
  *
- * Cancel turn, then decline, then whatever else the backend offered, then approve once.
+ * Stop turn, then decline, then whatever else the backend offered, then approve once.
  * A missing anchor is supplied rather than left out, so the shape of the card does not
  * depend on the shape of the ask.
  */
@@ -106,32 +108,31 @@ export function askActions(
   return actions;
 }
 
+export type PermissionAnswerRow = Extract<AskAction, { act: "answer" }> & {
+  /** The number key that picks it, for the first nine. */
+  shortcutDigit: number | null;
+};
+
+/** A permission ask's answers as one list of rows to choose from, in the order they are
+ *  read: approve once first (the default, key 1), then the backend's standing answers, then
+ *  decline last. The same rows a question's choices are, so every ask reads one way. */
+export function permissionAnswerRows(
+  ask: { options?: readonly PermissionAskOption[] } | null
+): PermissionAnswerRow[] {
+  const answers = askActions(ask).filter(
+    (action): action is Extract<AskAction, { act: "answer" }> => action.act === "answer"
+  );
+  const ordered = [
+    ...answers.filter((action) => action.emphasis === "primary"),
+    ...answers.filter((action) => action.emphasis === "option"),
+    ...answers.filter((action) => action.emphasis === "decline")
+  ];
+  return ordered.map((action, index) => ({ ...action, shortcutDigit: index < 9 ? index + 1 : null }));
+}
+
 /** Whether Panels had to supply an anchor, which is what makes a card the generic one. */
 export function askIsGeneric(ask: { options?: readonly PermissionAskOption[] } | null): boolean {
   return askActions(ask).some((action) => !action.supplied);
-}
-
-/** The ask's own words, used as the composer's placeholder while it takes over.
- *
- * A placeholder is one line of grey text, so only a detail that is genuinely one short
- * line is used as one. Anything longer — and anything structured — belongs in the card,
- * where it can be read and scrolled; squeezing it in here produced the JSON-in-a-
- * placeholder the owner saw.
- */
-const LONGEST_DETAIL_WORTH_A_PLACEHOLDER = 80;
-
-export function askPlaceholder(
-  ask: { title: string; detail?: string | null } | null
-): string {
-  if (ask === null) return "";
-  const detail = ask.detail?.trim() ?? "";
-  const isOneShortLine =
-    detail !== ""
-    && !detail.includes("\n")
-    && detail.length <= LONGEST_DETAIL_WORTH_A_PLACEHOLDER
-    && !detail.startsWith("{")
-    && !detail.startsWith("[");
-  return isOneShortLine ? detail : ask.title;
 }
 
 // --- what a picker changes ---------------------------------------------------------------
@@ -200,6 +201,7 @@ export function sendBodyFor(input: {
     mode: input.message.mode,
     sender_message_id: input.message.messageId,
     sent_at_unix_milliseconds: input.message.sentAtUnixMilliseconds,
+    ...(input.message.reconcilesSequence === undefined ? {} : { reconciles_sequence: input.message.reconcilesSequence }),
     ...(createdOn === null ? {} : { backend_key: createdOn }),
     ...whatThisMessageRunsUnder(input.current, input.picked, input.message.mode)
   };
@@ -379,3 +381,47 @@ export function recordedMessageFateSentence(
     default: return fallback;
   }
 }
+
+/** The key request the composer asks, in its own place, as it asks a question or a permission
+ *  ask: the newest one still pending. Read from the transcript's rows and the live view's items
+ *  (newest version of each), so the composer and the transcript always agree on which request
+ *  is docked: the transcript draws every other request inline, and never this one. A docked
+ *  conversation reads no transcript, so the record's own pending request (`recorded`) stands
+ *  in until the transcript says otherwise about it. */
+export function pendingCredentialRequest(
+  rows: readonly TranscriptRow[],
+  items: readonly ConversationViewItem[] = [],
+  recorded: CredentialRequestRowBody | null = null
+): CredentialRequestRowBody | null {
+  const fromTranscript = pendingCredentialRequestInTranscript(rows, items);
+  if (fromTranscript !== null || recorded?.state !== "pending") return fromTranscript;
+  const known = rows.some((row) => row.kind === "credential_request" && row.request.request_id === recorded.request_id)
+    || items.some((item) => item.kind === "row" && item.body.kind === "inline"
+      && item.body.value.kind === "credential_request" && item.body.value.request_id === recorded.request_id);
+  return known ? null : recorded;
+}
+
+function pendingCredentialRequestInTranscript(
+  rows: readonly TranscriptRow[],
+  items: readonly ConversationViewItem[]
+): CredentialRequestRowBody | null {
+  const fromRows = rows.findLast((row) => row.kind === "credential_request" && row.request.state === "pending");
+  if (fromRows?.kind === "credential_request") return fromRows.request;
+  const newest = new Map<string, ConversationViewItem & { kind: "row" }>();
+  for (const item of items) {
+    if (item.kind !== "row" || item.row_kind !== "credential_request" || item.body.kind !== "inline") continue;
+    const held = newest.get(item.key);
+    if (!held || held.changed_through_sequence <= item.changed_through_sequence) newest.set(item.key, item);
+  }
+  let docked: { request: CredentialRequestRowBody; sequence: number } | null = null;
+  for (const item of newest.values()) {
+    const value = item.body.kind === "inline" ? item.body.value : null;
+    if (value?.kind !== "credential_request" || value.state !== "pending") continue;
+    if (!docked || item.source_sequence > docked.sequence) docked = { request: value, sequence: item.source_sequence };
+  }
+  return docked?.request ?? null;
+}
+
+/** Context: the request_id of the key request the composer is asking, or null. The transcript
+ *  leaves that one request out, so it is asked in exactly one place. */
+export const DOCKED_CREDENTIAL_REQUEST = Symbol("docked-credential-request");

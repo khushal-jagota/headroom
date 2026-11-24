@@ -2,7 +2,7 @@
 // Required nullable fields stay required. Defaults are optional on the wire.
 import wire_schema from './wire.schema.json' with { type: 'json' };
 export const WIRE_SCHEMA = wire_schema;
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 export const SPOOL_FORMAT_VERSION = 5;
 export const COMMAND_JOURNAL_FORMAT_VERSION = 1;
 export type AcceptanceReceipt = {
@@ -84,6 +84,20 @@ export type BackendPermissionAsk = {
   options: PermissionAskOption[];
   title: string;
 };
+export type BackendRequest = {
+  backend_key: string;
+  operation:
+    | 'capabilities'
+    | 'refresh_usage'
+    | 'update_backend'
+    | 'sign_in_read'
+    | 'sign_in_start'
+    | 'sign_in_cancel'
+    | 'sign_in_return_url'
+    | 'sign_out';
+  secret_id?: string;
+  session_id?: string;
+};
 export type BackendSnapshot = {
   available_models: BackendModel[];
   backend_key: ConversationBackendKey;
@@ -164,9 +178,11 @@ export type CommandOutcomeReply = { recorded: string[]; rejected?: RejectedComma
 export type CommandOutcomeReport = { outcomes: CommandResult[] };
 export type CommandReplyReported = { reply_text: string };
 export type CommandResult = {
+  backend_result?: JsonObject | null;
   child_outcome?: CommandOutcome | null;
   command_id: string;
   model_list?: JsonObject | null;
+  work_move_result?: WorkMoveSourceResult | null;
 };
 export type ComposerCatalogEntry = {
   argument_hint?: string | null;
@@ -207,10 +223,12 @@ export type ExecutorHealthRead = {
 };
 export type ExecutorIdentity = {
   application_revision: string;
+  build_id?: string;
   connection_generation?: number;
   executor_incarnation: string;
   protocol_version: number;
   spool_format_version: number;
+  supports_work_moves?: boolean;
 };
 export type ExecutorRefusal = {
   peer_identity: ExecutorIdentity | null;
@@ -225,10 +243,10 @@ export type FileManifest = {
   scope: FileScope;
   sha256: string;
 };
-export type FileScope = 'ticket' | 'conversation';
+export type FileScope = 'ticket' | 'conversation' | 'manager';
 export type FileSnapshot = { local_path: string; manifest: FileManifest };
 export type FileUploadRequest = { child: ChildReference; manifest: FileManifest };
-export type IpcOperation = 'read' | 'write' | 'retry' | 'health' | 'quiesce';
+export type IpcOperation = 'read' | 'write' | 'retry' | 'health' | 'quiesce' | 'preview';
 export type IpcRequest = {
   capability: string | null;
   child_id: string | null;
@@ -266,10 +284,12 @@ export type LeaseReply = {
   accepted_at_vps_ms: number;
   away_after_seconds: number;
   mailbox_high_sequence: number;
+  server_move?: ServerMoveNotice | null;
   update: MacUpdateCheck;
 };
 export type LeaseRequest = {
   admission_stopped: boolean;
+  backend_controls?: boolean;
   cleanup_uncertainties?: WorkerCleanupUncertainty[];
   driver_kinds?: ConversationBackendKey[];
   going_to_sleep?: boolean;
@@ -298,6 +318,7 @@ export type MacLocalStatus = {
 export type MacRuntimeManifest = {
   application_revision: string;
   architecture: string;
+  build_id?: string;
   platform: string;
   schema_version: number;
 };
@@ -323,6 +344,7 @@ export type MacUpdatePrefetch = {
   archive_path: string;
   archive_sha256: string;
   archive_size: number;
+  build_id?: string;
 };
 export type MacUpdateReport = {
   application_revision: string;
@@ -343,15 +365,18 @@ export type MacUpdateTarget = {
   archive_path: string;
   archive_sha256: string;
   archive_size: number;
+  build_id?: string;
   mode: UpdateMode;
   request_id: string;
 };
 export type MailboxCommand = {
+  backend_request?: BackendRequest | null;
   child_command?: ChildCommand | null;
   command_id: string;
   command_sequence: number;
   created_at_vps_ms: number;
   model_list_request?: ModelListRequest | null;
+  work_move_request?: WorkMoveSourceRequest | null;
 };
 export type MailboxPollReply = { commands: MailboxCommand[] };
 export type MessageContent = MessagePiece[];
@@ -418,6 +443,13 @@ export type ResolvedConversationStart = {
   workspace_folder: string;
   workspace_path_policy?: WorkspacePathPolicy;
 };
+export type ServerLocation = {
+  move_number: number;
+  server_id: string;
+  server_url: string | null;
+  state: 'active' | 'moved';
+};
+export type ServerMoveNotice = { move_id: string };
 export type StartRun = {
   canonical_skill_snapshot: CanonicalSkillSnapshot;
   kind?: 'start';
@@ -480,6 +512,12 @@ export type UserInputQuestion = {
 export type UserInputRequested = { request: BackendUserInputRequest };
 export type VendorSessionCursorRebound = { vendor_session_cursor: string };
 export type WaitingConversation = { conversation_id: string; oldest_sequence: number };
+export type WorkMoveProof = { published_branch: string | null; published_revision: string | null };
+export type WorkMoveSourceRequest = {
+  owner_id: string;
+  owner_kind: 'ticket' | 'manager' | 'chief';
+};
+export type WorkMoveSourceResult = { error: string | null; proof: WorkMoveProof | null };
 export type WorkerCleanupUncertainty = {
   conversation_id: string;
   reason: string;
@@ -493,7 +531,12 @@ export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: 
 export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
 export type WorkspaceRegistrationRequest = { child: ChildReference; workspace: WorkspaceIdentity };
-export type WorkspaceRepository = { default_branch: string | null; repository_url: string | null };
+export type WorkspaceRepository = {
+  default_branch: string | null;
+  published_branch?: string | null;
+  published_revision?: string | null;
+  repository_url: string | null;
+};
 export type WorkspaceRetirementReply = { authorized: boolean };
 export type WorkspaceRetirementRequest = {
   replay?: boolean;
@@ -610,5 +653,10 @@ export interface WireTypes {
   WorkspaceStatesReply: WorkspaceStatesReply;
   WorkspaceStatesRequest: WorkspaceStatesRequest;
   WritePrompt: WritePrompt;
+  ServerLocation: ServerLocation;
+  BackendRequest: BackendRequest;
+  WorkMoveSourceRequest: WorkMoveSourceRequest;
+  WorkMoveProof: WorkMoveProof;
+  WorkMoveSourceResult: WorkMoveSourceResult;
 }
 export type WireRootName = keyof WireTypes;

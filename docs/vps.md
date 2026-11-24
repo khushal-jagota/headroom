@@ -6,7 +6,7 @@ The VPS page is a glance at the machine that runs Headroom: CPU, memory, load, d
 
 - **A sampler.** One server process at a time owns sampling, through a file lock. Other processes serve what is already stored. Sampling runs even when Worker dispatch is off.
 - **A metrics store.** A separate SQLite file beside the application database. Its writes never wake the application's change signal, so frequent samples never make open screens reload.
-- **The page.** `#/vps` in the shell, under System, with windows of five minutes, a day, or 30 days.
+- **The page.** Settings → Diagnostics (`#/settings/diagnostics`; the old `#/vps` redirects there), with windows of five minutes, a day, or 30 days.
 
 ## How readings are taken
 

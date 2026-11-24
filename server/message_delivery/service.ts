@@ -57,6 +57,7 @@ export interface SendMessageOptions {
   owner_read_through_sequence?: number | null;
   sender_message_id?: string | null;
   sent_at_unix_milliseconds?: number | null;
+  reconciles_sequence?: number | null;
   retain_created_conversation?: boolean;
   system_message?: boolean;
   admission?: MessageAdmission | null;
@@ -128,6 +129,7 @@ export async function send_message(
     owner_read_through_sequence: options.owner_read_through_sequence ?? null,
     sender_message_id: options.sender_message_id ?? null,
     sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
+    reconciles_sequence: options.reconciles_sequence ?? null,
     sender,
     recipient,
     recording_receipt: options.recording_receipt ?? null,
@@ -229,7 +231,7 @@ export async function send_message(
               employee_launch_reasoning_effort: resolved.reasoning_effort,
             };
             if (explicit_choice)
-              database.read((sql) => validate_launch_configuration(sql, configuration));
+              database.read((sql) => validate_launch_configuration(sql, configuration, item.id));
             const result = await conversation_start.send_to_agent_conversation(
               conversations,
               database,

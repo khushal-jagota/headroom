@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPhone app rebuild — proposed Tickets</title>
+<style>
+  :root { color-scheme: light dark; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --bg:#fff; --tag:#f2f2f7; }
+  @media (prefers-color-scheme: dark) { :root { --ink:#f2f2f7; --muted:#a1a1a6; --line:#2c2c2e; --bg:#111; --tag:#1c1c1e; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:800px; margin:0 auto; padding:48px 24px 96px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  h2 { font-size:19px; margin:40px 0 8px; }
+  details { border-top:1px solid var(--line); padding:14px 0; }
+  details:last-of-type { border-bottom:1px solid var(--line); }
+  summary { cursor:pointer; list-style:none; font-weight:600; }
+  summary::-webkit-details-marker { display:none; }
+  summary::before { content:"▸"; display:inline-block; width:1.2em; color:var(--muted); }
+  details[open] > summary::before { content:"▾"; }
+  summary .one { display:block; font-weight:400; color:var(--muted); margin-left:1.2em; font-size:15px; }
+  .body { margin:10px 0 0 1.2em; font-size:15px; }
+  .k { display:block; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-top:12px; }
+  ul { margin:4px 0; padding-left:20px; }
+  code { background:var(--tag); padding:1px 5px; border-radius:5px; font-size:13.5px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; margin-top:8px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  pre { white-space:pre-wrap; background:var(--tag); padding:12px; border-radius:8px; font-size:13.5px; }
+</style>
+</head>
+<body>
+<main>
+<h1>iPhone app rebuild — proposed Tickets</h1>
+<p class="sub">Planning Ticket "Plan the Panels iPhone app rebuild from the approved mockup". Stage: Proposed Tickets. 22 November 2026.</p>
+
+<p>Eight Tickets carry the approved answers. Seven run on Mac 1, one on VPS 1. All are coding Tickets in the Panels project, assigned to the Chief because no active Manager covers the iPhone app. Each Ticket gets the Brief below. Each Brief is a proposal at the Ticket's first gate, so Khushal reviews it there. The decisions behind every Ticket are in the <a href="question-tree.html">question tree</a>.</p>
+
+<h2>Order and dependencies</h2>
+<table>
+<tr><th>#</th><th>Ticket</th><th>Runs on</th><th>Waits for</th></tr>
+<tr><td>1</td><td>Server: receipts for ask answers</td><td>VPS 1</td><td>—</td></tr>
+<tr><td>2</td><td>Shell, Sidebar and strip</td><td>Mac 1</td><td>—</td></tr>
+<tr><td>3</td><td>Fresh data</td><td>Mac 1</td><td>—</td></tr>
+<tr><td>4</td><td>Native sheets</td><td>Mac 1</td><td>2</td></tr>
+<tr><td>5</td><td>Quiet offline sending</td><td>Mac 1</td><td>1</td></tr>
+<tr><td>6</td><td>Review queue</td><td>Mac 1</td><td>2, 3, 4, 5</td></tr>
+<tr><td>7</td><td>Artifact dock and shared rendering</td><td>Mac 1</td><td>6</td></tr>
+<tr><td>8</td><td>Assemble, test and ship the build</td><td>Mac 1</td><td>1–7</td></tr>
+</table>
+<p>Tickets 1, 2 and 3 start at once. Each Ticket merges into <code>staging</code> through the normal route at its Consequences. No TestFlight build goes out before Ticket 8. Where two Tickets touch one file, the second to merge reconciles.</p>
+
+<h2>Shared rules in every Brief</h2>
+<ul>
+<li>Reshape the current app in <code>ios/</code>. Do not rebuild it fresh. Treat the existing code as a base to repair, not as proven: the read side causes the known staleness, and the offline layer is over-built in places.</li>
+<li>Nothing is edited in the app. The composer is the only place to type.</li>
+<li>No connection state on screen: no cover screen, banners, toasts or "Delivery uncertain". Failures show on the item itself.</li>
+<li>Built-in iOS controls where appropriate. Our own controls only where needed, and then impeccable.</li>
+<li>No compatibility work for old phone builds. Khushal is the only user.</li>
+<li>Mac rules: build output outside artifacts (under TMPDIR). Book Simulator time through the Wren schedule Managers ("Ship Wren to the App Store", "Improve Wren"), at most two Simulators on the Mac. Never take over Khushal's screen.</li>
+<li>Prove bad-connection behavior with Simulator tests. Update the file lists in <code>ios/scripts/test-offline.sh</code> when files move.</li>
+</ul>
+
+<h2>The Tickets</h2>
+
+<details open>
+<summary>1. Give answers to agent asks a receipt, so a phone can queue them<span class="one">coding · VPS 1 · no blockers</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+An answer to a permission ask or a worker question can carry an operation ID. The server saves a receipt with the answer, and a lookup returns it. A repeat with the same ID returns the saved receipt. The phone can tell "my answer landed" from "the ask was no longer waiting".
+<span class="k">Owns</span>
+The server routes <code>.../permission-answers</code> and <code>.../user-input-answers</code>, the receipt storage and lookup, tests, and the iOS compatibility review update.
+<span class="k">Leaves elsewhere</span>
+All phone code (Ticket 5). Web callers keep working unchanged.
+<span class="k">Inherited</span>
+Same pattern as the decision-operations route (answer and receipt in one transaction). No support for old phone builds needed.
+<span class="k">Local questions</span>
+Route shape, receipt retention, whether the web adopts the receipts now.
+</div>
+</details>
+
+<details>
+<summary>2. Replace the iPhone tab shell with Review as root and a slide-over Sidebar, and strip what goes<span class="one">coding · Mac 1 · no blockers</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+One NavigationStack with Review as the root. The slide-over Sidebar, built from today's Workspace list, replaces the tab bar: Chief first, active Managers, a collapsed Settled group, Review with its badge and the Settings gear at the bottom. The strip list is gone.
+<span class="k">Owns</span>
+<ul>
+<li><code>AppShell.swift</code>, <code>Navigation.swift</code>, the Sidebar, notification links into the new stack, foreground entry.</li>
+<li>Removing: <code>MountedTabContent</code> and the tab bar, <code>AgentPageBackGesture</code>, Chief Diagnostics, Feedback, <code>WorkspaceContextMenu.swift</code> and every long-press menu and preview, the Steer / Queue / Send now menu.</li>
+<li>Removing every edit: recap edits, renames, goal text edits, proposal text edits, Remove blocker.</li>
+<li>Fixing the second conversation surface that <code>ConversationNavigation</code> mounts.</li>
+<li>What state survives a move between Sidebar destinations.</li>
+</ul>
+<span class="k">Leaves elsewhere</span>
+The Review screen itself (Ticket 6). Sheets (Ticket 4). Data and freshness (Ticket 3). The cover screen and status notes (Ticket 5).
+<span class="k">Inherited</span>
+Each Sidebar destination keeps its own pages. Unsent words survive everywhere. Usage, Ideas, VPS and the Goals list stay as they are, behind the Settings gear. Goals stay on Chief and Manager pages. Chart scrubbing on goal charts stays. Chief, Manager, Ticket and Conversation pages stay close to today's app.
+<span class="k">Local questions</span>
+Sidebar gesture and animation, how Review learns that Khushal visited another destination (Ticket 6 uses it).
+</div>
+</details>
+
+<details>
+<summary>3. Keep the iPhone app's data current on every open and every pull, without overloading the server<span class="one">coding · Mac 1 · no blockers</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+The navigation-view stream stays the one read model and is repaired. Every app open and every pull gets fresh server data. A silent connection is noticed and replaced. Fewer full reloads reach the server.
+<span class="k">Owns</span>
+<code>AppStore.swift</code> follow loop and <code>refresh()</code>, connection state, a liveness check on the server heartbeat, reload cuts (no new stream on brief inactive moments, open the new scope before closing the old one as web does, read ahead a few cards only), the saved copy at launch.
+<span class="k">Leaves elsewhere</span>
+The Review screen's own held cards, the main staleness cause (Ticket 6). The foreground hook in the shell (Ticket 2 calls this Ticket's entry point).
+<span class="k">Inherited</span>
+Every screen shows its saved copy at once and swaps in fresh data without any sign. The code-read diagnosis is in the planning research notes. Reproduce each cause in a test before the fix.
+<span class="k">Local questions</span>
+The liveness timeout, the read-ahead count, an age limit for the saved copy.
+</div>
+</details>
+
+<details>
+<summary>4. Rebuild the iPhone sheets as native iOS forms, one shared set<span class="one">coding · Mac 1 · waits for 2</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+One shared set of sheets, as standard grouped inset forms with Cancel, a title and a confirm button: Approve and ceiling (with "Then reviews"), Reviewer, Attach, and Ticket actions. One shared proposal decision control, used by Review and the Ticket page.
+<span class="k">Owns</span>
+Replacing the hand-drawn <code>DecisionApprovalSheet</code> (<code>ReviewStyle.swift</code>), building on <code>TicketApprovalLimitSheet</code>, stopping <code>panelsScreen()</code> from repainting every form flat, the in-sheet waiting and inline error for rare Ticket settings.
+<span class="k">Leaves elsewhere</span>
+Where Review places the control (Ticket 6). What happens after a queued decision (Ticket 5).
+<span class="k">Inherited</span>
+The approved mockup's sheet design. Rare Ticket settings wait for the server inside their sheet, with no banner.
+<span class="k">Local questions</span>
+Exact sheet layout and detents.
+</div>
+</details>
+
+<details>
+<summary>5. Make iPhone sending quiet and dependable on a bad connection<span class="one">coding · Mac 1 · waits for 1</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+Approve, send back, reply, mark read, messages, voice, photos and ask answers take effect on screen at once and go through when connected. Failures show on the item. The app never shows connection state.
+<span class="k">Owns</span>
+<ul>
+<li><code>Outbox.swift</code>, <code>OutgoingStorage.swift</code>, <code>PendingWork.swift</code>, simplified.</li>
+<li>Mark read and ask answers join the outbox. Ask answers use Ticket 1's receipts.</li>
+<li>Messages retry by themselves, because the server drops duplicates.</li>
+<li>A late ask answer becomes an ordinary message in that conversation.</li>
+<li>Removing the "Try again" cover screen, the status notes and the "Sent" toasts.</li>
+<li>A retry mark on an unsent message in its conversation.</li>
+</ul>
+<span class="k">Leaves elsewhere</span>
+Review card behavior after a refusal (Ticket 6 shows the returned card). Sheet waiting (Ticket 4).
+<span class="k">Inherited</span>
+Keep the sound core: save first, one ID per operation, a receipt check before any resend. Queued work sends only while the app is open (accepted limit).
+<span class="k">Local questions</span>
+What to simplify in the store and its migrations, the format of a late ask answer.
+</div>
+</details>
+
+<details>
+<summary>6. Rebuild the iPhone Review queue from the approved design<span class="one">coding · Mac 1 · waits for 2, 3, 4, 5</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+The Review queue matches the approved mockup and final-screen reference. Its cards never go stale.
+<span class="k">Owns</span>
+<ul>
+<li>Separate proposal, message and ask cards, built on the phone from the review window. Ask wording read from its conversation, as web does.</li>
+<li>The four-state summary screen with Message Chief, and the optional active-agents line.</li>
+<li>Skip and revisit.</li>
+<li>When the summary screen shows.</li>
+<li>Dropping held cards, the main staleness cause.</li>
+<li>A refused decision bringing its card back with the reason.</li>
+<li>A review that moves to another reviewer while it is open.</li>
+</ul>
+<span class="k">Leaves elsewhere</span>
+The artifact dock (Ticket 7).
+<span class="k">Inherited</span>
+<ul>
+<li>The app opens on the summary screen.</li>
+<li>An artifact or page opened from a card returns to that card.</li>
+<li>A visit to another Sidebar destination returns to the summary screen.</li>
+<li>Leaving the app keeps Khushal where he was, unless that card was handled meanwhile. Then the summary screen shows.</li>
+<li>Proposal text is not editable. Khushal sends it back with a note.</li>
+</ul>
+<span class="k">Local questions</span>
+Card layout details within the mockup, swipe behavior, read-ahead use.
+</div>
+</details>
+
+<details>
+<summary>7. Give the iPhone artifact viewer its three bottom docks, and share one Markdown display<span class="one">coding · Mac 1 · waits for 6</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+An artifact opened from a Review proposal keeps the note and Skip / Return / Approve below. One opened from a Review message keeps Reply with Skip / Mark read. One opened anywhere else keeps the live conversation composer. Review, artifacts and conversations show Markdown the same way.
+<span class="k">Owns</span>
+<code>ArtifactViewerView.swift</code> dock choice, merging the three Markdown renderers, collapsed artifacts on Ticket pages, the voice pipeline merge if it proves worth doing.
+<span class="k">Leaves elsewhere</span>
+The card controls themselves (Ticket 6) and the sending path (Ticket 5).
+<span class="k">Local questions</span>
+Whether to merge the two voice pipelines, and <code>panels-chart</code> support.
+</div>
+</details>
+
+<details>
+<summary>8. Assemble, test and ship the rebuilt iPhone app to TestFlight<span class="one">coding · Mac 1 · waits for 1–7</span></summary>
+<div class="body">
+<span class="k">Outcome</span>
+The assembled app on <code>staging</code> passes the full host and UI suites and a Simulator walk of every mockup screen, on good and bad connections. A TestFlight build reaches Khushal's phone, after his OK to upload, with a short check list for him.
+<span class="k">Owns</span>
+Full suites, the bad-connection walk, fixes for integration faults found there, build number, TestFlight upload.
+<span class="k">Leaves elsewhere</span>
+New features. A fault that needs real design work goes back to Khushal as a new Ticket.
+<span class="k">Local questions</span>
+The check list for Khushal's phone.
+</div>
+</details>
+
+<h2>Coverage of the rough split</h2>
+<table>
+<tr><th>Part</th><th>Owned by</th></tr>
+<tr><td>1. Live data and freshness</td><td>3, with held Review cards in 6</td></tr>
+<tr><td>2. Review queue</td><td>6</td></tr>
+<tr><td>3. App shell and navigation</td><td>2</td></tr>
+<tr><td>4. Native sheets and controls</td><td>4</td></tr>
+<tr><td>5. Sending and offline work</td><td>5, with server receipts in 1</td></tr>
+<tr><td>6. Workspace pages, kept faithful</td><td>2 (removals), 7 (artifact viewer)</td></tr>
+<tr><td>7. Server contract and shipping</td><td>1, 8</td></tr>
+<tr><td>8. What gets stripped</td><td>2, with banners and notes in 5</td></tr>
+</table>
+
+<h2>Creation details</h2>
+<ul>
+<li>Each Ticket's artifacts get copies of the approved mockup, the final-screen reference and the planning research notes, so each Worker has them in its own folder.</li>
+<li>Blockers are set with <code>--blocked-by</code> as in the table.</li>
+<li>Each Brief is supplied text at the default Brief ceiling, so it waits for Khushal's review.</li>
+</ul>
+</main>
+</body>
+</html>

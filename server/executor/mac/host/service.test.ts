@@ -176,6 +176,17 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
   try {
     service = await MacService.open(configuration, bindings, options());
     expect(context.identity.protocol_version).toBe(PROTOCOL_VERSION);
+    // Update downloads use the filtered headers, so the common identity must survive it.
+    const client_identity = context.client.headers['X-Panels-Client'];
+    expect(JSON.parse(client_identity!)).toEqual({
+      kind: 'machine',
+      device_id: configuration.executor_id,
+      version: context.identity.application_revision,
+      protocol_version: context.identity.protocol_version,
+      outbox_format: context.identity.spool_format_version,
+    });
+    expect(context.client.authentication_headers()['X-Panels-Client']).toBe(client_identity);
+    expect(context.identity.supports_work_moves).toBe(true);
     expect(invocation.child_processes).toBe(service.child_processes);
     expect(invocation.one_shot_children).toBe(service.one_shot_children);
     expect(context.outbox).toBe(service.outbox);

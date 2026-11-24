@@ -1,0 +1,3093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Panels iPhone — Review Queue &amp; Workspace Prototype</title>
+<style>
+  /* ==========================================================================
+     Panels Design Tokens (assets/tokens.css + Native iOS HIG)
+     ========================================================================== */
+  :root {
+    --surface-canvas: #080809;
+    --surface-recessed: #0e0e0e;
+    --surface-1: #121212;
+    --surface-2: #1a1a1a;
+    --surface-rail: #1b1b1b;
+    --surface-raised: #242424;
+    --surface-hover: #272727;
+    --surface-input: #2a2a2a;
+    --surface-input-hover: #303030;
+    --surface-selected: #353535;
+    --surface-ink: #111318;
+    --page-card-fill: rgba(255, 255, 255, 0.045); /* #1c1c1c over #121212: one step lighter! */
+
+    --border-subtle: rgba(255, 255, 255, 0.07);
+    --border-raised: rgba(255, 255, 255, 0.11);
+    --border-hairline: rgba(255, 255, 255, 0.085);
+    --scrim: rgba(10, 9, 8, 0.62);
+
+    --tone-strong: #ececec;
+    --tone-primary: #dadada;
+    --tone-secondary: #a7a7a7;
+    --tone-tertiary: #8c8c8c;
+    --tone-faint: #626262;
+
+    --accent-bright: #9aadd2;
+    --accent-surface: #222a38;
+    --accent-text: #dce6f8;
+    --accent-badge: rgba(154, 173, 210, 0.16);
+    --accent-done: #7fa564;
+    --accent-error: #c97c77;
+    --error-surface: #382226;
+    --accent-attention: #d4ab6c;
+    --accent-needs-me: #ffffff;
+    --link-artifact: #a9bde6;
+
+    --machine-jade: #83b7a7;
+    --machine-cyan: #6fc9d0;
+    --machine-orchid: #bd99bf;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+    --motion-fast: 90ms;
+    --motion-base: 150ms;
+    --motion-slow: 240ms;
+    --motion-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+    --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --motion-move: cubic-bezier(0.45, 0, 0.55, 1);
+
+    --dt: 1;
+    --phone-w: 393px;
+    --phone-h: 852px;
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 99px; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--surface-canvas); color: var(--tone-primary);
+    font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  button, input, textarea, select { font-family: inherit; color: inherit; }
+  button { border: none; background: none; padding: 0; cursor: pointer; }
+
+  /* ==========================================================================
+     Outer Workbench Shell
+     ========================================================================== */
+  .workbench { display: flex; flex-direction: column; height: 100dvh; width: 100vw; overflow: hidden; }
+  .wb-topbar {
+    height: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 0 20px; background: #0d0d0f; border-bottom: 1px solid var(--border-subtle); z-index: 20;
+  }
+  .wb-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .wb-brand-mark {
+    width: 22px; height: 22px; border-radius: 6px; background: var(--surface-2);
+    border: 1px solid var(--border-raised); display: grid; place-items: center; color: var(--accent-bright); flex-shrink: 0;
+  }
+  .wb-brand-title { font-size: 13.5px; font-weight: 600; color: var(--tone-strong); white-space: nowrap; }
+  .wb-brand-sub { font-size: 12px; color: var(--tone-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .wb-controls { display: flex; align-items: center; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .wb-controls::-webkit-scrollbar { display: none; }
+  .wb-group { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 2px; gap: 2px; }
+  .wb-pill {
+    font-size: 12px; font-weight: 500; color: var(--tone-secondary); padding: 4px 9px;
+    border-radius: 6px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+  }
+  .wb-pill:hover { color: var(--tone-strong); background: rgba(255,255,255,0.04); }
+  .wb-pill.active { background: var(--surface-input); color: var(--tone-strong); }
+  .wb-pill.active.warn { background: #362a18; color: var(--accent-attention); }
+  .wb-pill.active.err { background: var(--error-surface); color: var(--accent-error); }
+  .wb-pill.active.accent { background: var(--accent-surface); color: var(--accent-text); }
+  .wb-dot { width: 6px; height: 6px; border-radius: 99px; background: currentColor; }
+
+  .wb-reset-btn {
+    font-size: 12px; font-weight: 500; color: var(--tone-secondary); background: var(--surface-2);
+    border: 1px solid var(--border-subtle); border-radius: 8px; padding: 5px 10px; white-space: nowrap;
+  }
+  .wb-reset-btn:hover { background: var(--surface-input); color: var(--tone-strong); }
+
+  .wb-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(430px, 480px) minmax(0, 1fr); overflow: hidden; }
+
+  /* ==========================================================================
+     Left Stage: iPhone 16 Pro Hardware Frame
+     ========================================================================== */
+  .phone-stage {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px;
+    background: radial-gradient(circle at 50% 30%, rgba(154, 173, 210, 0.035), transparent 60%), var(--surface-canvas);
+    border-right: 1px solid var(--border-subtle); overflow: hidden; position: relative;
+  }
+  .phone-scaler { transform-origin: center center; will-change: transform; }
+
+  .iphone-bezel {
+    width: calc(var(--phone-w) + 22px); height: calc(var(--phone-h) + 22px);
+    padding: 11px; border-radius: 56px;
+    background: linear-gradient(145deg, #27272c 0%, #161619 52%, #222227 100%);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.12), inset 0 0 0 1.5px rgba(255, 255, 255, 0.06);
+    position: relative;
+  }
+  .iphone-bezel::before {
+    content: ""; position: absolute; left: -3px; top: 170px; width: 3px; height: 52px;
+    border-radius: 2px 0 0 2px; background: #2b2b31; box-shadow: 0 64px 0 #2b2b31, 0 -42px 0 #2b2b31;
+  }
+  .iphone-bezel::after {
+    content: ""; position: absolute; right: -3px; top: 204px; width: 3px; height: 82px;
+    border-radius: 0 2px 2px 0; background: #2b2b31;
+  }
+
+  .iphone-screen {
+    width: var(--phone-w); height: var(--phone-h); border-radius: 46px;
+    background: var(--surface-1); overflow: hidden; position: relative;
+    display: flex; flex-direction: column; color: var(--tone-primary);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05); user-select: none;
+  }
+
+  /* Status Bar & Dynamic Island */
+  .ios-statusbar {
+    height: 54px; flex-shrink: 0; display: flex; align-items: flex-end; justify-content: space-between;
+    padding: 0 26px 10px 28px; position: relative; z-index: 60; pointer-events: none;
+  }
+  .ios-island {
+    position: absolute; top: 11px; left: 50%; transform: translateX(-50%);
+    width: 122px; height: 35px; border-radius: 20px; background: #000;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 11px;
+  }
+  .ios-island-lens { width: 11px; height: 11px; border-radius: 99px; background: radial-gradient(circle at 38% 38%, #1d2a44 0%, #090c14 60%, #000 100%); }
+  .ios-time { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; color: var(--tone-strong); font-variant-numeric: tabular-nums; }
+  .ios-status-icons { display: flex; align-items: center; gap: 6px; color: var(--tone-strong); font-size: 12px; font-weight: 600; }
+
+  .ios-net-banner {
+    flex-shrink: 0; display: none; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 18px; font-size: calc(12px * var(--dt)); font-weight: 500;
+    background: var(--surface-2); border-bottom: 1px solid var(--border-subtle); color: var(--tone-secondary); z-index: 50;
+  }
+  .ios-net-banner.visible { display: flex; }
+  .ios-net-banner.offline { background: #1e1a14; color: var(--accent-attention); border-bottom-color: rgba(212,171,108,0.18); }
+  .ios-net-banner.slow { background: #181c24; color: var(--accent-bright); border-bottom-color: rgba(154,173,210,0.16); }
+  .ios-net-banner.err { background: var(--error-surface); color: var(--accent-error); }
+
+  /* Viewport & Single Navigation Stack */
+  .ios-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+  .ios-stack-layer { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--surface-1); overflow: hidden; }
+
+  .ios-pushed-layer {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    background: var(--surface-1); z-index: 30;
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.55);
+    animation: iosPushIn var(--motion-slow) var(--motion-ease) both;
+  }
+  .ios-pushed-layer.popping { animation: iosPopOut var(--motion-base) var(--motion-ease-exit) both; }
+  @keyframes iosPushIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes iosPopOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
+
+  /* Native Pinned iOS Navigation Bar */
+  .ios-navbar {
+    min-height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 2px 14px 4px 12px;
+    background: rgba(18, 18, 18, 0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border-subtle); z-index: 10;
+  }
+  .ios-navbar.borderless { border-bottom-color: transparent; background: var(--surface-1); }
+
+  .ios-nav-back {
+    min-height: 36px; padding: 0 8px 0 2px;
+    display: inline-flex; align-items: center; gap: 3px;
+    color: var(--accent-bright); font-size: calc(15px * var(--dt)); font-weight: 500; flex-shrink: 0;
+  }
+  .ios-nav-back:active { opacity: 0.6; }
+
+  .ios-nav-title {
+    font-size: calc(15px * var(--dt)); font-weight: 600; color: var(--tone-strong);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; flex: 1; min-width: 0;
+  }
+  .ios-nav-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+  /* Native iOS Navigation Bar Buttons (pill/rounded native feel!) */
+  .ios-bar-btn {
+    min-height: 34px; padding: 0 12px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border-subtle);
+    font-size: calc(13.5px * var(--dt)); font-weight: 500; color: var(--tone-primary);
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+  }
+  .ios-bar-btn:hover { background: var(--surface-input); color: var(--tone-strong); }
+  .ios-bar-btn:active { background: var(--surface-selected); }
+  .ios-bar-btn.icon-only { width: 36px; height: 36px; padding: 0; }
+
+  .ios-count-pill {
+    font-size: calc(11.5px * var(--dt)); font-weight: 600; font-variant-numeric: tabular-nums;
+    padding: 2px 7px; border-radius: 999px; background: var(--accent-badge); color: var(--accent-text);
+  }
+
+  .ios-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .ios-scroll::-webkit-scrollbar { display: none; }
+
+  .ios-home-indicator {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    width: 134px; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, 0.24);
+    z-index: 90; pointer-events: none;
+  }
+
+  /* ==========================================================================
+     Slide-Over Sidebar (Real Panels Rail Cards — Chief + Managers, Stripped of Tickets!)
+     ========================================================================== */
+  .sidebar-scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 55; animation: fadeIn 180ms ease both; }
+  .sidebar-scrim.closing { animation: fadeOut 150ms ease both; }
+
+  .sidebar-drawer {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
+    background: var(--surface-1); border-right: 1px solid var(--border-raised);
+    z-index: 58; display: flex; flex-direction: column;
+    padding: 58px 10px 24px;
+    box-shadow: 18px 0 42px rgba(0, 0, 0, 0.65);
+    animation: sidebarIn 220ms var(--motion-ease) both;
+  }
+  .sidebar-drawer.closing { animation: sidebarOut 150ms var(--motion-ease-exit) both; }
+  @keyframes sidebarIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+  @keyframes sidebarOut { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+  .sb-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-width: none; padding-bottom: 8px; }
+  .sb-scroll::-webkit-scrollbar { display: none; }
+
+  /* Real Panels Rail Manager Card Bubble (Chief IS just the first Manager card!) */
+  .rail-mgr-card {
+    width: 100%; text-align: left; flex-shrink: 0;
+    background: var(--surface-rail);
+    border-radius: 12px;
+    padding: 11px 14px 13px;
+    position: relative; overflow: hidden;
+    display: flex; flex-direction: column; gap: 3px;
+    transition: background var(--motion-fast) ease;
+  }
+  .rail-mgr-card:active { background: var(--surface-hover); }
+  .rail-mgr-card.selected { background: var(--surface-rail); }
+
+  /* Real Goal Status Haze Gradients from WorkspaceRailCard.svelte! */
+  .rail-mgr-card.goal-bad::before,
+  .rail-mgr-card.goal-attention::before,
+  .rail-mgr-card.goal-good::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 56px; pointer-events: none;
+  }
+  .rail-mgr-card.goal-bad::before { background: linear-gradient(180deg, rgba(201, 124, 119, 0.11), transparent); }
+  .rail-mgr-card.goal-attention::before { background: linear-gradient(180deg, rgba(212, 171, 108, 0.11), transparent); }
+  .rail-mgr-card.goal-good::before { background: linear-gradient(180deg, rgba(127, 165, 100, 0.09), transparent); }
+  .rail-mgr-card.selected::before { opacity: 0; }
+
+  .rail-mgr-eyebrow {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: calc(12px * var(--dt)); font-weight: 500; line-height: 16px;
+  }
+  .rail-mgr-proj { color: var(--tone-tertiary); }
+  .rail-goal-tag { font-size: calc(11.5px * var(--dt)); font-weight: 500; }
+  .rail-goal-tag.good { color: var(--accent-done); }
+  .rail-goal-tag.attention { color: var(--accent-attention); }
+  .rail-goal-tag.bad { color: var(--accent-error); }
+
+  .rail-mgr-head {
+    position: relative; z-index: 1;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  }
+  .rail-mgr-title {
+    font-size: calc(16px * var(--dt)); font-weight: 600; line-height: 1.3;
+    letter-spacing: -0.014em; color: #c8c8c8; flex: 1; min-width: 0;
+  }
+  .rail-mgr-card.unread .rail-mgr-title,
+  .rail-mgr-card.selected .rail-mgr-title { color: var(--tone-strong); }
+
+  /* Sidebar Settled Bubble + Bottom Utility Row (Review left with badge, Settings icon right!) */
+  .sb-dock {
+    flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+    padding-top: 8px; border-top: 1px solid var(--border-subtle);
+  }
+
+  .sb-settled-box {
+    background: var(--surface-rail); border-radius: 12px; overflow: hidden;
+  }
+  .sb-settled-head {
+    width: 100%; min-height: 40px; padding: 0 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: calc(13.5px * var(--dt)); font-weight: 500; color: var(--tone-secondary);
+  }
+  .sb-settled-row {
+    padding: 8px 14px; border-top: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 13px; color: var(--tone-tertiary);
+  }
+
+  .sb-bottom-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 2px 2px 0;
+  }
+  .sb-review-btn {
+    min-height: 42px; padding: 0 13px; border-radius: 11px;
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: calc(14.5px * var(--dt)); font-weight: 600; color: var(--tone-primary);
+    background: transparent;
+  }
+  .sb-review-btn:hover { background: rgba(255,255,255,0.05); }
+  .sb-review-btn.active { background: var(--surface-rail); color: var(--tone-strong); }
+
+  .sb-settings-btn {
+    width: 42px; height: 42px; border-radius: 11px;
+    display: grid; place-items: center; color: var(--tone-secondary); position: relative;
+  }
+  .sb-settings-btn:hover { background: rgba(255,255,255,0.05); color: var(--tone-strong); }
+  .sb-settings-btn.active { background: var(--surface-rail); color: var(--tone-strong); }
+
+  /* ==========================================================================
+     Review Directional Deck (Step-Lighter Proposal & Message Cards, Full-Width Decisions!)
+     ========================================================================== */
+  .deck-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+
+  .deck-card-shell {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    background: var(--surface-1); will-change: transform, opacity;
+  }
+  .deck-card-shell.enter-from-right { animation: deckEnterRight var(--motion-slow) var(--motion-ease) 60ms both; }
+  .deck-card-shell.enter-from-left { animation: deckEnterLeft var(--motion-slow) var(--motion-ease) 60ms both; }
+  .deck-card-shell.exit-left { pointer-events: none; animation: deckExitLeft var(--motion-base) var(--motion-ease-exit) both; }
+  .deck-card-shell.exit-right { pointer-events: none; animation: deckExitRight var(--motion-base) var(--motion-ease-exit) both; }
+  @keyframes deckEnterRight { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes deckEnterLeft { from { opacity: 0; transform: translateX(-36px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes deckExitLeft { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-36px); } }
+  @keyframes deckExitRight { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(36px); } }
+
+  .deck-part {
+    transition: opacity var(--motion-base) var(--motion-ease-exit),
+                transform var(--motion-base) var(--motion-ease-exit),
+                max-height var(--motion-slow) var(--motion-move),
+                margin var(--motion-slow) var(--motion-move),
+                padding var(--motion-slow) var(--motion-move);
+    overflow: hidden;
+  }
+  .deck-part.part-leaving {
+    opacity: 0; transform: translateX(-32px); max-height: 0 !important;
+    margin-top: 0 !important; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; pointer-events: none;
+  }
+
+  .review-pad { padding: 10px 18px 28px; }
+
+  .review-title {
+    font-size: calc(23px * var(--dt)); font-weight: 600; line-height: 1.24;
+    letter-spacing: -0.016em; color: var(--tone-strong); margin: 0 0 8px;
+  }
+  .review-recap {
+    font-size: calc(14px * var(--dt)); color: var(--tone-secondary); line-height: 1.5; margin: 0 0 18px;
+  }
+
+  /* Proposal Card: ONE STEP LIGHTER than #121212 (exact --page-card-fill from WorkerProposalCard.svelte!) */
+  .proposal-card {
+    background: var(--page-card-fill);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .proposal-card-meta {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: calc(13px * var(--dt)); font-weight: 500; margin-bottom: 12px;
+  }
+  .proposal-stage-txt { color: var(--tone-secondary); font-weight: 600; }
+  .proposal-approver-btn {
+    color: var(--tone-secondary); font-size: calc(13px * var(--dt)); font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 7px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .proposal-approver-btn:hover { background: rgba(255, 255, 255, 0.09); color: var(--tone-strong); }
+
+  /* Review Message Card (exact --surface-2 #1a1a1a, one step lighter — used both standalone & in mixed Ticket cards!) */
+  .review-message-card {
+    background: var(--surface-2);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .msg-piece-sep { width: 32px; height: 1px; background: rgba(255, 255, 255, 0.14); margin: 14px 0; }
+
+  .prose { font-size: calc(14.5px * var(--dt)); line-height: 1.58; color: var(--tone-primary); user-select: text; }
+  .prose p { margin: 0 0 11px; }
+  .prose p:last-child { margin-bottom: 0; }
+  .prose p.lead { font-size: calc(15px * var(--dt)); font-weight: 500; color: var(--tone-strong); }
+  .prose ul { margin: 8px 0 11px; padding-left: 18px; }
+  .prose li { margin-bottom: 4px; }
+  .prose strong { color: var(--tone-strong); font-weight: 600; }
+  .prose code { font-family: var(--font-mono); font-size: 0.86em; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; color: var(--tone-strong); }
+
+  .artifact-link {
+    display: inline; color: var(--link-artifact); font-weight: 500;
+    text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(169, 189, 230, 0.45);
+    cursor: pointer;
+  }
+  .artifact-link:active { opacity: 0.65; }
+
+  /* Inline Alerts */
+  .inline-alert {
+    border-radius: 11px; padding: 11px 13px; margin-bottom: 14px;
+    font-size: calc(13px * var(--dt)); line-height: 1.46; display: flex; flex-direction: column; gap: 7px;
+  }
+  .inline-alert.refused { background: var(--error-surface); border: 1px solid rgba(201, 124, 119, 0.28); color: #f0c9c6; }
+  .inline-alert.uncertain { background: #282115; border: 1px solid rgba(212, 171, 108, 0.28); color: #edd7b2; }
+  .inline-alert.info { background: var(--accent-surface); border: 1px solid rgba(154, 173, 210, 0.22); color: var(--accent-text); }
+  .inline-alert-title { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .inline-alert-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+
+  /* ==========================================================================
+     Floating Bottom Decision Dock (No Tab Bar Below -> Full-Width 50/50 Buttons!)
+     ========================================================================== */
+  .decision-dock {
+    flex-shrink: 0; position: relative;
+    background: var(--surface-1);
+    padding: 8px 18px 26px;
+    display: flex; flex-direction: column; gap: 10px; z-index: 15;
+  }
+  .decision-dock::before {
+    content: ""; position: absolute; left: 0; right: 0; top: -22px; height: 22px;
+    background: linear-gradient(to bottom, rgba(18, 18, 18, 0), var(--surface-1));
+    pointer-events: none;
+  }
+
+  .note-box {
+    background: var(--surface-input);
+    border-radius: 12px;
+    padding: 4px 6px 4px 10px;
+    display: flex; flex-direction: column; gap: 5px;
+    border: 1px solid transparent;
+    transition: border-color var(--motion-fast) ease;
+  }
+  .note-box:focus-within { border-color: rgba(154, 173, 210, 0.6); }
+  .note-input-row { display: flex; align-items: center; gap: 4px; }
+
+  .note-textarea {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none; resize: none;
+    overflow: hidden; scrollbar-width: none;
+    font-size: calc(15px * var(--dt)); line-height: 1.38; color: var(--tone-strong);
+    min-height: 24px; max-height: 88px; padding: 6px 2px;
+  }
+  .note-textarea::-webkit-scrollbar { display: none; }
+  .note-textarea::placeholder { color: var(--tone-tertiary); }
+
+  .composer-tool-btn {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center; color: var(--tone-secondary); flex-shrink: 0;
+  }
+  .composer-tool-btn:hover { color: var(--tone-strong); background: rgba(255,255,255,0.06); }
+  .composer-tool-btn.recording { background: var(--error-surface); color: var(--accent-error); }
+
+  .composer-send-circle {
+    width: 32px; height: 32px; border-radius: 99px;
+    display: grid; place-items: center; background: var(--tone-strong); color: var(--surface-ink); flex-shrink: 0;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease, transform 80ms ease;
+  }
+  .composer-send-circle:active { transform: scale(0.94); }
+  .composer-send-circle.empty { background: rgba(255, 255, 255, 0.11); color: var(--tone-tertiary); }
+
+  /* Balanced Bottom Decision Rows: Equal-width buttons, just two visual button tiers (secondary & primary) */
+  .decision-btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .decision-btn-row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+
+  .ios-btn {
+    min-height: 46px; border-radius: 12px; padding: 0 12px;
+    font-size: calc(14.5px * var(--dt)); font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    transition: transform 80ms ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, color var(--motion-fast) ease;
+  }
+  .ios-btn:active { transform: scale(0.98); }
+  .ios-btn.primary { background: var(--accent-bright); color: var(--surface-ink); }
+  .ios-btn.primary:hover { background: #a8bae0; }
+  .ios-btn.secondary { background: var(--surface-input); color: var(--tone-strong); }
+  .ios-btn.secondary:hover { background: var(--surface-input-hover); }
+  .ios-btn.subtle { background: transparent; color: var(--tone-secondary); min-height: 36px; font-weight: 500; }
+  .ios-btn.flash-ring { box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent-bright); }
+  .ios-btn:disabled { opacity: 0.38; pointer-events: none; }
+
+  .voice-strip {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #1f1718; border-radius: 8px; padding: 5px 9px;
+    font-size: calc(12.5px * var(--dt)); color: var(--tone-strong); margin: 2px 4px 0 0;
+  }
+  .voice-waves { display: inline-flex; align-items: center; gap: 2.5px; height: 14px; }
+  .voice-bar { width: 2.5px; border-radius: 2px; background: var(--accent-error); animation: waveBounce 0.7s ease-in-out infinite alternate; }
+  .voice-bar:nth-child(2) { animation-delay: 0.15s; }
+  .voice-bar:nth-child(3) { animation-delay: 0.3s; }
+  .voice-bar:nth-child(4) { animation-delay: 0.45s; }
+  @keyframes waveBounce { from { height: 4px; } to { height: 13px; } }
+
+  .att-strip { display: flex; gap: 6px; flex-wrap: wrap; padding: 3px 4px 0 0; }
+  .att-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); border-radius: 7px; padding: 3px 8px;
+    font-size: calc(12px * var(--dt)); color: var(--tone-primary);
+  }
+  .att-chip.preparing { color: var(--accent-bright); }
+  .att-remove { color: var(--tone-tertiary); font-size: 14px; line-height: 1; padding: 0 2px; }
+  .nudge-text { font-size: calc(12px * var(--dt)); color: var(--accent-attention); }
+
+  /* Answer Options */
+  .answer-option {
+    width: 100%; text-align: left; min-height: 48px; padding: 11px 13px;
+    border-radius: 10px; background: var(--surface-2); border: 1px solid transparent;
+    display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px;
+  }
+  .answer-option.selected { background: var(--accent-surface); border-color: rgba(154, 173, 210, 0.48); }
+  .radio-circle {
+    width: 17px; height: 17px; border-radius: 99px; border: 1.5px solid var(--tone-tertiary);
+    margin-top: 2px; flex-shrink: 0; display: grid; place-items: center;
+  }
+  .answer-option.selected .radio-circle { border-color: var(--accent-bright); }
+  .answer-option.selected .radio-circle::after { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--accent-bright); }
+
+  /* End of Queue — Two-Tone Left Editorial */
+  .final-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .final-stage {
+    flex: 1; min-height: 0; position: relative; padding: 224px 20px 36px;
+    display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start;
+    text-align: left;
+  }
+  .final-line1 {
+    font-size: calc(31px * var(--dt)); font-weight: 700; letter-spacing: -0.03em; line-height: 1.12;
+    color: var(--tone-strong); margin: 0; font-variant-numeric: tabular-nums;
+  }
+  .final-line2 {
+    font-size: calc(31px * var(--dt)); font-weight: 600; letter-spacing: -0.03em; line-height: 1.12;
+    color: #8a8a93; margin: 2px 0 0; font-variant-numeric: tabular-nums;
+  }
+  .final-cta {
+    margin-top: 24px;
+    min-height: 46px; border-radius: 12px; padding: 0 22px;
+    background: #272727; color: #f0f0f2;
+    border: none;
+    font-size: calc(15.5px * var(--dt)); font-weight: 600; letter-spacing: -0.015em;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background var(--motion-fast) ease, transform 80ms ease;
+  }
+  .final-cta:hover { background: #303030; }
+  .final-cta:active { transform: scale(0.98); background: #333333; }
+  .final-working {
+    position: absolute; left: 20px; bottom: 12px;
+    font-size: calc(13.5px * var(--dt)); font-weight: 400; color: #82828a;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ==========================================================================
+     Artifact Vertical Layer (Web-Parity 3-Way Bottom Context Rule)
+     ========================================================================== */
+  .artifact-layer {
+    position: absolute; inset: 0; background: var(--surface-1); z-index: 45;
+    display: flex; flex-direction: column;
+    animation: artifactRise var(--motion-slow) var(--motion-ease) both;
+  }
+  .artifact-layer.drop-out { animation: artifactDrop var(--motion-base) var(--motion-ease-exit) both; }
+  .artifact-layer.exit-left { animation: deckExitLeft var(--motion-base) var(--motion-ease-exit) both; }
+  @keyframes artifactRise { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes artifactDrop { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(26px); } }
+
+  .segmented-mini { display: inline-flex; background: var(--surface-recessed); padding: 2px; border-radius: 8px; gap: 2px; }
+  .segmented-mini button { font-size: calc(11.5px * var(--dt)); font-weight: 500; color: var(--tone-secondary); padding: 4px 9px; border-radius: 6px; }
+  .segmented-mini button.active { background: var(--surface-input); color: var(--tone-strong); }
+
+  /* Tables, Charts & Code */
+  .gfm-table-wrap {
+    overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 12px 0;
+    border-radius: 10px; border: 1px solid var(--border-subtle); background: var(--surface-recessed);
+  }
+  .gfm-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: calc(12.5px * var(--dt)); font-variant-numeric: tabular-nums; }
+  .gfm-table th, .gfm-table td { padding: 8px 11px; text-align: left; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
+  .gfm-table th { color: var(--tone-tertiary); font-weight: 600; background: rgba(255, 255, 255, 0.025); }
+  .gfm-table tr:last-child td { border-bottom: none; }
+  .gfm-table td { color: var(--tone-primary); }
+
+  .panels-chart-card {
+    background: var(--surface-recessed); border: 1px solid var(--border-subtle);
+    border-radius: 11px; padding: 12px; margin: 10px 0 2px;
+  }
+  .panels-chart-title { font-size: calc(12.5px * var(--dt)); font-weight: 600; color: var(--tone-strong); margin-bottom: 8px; }
+
+  .code-block {
+    background: var(--surface-recessed); border: 1px solid var(--border-subtle); border-radius: 10px;
+    padding: 10px 12px; overflow-x: auto; margin: 10px 0;
+    font-family: var(--font-mono); font-size: calc(12px * var(--dt)); line-height: 1.5; color: #d6dde8; white-space: pre;
+  }
+
+  /* ==========================================================================
+     Existing iOS Worker Sections (WorkerSections.swift — Kept Intact, No Long-Press)
+     ========================================================================== */
+  .worker-sections { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+  .worker-disc-head {
+    width: 100%; min-height: 44px; padding: 0 14px; border-radius: 10px;
+    background: var(--surface-raised); color: var(--tone-secondary);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left;
+    font-size: calc(13px * var(--dt)); font-weight: 600;
+  }
+  .worker-disc-head:active { background: var(--surface-input); }
+  .worker-disc-count { font-size: calc(12.5px * var(--dt)); font-weight: 500; color: var(--tone-tertiary); font-variant-numeric: tabular-nums; }
+  .worker-rows { display: flex; flex-direction: column; padding: 4px 0; }
+  .worker-row {
+    width: 100%; text-align: left; min-height: 44px; padding: 8px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 8px;
+  }
+  .worker-row:hover { background: rgba(255, 255, 255, 0.035); }
+  .worker-row:active { background: rgba(255, 255, 255, 0.06); }
+  .worker-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .worker-row-title { font-size: calc(14.5px * var(--dt)); font-weight: 500; color: var(--tone-strong); line-height: 1.35; }
+  .worker-row-title.quiet { font-weight: 400; color: var(--tone-tertiary); }
+  .worker-row-sub { font-size: calc(12px * var(--dt)); color: var(--tone-tertiary); font-variant-numeric: tabular-nums; }
+
+  .mark-trail { width: 20px; height: 22px; display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; }
+  .mark-dot-accent { width: 8px; height: 8px; border-radius: 99px; background: var(--accent-bright); }
+  .mark-dot-answer { width: 8px; height: 8px; border-radius: 99px; background: var(--accent-needs-me); box-shadow: 0 0 8px rgba(255, 255, 255, 0.45); }
+  .mark-ring-assigned { width: 10px; height: 10px; border-radius: 99px; border: 2px solid var(--accent-bright); }
+  .mark-ring-upcoming { width: 10px; height: 10px; border-radius: 99px; border: 1.5px solid rgba(255,255,255,0.26); }
+  .mark-done { width: 13px; height: 13px; border-radius: 99px; background: rgba(127, 165, 100, 0.2); color: var(--accent-done); display: grid; place-items: center; font-size: 9px; font-weight: 800; }
+  .mark-spinner { width: 11px; height: 11px; border-radius: 99px; border: 1.8px solid rgba(154, 173, 210, 0.22); border-top-color: var(--tone-strong); animation: spin900 900ms linear infinite; }
+  @keyframes spin900 { to { transform: rotate(360deg); } }
+
+  /* Detail & Conversation Screens */
+  .detail-pad { padding: 14px 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+  .detail-pad > * { flex-shrink: 0; }
+  .detail-card { background: var(--surface-2); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
+
+  .disclosure-band { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+  .disclosure-head { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; font-size: calc(13.5px * var(--dt)); font-weight: 600; color: var(--tone-strong); }
+  .step-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border-subtle); }
+  .step-row:last-child { border-bottom: none; }
+
+  .conv-preview-dock {
+    flex-shrink: 0; position: relative; background: var(--surface-1);
+    padding: 8px 18px 26px; display: flex; flex-direction: column; gap: 6px; z-index: 15;
+  }
+  .conv-preview-dock::before {
+    content: ""; position: absolute; left: 0; right: 0; top: -20px; height: 20px;
+    background: linear-gradient(to bottom, rgba(18,18,18,0), var(--surface-1)); pointer-events: none;
+  }
+  .conv-preview-line { font-size: calc(12px * var(--dt)); color: var(--tone-tertiary); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+  .chat-thread { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 15px; }
+  .chat-human-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .chat-human-bubble { max-width: 84%; background: var(--surface-2); color: var(--tone-strong); border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: calc(14.5px * var(--dt)); line-height: 1.48; }
+  .chat-meta-tiny { font-size: 11px; color: var(--tone-tertiary); font-variant-numeric: tabular-nums; }
+  .chat-agent-block { display: flex; flex-direction: column; gap: 6px; }
+  .chat-tool-pill { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--tone-tertiary); background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 4px 8px; align-self: flex-start; }
+  .chat-sys-note { font-size: calc(12px * var(--dt)); color: var(--tone-tertiary); border-left: 2px solid var(--accent-bright); padding: 4px 10px; background: rgba(154,173,210,0.06); border-radius: 0 7px 7px 0; }
+  .held-stack { background: var(--surface-2); border-top: 1px solid var(--border-subtle); padding: 8px 18px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: calc(12px * var(--dt)); }
+
+  /* Native SwiftUI Grouped Form Sheets (.sheet + NavigationStack + Form) */
+  .ios-sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.56); z-index: 70; display: flex; align-items: flex-end; animation: fadeIn 150ms ease both; }
+  .ios-sheet {
+    width: 100%; max-height: 86%; background: #1c1c1e;
+    border-radius: 26px 26px 0 0;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55), inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+    display: flex; flex-direction: column; overflow: hidden;
+    animation: sheetRise 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes sheetRise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .sheet-grabber { width: 36px; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, 0.28); margin: 8px auto 0; flex-shrink: 0; }
+  .ios-sheet-nav {
+    height: 48px; flex-shrink: 0; padding: 0 16px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+  }
+  .ios-sheet-nav-title {
+    font-size: calc(16.5px * var(--dt)); font-weight: 600; color: #ffffff;
+    text-align: center; white-space: nowrap; letter-spacing: -0.015em;
+  }
+  .ios-sheet-nav-cancel {
+    justify-self: start; font-size: calc(15.5px * var(--dt)); font-weight: 400;
+    color: var(--accent-bright); padding: 6px 2px;
+  }
+  .ios-sheet-nav-cancel:active { opacity: 0.6; }
+  .ios-sheet-nav-done {
+    justify-self: end; font-size: calc(14.5px * var(--dt)); font-weight: 600;
+    background: var(--accent-bright); color: var(--surface-ink);
+    padding: 6px 14px; border-radius: 999px;
+  }
+  .ios-sheet-nav-done:active { opacity: 0.8; }
+  .ios-sheet-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 34px;
+    display: flex; flex-direction: column; gap: 22px; scrollbar-width: none;
+  }
+  .ios-sheet-body::-webkit-scrollbar { display: none; }
+
+  .ios-form-section { display: flex; flex-direction: column; }
+  .ios-form-header {
+    font-size: calc(12px * var(--dt)); font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.03em; color: #8e8e93; padding: 0 14px 7px;
+  }
+  .ios-form-group { background: #2c2c2e; border-radius: 12px; overflow: hidden; }
+  .ios-form-row {
+    width: 100%; min-height: 46px; padding: 11px 16px; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    font-size: calc(15.5px * var(--dt)); color: #ffffff; position: relative;
+    transition: background 80ms ease;
+  }
+  .ios-form-row:active { background: rgba(255, 255, 255, 0.08); }
+  .ios-form-row + .ios-form-row::before {
+    content: ""; position: absolute; left: 16px; right: 0; top: 0; height: 0.5px;
+    background: rgba(255, 255, 255, 0.11);
+  }
+  .ios-form-row-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .ios-form-row-icon { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent-bright); flex-shrink: 0; }
+  .ios-form-row.destructive { color: #ff6961; }
+  .ios-form-row.destructive .ios-form-row-icon { color: #ff6961; }
+  .ios-form-note { padding: 12px 16px; font-size: calc(14px * var(--dt)); line-height: 1.45; color: #d1d1d6; }
+
+  .ios-segmented {
+    background: #2c2c2e; border-radius: 10px; padding: 3px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
+  }
+  .ios-segmented button {
+    min-height: 34px; border-radius: 7.5px; font-size: calc(14px * var(--dt)); font-weight: 500;
+    color: #aeaeb2; transition: background 120ms ease, color 120ms ease;
+  }
+  .ios-segmented button.active {
+    background: #545458; color: #ffffff; font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Desktop-parity Artifact rows inside collapsed Artifacts disclosure band */
+  .artifact-inline-row {
+    width: 100%; min-height: 44px; padding: 9px 2px; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    border-top: 1px solid var(--border-subtle); font-size: calc(14px * var(--dt));
+  }
+  .artifact-inline-row:first-child { border-top: none; }
+  .artifact-inline-row:active { opacity: 0.7; }
+
+  .ios-toast {
+    position: absolute; top: 62px; left: 16px; right: 16px; z-index: 80;
+    background: rgba(34, 34, 38, 0.96); border: 1px solid var(--border-raised);
+    border-radius: 12px; padding: 10px 13px; font-size: calc(12.5px * var(--dt)); color: var(--tone-strong);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    animation: toastIn 180ms var(--motion-ease) both;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .ios-gate-cover {
+    position: absolute; inset: 0; background: var(--surface-1); z-index: 85;
+    padding: 80px 26px 40px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+
+  /* ==========================================================================
+     Right Column: Data Flow, Edge States & Postmortem Inspector
+     ========================================================================== */
+  .inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #0c0c0e; overflow: hidden; }
+  .insp-head { flex-shrink: 0; padding: 14px 22px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 10px; }
+  .insp-context-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .insp-screen-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--tone-strong); }
+  .insp-screen-pill { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 5px; background: var(--accent-badge); color: var(--accent-text); }
+  .insp-tabs { display: inline-flex; gap: 4px; background: var(--surface-1); padding: 3px; border-radius: 9px; border: 1px solid var(--border-subtle); align-self: flex-start; }
+  .insp-tab { font-size: 12.5px; font-weight: 500; color: var(--tone-secondary); padding: 6px 12px; border-radius: 7px; }
+  .insp-tab:hover { color: var(--tone-strong); }
+  .insp-tab.active { background: var(--surface-input); color: var(--tone-strong); }
+
+  .insp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 32px; display: flex; flex-direction: column; gap: 16px; }
+  .df-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .df-card { background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .df-card-kicker { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tone-tertiary); }
+  .df-card-title { font-size: 14px; font-weight: 600; color: var(--tone-strong); }
+  .df-card-text { font-size: 13px; color: var(--tone-secondary); line-height: 1.5; overflow-wrap: anywhere; }
+  .df-route { font-family: var(--font-mono); font-size: 11.5px; color: var(--link-artifact); background: var(--surface-recessed); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere; }
+
+  .trace-box { background: var(--surface-recessed); border: 1px solid var(--border-subtle); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .trace-head { padding: 9px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--tone-secondary); }
+  .trace-list { max-height: 230px; overflow-y: auto; padding: 6px 0; font-family: var(--font-mono); font-size: 11.5px; }
+  .trace-row { padding: 5px 12px; display: grid; grid-template-columns: 56px 56px minmax(0, 1fr); gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.03); align-items: baseline; }
+  .trace-time { color: var(--tone-faint); font-variant-numeric: tabular-nums; }
+  .trace-kind { font-weight: 600; }
+  .trace-kind.SSE { color: var(--machine-jade); }
+  .trace-kind.POST { color: var(--accent-bright); }
+  .trace-kind.GET { color: var(--machine-cyan); }
+  .trace-kind.OUTBOX { color: var(--accent-attention); }
+  .trace-kind.ERR { color: var(--accent-error); }
+  .trace-kind.UI { color: var(--machine-orchid); }
+  .trace-msg { color: var(--tone-primary); overflow-wrap: anywhere; }
+
+  .sim-btn { align-self: flex-start; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--accent-text); background: var(--accent-surface); padding: 6px 11px; border-radius: 7px; }
+  .sim-btn:hover { background: #2b3547; }
+
+  .problem-row { background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 13px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+  .problem-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(201, 124, 119, 0.14); color: var(--accent-error); display: inline-block; margin-bottom: 4px; }
+  .fix-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(127, 165, 100, 0.14); color: var(--accent-done); display: inline-block; margin-top: 6px; margin-bottom: 3px; }
+
+  .jump-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 9px; }
+  .jump-card { text-align: left; background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: 11px; padding: 11px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .jump-card:hover { background: var(--surface-2); border-color: var(--border-raised); }
+
+  @media (max-width: 960px) {
+    html, body { overflow: auto; }
+    .workbench { height: auto; min-height: 100dvh; overflow: visible; }
+    .wb-brand-sub { display: none; }
+    .wb-body { grid-template-columns: 1fr; overflow: visible; }
+    .phone-stage { border-right: none; border-bottom: 1px solid var(--border-subtle); padding: 14px 8px 20px; }
+    .inspector, .insp-body { overflow: visible; }
+  }
+  @media (max-width: 440px) {
+    .wb-topbar { padding: 0 10px; }
+    .iphone-bezel { width: 100%; height: auto; min-height: calc(100dvh - 56px); padding: 0; border-radius: 0; box-shadow: none; background: var(--surface-1); }
+    .iphone-bezel::before, .iphone-bezel::after, .ios-statusbar, .ios-home-indicator { display: none; }
+    .iphone-screen { width: 100%; height: calc(100dvh - 56px); border-radius: 0; box-shadow: none; }
+    .phone-stage { padding: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="workbench">
+  <header class="wb-topbar">
+    <div class="wb-brand">
+      <div class="wb-brand-mark" aria-hidden="true">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <rect x="1.5" y="2" width="5" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="9.5" y="2" width="5" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <span class="wb-brand-title">Panels iPhone</span>
+      <span class="wb-brand-sub">Review Queue &amp; Sidebar Workspace Prototype</span>
+    </div>
+
+    <div class="wb-controls">
+      <div class="wb-group" role="group" aria-label="Dynamic Type scale">
+        <button class="wb-pill active" id="dt-1" onclick="setDynamicType(1)">Aa</button>
+        <button class="wb-pill" id="dt-112" onclick="setDynamicType(1.12)">Aa+</button>
+        <button class="wb-pill" id="dt-124" onclick="setDynamicType(1.24)">AX1</button>
+      </div>
+
+      <button class="wb-reset-btn" onclick="resetPrototype()">Reset Queue</button>
+    </div>
+  </header>
+
+  <main class="wb-body">
+    <section class="phone-stage" aria-label="Interactive iPhone mockup">
+      <div class="phone-scaler" id="phoneScaler">
+        <div class="iphone-bezel">
+          <div class="iphone-screen" id="iphoneScreen">
+            <div class="ios-statusbar">
+              <span class="ios-time">9:41</span>
+              <div class="ios-island"><div class="ios-island-lens"></div></div>
+              <div class="ios-status-icons">
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.8"/><rect x="4.3" y="5" width="3" height="6" rx="0.8"/><rect x="8.6" y="2.5" width="3" height="8.5" rx="0.8"/><rect x="13" y="0" width="3" height="11" rx="0.8"/></svg>
+                <span id="iosCarrierLabel">5G</span>
+                <svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.7" y="1" width="19.6" height="10" rx="2.6" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.2"/><rect x="2.5" y="2.8" width="15" height="6.4" rx="1.2" fill="currentColor"/><path d="M22 4.2v3.6" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.4" stroke-linecap="round"/></svg>
+              </div>
+            </div>
+
+            <div class="ios-net-banner" id="iosNetBanner"></div>
+            <div class="ios-viewport" id="iosViewport"></div>
+
+            <div id="iosSidebarHost"></div>
+            <div id="iosToastHost"></div>
+            <div id="iosSheetHost"></div>
+            <div id="iosGateHost"></div>
+            <div class="ios-home-indicator" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="inspector" aria-label="Architecture and data flow inspector">
+      <div class="insp-head">
+        <div class="insp-context-row">
+          <div class="insp-screen-tag">
+            <span class="insp-screen-pill" id="inspPill">Review</span>
+            <span id="inspTitle">Proposal + HTML Artifact</span>
+          </div>
+          <span id="inspStateMeta" style="font-size:12px;color:var(--tone-tertiary);font-variant-numeric:tabular-nums;">SSE live · Outbox 0</span>
+        </div>
+
+        <div class="insp-tabs" role="tablist">
+          <button class="insp-tab active" id="itab-dataflow" onclick="setInspectorTab('dataflow')">Data Flow</button>
+          <button class="insp-tab" id="itab-states" onclick="setInspectorTab('states')">Edge States</button>
+          <button class="insp-tab" id="itab-problems" onclick="setInspectorTab('problems')">Broken → Fixed</button>
+          <button class="insp-tab" id="itab-map" onclick="setInspectorTab('map')">Screen Map</button>
+        </div>
+      </div>
+
+      <div class="insp-body" id="inspBody"></div>
+    </aside>
+  </main>
+</div>
+
+<script>
+/* ============================================================================
+   Realistic Panels Data (Exact Web Review & Sidebar Semantics)
+   ============================================================================ */
+const INITIAL_QUEUE = [
+  {
+    key: 'ticket:t_post_paywall',
+    kind: 'ticket',
+    ticketId: 't_post_paywall',
+    title: 'Design the post-paywall setup flow',
+    recap: 'Three onboarding options are ready for review before coding starts.',
+    stage: 'Wireframe',
+    field: 'wireframe',
+    isTerminal: false,
+    revision: 3,
+    holder: 'You',
+    nextCeilings: ['What Changes', 'Plan', 'Implementation', 'Consequences', 'Done'],
+    proposalDone: false,
+    proposalBodyHtml: `
+      <p class="lead">Three options for the first three minutes after subscribing, built around one goal instead of a settings checklist.</p>
+      <p><strong>Option B</strong> cuts setup from 7 screens to 3, builds a 7-day starter cadence in place, and waits to ask for notifications until after the first win.</p>
+      <ul>
+        <li>Reuses the existing iOS goal sheet component.</li>
+        <li>Lets users skip setup without losing their first check-in.</li>
+      </ul>
+      <p>Open <button class="artifact-link" onclick="openArtifact('post_paywall_html', 'proposal')">post-paywall-wireframe.html</button> to walk through the screens.</p>
+    `,
+    refusal: null,
+    uncertain: null
+  },
+  {
+    key: 'ticket:t_app_routes',
+    kind: 'ticket',
+    ticketId: 't_app_routes',
+    title: 'Weigh one app architecture across desktop, phone, and web',
+    recap: 'Comparison of native Swift, Tauri, and Electron is ready to close out.',
+    stage: 'Consequences',
+    field: 'consequences',
+    isTerminal: true,
+    revision: 2,
+    holder: 'You',
+    nextCeilings: [],
+    proposalDone: false,
+    proposalBodyHtml: `
+      <p class="lead">Keep the iPhone app native SwiftUI, and share the web app inside a thin macOS shell only if desktop needs native menus.</p>
+      <p>The benchmark table and polish comparison are in <button class="artifact-link" onclick="openArtifact('app_routes_md', 'proposal')">app-routes-report.md</button>. Approving moves this Ticket to Done.</p>
+    `,
+    refusal: null,
+    uncertain: null
+  },
+  {
+    key: 'message:conv_app_routes',
+    kind: 'message',
+    conversationId: 'conv_app_routes',
+    ticketId: 't_app_routes',
+    title: 'Weigh one app architecture across desktop, phone, and web',
+    recap: 'Worker message on the architecture comparison.',
+    historical: false,
+    read: false,
+    pieces: [
+      'Before you decide: pooling a single <code>WKWebView</code> for HTML artifacts saves about 95 MB when opening several reports in a row.'
+    ]
+  },
+  {
+    key: 'answer:t_goal_sheet',
+    kind: 'answer',
+    ticketId: 't_goal_sheet',
+    title: 'Build the goal sheet and first-goal card',
+    recap: 'Waiting on one choice before finishing the first-goal card transition.',
+    questionMode: 'user_input',
+    prompt: 'After a user creates their first goal, what should happen to the card?',
+    options: [
+      { id: 'opt_expand', title: 'Stay expanded with the first milestone checklist', desc: 'Shows the immediate next step without a second tap.' },
+      { id: 'opt_dismiss', title: 'Collapse to the summary row right away', desc: 'Keeps Today compact; user taps to inspect tasks.' },
+      { id: 'opt_toast', title: 'Collapse after a short confirmation state', desc: 'Confirms creation, then settles quietly.' }
+    ],
+    permissionCommand: 'xcodebuild test -scheme Wren -destination "platform=iOS Simulator,name=PanelsLaneB"',
+    selectedOption: 'opt_expand'
+  },
+  {
+    key: 'message:conv_accounts',
+    kind: 'message',
+    conversationId: 'conv_accounts',
+    ownerId: 'm_accounts',
+    title: 'Use several accounts of one agent program in Panels',
+    recap: 'Four option kinds are ready and await your choice.',
+    historical: false,
+    pieces: [
+      'I compared four ways to rotate Claude and Gemini accounts when one hits quota. Manual per-Ticket pinning is fastest to ship; automatic failover needs encrypted credential storage first.',
+      'See <button class="artifact-link" onclick="openArtifact(\'accounts_md\', \'message\')">account-rotation-options.md</button> or reply here with which route you want me to plan.'
+    ],
+    chart: {
+      title: 'Remaining Weekly Quota (%)',
+      bars: [
+        { label: 'Account A', value: 18, color: 'var(--accent-error)' },
+        { label: 'Account B', value: 74, color: 'var(--accent-bright)' },
+        { label: 'Account C', value: 92, color: 'var(--accent-done)' }
+      ]
+    }
+  }
+];
+
+/* Chief + Active Managers (all rendered uniformly as real Panels rail cards!) */
+const MANAGERS = [
+  {
+    id: 'm_improve_wren',
+    title: 'Improve Wren',
+    project: 'Wren',
+    goalStatus: 'attention',
+    goalLabel: 'At risk',
+    unread: false,
+    working: true,
+    recap: 'Goal record, tools, card merged; last two phone builds starting.',
+    goal: 'Make Wren do what the approved onboarding screens promise, so the screens are honest before release.',
+    soleGoal: {
+      headline: '4 of 6 promises shipped',
+      target: 'Target: 6 of 6',
+      deadline: 'Due Nov 24',
+      status: 'attention',
+      statusLabel: 'At risk',
+      items: [
+        { label: 'Goal record & tools', done: true },
+        { label: 'Record completes goal tasks', done: true },
+        { label: 'Post-paywall setup flow', done: false },
+        { label: 'First-goal card transition', done: false }
+      ]
+    },
+    pageTable: null,
+    artifacts: [{ id: 'post_paywall_html', label: 'post-paywall-wireframe.html', kind: 'HTML' }],
+    tickets: [
+      { id: 't_post_paywall', title: 'Design the post-paywall setup flow', group: 'awaiting_approval', sub: 'Wireframe proposal', mark: 'approval' },
+      { id: 't_goal_sheet', title: 'Build the goal sheet and first-goal card', group: 'awaiting_answer', sub: 'Waiting for your answer', mark: 'answer' },
+      { id: 't_wren_build15', title: 'Run Wren build 15 TestFlight upload', group: 'agent', sub: 'Setting up · 1m 42s', unread: true, settingUp: true, mark: 'setting_up' },
+      { id: 't_record_tasks', title: 'Let the record complete goal tasks', group: 'agent', sub: 'Running tests', mark: 'working' }
+    ],
+    backlogged: [
+      { id: 't_record_tasks', title: 'Set the rules for Wren’s Record page', sub: 'Backlogged' }
+    ],
+    done: [
+      { id: 't_record_tasks', title: 'Build goal record storage and sync tools', sub: 'Done' },
+      { id: 't_record_tasks', title: 'Add daily check-in mood rules', sub: 'Done' }
+    ]
+  },
+  {
+    id: 'm_desktop_est',
+    title: 'Estimate a desktop app for Panels',
+    project: 'Panels',
+    goalStatus: null,
+    goalLabel: null,
+    unread: false,
+    working: false,
+    recap: 'Report is with you through Chief; waiting for two answers.',
+    goal: 'Compare native macOS, thin WKWebView shell, Tauri, and Electron options with realistic build effort.',
+    soleGoal: null,
+    pageTable: null,
+    artifacts: [{ id: 'app_routes_md', label: 'app-routes-report.md', kind: 'Markdown' }],
+    tickets: [
+      { id: 't_app_routes', title: 'Weigh one app architecture across desktop, phone, and web', group: 'awaiting_approval', sub: 'Consequences', unread: true, mark: 'approval' }
+    ],
+    backlogged: [],
+    done: [
+      { id: 't_app_routes', title: 'Map the desktop app options for Panels and their effort', sub: 'Done' },
+      { id: 't_app_routes', title: 'Study how comparable agent tools built desktop and mobile apps', sub: 'Done' }
+    ]
+  },
+  {
+    id: 'm_accounts',
+    title: 'Use several accounts of one agent program in Panels',
+    project: 'Panels',
+    goalStatus: null,
+    goalLabel: null,
+    unread: true,
+    working: false,
+    recap: 'Four option kinds are ready on the page and await your choice.',
+    goal: 'Let Panels run across multiple Claude or Gemini accounts without losing context when one hits quota.',
+    soleGoal: null,
+    pageTable: {
+      headers: ['Option', 'Failover', 'Credential Risk', 'Effort'],
+      rows: [
+        ['Per-Ticket pin', 'Manual', 'Low', '2 days'],
+        ['Pool round-robin', 'Next turn', 'Medium', '5 days'],
+        ['Fallback on 429', 'Retry', 'Medium', '1 wk'],
+        ['Mid-turn swap', 'Live', 'High', '2 wks']
+      ]
+    },
+    artifacts: [{ id: 'accounts_md', label: 'account-rotation-options.md', kind: 'Markdown' }],
+    tickets: [],
+    backlogged: [],
+    done: []
+  },
+  {
+    id: 'm_ship_wren',
+    title: 'Ship Wren to the App Store',
+    project: 'Wren',
+    goalStatus: 'good',
+    goalLabel: 'On track',
+    unread: false,
+    working: false,
+    recap: 'App Store record ready; only Submit for Review remains.',
+    goal: 'Get Wren 1.0 approved and live on the iOS App Store.',
+    soleGoal: {
+      headline: '5 of 6 release checks passed',
+      target: 'Target: Submit for Review',
+      deadline: 'Due Nov 23',
+      status: 'good',
+      statusLabel: 'On track',
+      items: [
+        { label: 'App Privacy & screenshots uploaded', done: true },
+        { label: 'Build 14 crash-free check', done: true },
+        { label: 'Submit for App Store Review', done: false }
+      ]
+    },
+    pageTable: null,
+    artifacts: [],
+    tickets: [
+      { id: 't_submit_asc', title: 'Submit Wren 1.0 in App Store Connect', group: 'assigned', sub: 'Your step', mark: 'assigned' }
+    ],
+    backlogged: [],
+    done: [
+      { id: 't_submit_asc', title: 'Upload App Store screenshots and metadata', sub: 'Done' }
+    ]
+  }
+];
+
+/* Real Chief of Staff Page (headroom.page velocity blocks + Chief's own direct Tickets — NEVER a Managers list!) */
+const CHIEF_PAGE = {
+  recap: 'Mac Studio is held for Wren build 15. Two proposals and one question wait in Review.',
+  segments: {
+    all: {
+      label: 'All projects',
+      rows: [
+        ['Oct 21', '152', '317', '132k', '50k', '182k'],
+        ['Oct 28', '198', '539', '218k', '134k', '352k'],
+        ['Nov 4', '199', '814', '293k', '158k', '451k'],
+        ['Nov 11', '500', '1917', '648k', '593k', '1242k'],
+        ['Nov 18 (so far)', '7', '18', '7k', '7k', '14k']
+      ],
+      bars: [
+        { label: 'Oct 21', value: 182, max: 1250, color: 'var(--accent-bright)' },
+        { label: 'Oct 28', value: 352, max: 1250, color: 'var(--accent-bright)' },
+        { label: 'Nov 4', value: 451, max: 1250, color: 'var(--accent-bright)' },
+        { label: 'Nov 11', value: 1242, max: 1250, color: 'var(--accent-done)' }
+      ]
+    },
+    panels: {
+      label: 'Panels',
+      rows: [
+        ['Oct 21', '114', '241', '98k', '38k', '136k'],
+        ['Oct 28', '146', '412', '164k', '96k', '260k'],
+        ['Nov 4', '151', '620', '224k', '119k', '343k'],
+        ['Nov 11', '382', '1490', '512k', '470k', '982k']
+      ],
+      bars: [
+        { label: 'Oct 21', value: 136, max: 1000, color: 'var(--accent-bright)' },
+        { label: 'Oct 28', value: 260, max: 1000, color: 'var(--accent-bright)' },
+        { label: 'Nov 4', value: 343, max: 1000, color: 'var(--accent-bright)' },
+        { label: 'Nov 11', value: 982, max: 1000, color: 'var(--accent-done)' }
+      ]
+    },
+    wren: {
+      label: 'Wren',
+      rows: [
+        ['Oct 21', '38', '76', '34k', '12k', '46k'],
+        ['Oct 28', '52', '127', '54k', '38k', '92k'],
+        ['Nov 4', '48', '194', '69k', '39k', '108k'],
+        ['Nov 11', '118', '427', '136k', '123k', '259k']
+      ],
+      bars: [
+        { label: 'Oct 21', value: 46, max: 300, color: 'var(--accent-bright)' },
+        { label: 'Oct 28', value: 92, max: 300, color: 'var(--accent-bright)' },
+        { label: 'Nov 4', value: 108, max: 300, color: 'var(--accent-bright)' },
+        { label: 'Nov 11', value: 259, max: 300, color: 'var(--accent-done)' }
+      ]
+    }
+  },
+  directTickets: [
+    { id: 't_post_paywall', title: 'Mock up the Panels iPhone app’s review queue and workspace', group: 'awaiting_approval', sub: 'Mockup proposal', mark: 'approval' },
+    { id: 't_record_tasks', title: 'Explain why load runs high on VPS and Mac', group: 'agent', sub: 'Working', mark: 'working' }
+  ],
+  backlogged: [
+    { id: 't_record_tasks', title: 'Repair same-profile multi-tab use over direct HTTP', sub: 'Backlogged' }
+  ],
+  done: [
+    { id: 't_app_routes', title: 'Show Setting up while a Worker is being prepared', sub: 'Done' },
+    { id: 't_app_routes', title: 'Move through the review page as one deck', sub: 'Done' }
+  ]
+};
+
+const SETTLED_MANAGERS = [
+  { id: 'si_duer6288', title: 'Make the Panels iPhone app’s data work like the web app' },
+  { id: 'si_uuh3y83p', title: 'Complete the Panels interface redesign' },
+  { id: 'si_jxefmf3u', title: 'Build notifications as its own system' },
+  { id: 'si_p9yyu5mr', title: 'Get Panels hosted on a VPS' }
+];
+
+const TICKETS_DB = {
+  t_post_paywall: {
+    id: 't_post_paywall', managerTitle: 'Improve Wren', title: 'Design the post-paywall setup flow',
+    machine: { name: 'Mac Studio', color: 'var(--machine-cyan)' },
+    stage: 'Wireframe', ceiling: 'Wireframe', holder: 'You', agentState: 'idle',
+    recap: 'Three onboarding options are ready for review before coding starts.',
+    steps: [
+      { label: 'Brief', status: 'done', by: 'Approved by You' },
+      { label: 'Wireframe', status: 'awaiting_approval', by: 'Waiting on You' },
+      { label: 'What Changes', status: 'upcoming', by: 'Next' },
+      { label: 'Implementation', status: 'upcoming', by: 'Worker' },
+      { label: 'Consequences', status: 'upcoming', by: 'Worker' }
+    ],
+    artifacts: [{ id: 'post_paywall_html', label: 'post-paywall-wireframe.html', kind: 'HTML' }],
+    convId: 't_post_paywall', lastMsg: 'Uploaded Option B wireframe with 3-step cadence.'
+  },
+  t_app_routes: {
+    id: 't_app_routes', managerTitle: 'Estimate a desktop app for Panels', title: 'Weigh one app architecture across desktop, phone, and web',
+    machine: { name: 'VPS 1', color: 'var(--machine-jade)' },
+    stage: 'Consequences', ceiling: 'Consequences', holder: 'You', agentState: 'idle',
+    recap: 'Comparison of native Swift, Tauri, and Electron is ready to close out.',
+    steps: [
+      { label: 'Brief', status: 'done', by: 'Approved by Manager' },
+      { label: 'Research', status: 'done', by: 'Approved by Manager' },
+      { label: 'Consequences', status: 'awaiting_approval', by: 'Waiting on You' }
+    ],
+    artifacts: [{ id: 'app_routes_md', label: 'app-routes-report.md', kind: 'Markdown' }],
+    convId: 't_post_paywall', lastMsg: 'Pooled WKWebView saves ~95 MB across back-to-back reports.'
+  },
+  t_goal_sheet: {
+    id: 't_goal_sheet', managerTitle: 'Improve Wren', title: 'Build the goal sheet and first-goal card',
+    machine: { name: 'Mac Studio', color: 'var(--machine-cyan)' },
+    stage: 'Implementation', ceiling: 'Implementation', holder: 'Manager', agentState: 'working',
+    recap: 'Waiting on one choice before finishing the first-goal card transition.',
+    steps: [
+      { label: 'Brief', status: 'done', by: 'Approved by Manager' },
+      { label: 'What Changes', status: 'done', by: 'Approved by You' },
+      { label: 'Implementation', status: 'running', by: 'Waiting for your answer' },
+      { label: 'Consequences', status: 'upcoming', by: 'Manager' }
+    ],
+    artifacts: [], convId: 't_post_paywall', lastMsg: 'Should the first-goal card stay expanded with the milestone checklist?'
+  },
+  t_wren_build15: {
+    id: 't_wren_build15', managerTitle: 'Improve Wren', title: 'Run Wren build 15 TestFlight upload',
+    machine: { name: 'Mac Studio', color: 'var(--machine-cyan)' },
+    stage: 'Release', ceiling: 'Consequences', holder: 'You', agentState: 'setting_up',
+    recap: 'Cloning clean release worktree from local mirror before archiving build 15.',
+    steps: [
+      { label: 'Brief', status: 'done', by: 'Approved by Manager' },
+      { label: 'Release', status: 'running', by: 'Setting up · preparing workspace' },
+      { label: 'Consequences', status: 'upcoming', by: 'You' }
+    ],
+    artifacts: [], convId: 't_post_paywall', lastMsg: 'Workspace clone started on Mac Studio.'
+  },
+  t_record_tasks: {
+    id: 't_record_tasks', managerTitle: 'Improve Wren', title: 'Let the record complete goal tasks',
+    machine: { name: 'VPS 1', color: 'var(--machine-jade)' },
+    stage: 'Implementation', ceiling: 'Consequences', holder: 'Manager', agentState: 'working',
+    recap: 'The record now completes goal tasks; final test runs come before the proposal.',
+    steps: [
+      { label: 'Brief', status: 'done', by: 'Approved by Manager' },
+      { label: 'What Changes', status: 'done', by: 'Approved by Manager' },
+      { label: 'Implementation', status: 'running', by: 'Running tests' },
+      { label: 'Consequences', status: 'upcoming', by: 'Manager' }
+    ],
+    artifacts: [], convId: 't_post_paywall', lastMsg: 'Running final test suite before proposing implementation.'
+  },
+  t_submit_asc: {
+    id: 't_submit_asc', managerTitle: 'Ship Wren to the App Store', title: 'Submit Wren 1.0 in App Store Connect',
+    machine: { name: 'VPS 1', color: 'var(--machine-jade)' },
+    stage: 'Submission', ceiling: 'Submission', holder: 'You', agentState: 'idle',
+    recap: 'Metadata and screenshots are ready; only Submit for Review remains.',
+    steps: [
+      { label: 'Prep', status: 'done', by: 'Approved by Manager' },
+      { label: 'Submission', status: 'assigned', by: 'Your step' }
+    ],
+    artifacts: [], convId: 't_post_paywall', lastMsg: 'Ready in App Store Connect. Mark complete once submitted.'
+  }
+};
+
+const ARTIFACTS = {
+  post_paywall_html: { id: 'post_paywall_html', title: 'post-paywall-wireframe.html', kind: 'html', path: '/files/tickets/t_post_paywall/artifacts/post-paywall-wireframe.html', ticketKey: 'ticket:t_post_paywall', defaultConvId: 't_post_paywall' },
+  app_routes_md: { id: 'app_routes_md', title: 'app-routes-report.md', kind: 'markdown', path: '/files/tickets/t_app_routes/artifacts/app-routes-report.md', ticketKey: 'ticket:t_app_routes', defaultConvId: 'chief' },
+  accounts_md: { id: 'accounts_md', title: 'account-rotation-options.md', kind: 'markdown', path: '/files/managers/m_accounts/artifacts/account-rotation-options.md', ticketKey: 'message:conv_accounts', defaultConvId: 'm_improve_wren' }
+};
+
+const INITIAL_CONVERSATIONS = {
+  chief: {
+    id: 'chief', title: 'Chief of Staff', working: true,
+    messages: [
+      {
+        role: 'agent',
+        html: `<p>Four Managers are active. The highest-leverage items waiting on you are the <strong>Wren post-paywall wireframe</strong> and the <strong>Panels app architecture</strong> closeout.</p>`
+      },
+      { role: 'human', text: 'Keep Mac Studio free for Wren build 15 until I finish Review.', time: '9:34' },
+      {
+        role: 'agent',
+        html: `<p>Done. New Mac runs are paused while build 15 sets up.</p><p>Full tradeoffs are in <button class="artifact-link" onclick="openArtifact('app_routes_md', 'conversation', 'chief')">app-routes-report.md</button>.</p>`
+      }
+    ]
+  },
+  m_improve_wren: {
+    id: 'm_improve_wren', title: 'Manager', working: false,
+    messages: [{ role: 'agent', html: '<p>Goal record, tools, and card changes are merged. Build 15 is setting up its worktree on Mac Studio now.</p><p>Once you approve the post-paywall wireframe, I will start the coding Worker.</p>' }]
+  },
+  t_post_paywall: {
+    id: 't_post_paywall', title: 'Worker', working: false,
+    messages: [{ role: 'agent', html: '<p>All three options are in <button class="artifact-link" onclick="openArtifact(\'post_paywall_html\', \'conversation\', \'t_post_paywall\')">post-paywall-wireframe.html</button>. Option B keeps setup under 45 seconds.</p>' }]
+  }
+};
+
+/* ============================================================================
+   App State
+   ============================================================================ */
+let state = {
+  root: { kind: 'review' },
+  stack: [],
+  sidebarOpen: false,
+  condition: 'live',
+  dynamicType: 1,
+  inspectorTab: 'dataflow',
+  queue: deepClone(INITIAL_QUEUE),
+  skippedKeys: [],
+  pinnedKey: INITIAL_QUEUE[0].key,
+  finalLatched: false,
+  deckDir: 1,
+  drafts: { 'ticket:t_post_paywall': '', 'ticket:t_app_routes': '', 'msg:conv_app_routes': '', 'message:conv_accounts': '', 'owner:chief': '', 'chat:t_post_paywall': '', 'chat:m_improve_wren': '' },
+  attachments: { 'ticket:t_post_paywall': [], 'ticket:t_app_routes': [], 'msg:conv_app_routes': [], 'message:conv_accounts': [], 'owner:chief': [], 'chat:t_post_paywall': [], 'chat:m_improve_wren': [] },
+  voice: { activeKey: null, phase: 'idle', sec: 0, timer: null },
+  artifactLayer: null,
+  settledExpanded: false,
+  stepsExpanded: false,
+  artifactsOpen: {},
+  chiefSegment: 'all',
+  closedGroups: {},
+  openBuckets: {},
+  chatLens: 'focus',
+  conversations: deepClone(INITIAL_CONVERSATIONS),
+  outbox: [],
+  notifs: { tickets_approval: true, tickets_answer: true, tickets_reply: true, chief_reply: true, stall_alarm: false },
+  gate426: false,
+  settingUpElapsed: 102,
+  traces: []
+};
+
+function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
+function formatDuration(sec) { return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`; }
+
+function renderMiniBarSvg(bars) {
+  return bars.map(b => {
+    const pct = Math.max(4, Math.round((b.value / (b.max || 100)) * 100));
+    return `
+      <div style="display:grid;grid-template-columns:82px 1fr 32px;align-items:center;gap:8px;margin-bottom:6px;font-size:11.5px;">
+        <span style="color:var(--tone-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.label)}</span>
+        <div style="height:8px;border-radius:4px;background:rgba(255,255,255,0.06);overflow:hidden;">
+          <div style="width:${pct}%;height:100%;border-radius:4px;background:${b.color};"></div>
+        </div>
+        <span style="text-align:right;color:var(--tone-strong);font-variant-numeric:tabular-nums;">${b.value}</span>
+      </div>`;
+  }).join('');
+}
+
+function logTrace(kind, msg) {
+  const ts = new Date().toTimeString().slice(0, 8);
+  state.traces.unshift({ ts, kind, msg });
+  if (state.traces.length > 40) state.traces.pop();
+  renderInspector();
+}
+
+function showToast(msg, actionLabel, actionFn) {
+  const host = document.getElementById('iosToastHost');
+  host.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'ios-toast';
+  el.innerHTML = `<span>${escapeHtml(msg)}</span>${actionLabel ? `<button style="color:var(--accent-bright);font-weight:600;white-space:nowrap;" id="toastActBtn">${escapeHtml(actionLabel)}</button>` : ''}`;
+  host.appendChild(el);
+  if (actionLabel && actionFn) el.querySelector('#toastActBtn').onclick = () => { host.innerHTML = ''; actionFn(); };
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => { host.innerHTML = ''; }, 3200);
+}
+
+/* ============================================================================
+   Queue & Navigation
+   ============================================================================ */
+function activeQueueItems() {
+  return state.queue.filter(item => {
+    if (state.skippedKeys.includes(item.key)) return false;
+    if (item.kind === 'ticket') return !item.proposalDone;
+    if (item.kind === 'answer') return !item.answered;
+    if (item.kind === 'message') return !item.read;
+    return false;
+  });
+}
+function totalRemainingBadgeCount() {
+  return state.queue.filter(item => {
+    if (item.kind === 'ticket') return !item.proposalDone;
+    if (item.kind === 'answer') return !item.answered;
+    if (item.kind === 'message') return !item.read;
+    return false;
+  }).length;
+}
+function currentReviewItem() {
+  if (state.finalLatched) return null;
+  const active = activeQueueItems();
+  if (!active.length) return null;
+  const pinned = active.find(i => i.key === state.pinnedKey);
+  if (pinned) return pinned;
+  state.pinnedKey = active[0].key;
+  return active[0];
+}
+
+function openSidebar() {
+  state.sidebarOpen = true;
+  logTrace('UI', 'Opened Sidebar drawer (Navigation SSE demands rail_parents + settled + counts)');
+  renderPhone(); renderInspector();
+}
+function closeSidebar() {
+  const scrim = document.querySelector('.sidebar-scrim');
+  const drawer = document.querySelector('.sidebar-drawer');
+  const finish = () => { state.sidebarOpen = false; renderPhone(); renderInspector(); };
+  if (drawer) {
+    if (scrim) scrim.classList.add('closing');
+    drawer.classList.add('closing');
+    setTimeout(finish, 145);
+  } else finish();
+}
+function selectRoot(dest) {
+  state.root = dest; state.stack = []; state.artifactLayer = null; state.sidebarOpen = false;
+  logTrace('UI', `Sidebar → ${dest.kind}${dest.id ? ':' + dest.id : ''}`);
+  renderPhone(); renderInspector();
+}
+function pushScreen(route) {
+  state.artifactLayer = null; state.stack.push(route);
+  logTrace('GET', `Push ${route.kind}:${route.id} (ResourceOwner cache + version probe)`);
+  renderPhone(); renderInspector();
+}
+function popScreen() {
+  if (!state.stack.length) return;
+  const topEl = document.querySelector('.ios-pushed-layer:last-of-type');
+  const finish = () => { state.stack.pop(); renderPhone(); renderInspector(); };
+  if (topEl) { topEl.classList.add('popping'); setTimeout(finish, 145); } else finish();
+}
+function currentPushed() { return state.stack.length ? state.stack[state.stack.length - 1] : null; }
+
+/* ============================================================================
+   Workbench Conditions
+   ============================================================================ */
+function setCondition(cond) {
+  const prev = state.condition;
+  state.condition = cond;
+  const carrier = document.getElementById('iosCarrierLabel');
+  if (cond === 'live') {
+    if (carrier) carrier.textContent = '5G';
+    if (prev === 'offline' && state.outbox.length) drainOutbox();
+    else logTrace('SSE', 'GET /api/navigation/view/events connected (projection_version=7)');
+  } else if (cond === 'slow') {
+    if (carrier) carrier.textContent = '3G';
+    logTrace('SSE', 'Slow link active: POST /decision-operations times out → receipt check recovery');
+  } else if (cond === 'offline') {
+    if (carrier) carrier.textContent = 'No Signal';
+    logTrace('OUTBOX', 'NWPathMonitor: offline. Cached queue stays usable; Outbox holds writes silently.');
+  } else if (cond === 'conflict') {
+    if (carrier) carrier.textContent = '5G';
+    triggerReviewerConflict();
+  } else if (cond === 'unavailable') {
+    if (carrier) carrier.textContent = '5G';
+    logTrace('ERR', 'GET /api/navigation/view/snapshot → 503 (fail closed)');
+  }
+  renderPhone(); renderInspector();
+}
+
+function triggerReviewerConflict() {
+  let item = currentReviewItem();
+  if (state.root.kind !== 'review' || state.stack.length || !item || item.kind !== 'ticket' || item.proposalDone) {
+    state.root = { kind: 'review' }; state.stack = []; state.finalLatched = false; state.sidebarOpen = false;
+    item = state.queue[0]; item.proposalDone = false;
+    state.skippedKeys = state.skippedKeys.filter(k => k !== item.key);
+    state.pinnedKey = item.key;
+  }
+  item.revision += 1; item.holder = 'Manager';
+  item.refusal = { message: 'This proposal moved to Manager while it was open. Your note and attachments were kept.' };
+  logTrace('SSE', `PATCH /api/tickets/${item.ticketId} bumped pending_proposal_revision → ${item.revision}`);
+  logTrace('ERR', 'POST /decision-operations → HTTP 200 receipt.outcome="refused"');
+}
+
+function setDynamicType(scale) {
+  state.dynamicType = scale;
+  document.documentElement.style.setProperty('--dt', scale);
+  [1, 1.12, 1.24].forEach(s => document.getElementById('dt-' + String(s).replace('.', '')).classList.toggle('active', s === scale));
+  renderPhone();
+}
+
+function resetPrototype() {
+  stopVoice();
+  state.root = { kind: 'review' }; state.stack = []; state.sidebarOpen = false;
+  state.queue = deepClone(INITIAL_QUEUE); state.skippedKeys = []; state.pinnedKey = state.queue[0].key;
+  state.finalLatched = false; state.deckDir = 1; state.artifactLayer = null;
+  state.outbox = []; state.gate426 = false; state.conversations = deepClone(INITIAL_CONVERSATIONS);
+  Object.keys(state.drafts).forEach(k => state.drafts[k] = '');
+  Object.keys(state.attachments).forEach(k => state.attachments[k] = []);
+  document.getElementById('iosSheetHost').innerHTML = '';
+  document.getElementById('iosGateHost').innerHTML = '';
+  setCondition('live');
+}
+
+function drainOutbox() {
+  const count = state.outbox.length;
+  logTrace('GET', `Reconnected: checking ${count} receipt(s) via GET /decision-operations/:op_id`);
+  state.outbox.forEach(r => logTrace('POST', `Drained ${r.lane}: ${r.summary} → applied`));
+  state.outbox = [];
+  showToast(`Synced ${count} queued item${count > 1 ? 's' : ''}`);
+}
+
+/* ============================================================================
+   Review Deck & Decisions
+   ============================================================================ */
+function advanceDeck(direction, afterMutate) {
+  const stage = document.querySelector('.deck-stage');
+  const existing = stage ? stage.querySelector('.deck-card-shell') : null;
+  if (existing) {
+    existing.classList.remove('enter-from-right', 'enter-from-left');
+    existing.classList.add(direction === 1 ? 'exit-left' : 'exit-right');
+  }
+  state.deckDir = direction;
+  afterMutate();
+  const next = activeQueueItems();
+  if (!next.length) { state.finalLatched = true; state.pinnedKey = null; }
+  else { state.finalLatched = false; state.pinnedKey = next[0].key; }
+  setTimeout(() => { renderPhone({ animateDeck: true }); renderInspector(); }, existing ? 60 : 0);
+}
+
+function skipCurrentCard() {
+  const item = currentReviewItem();
+  if (!item) return;
+  if (state.artifactLayer) closeArtifactLayer('left');
+  logTrace('UI', `Skip ${item.key} (deferred for this visit)`);
+  advanceDeck(1, () => { if (!state.skippedKeys.includes(item.key)) state.skippedKeys.push(item.key); });
+}
+
+function returnToReview() {
+  const active = activeQueueItems();
+  const pendingSkipped = state.skippedKeys.filter(k => state.queue.some(item => item.key === k && ((item.kind === 'ticket' && !item.proposalDone) || (item.kind === 'answer' && !item.answered) || (item.kind === 'message' && !item.read))));
+  if (!active.length && !pendingSkipped.length) return;
+  logTrace('SSE', `Return from final screen: review_priority_keys=[${pendingSkipped.join(', ')}]`);
+  advanceDeck(-1, () => {
+    const first = active.length ? active[0].key : pendingSkipped[0];
+    state.skippedKeys = []; state.finalLatched = false; state.pinnedKey = first;
+  });
+}
+
+function handleProposalApproveClick(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item || item.refusal) return;
+  if (item.isTerminal) executeProposalDecision(item, 'approve', null, null);
+  else openApproveCeilingSheet(item);
+}
+
+function handleProposalSendBackClick(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item || item.refusal) return;
+  const note = (state.drafts[itemKey] || '').trim();
+  const atts = state.attachments[itemKey] || [];
+  if (!note && !atts.length) {
+    const ta = document.getElementById('activeNoteInput');
+    if (ta) ta.focus();
+    const nudge = document.getElementById('sendBackNudge');
+    if (nudge) nudge.style.display = 'block';
+    return;
+  }
+  executeProposalDecision(item, 'send_back', null, null);
+}
+
+function executeProposalDecision(item, decision, nextCeiling, nextHolder) {
+  const opId = 'op_' + Math.random().toString(36).slice(2, 8);
+  if (state.condition === 'slow') {
+    item.uncertain = { opId, decision, summary: `${decision === 'approve' ? 'Approval' : 'Send back'} timed out before the server replied.` };
+    logTrace('POST', `POST /api/tickets/${item.ticketId}/decision-operations/${opId} (rev=${item.revision}) → timeout (.uncertain)`);
+    closeSheet(); renderPhone(); renderInspector(); return;
+  }
+  if (state.condition === 'offline') {
+    state.outbox.push({ opId, lane: `ticket:${item.ticketId}`, summary: `${decision} ${item.field} (rev ${item.revision})` });
+    logTrace('OUTBOX', `Saved frozen DecisionCommand ${opId} to SwiftData Outbox`);
+    showToast('Saved offline');
+  } else {
+    logTrace('POST', `POST /api/tickets/${item.ticketId}/decision-operations/${opId} (${decision}, rev=${item.revision}${nextCeiling ? `, ceiling=${nextCeiling}` : ''}${nextHolder ? `, holder=${nextHolder}` : ''}) → 200 applied`);
+  }
+
+  state.drafts[item.key] = ''; state.attachments[item.key] = [];
+  closeSheet();
+  if (state.artifactLayer) closeArtifactLayer('left');
+  advanceDeck(1, () => { item.proposalDone = true; });
+}
+
+function checkUncertainReceipt(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item || !item.uncertain) return;
+  logTrace('GET', `GET /api/tickets/${item.ticketId}/decision-operations/${item.uncertain.opId} → receipt applied`);
+  item.uncertain = null; setCondition('live'); showToast('Confirmed · Already applied');
+  advanceDeck(1, () => { item.proposalDone = true; });
+}
+
+function resolveRefusalTakeBack(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item) return;
+  item.holder = 'You'; item.revision += 1; item.refusal = null;
+  state.condition = 'live';
+  logTrace('POST', `PATCH /api/tickets/${item.ticketId} { ceiling_holder: owner } → rev ${item.revision}`);
+  showToast('Returned to you'); renderPhone(); renderInspector();
+}
+function resolveRefusalDismiss(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item) return;
+  item.refusal = null; state.condition = 'live';
+  advanceDeck(1, () => { item.proposalDone = true; });
+}
+
+function sendReviewMessageReply(id, cardKey) {
+  const text = (state.drafts[cardKey] || '').trim();
+  const atts = state.attachments[cardKey] || [];
+  if (!text && !atts.length) return;
+  if (state.condition === 'offline') {
+    state.outbox.push({ opId: 'msg_' + Date.now(), lane: `conversation:${id}`, summary: 'Reply' });
+    logTrace('OUTBOX', `Queued reply on conversation:${id}`); showToast('Saved offline');
+  } else {
+    logTrace('POST', `POST /api/conversation/send (${id}) + owner-read → started`);
+  }
+  state.drafts[cardKey] = ''; state.attachments[cardKey] = [];
+  if (state.artifactLayer) closeArtifactLayer('left');
+  advanceDeck(1, () => { const item = state.queue.find(q => q.key === cardKey); if (item) item.read = true; });
+}
+
+function markReviewMessageRead(id, cardKey) {
+  logTrace('POST', `POST /api/conversation/conversations/${id}/owner-read`);
+  if (state.artifactLayer) closeArtifactLayer('left');
+  advanceDeck(1, () => { const item = state.queue.find(q => q.key === cardKey); if (item) item.read = true; });
+}
+
+function submitAnswerCard(itemKey, answerLabel) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item) return;
+  const ep = item.questionMode === 'permission' ? 'permission-answers' : 'user-input-answers';
+  logTrace('POST', `POST /api/conversation/conversations/conv_goal_sheet/${ep} (${answerLabel}) → injected`);
+  advanceDeck(1, () => { item.answered = true; });
+}
+
+function sendChiefQuickMessage() {
+  const text = (state.drafts['owner:chief'] || '').trim();
+  const atts = state.attachments['owner:chief'] || [];
+  if (!text && !atts.length) return;
+  if (state.condition === 'offline') {
+    state.outbox.push({ opId: 'ch_' + Date.now(), lane: 'conversation:chief', summary: 'Chief' });
+  } else {
+    state.conversations.chief.messages.push({ role: 'human', text, time: '9:41' });
+    logTrace('POST', 'POST /api/chief/conversation/send → queued');
+  }
+  state.drafts['owner:chief'] = ''; state.attachments['owner:chief'] = [];
+  renderPhone(); renderInspector();
+}
+
+/* ============================================================================
+   Voice, Attachments & Native Sheets
+   ============================================================================ */
+function toggleVoice(draftKey) {
+  if (state.voice.activeKey === draftKey && state.voice.phase === 'recording') { stopVoiceAndTranscribe(draftKey); return; }
+  stopVoice();
+  state.voice = {
+    activeKey: draftKey, phase: 'recording', sec: 1,
+    timer: setInterval(() => {
+      state.voice.sec += 1;
+      const el = document.getElementById('voiceSecLabel');
+      if (el) el.textContent = `0:${String(state.voice.sec).padStart(2, '0')}`;
+    }, 1000)
+  };
+  logTrace('UI', 'AVAudioRecorder started durable .m4a capture');
+  renderPhone();
+}
+function stopVoice() { if (state.voice.timer) clearInterval(state.voice.timer); state.voice = { activeKey: null, phase: 'idle', sec: 0, timer: null }; }
+function stopVoiceAndTranscribe(draftKey) {
+  if (state.voice.timer) clearInterval(state.voice.timer);
+  if (state.condition === 'offline') {
+    state.attachments[draftKey] = state.attachments[draftKey] || [];
+    state.attachments[draftKey].push({ id: 'v_' + Date.now(), kind: 'voice', label: 'Voice note (queued)' });
+    state.voice = { activeKey: null, phase: 'idle', sec: 0, timer: null };
+    showToast('Voice note saved offline'); renderPhone(); return;
+  }
+  state.voice.phase = 'transcribing';
+  logTrace('POST', 'POST /api/conversation/voice-transcriptions (audio/mp4)');
+  renderPhone();
+  setTimeout(() => {
+    const sample = draftKey === 'owner:chief'
+      ? 'Check if build 15 started cleanly and tell me if it stalls.'
+      : 'Go with Option B, and keep notifications after the first check-in.';
+    const cur = state.drafts[draftKey] || '';
+    state.drafts[draftKey] = cur ? cur + '\n\n' + sample : sample;
+    state.voice = { activeKey: null, phase: 'idle', sec: 0, timer: null };
+    renderPhone();
+  }, 600);
+}
+
+const IOS_CHECK_SVG = `<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="var(--accent-bright)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>`;
+
+function openAttachSheet(draftKey) {
+  document.getElementById('iosSheetHost').innerHTML = `
+    <div class="ios-sheet-backdrop" onclick="if(event.target===this)closeSheet()">
+      <div class="ios-sheet">
+        <div class="sheet-grabber"></div>
+        <div class="ios-sheet-nav">
+          <button class="ios-sheet-nav-cancel" onclick="closeSheet()">Cancel</button>
+          <div class="ios-sheet-nav-title">Attach</div>
+          <div></div>
+        </div>
+        <div class="ios-sheet-body">
+          <div class="ios-form-section">
+            <div class="ios-form-group">
+              <button class="ios-form-row" onclick="simulatePhotoAttach('${draftKey}')">
+                <span class="ios-form-row-left">
+                  <span class="ios-form-row-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 20"/></svg></span>
+                  <span>Photo Library</span>
+                </span>
+              </button>
+              <button class="ios-form-row" onclick="simulateFileAttach('${draftKey}')">
+                <span class="ios-form-row-left">
+                  <span class="ios-form-row-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+                  <span>Choose File</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function simulatePhotoAttach(draftKey) {
+  closeSheet();
+  const id = 'p_' + Date.now();
+  state.attachments[draftKey] = state.attachments[draftKey] || [];
+  state.attachments[draftKey].push({ id, kind: 'image', label: 'Preparing photo…', preparing: true });
+  logTrace('UI', 'Task.detached: HEIC (4.8 MB) → JPEG (1.1 MB) off main thread');
+  renderPhone();
+  setTimeout(() => {
+    const e = (state.attachments[draftKey] || []).find(a => a.id === id);
+    if (e) { e.preparing = false; e.label = 'Photo · 1.1 MB'; }
+    renderPhone();
+  }, 550);
+}
+function simulateFileAttach(draftKey) {
+  closeSheet();
+  state.attachments[draftKey] = state.attachments[draftKey] || [];
+  state.attachments[draftKey].push({ id: 'f_' + Date.now(), kind: 'file', label: 'notes.md', preparing: false });
+  renderPhone();
+}
+function removeAttachment(draftKey, attId) {
+  state.attachments[draftKey] = (state.attachments[draftKey] || []).filter(a => a.id !== attId);
+  renderPhone();
+}
+
+function openApproveCeilingSheet(item) {
+  let chosenCeiling = item.nextCeilings[0];
+  let chosenHolder = 'You';
+  const note = (state.drafts[item.key] || '').trim();
+  const atts = state.attachments[item.key] || [];
+  const renderSheet = () => {
+    const host = document.getElementById('iosSheetHost');
+    host.innerHTML = `
+      <div class="ios-sheet-backdrop" onclick="if(event.target===this)closeSheet()">
+        <div class="ios-sheet">
+          <div class="sheet-grabber"></div>
+          <div class="ios-sheet-nav">
+            <button class="ios-sheet-nav-cancel" onclick="closeSheet()">Cancel</button>
+            <div class="ios-sheet-nav-title">Approve</div>
+            <button class="ios-sheet-nav-done" id="confirmApproveBtn">Approve</button>
+          </div>
+          <div class="ios-sheet-body">
+            <div class="ios-form-section">
+              <div class="ios-form-header">Approved until</div>
+              <div class="ios-form-group">
+                ${item.nextCeilings.map(c => `
+                  <button class="ios-form-row" data-ceil="${c}">
+                    <span>${escapeHtml(c)}</span>
+                    ${c === chosenCeiling ? IOS_CHECK_SVG : ''}
+                  </button>`).join('')}
+              </div>
+            </div>
+
+            ${chosenCeiling !== 'Done' ? `
+              <div class="ios-form-section">
+                <div class="ios-form-header">Then reviews</div>
+                <div class="ios-segmented">
+                  ${['You', 'Manager', 'Chief'].map(h => `
+                    <button class="${h === chosenHolder ? 'active' : ''}" data-hold="${h}">${h}</button>`).join('')}
+                </div>
+              </div>` : ''}
+
+            ${(note || atts.length) ? `
+              <div class="ios-form-section">
+                <div class="ios-form-header">Note to worker</div>
+                <div class="ios-form-group">
+                  <div class="ios-form-note">${note ? escapeHtml(note) : `${atts.length} attachment${atts.length > 1 ? 's' : ''} included`}</div>
+                </div>
+              </div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    host.querySelectorAll('[data-ceil]').forEach(b => b.onclick = () => { chosenCeiling = b.dataset.ceil; renderSheet(); });
+    host.querySelectorAll('[data-hold]').forEach(b => b.onclick = () => { chosenHolder = b.dataset.hold; renderSheet(); });
+    host.querySelector('#confirmApproveBtn').onclick = () => executeProposalDecision(item, 'approve', chosenCeiling, chosenCeiling === 'Done' ? null : chosenHolder);
+  };
+  renderSheet();
+}
+
+function openHolderTransferSheet(itemKey) {
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item) return;
+  document.getElementById('iosSheetHost').innerHTML = `
+    <div class="ios-sheet-backdrop" onclick="if(event.target===this)closeSheet()">
+      <div class="ios-sheet">
+        <div class="sheet-grabber"></div>
+        <div class="ios-sheet-nav">
+          <button class="ios-sheet-nav-cancel" onclick="closeSheet()">Cancel</button>
+          <div class="ios-sheet-nav-title">Reviewer</div>
+          <div></div>
+        </div>
+        <div class="ios-sheet-body">
+          <div class="ios-form-section">
+            <div class="ios-form-header">Who reviews this stage</div>
+            <div class="ios-form-group">
+              ${['You', 'Manager', 'Chief'].map(h => `
+                <button class="ios-form-row" onclick="transferHolder('${item.key}','${h}')">
+                  <span>${h}</span>
+                  ${h === item.holder ? IOS_CHECK_SVG : ''}
+                </button>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function transferHolder(itemKey, newHolder) {
+  closeSheet();
+  const item = state.queue.find(q => q.key === itemKey);
+  if (!item || newHolder === item.holder) return;
+  item.holder = newHolder; item.revision += 1;
+  logTrace('POST', `PATCH /api/tickets/${item.ticketId} { ceiling_holder: ${newHolder} } → rev ${item.revision}`);
+  showToast(`Handed off to ${newHolder}`);
+  advanceDeck(1, () => { item.proposalDone = true; });
+}
+function closeSheet() { document.getElementById('iosSheetHost').innerHTML = ''; }
+
+/* ============================================================================
+   Artifact Vertical Layer (Web-Parity 3-Way Bottom Context Rule)
+   ============================================================================ */
+function openArtifact(artifactId, origin, convId) {
+  const art = ARTIFACTS[artifactId];
+  state.artifactLayer = { artifactId, origin, convId: convId || art.defaultConvId || 'chief', htmlMode: 'phone' };
+  const barLabel = origin === 'proposal' ? 'Proposal decision bar' : origin === 'message' ? 'Message reply bar' : 'Conversation dock';
+  logTrace('GET', `GET ${art.path} (origin=${origin} → ${barLabel} docked below)`);
+  renderPhone(); renderInspector();
+}
+function closeArtifactLayer(mode) {
+  const el = document.querySelector('.artifact-layer');
+  const finish = () => { state.artifactLayer = null; renderPhone(); renderInspector(); };
+  if (el) { el.classList.add(mode === 'left' ? 'exit-left' : 'drop-out'); setTimeout(finish, 145); } else finish();
+}
+
+/* ============================================================================
+   Render iPhone Screen
+   ============================================================================ */
+function renderPhone(opts = {}) {
+  const vp = document.getElementById('iosViewport');
+  let html = '';
+  if (state.root.kind === 'review') html += renderReviewRoot(opts);
+  else if (state.root.kind === 'manager') html += renderManagerScreen(state.root.id, null);
+  else if (state.root.kind === 'chief') html += renderChiefScreen(null);
+  else html += renderMoreScreen();
+
+  state.stack.forEach((route, idx) => {
+    const prev = idx === 0
+      ? (state.root.kind === 'review' ? 'Review' : state.root.kind === 'manager' ? 'Manager' : 'Chief')
+      : (state.stack[idx - 1].kind === 'manager' ? 'Manager' : state.stack[idx - 1].kind === 'chief' ? 'Chief' : 'Ticket');
+    html += `<div class="ios-pushed-layer">${renderPushedRoute(route, prev)}</div>`;
+  });
+
+  if (state.artifactLayer) html += renderArtifactLayer(state.artifactLayer);
+  vp.innerHTML = html;
+
+  document.getElementById('iosSidebarHost').innerHTML = state.sidebarOpen ? renderSidebarDrawer() : '';
+
+  const noteInput = document.getElementById('activeNoteInput');
+  if (noteInput) {
+    noteInput.oninput = (e) => {
+      state.drafts[e.target.dataset.draftKey] = e.target.value;
+      const n = document.getElementById('sendBackNudge');
+      if (n) n.style.display = 'none';
+    };
+    noteInput.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && e.target.dataset.isProposal === '1') {
+        e.preventDefault();
+        document.querySelectorAll('.decision-btn-row-3 .ios-btn:not(.skip), .decision-btn-row .ios-btn').forEach(b => {
+          b.classList.remove('flash-ring'); void b.offsetWidth; b.classList.add('flash-ring');
+          setTimeout(() => b.classList.remove('flash-ring'), 850);
+        });
+      }
+    };
+  }
+  vp.querySelectorAll('[data-bind-draft]').forEach(el => {
+    const key = el.dataset.bindDraft;
+    if (el.id !== 'activeNoteInput') {
+      el.oninput = (e) => {
+        state.drafts[key] = e.target.value;
+        const box = e.target.closest('.note-box');
+        const btn = box ? box.querySelector('.composer-send-circle') : null;
+        if (btn) {
+          const hasContent = Boolean(e.target.value.trim() || (state.attachments[key] || []).length);
+          btn.classList.toggle('empty', !hasContent);
+        }
+      };
+      el.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          const box = e.target.closest('.note-box');
+          const btn = box ? box.querySelector('.composer-send-circle') : null;
+          if (btn) { e.preventDefault(); btn.click(); }
+        }
+      };
+    }
+  });
+
+  document.getElementById('iosGateHost').innerHTML = state.gate426 ? `
+    <div class="ios-gate-cover">
+      <h2 style="margin:0;font-size:19px;color:var(--tone-strong);">Update Panels from TestFlight</h2>
+      <p style="margin:0;font-size:13.5px;color:var(--tone-secondary);max-width:280px;">This server requires a newer build. Your unsent drafts and Outbox stay safely on device.</p>
+      <button class="ios-btn primary" style="width:100%;max-width:240px;" onclick="state.gate426=false;renderPhone()">Close</button>
+    </div>` : '';
+}
+
+function sidebarTriggerBtn() {
+  return `
+    <button class="ios-bar-btn icon-only" onclick="openSidebar()" aria-label="Open sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="3"/>
+        <path d="M9 4v16"/>
+      </svg>
+    </button>`;
+}
+
+/* ---------- SLIDE-OVER SIDEBAR (Real Panels Rail Cards, Chief has All projects eyebrow + right slot, identical fill, no borders) ---------- */
+function renderSidebarDrawer() {
+  const reviewCount = totalRemainingBadgeCount();
+  const chiefSelected = state.root.kind === 'chief';
+
+  return `
+    <div class="sidebar-scrim" onclick="closeSidebar()"></div>
+    <aside class="sidebar-drawer" aria-label="Workspace sidebar">
+      <div class="sb-scroll">
+        <!-- Chief of Staff: exact WorkspaceCard.swift header (All projects eyebrow + right-hand status if held, identical #1b1b1b card, no border) -->
+        <button class="rail-mgr-card ${chiefSelected ? 'selected' : ''}" onclick="selectRoot({kind:'chief'})">
+          <div class="rail-mgr-eyebrow">
+            <span class="rail-mgr-proj">All projects</span>
+            <span class="rail-goal-tag good">On track</span>
+          </div>
+          <div class="rail-mgr-head">
+            <span class="rail-mgr-title">Chief of Staff</span>
+            <span class="mark-trail"><span class="mark-spinner"></span></span>
+          </div>
+        </button>
+
+        <!-- Active Manager Cards (project eyebrow, goal haze/tag, title, right-aligned signal mark) -->
+        ${MANAGERS.map(m => {
+          const isSelected = state.root.kind === 'manager' && state.root.id === m.id;
+          const hazeClass = m.goalStatus ? `goal-${m.goalStatus}` : '';
+          return `
+            <button class="rail-mgr-card ${hazeClass} ${m.unread ? 'unread' : ''} ${isSelected ? 'selected' : ''}" onclick="selectRoot({kind:'manager',id:'${m.id}'})">
+              <div class="rail-mgr-eyebrow">
+                <span class="rail-mgr-proj">${escapeHtml(m.project)}</span>
+                ${m.goalLabel ? `<span class="rail-goal-tag ${m.goalStatus}">${escapeHtml(m.goalLabel)}</span>` : ''}
+              </div>
+              <div class="rail-mgr-head">
+                <span class="rail-mgr-title">${escapeHtml(m.title)}</span>
+                <span class="mark-trail">
+                  ${m.unread ? '<span class="mark-dot-accent"></span>' : (m.working ? '<span class="mark-spinner"></span>' : '')}
+                </span>
+              </div>
+            </button>`;
+        }).join('')}
+      </div>
+
+      <div class="sb-dock">
+        <div class="sb-settled-box">
+          <button class="sb-settled-head" onclick="state.settledExpanded=!state.settledExpanded;renderPhone()">
+            <span>Settled <span style="color:var(--tone-tertiary);margin-left:4px;font-variant-numeric:tabular-nums;">${SETTLED_MANAGERS.length}</span></span>
+            <span style="color:var(--tone-tertiary);font-size:12px;">${state.settledExpanded ? '▾' : '▸'}</span>
+          </button>
+          ${state.settledExpanded ? SETTLED_MANAGERS.map(sm => `
+            <div class="sb-settled-row">
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(sm.title)}</span>
+              <button style="color:var(--accent-bright);font-size:12px;flex-shrink:0;" onclick="showToast('Reopened')">Reopen</button>
+            </div>`).join('') : ''}
+        </div>
+
+        <!-- Bottom Bar: Review furthest left with badge, normal iOS Settings gear icon furthest right -->
+        <div class="sb-bottom-bar">
+          <button class="sb-review-btn ${state.root.kind === 'review' ? 'active' : ''}" onclick="selectRoot({kind:'review'})">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent-bright)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.5 12.2l2.3 2.3 4.8-5"/></svg>
+            <span>Review</span>
+            ${reviewCount > 0 ? `<span class="ios-count-pill">${reviewCount}</span>` : ''}
+          </button>
+
+          <button class="sb-settings-btn ${state.root.kind === 'more' ? 'active' : ''}" onclick="selectRoot({kind:'more'})" aria-label="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>`;
+}
+
+/* ---------- REVIEW ROOT (Clean Top Bar; Balanced Equal-Width Buttons in Bottom Row!) ---------- */
+function renderReviewRoot(opts) {
+  const item = currentReviewItem();
+  const animClass = opts.animateDeck ? (state.deckDir === 1 ? 'enter-from-right' : 'enter-from-left') : '';
+
+  if (state.condition === 'unavailable') {
+    return `
+      <div class="ios-stack-layer">
+        <div class="ios-navbar borderless">
+          ${sidebarTriggerBtn()}
+          <div style="width:36px;"></div>
+        </div>
+        <div class="final-screen">
+          <div class="final-center">
+            <h2 class="final-title">Review unavailable</h2>
+            <p class="final-sub">Reconnecting to server.</p>
+            <button class="ios-btn secondary" style="margin-top:16px;min-width:140px;" onclick="setCondition('live')">Retry</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="ios-stack-layer">
+      <div class="ios-navbar borderless">
+        ${sidebarTriggerBtn()}
+        <div class="ios-nav-actions">
+          ${item && item.ticketId ? `<button class="ios-bar-btn" onclick="pushScreen({kind:'ticket',id:'${item.ticketId}'})">Open ticket</button>` : ''}
+          ${item && !item.ticketId && item.ownerId ? `<button class="ios-bar-btn" onclick="pushScreen({kind:'conversation',id:'${item.ownerId}'})">Open conversation</button>` : ''}
+          ${!item ? `<button class="ios-bar-btn" onclick="selectRoot({kind:'chief'})">Open Chief</button>` : ''}
+        </div>
+      </div>
+
+      <div class="deck-stage">
+        <div class="deck-card-shell ${animClass}">
+          ${item ? renderReviewItemCard(item) : renderReviewFinalScreen()}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderReviewItemCard(item) {
+  // Proposal Card: ONE item, ONE bottom dock (Skip / Return / Approve)
+  if (item.kind === 'ticket') {
+    return `
+      <div class="ios-scroll review-pad">
+        <h1 class="review-title">${escapeHtml(item.title)}</h1>
+        <p class="review-recap">${escapeHtml(item.recap)}</p>
+
+        ${item.refusal ? `
+          <div class="inline-alert refused">
+            <div class="inline-alert-title">Proposal changed while open</div>
+            <div>${escapeHtml(item.refusal.message)}</div>
+            <div class="inline-alert-actions">
+              <button class="ios-btn secondary" style="min-height:36px;font-size:13px;" onclick="resolveRefusalTakeBack('${item.key}')">Take back</button>
+              <button class="ios-btn subtle" style="min-height:36px;font-size:13px;" onclick="resolveRefusalDismiss('${item.key}')">Leave with Manager</button>
+            </div>
+          </div>` : ''}
+
+        ${item.uncertain ? `
+          <div class="inline-alert uncertain">
+            <div class="inline-alert-title">Delivery uncertain</div>
+            <div>${escapeHtml(item.uncertain.summary)}</div>
+            <div class="inline-alert-actions">
+              <button class="ios-btn primary" style="min-height:36px;font-size:13px;" onclick="checkUncertainReceipt('${item.key}')">Check status</button>
+            </div>
+          </div>` : ''}
+
+        <div class="proposal-card">
+          <div class="proposal-card-meta">
+            <span class="proposal-stage-txt">${escapeHtml(item.stage)}</span>
+            <button class="proposal-approver-btn" onclick="openHolderTransferSheet('${item.key}')">
+              <span>${escapeHtml(item.holder)}</span>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+          </div>
+          <div class="prose">${item.proposalBodyHtml}</div>
+        </div>
+      </div>
+
+      ${renderProposalDecisionDock(item, true)}`;
+  }
+
+  // Question / Permission Ask Card: ONE item, ONE bottom dock
+  if (item.kind === 'answer') {
+    const isPerm = item.questionMode === 'permission';
+    return `
+      <div class="ios-scroll review-pad">
+        <h1 class="review-title">${escapeHtml(item.title)}</h1>
+        <p class="review-recap">${escapeHtml(item.recap)}</p>
+
+        <div class="proposal-card">
+          ${!isPerm ? `
+            <div class="proposal-card-meta"><span class="proposal-stage-txt">Question</span></div>
+            <p class="prose lead" style="margin:0 0 12px;">${escapeHtml(item.prompt)}</p>
+            ${item.options.map(o => `
+              <button class="answer-option ${item.selectedOption === o.id ? 'selected' : ''}" onclick="selectAnswerOption('${item.key}','${o.id}')">
+                <span class="radio-circle"></span>
+                <span>
+                  <div style="font-size:calc(13.5px * var(--dt));font-weight:600;color:var(--tone-strong);">${escapeHtml(o.title)}</div>
+                  <div style="font-size:calc(12.5px * var(--dt));color:var(--tone-secondary);margin-top:2px;">${escapeHtml(o.desc)}</div>
+                </span>
+              </button>`).join('')}` : `
+            <div class="proposal-card-meta"><span class="proposal-stage-txt">Permission ask</span></div>
+            <p class="prose" style="margin:0 0 8px;">Run tests on the Mac simulator?</p>
+            <pre class="code-block">${escapeHtml(item.permissionCommand)}</pre>`}
+        </div>
+      </div>
+
+      <div class="decision-dock">
+        ${!isPerm
+          ? `<div class="decision-btn-row">
+               <button class="ios-btn secondary" onclick="skipCurrentCard()">Skip</button>
+               <button class="ios-btn primary" onclick="submitAnswerCard('${item.key}','${item.selectedOption}')">Send answer</button>
+             </div>`
+          : `<div class="decision-btn-row-3">
+               <button class="ios-btn secondary" onclick="skipCurrentCard()">Skip</button>
+               <button class="ios-btn secondary" onclick="submitAnswerCard('${item.key}','decline')">Decline</button>
+               <button class="ios-btn primary" onclick="submitAnswerCard('${item.key}','approve_once')">Approve</button>
+             </div>`}
+      </div>`;
+  }
+
+  // Separate Conversation / Unread Message Card (Ticket worker OR Manager): ONE item, ONE bottom dock
+  return `
+    <div class="ios-scroll review-pad">
+      <h1 class="review-title">${escapeHtml(item.title)}</h1>
+      <p class="review-recap">${escapeHtml(item.recap)}</p>
+
+      ${item.historical ? `
+        <div class="inline-alert info">
+          <div class="inline-alert-title">Conversation replaced</div>
+          <div>This card stays read-only with your draft intact.</div>
+          <div class="inline-alert-actions">
+            <button class="ios-btn secondary" style="min-height:36px;font-size:13px;" onclick="itemRestoreLive('${item.key}')">Open current</button>
+          </div>
+        </div>` : ''}
+
+      <div class="review-message-card">
+        <div class="proposal-card-meta" style="margin-bottom:0;">
+          <span class="proposal-stage-txt">Message</span>
+        </div>
+        <div class="prose">
+          ${item.pieces.map((p, i) => `${i > 0 ? '<div class="msg-piece-sep"></div>' : ''}<p>${p}</p>`).join('')}
+        </div>
+        ${item.chart ? `
+          <div class="panels-chart-card">
+            <div class="panels-chart-title">${escapeHtml(item.chart.title)}</div>
+            ${renderMiniBarSvg(item.chart.bars.map(b => ({ ...b, max: 100 })))}
+          </div>` : ''}
+      </div>
+    </div>
+
+    ${!item.historical ? `
+      <div class="decision-dock">
+        ${renderComposerBox(item.key, 'Reply…', false, `sendReviewMessageReply('${item.conversationId}','${item.key}')`)}
+        <div class="decision-btn-row">
+          <button class="ios-btn secondary" onclick="skipCurrentCard()">Skip</button>
+          <button class="ios-btn secondary" onclick="markReviewMessageRead('${item.conversationId}','${item.key}')">Mark read</button>
+        </div>
+      </div>` : `
+      <div class="decision-dock">
+        <button class="ios-btn secondary" style="width:100%;" onclick="skipCurrentCard()">Skip</button>
+      </div>`}`;
+}
+
+function selectAnswerOption(key, optId) { const i = state.queue.find(q => q.key === key); if (i) { i.selectedOption = optId; renderPhone(); } }
+function itemRestoreLive(key) { const i = state.queue.find(q => q.key === key); if (i) i.historical = false; showToast('Opened current conversation'); renderPhone(); }
+
+function renderProposalDecisionDock(item, includeSkip = true) {
+  const disabled = Boolean(item.uncertain || item.refusal);
+  return `
+    <div class="decision-dock">
+      ${renderComposerBox(item.key, 'Add a note for the worker…', true)}
+      <div class="nudge-text" id="sendBackNudge" style="display:none;">Add a note, voice memo, or photo to return it.</div>
+      <div class="${includeSkip ? 'decision-btn-row-3' : 'decision-btn-row'}">
+        ${includeSkip ? `<button class="ios-btn secondary" onclick="skipCurrentCard()">Skip</button>` : ''}
+        <button class="ios-btn secondary" ${disabled ? 'disabled' : ''} onclick="handleProposalSendBackClick('${item.key}')">Return</button>
+        <button class="ios-btn primary" ${disabled ? 'disabled' : ''} onclick="handleProposalApproveClick('${item.key}')">Approve</button>
+      </div>
+    </div>`;
+}
+
+function renderComposerBox(draftKey, placeholder, isProposal, inlineSendAction) {
+  const val = state.drafts[draftKey] || '';
+  const atts = state.attachments[draftKey] || [];
+  const hasContent = Boolean(val.trim() || atts.length);
+  const isRec = state.voice.activeKey === draftKey && state.voice.phase === 'recording';
+  const isTrans = state.voice.activeKey === draftKey && state.voice.phase === 'transcribing';
+
+  return `
+    <div class="note-box">
+      ${atts.length ? `<div class="att-strip">${atts.map(a => `<span class="att-chip ${a.preparing ? 'preparing' : ''}"><span>${escapeHtml(a.label)}</span><button class="att-remove" onclick="removeAttachment('${draftKey}','${a.id}')">×</button></span>`).join('')}</div>` : ''}
+      ${isRec ? `<div class="voice-strip"><div style="display:flex;align-items:center;gap:8px;"><div class="voice-waves"><span class="voice-bar"></span><span class="voice-bar"></span><span class="voice-bar"></span><span class="voice-bar"></span></div><span id="voiceSecLabel" style="font-variant-numeric:tabular-nums;">0:${String(state.voice.sec).padStart(2,'0')}</span></div><button style="color:var(--accent-bright);font-weight:600;padding:2px 8px;" onclick="stopVoiceAndTranscribe('${draftKey}')">Done</button></div>` : ''}
+      ${isTrans ? `<div class="voice-strip" style="background:#171d27;"><span>Transcribing…</span><span class="mark-spinner"></span></div>` : ''}
+
+      <div class="note-input-row">
+        <button class="composer-tool-btn" onclick="openAttachSheet('${draftKey}')" aria-label="Attach">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <textarea class="note-textarea" id="${isProposal ? 'activeNoteInput' : ''}" data-draft-key="${draftKey}" data-bind-draft="${draftKey}" data-is-proposal="${isProposal ? '1' : '0'}" rows="1" placeholder="${escapeHtml(placeholder)}">${escapeHtml(val)}</textarea>
+        <button class="composer-tool-btn ${isRec ? 'recording' : ''}" onclick="toggleVoice('${draftKey}')" aria-label="Voice">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
+        ${inlineSendAction ? `<button class="composer-send-circle ${hasContent ? '' : 'empty'}" onclick="${inlineSendAction}" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderReviewFinalScreen() {
+  const newCount = activeQueueItems().length;
+  const skippedCount = state.skippedKeys.filter(k => state.queue.some(item => item.key === k && ((item.kind === 'ticket' && !item.proposalDone) || (item.kind === 'answer' && !item.answered) || (item.kind === 'message' && !item.read)))).length;
+  const total = newCount + skippedCount;
+
+  let line1 = 'All clear.';
+  let line2 = 'Nothing to review.';
+  let cta = '';
+  if (newCount > 0 && skippedCount > 0) {
+    line1 = `${total} to review.`;
+    line2 = `${newCount} new, ${skippedCount} skipped.`;
+    cta = 'Back to review';
+  } else if (newCount > 0) {
+    line1 = `${newCount} new.`;
+    line2 = 'Ready to review.';
+    cta = 'Back to review';
+  } else if (skippedCount > 0) {
+    line1 = `${skippedCount} skipped.`;
+    line2 = 'Nothing new.';
+    cta = 'Review skipped';
+  }
+
+  const workingCount = 4;
+
+  return `
+    <div class="final-screen">
+      <div class="final-stage">
+        <h2 class="final-line1">${line1}</h2>
+        <div class="final-line2">${line2}</div>
+        ${cta ? `<button class="final-cta" onclick="returnToReview()">${cta}</button>` : ''}
+        ${workingCount ? `<div class="final-working">${workingCount} agent${workingCount === 1 ? '' : 's'} working right now</div>` : ''}
+      </div>
+
+      <div class="decision-dock">
+        ${renderComposerBox('owner:chief', 'Message Chief…', false, 'sendChiefQuickMessage()')}
+      </div>
+    </div>`;
+}
+
+/* ==========================================================================
+   Artifact Vertical Layer (3-Way Web-Parity Bottom Controls)
+   ========================================================================== */
+function renderArtifactLayer(layer) {
+  const art = ARTIFACTS[layer.artifactId];
+  const item = state.queue.find(q => q.key === art.ticketKey);
+  const conv = state.conversations[layer.convId] || state.conversations.chief;
+  const chatDraftKey = conv.id === 'chief' ? 'owner:chief' : `chat:${conv.id}`;
+
+  let bottomHtml = '';
+  if (layer.origin === 'proposal' && item && item.kind === 'ticket' && !item.proposalDone) {
+    bottomHtml = renderProposalDecisionDock(item, true);
+  } else if (layer.origin === 'message' && item && item.kind === 'message' && !item.read) {
+    bottomHtml = `
+      <div class="decision-dock">
+        ${renderComposerBox(item.key, 'Reply…', false, `sendReviewMessageReply('${item.conversationId}','${item.key}')`)}
+        <div class="decision-btn-row">
+          <button class="ios-btn secondary" onclick="skipCurrentCard()">Skip</button>
+          <button class="ios-btn secondary" onclick="markReviewMessageRead('${item.conversationId}','${item.key}')">Mark read</button>
+        </div>
+      </div>`;
+  } else {
+    const lastAgent = [...conv.messages].reverse().find(m => m.role === 'agent' || m.role === 'human');
+    const previewTxt = lastAgent ? (lastAgent.text || lastAgent.html.replace(/<[^>]+>/g, ' ').trim().slice(0, 64)) : `Chat with ${conv.title}`;
+    bottomHtml = `
+      <div class="conv-preview-dock">
+        <div class="conv-preview-line">
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(conv.title)}: ${escapeHtml(previewTxt)}</span>
+          <button style="color:var(--accent-bright);font-weight:500;flex-shrink:0;" onclick="closeArtifactLayer('drop');pushScreen({kind:'conversation',id:'${conv.id}'})">Open chat</button>
+        </div>
+        ${renderComposerBox(chatDraftKey, `Message ${conv.title}…`, false, `sendChatFromArtifact('${conv.id}','${chatDraftKey}')`)}
+      </div>`;
+  }
+
+  return `
+    <div class="artifact-layer">
+      <div class="ios-navbar">
+        <button class="ios-bar-btn" onclick="closeArtifactLayer('drop')">Close</button>
+        <div class="ios-nav-title">${escapeHtml(art.title)}</div>
+        <div class="ios-nav-actions">
+          ${art.kind === 'html' ? `
+            <div class="segmented-mini">
+              <button class="${layer.htmlMode === 'phone' ? 'active' : ''}" onclick="state.artifactLayer.htmlMode='phone';renderPhone()">Phone</button>
+              <button class="${layer.htmlMode === 'desktop' ? 'active' : ''}" onclick="state.artifactLayer.htmlMode='desktop';renderPhone()">Fit</button>
+            </div>` : ''}
+        </div>
+      </div>
+
+      <div class="ios-scroll" style="padding:16px 20px 28px;">
+        ${renderArtifactContent(art, layer.htmlMode)}
+      </div>
+
+      ${bottomHtml}
+    </div>`;
+}
+
+function sendChatFromArtifact(convId, draftKey) {
+  const text = (state.drafts[draftKey] || '').trim();
+  if (!text) return;
+  const conv = state.conversations[convId] || state.conversations.chief;
+  conv.messages.push({ role: 'human', text, time: 'Now' });
+  state.drafts[draftKey] = '';
+  logTrace('POST', `POST /api/${convId === 'chief' ? 'chief' : 'tickets/' + convId}/conversation/send (from artifact conversation dock)`);
+  renderPhone();
+}
+
+function renderArtifactContent(art, htmlMode) {
+  if (art.id === 'post_paywall_html') {
+    const scaleStyle = htmlMode === 'desktop' ? 'transform:scale(0.76);transform-origin:top center;width:131%;margin-left:-15.5%;' : '';
+    return `
+      <div style="${scaleStyle}transition:transform 200ms var(--motion-ease);">
+        <div style="background:#17191f;border:1px solid rgba(154,173,210,0.22);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px;">
+          <span style="font-size:11.5px;font-weight:600;color:var(--accent-bright);">Option B · Step 1 of 3</span>
+          <div style="font-size:19px;font-weight:600;color:var(--tone-strong);line-height:1.25;">What is one thing you want momentum on this week?</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="padding:12px;border-radius:11px;background:var(--accent-surface);border:1px solid rgba(154,173,210,0.42);color:var(--accent-text);font-weight:500;">Ship my side project to 10 testers</div>
+            <div style="padding:12px;border-radius:11px;background:var(--surface-2);color:var(--tone-secondary);">Rebuild a steady sleep &amp; gym routine</div>
+            <div style="padding:12px;border-radius:11px;background:var(--surface-2);color:var(--tone-secondary);">Finish a work deliverable I keep putting off</div>
+          </div>
+          <div style="padding:12px;border-radius:11px;background:var(--surface-recessed);">
+            <div style="font-size:11.5px;color:var(--tone-tertiary);margin-bottom:4px;">Starter cadence preview</div>
+            <div style="font-size:13px;color:var(--tone-primary);">First 15-minute step tonight at 19:30 · Check-in tomorrow morning</div>
+          </div>
+        </div>
+      </div>`;
+  }
+  if (art.id === 'app_routes_md') {
+    return `
+      <div class="prose">
+        <h2 style="font-size:calc(18px * var(--dt));color:var(--tone-strong);margin:0 0 8px;">Panels App Architecture Tradeoffs</h2>
+        <p>Comparison of native SwiftUI, Tauri, and wrapped web options across phone and desktop.</p>
+        <div class="gfm-table-wrap">
+          <table class="gfm-table">
+            <thead><tr><th>Route</th><th>Phone Feel</th><th>Cold Start</th><th>Offline</th><th>RAM</th><th>Effort</th></tr></thead>
+            <tbody>
+              <tr><td>Native SwiftUI</td><td>Best</td><td>0.4s</td><td>SwiftData</td><td>48 MB</td><td>3 wks</td></tr>
+              <tr><td>Capacitor Wrap</td><td>Compromised</td><td>1.1s</td><td>IndexedDB</td><td>165 MB</td><td>1.5 wks</td></tr>
+              <tr><td>Tauri + Native iOS</td><td>Best</td><td>0.6s</td><td>Native</td><td>95 MB</td><td>4 wks</td></tr>
+              <tr><td>Pooled WKWebView</td><td>Clean</td><td>0.4s</td><td>Saves 95 MB</td><td>62 MB</td><td>2 days</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panels-chart-card">
+          <div class="panels-chart-title">Native Polish Score</div>
+          ${renderMiniBarSvg([
+            { label: 'SwiftUI', value: 96, max: 100, color: 'var(--accent-done)' },
+            { label: 'Tauri', value: 84, max: 100, color: 'var(--accent-bright)' },
+            { label: 'Capacitor', value: 52, max: 100, color: 'var(--accent-attention)' }
+          ])}
+        </div>
+        <p><strong>Recommendation:</strong> Keep the iPhone app native SwiftUI and share one pooled <code>WKWebView</code> for HTML artifacts.</p>
+      </div>`;
+  }
+  return `
+    <div class="prose">
+      <h2 style="font-size:calc(18px * var(--dt));color:var(--tone-strong);margin:0 0 8px;">Multi-Account Rotation Options</h2>
+      <div class="gfm-table-wrap">
+        <table class="gfm-table">
+          <thead><tr><th>Option</th><th>Failover</th><th>Complexity</th><th>Safety</th></tr></thead>
+          <tbody>
+            <tr><td>1. Per-Ticket pin</td><td>None</td><td>Low</td><td>Medium</td></tr>
+            <tr><td>2. Least-used on start</td><td>Next turn</td><td>Medium</td><td>High</td></tr>
+            <tr><td>3. Fallback on 429</td><td>Retry</td><td>Medium</td><td>High</td></tr>
+            <tr><td>4. Mid-turn swap</td><td>Live</td><td>High</td><td>Highest</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* ==========================================================================
+   Manager, Ticket, Chief, Conversation & Settings Screens
+   ========================================================================== */
+function renderPushedRoute(route, backLabel) {
+  if (route.kind === 'ticket') return renderTicketDetail(route.id, backLabel);
+  if (route.kind === 'manager') return renderManagerScreen(route.id, backLabel);
+  if (route.kind === 'chief') return renderChiefScreen(backLabel);
+  if (route.kind === 'conversation') return renderConversationScreen(route.id, backLabel);
+  return '';
+}
+
+function groupManagerTickets(tickets) {
+  const order = [
+    { key: 'awaiting_approval', label: 'Needs your approval' },
+    { key: 'awaiting_answer', label: 'Needs your answer' },
+    { key: 'assigned', label: 'Yours' },
+    { key: 'agent', label: 'Agent' }
+  ];
+  return order.map(o => ({ label: o.label, items: tickets.filter(t => t.group === o.key) })).filter(g => g.items.length > 0);
+}
+
+function renderMark(mark, unread) {
+  if (unread) return '<span class="mark-dot-accent"></span>';
+  if (mark === 'approval') return `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--accent-bright)" stroke-width="1.6"><rect x="2" y="3" width="12" height="10" rx="2.5"/><path d="M2 9h3.5l1.2 1.8h2.6L10.5 9H14"/></svg>`;
+  if (mark === 'answer') return '<span class="mark-dot-answer"></span>';
+  if (mark === 'assigned') return '<span class="mark-ring-assigned"></span>';
+  if (mark === 'working' || mark === 'setting_up') return '<span class="mark-spinner"></span>';
+  if (mark === 'done') return '<span class="mark-done">✓</span>';
+  return '<span class="mark-ring-upcoming"></span>';
+}
+
+function renderTicketsCard(scopeKey, activeTickets, backlogged, done) {
+  const elapsedStr = formatDuration(state.settingUpElapsed);
+  const groups = groupManagerTickets(activeTickets);
+  const blKey = `${scopeKey}:backlogged`;
+  const doneKey = `${scopeKey}:done`;
+  const blOpen = Boolean(state.openBuckets[blKey]);
+  const doneOpen = Boolean(state.openBuckets[doneKey]);
+
+  return `
+    <div class="worker-sections">
+      ${groups.length ? groups.map(g => {
+        const gKey = `${scopeKey}:${g.label}`;
+        const isOpen = !state.closedGroups[gKey];
+        const unreadCount = g.items.filter(t => t.unread).length;
+        return `
+          <div>
+            <button class="worker-disc-head" onclick="state.closedGroups['${gKey}']=!state.closedGroups['${gKey}'];renderPhone()">
+              <span>${escapeHtml(g.label)}</span>
+              <span class="worker-disc-count">${!isOpen && unreadCount > 0 ? `${unreadCount} unread` : g.items.length}</span>
+            </button>
+            ${isOpen ? `
+              <div class="worker-rows">
+                ${g.items.map(t => `
+                  <button class="worker-row" onclick="pushScreen({kind:'ticket',id:'${t.id}'})">
+                    <div class="worker-row-text">
+                      <div class="worker-row-title ${t.group === 'agent' && !t.unread ? 'quiet' : ''}">${escapeHtml(t.title)}</div>
+                      ${t.settingUp ? `<div class="worker-row-sub">Setting up · ${elapsedStr}</div>` : ''}
+                    </div>
+                    <span class="mark-trail">${renderMark(t.mark, t.unread)}</span>
+                  </button>`).join('')}
+              </div>` : ''}
+          </div>`;
+      }).join('') : `<div style="padding:4px 4px;font-size:13px;color:var(--tone-tertiary);">No active workers</div>`}
+
+      ${backlogged.length ? `
+        <div>
+          <button class="worker-disc-head" onclick="state.openBuckets['${blKey}']=!state.openBuckets['${blKey}'];renderPhone()">
+            <span>Backlogged</span>
+            <span class="worker-disc-count">${backlogged.length}</span>
+          </button>
+          ${blOpen ? `
+            <div class="worker-rows">
+              ${backlogged.map(t => `
+                <button class="worker-row" onclick="pushScreen({kind:'ticket',id:'${t.id}'})">
+                  <div class="worker-row-text"><div class="worker-row-title quiet">${escapeHtml(t.title)}</div></div>
+                </button>`).join('')}
+            </div>` : ''}
+        </div>` : ''}
+
+      ${done.length ? `
+        <div>
+          <button class="worker-disc-head" onclick="state.openBuckets['${doneKey}']=!state.openBuckets['${doneKey}'];renderPhone()">
+            <span>Done</span>
+            <span class="worker-disc-count">${done.length}</span>
+          </button>
+          ${doneOpen ? `
+            <div class="worker-rows">
+              ${done.map(t => `
+                <button class="worker-row" onclick="pushScreen({kind:'ticket',id:'${t.id}'})">
+                  <div class="worker-row-text"><div class="worker-row-title quiet">${escapeHtml(t.title)}</div></div>
+                  <span class="mark-trail"><span class="mark-done">✓</span></span>
+                </button>`).join('')}
+            </div>` : ''}
+        </div>` : ''}
+    </div>`;
+}
+
+function renderBottomConversationDock(convId, draftKey, placeholder) {
+  const conv = state.conversations[convId] || state.conversations.chief;
+  const lastMsg = [...conv.messages].reverse().find(m => m.role === 'agent' || m.role === 'human');
+  const preview = lastMsg ? (lastMsg.text || lastMsg.html.replace(/<[^>]+>/g, ' ').trim().slice(0, 62)) : `Open conversation`;
+  return `
+    <div class="conv-preview-dock">
+      <button class="conv-preview-line" style="width:100%;text-align:left;padding:2px 2px;" onclick="pushScreen({kind:'conversation',id:'${conv.id}'})">
+        <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(preview)}</span>
+        <span style="color:var(--accent-bright);font-weight:500;flex-shrink:0;">Open ›</span>
+      </button>
+      ${renderComposerBox(draftKey, placeholder, false, `sendFromPageDock('${conv.id}','${draftKey}')`)}
+    </div>`;
+}
+
+function sendFromPageDock(convId, draftKey) {
+  const text = (state.drafts[draftKey] || '').trim();
+  const atts = state.attachments[draftKey] || [];
+  if (!text && !atts.length) { pushScreen({ kind: 'conversation', id: convId }); return; }
+  sendChatMessage(convId, draftKey);
+}
+
+function renderArtifactsBand(scopeKey, artifacts, convId) {
+  if (!artifacts || !artifacts.length) return '';
+  const open = Boolean(state.artifactsOpen[scopeKey]);
+  return `
+    <div class="disclosure-band">
+      <button class="disclosure-head" onclick="state.artifactsOpen['${scopeKey}']=!state.artifactsOpen['${scopeKey}'];renderPhone()">
+        <span>Artifacts</span>
+        <span style="color:var(--tone-tertiary);font-weight:400;font-size:13px;font-variant-numeric:tabular-nums;">${artifacts.length}</span>
+      </button>
+      ${open ? `
+        <div style="margin-top:4px;">
+          ${artifacts.map(a => `
+            <button class="artifact-inline-row" onclick="openArtifact('${a.id}','conversation','${convId}')">
+              <span style="color:var(--tone-secondary);font-weight:500;">${escapeHtml(a.label)}</span>
+              <span style="font-size:12px;color:var(--tone-tertiary);">${escapeHtml(a.kind)}</span>
+            </button>`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+
+function openAgentActionsSheet(kind, title) {
+  document.getElementById('iosSheetHost').innerHTML = `
+    <div class="ios-sheet-backdrop" onclick="if(event.target===this)closeSheet()">
+      <div class="ios-sheet">
+        <div class="sheet-grabber"></div>
+        <div class="ios-sheet-nav">
+          <button class="ios-sheet-nav-cancel" onclick="closeSheet()">Cancel</button>
+          <div class="ios-sheet-nav-title">Actions</div>
+          <div></div>
+        </div>
+        <div class="ios-sheet-body">
+          <div class="ios-form-section">
+            <div class="ios-form-group">
+              <button class="ios-form-row" onclick="closeSheet();logTrace('POST','POST /api/recap-requests');showToast('Requested fresh recap')">
+                <span>Ask for a recap</span>
+              </button>
+              ${kind === 'manager' ? `
+                <button class="ios-form-row" onclick="closeSheet();showToast('Manager settled')">
+                  <span>Settle</span>
+                </button>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderManagerScreen(managerId, backLabel) {
+  const m = MANAGERS.find(x => x.id === managerId) || MANAGERS[0];
+  const convId = state.conversations[m.id] ? m.id : 'm_improve_wren';
+
+  return `
+    <div class="${backLabel ? '' : 'ios-stack-layer'}" style="${backLabel ? 'display:flex;flex-direction:column;height:100%;' : ''}">
+      <div class="ios-navbar borderless">
+        ${backLabel ? `<button class="ios-nav-back" onclick="popScreen()">‹ ${escapeHtml(backLabel)}</button>` : sidebarTriggerBtn()}
+        <div class="ios-nav-actions">
+          <button class="ios-bar-btn icon-only" onclick="openAgentActionsSheet('manager','${escapeHtml(m.title)}')" aria-label="Actions">•••</button>
+        </div>
+      </div>
+
+      <div class="ios-scroll detail-pad">
+        <div>
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+            <h1 class="review-title" style="flex:1;">${escapeHtml(m.title)}</h1>
+            <span class="mark-trail" style="margin-top:4px;">${m.unread ? '<span class="mark-dot-accent"></span>' : (m.working ? '<span class="mark-spinner"></span>' : '')}</span>
+          </div>
+          <p class="review-recap" style="margin-bottom:0;">${escapeHtml(m.recap)}</p>
+        </div>
+
+        <!-- Existing iOS HolderContent: Sole Goal or Page Blocks -->
+        ${m.soleGoal ? `
+          <div class="detail-card" style="background:var(--page-card-fill);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span style="font-size:15px;font-weight:600;color:var(--tone-strong);">${escapeHtml(m.soleGoal.headline)}</span>
+              <span class="rail-goal-tag ${m.soleGoal.status}">${escapeHtml(m.soleGoal.statusLabel)}</span>
+            </div>
+            <div style="font-size:12px;color:var(--tone-tertiary);">${escapeHtml(m.soleGoal.target)} · ${escapeHtml(m.soleGoal.deadline)}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px;">
+              ${m.soleGoal.items.map(it => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13.5px;color:${it.done ? 'var(--tone-tertiary)' : 'var(--tone-primary)'};">
+                  <span>${escapeHtml(it.label)}</span>
+                  <span class="mark-trail">${it.done ? '<span class="mark-done">✓</span>' : '<span class="mark-ring-upcoming"></span>'}</span>
+                </div>`).join('')}
+            </div>
+          </div>` : ''}
+
+        ${m.pageTable ? `
+          <div class="gfm-table-wrap" style="margin:0;">
+            <table class="gfm-table">
+              <thead><tr>${m.pageTable.headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+              <tbody>${m.pageTable.rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+            </table>
+          </div>` : ''}
+
+        <!-- Existing iOS HolderTickets / WorkerSections (no weird long-press preview sheets) -->
+        ${renderTicketsCard('mgr:' + m.id, m.tickets, m.backlogged || [], m.done || [])}
+
+        <!-- Artifacts hidden/collapsed by default (exact desktop ArtifactsBand & iOS ArtifactsRow) -->
+        ${renderArtifactsBand('mgr:' + m.id, m.artifacts, convId)}
+      </div>
+
+      ${renderBottomConversationDock(convId, `chat:${convId}`, 'Message…')}
+    </div>`;
+}
+
+function renderTicketDetail(ticketId, backLabel) {
+  const t = TICKETS_DB[ticketId] || TICKETS_DB.t_post_paywall;
+  const elapsedStr = formatDuration(state.settingUpElapsed);
+  const matchingReview = state.queue.find(q => q.ticketId === t.id && q.kind === 'ticket' && !q.proposalDone);
+
+  return `
+    <div class="ios-navbar borderless">
+      <button class="ios-nav-back" onclick="popScreen()">‹ ${escapeHtml(backLabel)}</button>
+      <div class="ios-nav-actions">
+        <button class="ios-bar-btn icon-only" onclick="openTicketActionsSheet('${t.id}')" aria-label="Actions">•••</button>
+      </div>
+    </div>
+
+    <div class="ios-scroll detail-pad">
+      <div>
+        <div style="font-size:calc(12.5px * var(--dt));color:var(--tone-tertiary);margin-bottom:4px;">${escapeHtml(t.managerTitle || 'Chief of Staff')}</div>
+        <h1 class="review-title">${escapeHtml(t.title)}</h1>
+        <div style="font-size:calc(12.5px * var(--dt));color:${t.machine.color};margin-bottom:8px;">${escapeHtml(t.machine.name)}</div>
+        <p class="review-recap" style="margin-bottom:0;">${escapeHtml(t.recap)}</p>
+      </div>
+
+      ${matchingReview ? `
+        <div class="proposal-card" style="margin-bottom:0;">
+          <div class="proposal-card-meta">
+            <span class="proposal-stage-txt">${escapeHtml(matchingReview.stage)}</span>
+            <button class="proposal-approver-btn" onclick="openHolderTransferSheet('${matchingReview.key}')">
+              <span>${escapeHtml(matchingReview.holder)}</span>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+          </div>
+          <div class="prose">${matchingReview.proposalBodyHtml}</div>
+        </div>` : `
+        <div class="proposal-card" style="margin-bottom:0;display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:15px;font-weight:600;color:var(--tone-strong);">${escapeHtml(t.stage)}</div>
+          ${t.agentState === 'setting_up' ? `
+            <div style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--accent-text);">
+              <span class="mark-spinner" style="width:11px;height:11px;"></span>
+              <span>Setting up · preparing workspace · ${elapsedStr}</span>
+            </div>` : `
+            <div style="font-size:13.5px;color:var(--tone-secondary);">
+              Approved until <strong style="color:var(--tone-strong);font-weight:600;">${escapeHtml(t.ceiling)}</strong>, then <strong style="color:var(--tone-strong);font-weight:600;">${escapeHtml(t.holder)}</strong> reviews ▾
+            </div>`}
+        </div>`}
+
+      <div class="disclosure-band">
+        <button class="disclosure-head" onclick="state.stepsExpanded=!state.stepsExpanded;renderPhone()">
+          <span>Steps</span>
+          <span style="color:var(--tone-tertiary);font-weight:400;font-size:13px;">${t.steps.filter(s => s.status === 'done').length} of ${t.steps.length} done</span>
+        </button>
+        ${state.stepsExpanded ? `
+          <div style="margin-top:4px;">
+            ${t.steps.map(s => `
+              <div class="step-row">
+                <div>
+                  <div style="font-size:calc(14px * var(--dt));font-weight:500;color:var(--tone-strong);">${escapeHtml(s.label)}</div>
+                  <div style="font-size:calc(12.5px * var(--dt));color:var(--tone-tertiary);">${escapeHtml(s.by)}</div>
+                </div>
+                <span class="mark-trail">${renderMark(s.status === 'done' ? 'done' : s.status === 'awaiting_approval' ? 'approval' : s.status === 'running' ? 'working' : s.status === 'assigned' ? 'assigned' : 'upcoming', false)}</span>
+              </div>`).join('')}
+          </div>` : ''}
+      </div>
+
+      <!-- Artifacts hidden/collapsed by default (exact desktop ArtifactsBand & iOS ArtifactsRow) -->
+      ${renderArtifactsBand('ticket:' + t.id, t.artifacts, t.convId)}
+    </div>
+
+    ${matchingReview
+      ? renderProposalDecisionDock(matchingReview, false)
+      : renderBottomConversationDock(t.convId, `chat:${t.convId}`, 'Message…')}`;
+}
+
+function openTicketActionsSheet(ticketId) {
+  document.getElementById('iosSheetHost').innerHTML = `
+    <div class="ios-sheet-backdrop" onclick="if(event.target===this)closeSheet()">
+      <div class="ios-sheet">
+        <div class="sheet-grabber"></div>
+        <div class="ios-sheet-nav">
+          <button class="ios-sheet-nav-cancel" onclick="closeSheet()">Cancel</button>
+          <div class="ios-sheet-nav-title">Ticket</div>
+          <div></div>
+        </div>
+        <div class="ios-sheet-body">
+          <div class="ios-form-section">
+            <div class="ios-form-group">
+              <button class="ios-form-row" onclick="closeSheet();logTrace('POST','POST /api/recap-requests');showToast('Requested fresh recap')">
+                <span>Ask for a recap</span>
+              </button>
+              <button class="ios-form-row" onclick="closeSheet();attemptRestart('${ticketId}')">
+                <span>Restart Worker</span>
+              </button>
+              <button class="ios-form-row" onclick="closeSheet();showToast('Moved to Backlog')">
+                <span>Backlog ticket</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+function attemptRestart(ticketId) {
+  const t = TICKETS_DB[ticketId];
+  if (t && t.agentState === 'setting_up') {
+    logTrace('POST', `POST /api/tickets/${ticketId}/restart-worker → 400 validation: "Still setting up (< 15m guard)"`);
+    showToast('Still setting up (under 15m)');
+  } else {
+    logTrace('POST', `POST /api/tickets/${ticketId}/restart-worker → 200`);
+    showToast('Worker restarted');
+  }
+}
+
+function renderChiefScreen(backLabel) {
+  const seg = CHIEF_PAGE.segments[state.chiefSegment] || CHIEF_PAGE.segments.all;
+  return `
+    <div class="${backLabel ? '' : 'ios-stack-layer'}" style="${backLabel ? 'display:flex;flex-direction:column;height:100%;' : ''}">
+      <div class="ios-navbar borderless">
+        ${backLabel ? `<button class="ios-nav-back" onclick="popScreen()">‹ ${escapeHtml(backLabel)}</button>` : sidebarTriggerBtn()}
+        <div class="ios-nav-actions">
+          <button class="ios-bar-btn icon-only" onclick="openAgentActionsSheet('chief','Chief of Staff')" aria-label="Actions">•••</button>
+        </div>
+      </div>
+
+      <div class="ios-scroll detail-pad">
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <h1 class="review-title">Chief of Staff</h1>
+            <span class="mark-trail"><span class="mark-spinner"></span></span>
+          </div>
+          <p class="review-recap" style="margin-bottom:0;">${escapeHtml(CHIEF_PAGE.recap)}</p>
+        </div>
+
+        <!-- Existing iOS HolderContent: Chief's headroom.page blocks (never a Managers list) -->
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div class="segmented-mini" style="align-self:flex-start;">
+            ${Object.entries(CHIEF_PAGE.segments).map(([k, v]) => `
+              <button class="${state.chiefSegment === k ? 'active' : ''}" onclick="state.chiefSegment='${k}';renderPhone()">${escapeHtml(v.label)}</button>
+            `).join('')}
+          </div>
+
+          <div class="gfm-table-wrap" style="margin:0;">
+            <table class="gfm-table">
+              <thead><tr><th>Week of</th><th>PRs</th><th>Commits</th><th>Added</th><th>Removed</th><th>Changed</th></tr></thead>
+              <tbody>${seg.rows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+            </table>
+          </div>
+
+          <div class="panels-chart-card" style="margin:0;">
+            <div class="panels-chart-title">Lines changed (k)</div>
+            ${renderMiniBarSvg(seg.bars)}
+          </div>
+        </div>
+
+        <!-- Existing iOS HolderTickets / WorkerSections (exact same structure as Manager pages) -->
+        ${renderTicketsCard('chief', CHIEF_PAGE.directTickets, CHIEF_PAGE.backlogged, CHIEF_PAGE.done)}
+      </div>
+
+      ${renderBottomConversationDock('chief', 'owner:chief', 'Message Chief…')}
+    </div>`;
+}
+
+function renderConversationScreen(convId, backLabel) {
+  const conv = state.conversations[convId] || state.conversations.chief;
+  const draftKey = convId === 'chief' ? 'owner:chief' : `chat:${convId}`;
+
+  return `
+    <div class="ios-navbar borderless">
+      <button class="ios-nav-back" onclick="popScreen()">‹ ${escapeHtml(backLabel)}</button>
+      <div class="ios-nav-title">${escapeHtml(conv.title)}</div>
+      <div style="width:44px;"></div>
+    </div>
+
+    <div class="ios-scroll chat-thread" id="chatScrollArea">
+      ${conv.messages.map(m => {
+        if (m.role === 'human') return `<div class="chat-human-wrap"><div class="chat-human-bubble">${escapeHtml(m.text)}</div><span class="chat-meta-tiny">${escapeHtml(m.time || 'Now')}</span></div>`;
+        return `<div class="chat-agent-block prose">${m.html}</div>`;
+      }).join('')}
+    </div>
+
+    <div class="decision-dock">
+      ${renderComposerBox(draftKey, `Message ${conv.title}…`, false, `sendChatMessage('${conv.id}','${draftKey}')`)}
+    </div>`;
+}
+
+function sendChatMessage(convId, draftKey) {
+  const text = (state.drafts[draftKey] || '').trim();
+  const atts = state.attachments[draftKey] || [];
+  if (!text && !atts.length) return;
+  const conv = state.conversations[convId] || state.conversations.chief;
+  const label = text + (atts.length ? ` [${atts.map(a => a.label).join(', ')}]` : '');
+  if (state.condition === 'offline') {
+    state.outbox.push({ opId: 'chat_' + Date.now(), lane: `conversation:${convId}`, summary: label.slice(0, 28) });
+    conv.messages.push({ role: 'human', text: label, time: 'Now' });
+  } else {
+    conv.messages.push({ role: 'human', text: label, time: 'Now' });
+    logTrace('POST', `POST /api/${convId === 'chief' ? 'chief' : 'tickets/' + convId}/conversation/send`);
+  }
+  state.drafts[draftKey] = ''; state.attachments[draftKey] = [];
+  renderPhone();
+  setTimeout(() => { const a = document.getElementById('chatScrollArea'); if (a) a.scrollTop = a.scrollHeight; }, 20);
+}
+
+function renderMoreScreen() {
+  return `
+    <div class="ios-stack-layer">
+      <div class="ios-navbar">
+        ${sidebarTriggerBtn()}
+        <div class="ios-nav-title">Settings</div>
+        <div style="width:36px;"></div>
+      </div>
+      <div class="ios-scroll detail-pad">
+        <div class="detail-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:14.5px;font-weight:600;color:var(--tone-strong);">Deployment</span>
+            <span style="font-size:12.5px;color:var(--accent-done);font-weight:600;">Healthy</span>
+          </div>
+          <div style="font-size:13px;color:var(--tone-secondary);">VPS 1 · Mac Studio online</div>
+        </div>
+        <div class="detail-card">
+          <div style="font-size:12px;font-weight:600;color:var(--tone-tertiary);">Notifications</div>
+          ${[
+            ['tickets_approval', 'Proposals awaiting approval'],
+            ['tickets_answer', 'Worker questions & asks'],
+            ['tickets_reply', 'Unread messages'],
+            ['chief_reply', 'Chief of Staff'],
+            ['stall_alarm', 'Stall alarms']
+          ].map(([k, lbl]) => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <span style="font-size:calc(14px * var(--dt));color:var(--tone-primary);">${lbl}</span>
+              <button onclick="toggleNotif('${k}')" style="width:44px;height:26px;border-radius:99px;background:${state.notifs[k] ? 'var(--accent-bright)' : 'var(--surface-input)'};padding:3px;display:flex;justify-content:${state.notifs[k] ? 'flex-end' : 'flex-start'};">
+                <span style="width:20px;height:20px;border-radius:99px;background:${state.notifs[k] ? 'var(--surface-ink)' : 'var(--tone-secondary)'};"></span>
+              </button>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+function toggleNotif(key) { state.notifs[key] = !state.notifs[key]; logTrace('POST', `PUT /api/notifications/preferences/${key} { enabled: ${state.notifs[key]} }`); renderPhone(); }
+
+/* ============================================================================
+   Right Pane: Inspector
+   ============================================================================ */
+function setInspectorTab(t) {
+  state.inspectorTab = t;
+  ['dataflow', 'states', 'problems', 'map'].forEach(id => document.getElementById('itab-' + id).classList.toggle('active', id === t));
+  renderInspector();
+}
+
+function getScreenMetadata() {
+  if (state.sidebarOpen) return {
+    pill: 'Workspace Sidebar', title: 'Panels Rail Cards',
+    reads: ['GET /api/navigation/view/events (rail_parents, settled, counts)', 'Goal status tags & haze colors per Manager'],
+    updates: 'Chief of Staff and active Managers use the exact same #1b1b1b rail card with zero borders. Chief carries the All projects eyebrow and right-hand status when held. Bottom bar puts Review + badge left and iOS Settings gear right.',
+    writes: 'Settled Reopen calls PATCH /api/managers/:id/settled; tapping any card switches cleanly.',
+    offline: 'Restores reduced snapshot checkpoint from SwiftData silently.'
+  };
+  if (state.artifactLayer) {
+    const art = ARTIFACTS[state.artifactLayer.artifactId];
+    const mode = state.artifactLayer.origin;
+    const ruleText = mode === 'proposal'
+      ? 'Opened from Proposal → Proposal decision dock (note + Skip / Return / Approve) stays below, sharing the exact draft.'
+      : mode === 'message'
+      ? 'Opened from Review Message → Reply composer (inline Send) + Skip / subtle Mark read stays below.'
+      : 'Opened from Ticket Artifacts / Manager / Chat → Conversation dock (inline Send) stays below.';
+    return {
+      pill: `Artifact · ${mode === 'proposal' ? 'Proposal Bar' : mode === 'message' ? 'Reply Bar' : 'Conversation Below'}`,
+      title: art.title,
+      reads: [`GET ${art.path} (ETag / If-None-Match 304)`, mode === 'conversation' ? `Conversation tail for ${state.artifactLayer.convId}` : 'Shared ReviewStore draft & attachments'],
+      updates: ruleText,
+      writes: mode === 'proposal' ? 'POST /api/tickets/:id/decision-operations/:op_id' : 'POST /api/(tickets|managers|chief)/conversation/send',
+      offline: 'Cached artifacts stay readable offline; decisions and replies queue in SwiftData Outbox.'
+    };
+  }
+  const pushed = currentPushed();
+  if (pushed) {
+    if (pushed.kind === 'ticket') return {
+      pill: 'Ticket Page', title: (TICKETS_DB[pushed.id] || {}).title || 'Ticket',
+      reads: [`GET /api/tickets/${pushed.id}/workspace`, `GET /api/artifact-catalog/ticket/${pushed.id}`, 'Navigation SSE supplies worker_setup & agent_state'],
+      updates: 'Keeps today’s iOS TicketView layout intact (Manager eyebrow, title, machine, recap, stage/proposal card, collapsible Steps, Artifacts, bottom composer with inline Send) while removing weird long-press context menus.',
+      writes: 'PATCH /api/tickets/:id, POST /decision-operations/:op_id, POST /restart-worker (400 refused under 15m setting_up).',
+      offline: 'Pushed on the single NavigationStack so Back from Review returns straight to that card.'
+    };
+    if (pushed.kind === 'conversation') return {
+      pill: 'Conversation', title: (state.conversations[pushed.id] || {}).title || 'Chat',
+      reads: [`GET /api/conversation/conversations/${pushed.id}/view/tail (SSE)`],
+      updates: 'Existing iOS Conversation screen kept as-is (no redesign or changes to conversation UI).',
+      writes: 'POST /conversation/send with sender_message_id saved to Outbox before network send.',
+      offline: 'Offline sends queue silently and verify via /view/receipts on reconnect.'
+    };
+  }
+  if (state.root.kind === 'manager') return {
+    pill: 'Manager Page', title: (MANAGERS.find(m => m.id === state.root.id) || {}).title || 'Manager',
+    reads: [`GET /api/managers/${state.root.id}/workspace-content (recap, held goals)`, `GET /api/managers/${state.root.id}/page + /readings`, 'Navigation SSE children window (active, backlogged, done)'],
+    updates: 'Keeps today’s iOS OrchestratorView layout intact (title + signal, recap, HolderContent, collapsible WorkerSections with right-aligned counts & marks, Artifacts, bottom composer with inline Send) while removing weird long-press previews.',
+    writes: 'PATCH /api/managers/:id/settled; Artifact links open with Manager Conversation docked below.',
+    offline: 'Cached page renders from disk; writes queue in Outbox.'
+  };
+  if (state.root.kind === 'chief') return {
+    pill: 'Chief of Staff', title: 'Chief of Staff',
+    reads: ['GET /api/chief/page + /readings (headroom.page document)', 'Navigation SSE children window for Chief’s own direct Tickets', 'Canonical conversation_id from NavigationPresentation.chief.conversationId'],
+    updates: 'Uses the exact same layout as Manager pages (ChiefView + HolderContent + WorkerSections + bottom composer with inline Send). Never lists Managers.',
+    writes: 'Shares draft key owner:chief with Review’s final screen.',
+    offline: 'Reads from disk cache; messages queue on lane conversation:chief.'
+  };
+  if (state.root.kind === 'more') return {
+    pill: 'Settings', title: 'Deployment & Notifications',
+    reads: ['GET /api/notifications/settings', 'Deployment health'],
+    updates: 'Event-driven refresh (replaces 1-second polling loops).',
+    writes: 'PUT /api/notifications/preferences/:subject/:type.',
+    offline: 'Shows cached deployment state.'
+  };
+  const item = currentReviewItem();
+  if (!item) return {
+    pill: 'Review · Done', title: 'All Caught Up',
+    reads: ['Navigation SSE section:"review" (terminalWindow latched only when runtimeCurrent=true & !next)'],
+    updates: 'Minimal end-of-queue screen (All caught up, or Revisit skipped when items were skipped) with the Chief composer anchored below and Open Chief in the top bar.',
+    writes: 'Chief composer shares owner:chief draft and checks delivery receipt before resending.',
+    offline: 'Offline Chief messages queue silently on lane conversation:chief.'
+  };
+  return {
+    pill: 'Review Home', title: item.title,
+    reads: [
+      'GET /api/navigation/view/events (section:"review", oldest-first, limit:30)',
+      item.kind === 'ticket' ? `GET /api/tickets/${item.ticketId}/workspace via ResourceOwner` : `GET /api/conversation/conversations/${item.conversationId}/events`
+    ],
+    updates: 'Proposals and conversation messages are separate Review cards so every card has one clean bottom dock (Skip / Return / Approve, Skip / Send answer, or inline-Send Reply + Skip / Mark read).',
+    writes: item.kind === 'ticket'
+      ? `POST /api/tickets/${item.ticketId}/decision-operations/:op_id (expected_proposal_revision=${item.revision}, note + off-main HEIC→JPEG + durable .m4a voice)`
+      : `POST /api/conversation/send or POST /owner-read`,
+    offline: 'Offline decisions freeze DecisionCommand JSON into SwiftData Outbox. Reconnect checks GET /decision-operations/:op_id BEFORE POSTing.'
+  };
+}
+
+function renderInspector() {
+  const meta = getScreenMetadata();
+  document.getElementById('inspPill').textContent = meta.pill;
+  document.getElementById('inspTitle').textContent = meta.title;
+  document.getElementById('inspStateMeta').textContent = `${state.condition === 'offline' ? 'Offline' : state.condition === 'unavailable' ? 'Index 503' : 'SSE live'} · Outbox ${state.outbox.length}`;
+
+  const body = document.getElementById('inspBody');
+  if (state.inspectorTab === 'dataflow') {
+    body.innerHTML = `
+      <div class="df-grid">
+        <div class="df-card"><div class="df-card-kicker">1 · Reads</div>${meta.reads.map(r => `<div class="df-route">${escapeHtml(r)}</div>`).join('')}</div>
+        <div class="df-card"><div class="df-card-kicker">2 · Updates &amp; Behavior</div><div class="df-card-text">${escapeHtml(meta.updates)}</div></div>
+        <div class="df-card"><div class="df-card-kicker">3 · Writes &amp; Concurrency</div><div class="df-card-text">${escapeHtml(meta.writes)}</div></div>
+        <div class="df-card"><div class="df-card-kicker">4 · Offline &amp; Navigation</div><div class="df-card-text">${escapeHtml(meta.offline)}</div></div>
+      </div>
+      <div class="trace-box">
+        <div class="trace-head"><span>Live Network, SSE &amp; Outbox Trace</span><button style="color:var(--tone-tertiary);font-size:11.5px;" onclick="state.traces=[];renderInspector()">Clear</button></div>
+        <div class="trace-list">${state.traces.map(tr => `<div class="trace-row"><span class="trace-time">${tr.ts}</span><span class="trace-kind ${tr.kind}">${tr.kind}</span><span class="trace-msg">${escapeHtml(tr.msg)}</span></div>`).join('')}</div>
+      </div>`;
+    return;
+  }
+
+  if (state.inspectorTab === 'states') {
+    const cards = [
+      { title: 'Artifact from Proposal → Decision Bar Below', badge: 'Artifact Rule 1 of 3', desc: 'Opening an artifact linked inside a Proposal keeps the note + Skip / Return / Approve bar docked below.', btn: 'Open Proposal Artifact', fn: () => { jumpReviewCard('ticket:t_post_paywall'); openArtifact('post_paywall_html', 'proposal'); } },
+      { title: 'Artifact from Ticket / Chat → Conversation Below', badge: 'Artifact Rule 2 of 3', desc: 'Opening an artifact from Ticket Artifacts, Manager page, or Chat keeps the live Conversation composer (inline Send) docked below.', btn: 'Open With Conversation', fn: () => { state.root = { kind: 'manager', id: 'm_improve_wren' }; state.stack = [{ kind: 'ticket', id: 't_post_paywall' }]; openArtifact('post_paywall_html', 'conversation', 't_post_paywall'); } },
+      { title: 'Artifact from Review Message → Reply Bar Below', badge: 'Artifact Rule 3 of 3', desc: 'Opening an artifact linked inside a Review message keeps the Reply composer (inline Send) + Skip / subtle Mark read below.', btn: 'Open Message Artifact', fn: () => { jumpReviewCard('message:conv_accounts'); openArtifact('accounts_md', 'message'); } },
+      { title: 'Reviewer Changed Mid-Review', badge: 'Revision Bump · 200 Refused', desc: 'Holder moves to Manager while open. Revision increments and POST returns HTTP 200 refused receipt while preserving your note & attachments.', btn: 'Simulate Reviewer Move', fn: () => setCondition('conflict') },
+      { title: 'Slow Link → Uncertain Receipt Check', badge: 'Idempotency', desc: 'Dropped response enters .uncertain. Check status queries GET /decision-operations/:op_id first so it never double-applies.', btn: 'Enable Slow / Uncertain', fn: () => { setCondition('slow'); showToast('Tap Approve or Return'); } },
+      { title: 'Offline Queue & Durable Voice Outbox', badge: 'SwiftData Outbox', desc: 'Pre-dispatch offline writes stay .waiting, voice retains its .m4a file, and reconnecting checks receipts before draining.', btn: 'Switch Offline', fn: () => setCondition('offline') },
+      { title: 'Permission Ask Variant (Question Card)', badge: 'pending_permission_ask', desc: 'Switches the Question card between a Worker question and a live Permission Ask (Skip / Decline / Approve).', btn: 'Toggle Permission Ask', fn: () => { jumpReviewCard('answer:t_goal_sheet'); const q = state.queue.find(x => x.key === 'answer:t_goal_sheet'); if (q) q.questionMode = q.questionMode === 'permission' ? 'user_input' : 'permission'; renderPhone(); renderInspector(); } },
+      { title: 'Setting Up & 15-Min Restart Guard', badge: 'worker_setup · 400 Refusal', desc: 'Opens the Setting up Ticket; tapping ••• → Restart Worker under 15 minutes returns a 400 refusal.', btn: 'Open Setting-Up Ticket', fn: () => { state.root = { kind: 'manager', id: 'm_improve_wren' }; state.stack = [{ kind: 'ticket', id: 't_wren_build15' }]; state.artifactLayer = null; state.sidebarOpen = false; renderPhone(); renderInspector(); } },
+      { title: 'Native Build Gate (HTTP 426)', badge: 'Update Blocker', desc: 'Blocks outdated builds while preserving local drafts and Outbox.', btn: 'Preview 426 Gate', fn: () => { state.gate426 = true; renderPhone(); } }
+    ];
+    body.innerHTML = `<div class="df-grid">${cards.map((c, i) => `<div class="df-card"><div class="df-card-kicker">${escapeHtml(c.badge)}</div><div class="df-card-title">${escapeHtml(c.title)}</div><div class="df-card-text">${escapeHtml(c.desc)}</div><button class="sim-btn" id="sim-${i}">${escapeHtml(c.btn)}</button></div>`).join('')}</div>`;
+    cards.forEach((c, i) => document.getElementById('sim-' + i).onclick = c.fn);
+    return;
+  }
+
+  if (state.inspectorTab === 'problems') {
+    const items = [
+      { broken: 'Heavy Multi-Row Bottom Stack on Review', cause: 'Bottom tab bar plus separate Send reply / Skip chrome crowded the viewport.', fix: 'Slide-over Sidebar replaces the tab bar; Review puts Skip, Return, and Approve in one bottom row, and every message/conversation composer puts Send inside the composer with a subtle Mark read.', fn: () => selectRoot({ kind: 'review' }) },
+      { broken: 'Mixed Proposal + Message Cards Stacked Multiple Composers', cause: 'Showing a proposal and an unread conversation on the same phone card forced two composers and competing button rows.', fix: 'Conversation items are separate Review cards on iOS: every card has one clear focus and one balanced bottom dock.', fn: () => jumpReviewCard('message:conv_app_routes') },
+      { broken: 'Over-Engineered Final Page', cause: 'Extra status cards, lists, and chrome turned the end of Review into noise.', fix: 'Simple, quiet All caught up screen (with Revisit skipped only when needed) and Chief composer anchored at the bottom.', fn: () => { state.root = { kind: 'review' }; state.stack = []; state.artifactLayer = null; state.sidebarOpen = false; state.finalLatched = true; renderPhone(); renderInspector(); } },
+      { broken: 'Web-Parity 3-Way Artifact Bottom Controls', cause: 'iOS ArtifactViewer dropped proposal controls and ignored conversation-below behavior.', fix: 'Proposal links keep Skip / Return / Approve below; message links keep inline-Send reply + subtle Mark read; Ticket/Manager/Chat links keep Conversation composer below.', fn: () => { state.root = { kind: 'manager', id: 'm_improve_wren' }; state.stack = [{ kind: 'ticket', id: 't_post_paywall' }]; openArtifact('post_paywall_html', 'conversation', 't_post_paywall'); } },
+      { broken: '1,451 ms Main-Thread Review Hangs & Keystroke SQLite Saves', cause: 'ReviewView queried SwiftData synchronously on every render, and saveDraft wrote on MainActor per keystroke.', fix: 'In-memory ReviewSavedWork snapshot invalidated only on Outbox writes + debounced off-main draft saves.', fn: () => setInspectorTab('dataflow') },
+      { broken: 'Chief Sideways Swipe Shift & Workspace Composer Leaks', cause: 'Hidden UINavigationBar delegate hijack + nested MountedTabContent hosting controller + dual-mounted ConversationSurface.', fix: 'Standard native navigation, unified table layout, pure SwiftUI stack, and screen-scoped conversation dock.', fn: () => selectRoot({ kind: 'chief' }) },
+      { broken: 'Photo HTTP 422, Dual Voice Systems & Inline-Only Chat Markdown', cause: 'Raw >3 MiB HEIC froze MainActor, chat dropped offline voice audio, and chat lacked tables/code/charts.', fix: 'Off-main HEIC→JPEG prep, unified durable .m4a voice capture, and block Markdown rendering everywhere.', fn: () => { state.root = { kind: 'chief' }; state.stack = [{ kind: 'conversation', id: 'chief' }]; renderPhone(); renderInspector(); } }
+    ];
+    body.innerHTML = items.map((it, i) => `
+      <div class="problem-row">
+        <div>
+          <span class="problem-badge">Before</span>
+          <div style="font-size:13.5px;font-weight:600;color:var(--tone-strong);">${escapeHtml(it.broken)}</div>
+          <div style="font-size:12.5px;color:var(--tone-secondary);margin-top:2px;">${escapeHtml(it.cause)}</div>
+          <span class="fix-badge">Now</span>
+          <div style="font-size:12.5px;color:var(--tone-primary);">${escapeHtml(it.fix)}</div>
+        </div>
+        <button class="sim-btn" style="margin:0;" id="pjump-${i}">Show</button>
+      </div>`).join('');
+    items.forEach((it, i) => document.getElementById('pjump-' + i).onclick = it.fn);
+    return;
+  }
+
+  const jumps = [
+    { k: 'Review · Home', t: 'Proposal Card (3 Balanced Buttons)', s: 'Equal-width Skip, Return, and Approve in one bottom row', fn: () => jumpReviewCard('ticket:t_post_paywall') },
+    { k: 'Sidebar', t: 'Chief & Managers Rail Cards', s: 'All projects eyebrow on Chief, identical cards, no borders', fn: () => openSidebar() },
+    { k: 'Review · Card 2', t: 'Terminal Proposal Card', s: 'Clean proposal only — conversation item is its own card', fn: () => jumpReviewCard('ticket:t_app_routes') },
+    { k: 'Review · Card 3', t: 'Worker Message Card', s: 'Separate conversation item: inline Send + Skip / Mark read', fn: () => jumpReviewCard('message:conv_app_routes') },
+    { k: 'Review · Card 4', t: 'Worker Question', s: 'Equal-width Skip and Send answer buttons', fn: () => jumpReviewCard('answer:t_goal_sheet') },
+    { k: 'Review · Card 5', t: 'Manager Message', s: 'Send inside composer, equal-width Skip & Mark read below', fn: () => jumpReviewCard('message:conv_accounts') },
+    { k: 'Review · End', t: 'All Caught Up + Chief Composer', s: 'Simple quiet end screen with Chief composer anchored below', fn: () => { state.root = { kind: 'review' }; state.stack = []; state.artifactLayer = null; state.sidebarOpen = false; state.finalLatched = true; renderPhone(); renderInspector(); } },
+    { k: 'Manager', t: 'Existing iOS Manager Page', s: 'Kept intact from today’s app, no weird long-presses', fn: () => selectRoot({ kind: 'manager', id: 'm_improve_wren' }) },
+    { k: 'Chief', t: 'Chief of Staff Page', s: 'Same layout as Managers, headroom.page + direct Tickets', fn: () => selectRoot({ kind: 'chief' }) },
+    { k: 'Artifact · Proposal', t: 'HTML Artifact + Proposal Bar', s: 'Opened from Review proposal → Skip / Return / Approve below', fn: () => { jumpReviewCard('ticket:t_post_paywall'); openArtifact('post_paywall_html', 'proposal'); } },
+    { k: 'Artifact · Conversation', t: 'HTML Artifact + Conversation Below', s: 'Opened from Ticket Artifacts / Chat → inline-Send dock below', fn: () => { state.root = { kind: 'manager', id: 'm_improve_wren' }; state.stack = [{ kind: 'ticket', id: 't_post_paywall' }]; openArtifact('post_paywall_html', 'conversation', 't_post_paywall'); } },
+    { k: 'Conversation', t: 'Existing Conversation View', s: 'Unchanged iOS conversation screen with inline Send', fn: () => { state.root = { kind: 'chief' }; state.stack = [{ kind: 'conversation', id: 'chief' }]; state.sidebarOpen = false; state.artifactLayer = null; renderPhone(); renderInspector(); } }
+  ];
+  body.innerHTML = `<div class="jump-grid">${jumps.map((j, i) => `<button class="jump-card" id="j-${i}"><span style="font-size:11px;font-weight:600;color:var(--accent-bright);text-transform:uppercase;letter-spacing:0.04em;">${escapeHtml(j.k)}</span><span style="font-size:13.5px;font-weight:600;color:var(--tone-strong);">${escapeHtml(j.t)}</span><span style="font-size:12px;color:var(--tone-secondary);line-height:1.4;">${escapeHtml(j.s)}</span></button>`).join('')}</div>`;
+  jumps.forEach((j, i) => document.getElementById('j-' + i).onclick = j.fn);
+}
+
+function jumpReviewCard(key) {
+  state.root = { kind: 'review' }; state.stack = []; state.artifactLayer = null; state.sidebarOpen = false; state.finalLatched = false;
+  const item = state.queue.find(q => q.key === key);
+  if (item) {
+    if (item.kind === 'ticket') item.proposalDone = false;
+    if (item.kind === 'answer') item.answered = false;
+    if (item.kind === 'message') item.read = false;
+    state.skippedKeys = state.skippedKeys.filter(k => k !== key);
+    state.pinnedKey = key;
+  }
+  renderPhone(); renderInspector();
+}
+
+function fitPhoneFrame() {
+  const scaler = document.getElementById('phoneScaler');
+  const stage = document.querySelector('.phone-stage');
+  if (!scaler || !stage) return;
+  if (window.innerWidth <= 440) { scaler.style.transform = 'none'; return; }
+  const scale = Math.min(1, (stage.clientHeight - 24) / 876, (stage.clientWidth - 24) / 418);
+  scaler.style.transform = `scale(${scale.toFixed(3)})`;
+}
+window.addEventListener('resize', fitPhoneFrame);
+
+setInterval(() => {
+  state.settingUpElapsed += 1;
+  if (state.root.kind === 'manager' && !currentPushed()) {
+    document.querySelectorAll('.worker-row-sub').forEach(el => {
+      if (el.textContent.startsWith('Setting up ·')) el.textContent = `Setting up · ${formatDuration(state.settingUpElapsed)}`;
+    });
+  }
+}, 1000);
+
+logTrace('SSE', 'GET /api/navigation/view/events connected (projection_version=7, review=4)');
+logTrace('GET', 'GET /api/tickets/t_post_paywall/workspace (ResourceOwner cached)');
+renderPhone();
+renderInspector();
+fitPhoneFrame();
+</script>
+</body>
+</html>

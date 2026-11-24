@@ -60,6 +60,8 @@ function copySelection(document: Document, ranges: Map<string, CopyRange>, event
       placeholder.replaceChildren(document.createTextNode(value));
       substituted = true;
     }
+    // Code-block headers are chrome (a language name, a Copy button), not what was said.
+    for (const chrome of fragment.querySelectorAll('[data-markdown-chrome]')) chrome.remove();
     fragments.push(fragment);
   }
   if (!substituted) return;

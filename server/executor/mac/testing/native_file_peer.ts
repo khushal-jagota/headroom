@@ -1,5 +1,6 @@
 /** Only the peer's file byte routes are simulated; the home owns all other routes. */
 import assert from 'node:assert/strict';
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { decode_bounded } from '../../protocol.ts';
@@ -19,7 +20,7 @@ export function native_file_peer(credential: string, incarnation: string) {
       assert.equal(request.headers['x-panels-executor-id'], 'test-executor');
       assert.equal(request.headers['x-panels-executor-credential'], credential);
       assert.equal(request.headers['x-panels-executor-incarnation'], incarnation);
-      assert.equal(request.headers['x-panels-executor-protocol'], '26');
+      assert.equal(request.headers['x-panels-executor-protocol'], String(PROTOCOL_VERSION));
       assert.equal(request.headers['x-panels-executor-platform'], 'darwin');
       if (path === file_peer_download) {
         assert.equal(request.method, 'GET');

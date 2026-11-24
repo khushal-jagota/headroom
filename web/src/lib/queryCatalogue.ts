@@ -1,11 +1,12 @@
 import type { ExecutorHealth } from "./ticketMachines";
 import { ORIGINAL_MAC_MACHINE_ID } from "./machines/contracts";
-import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
+import { MACHINE_HEALTH_POLL_MS, SERVER_MOVE_POLL_MS } from "./machines/config";
+import { serverMoveActive } from "./machines/logic/serverMove";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
-import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
+import { readUsageLimits, usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
 import type { DriversResponse } from "./drivers/contracts";
 import type { WorkerTypesResponse } from "./lifecycle";
@@ -14,7 +15,6 @@ import type {
   EmployeeConfigurationSnapshot,
   ManagerPrincipal,
   ManagerChildFilter,
-  IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
   SkillsHomeResponse,
@@ -53,7 +53,16 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
+  workMoves: () => jsonQuery<import("../../../server/work_moves/contracts").WorkMoveStatus>(["work-moves"], "/api/work-moves"),
   machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
+  // The latest move of the server. The change signal can be held during the pause, so an
+  // active run also polls; a settled one follows the change stream alone.
+  serverMove: () => {
+    const query = jsonQuery<import("./machines/contracts").ServerMoveResponse>(["server-move"], "/api/server-move");
+    return {...query, retry: false,
+      refetchInterval: (state: {state: {data?: {body: import("./machines/contracts").ServerMoveResponse}}}) =>
+        serverMoveActive(state.state.data?.body.move) ? SERVER_MOVE_POLL_MS : false};
+  },
   // The driver list changes only with a release, so it does not follow the change stream.
   drivers: () => queryOptions<DriversResponse>({
     queryKey: ["drivers"], queryFn: readDrivers, staleTime: Infinity, retry: false,
@@ -75,7 +84,14 @@ export const queries = {
     retry: false
   }),
 
-  updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+  // The update status drives the shell's own card, so an old one is never shown from a saved session.
+  updates: () => ({
+    ...jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+    meta: { resourceBody: true, savedForNextLaunch: false }
+  }),
+  usageLimits: (machineId: string) => queryOptions({
+    queryKey: ["usage-limits", machineId], queryFn: () => readUsageLimits(machineId), retry: false
+  }),
   recordedUsage: (input: UsageSummaryInput) => ({
     ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
@@ -90,7 +106,6 @@ export const queries = {
       ["tickets", "manager", { principal, filter, offset, limit }],
       `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
     ),
-  ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>

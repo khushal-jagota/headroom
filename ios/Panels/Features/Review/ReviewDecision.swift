@@ -32,102 +32,35 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
-/// A sheet's interaction state survives replacement of its presented content.
-@MainActor @Observable final class DecisionApprovalFlow {
-    var selected: String?
-    var busy = false
-    var error: String?
-    var confirmationMessage: String?
-}
-
-/// Ordinary scope writes have no decision receipt. They are never saved to the Outbox.
-/// Keep the exact choice for an explicit read-only check after an uncertain result.
+/// A reviewer or ceiling change is not a decision, so it never reaches the Outbox. The sheet
+/// waits for the server and shows a failure inline. The change is a plain set, so a retry is safe.
 @MainActor @Observable final class DecisionScopeChange {
-    struct Choice: Equatable {
-        let server: String
-        let ticketID: String
-        let ceiling: String
-        let holder: Principal
-    }
-    private(set) var choice: Choice?
-    private(set) var busy = false
-    private(set) var needsCheck = false
-    private(set) var canRetry = false
-    private(set) var holdingProposal = false
-    private(set) var message: String?
-    @ObservationIgnored private var capturedAPI: APIClient?
-
-    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal, online: Bool) async throws -> TicketDetail {
-        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
-        guard !needsCheck || canRetry else { throw APIError(status: 0, message: message ?? "Check current settings before another change.") }
-        choice = Choice(server: LocalStore.server(api.baseURL), ticketID: ticket.id,
-                        ceiling: ceiling ?? ticket.ceiling, holder: holder)
-        capturedAPI = api
-        holdingProposal = true
-        guard online else {
-            message = "Not sent while offline. Your choice is kept. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        busy = true
-        needsCheck = false
-        canRetry = false
-        defer { busy = false }
-        do {
-            try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
-        } catch let error as APIError where (400..<500).contains(error.status) {
-            message = "Not sent. \(error.localizedDescription) No proposal approval was sent."
-            throw APIError(status: error.status, message: message!)
-        } catch {
-            // A transport failure or server error cannot establish whether the write applied.
-            // The next request is a GET, never another PATCH.
-        }
-        needsCheck = true
-        return try await readCurrent()
-    }
-
-    func releasePresentation() { holdingProposal = false }
-
-    func check(online: Bool) async throws -> TicketDetail {
-        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
-        holdingProposal = true
-        guard online else {
-            message = "Not checked while offline. Your choice is kept. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        busy = true
-        defer { busy = false }
-        return try await readCurrent()
-    }
-
-    private func readCurrent() async throws -> TicketDetail {
-        guard let choice, let api = capturedAPI else { throw APIError(status: 0, message: "Choose the settings first.") }
-        let current: TicketDetail
-        do {
-            // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
-            current = try await api.ticket(choice.ticketID)
-        } catch {
-            needsCheck = true
-            canRetry = false
-            message = "The change is not confirmed. Check current settings when online. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        let waiting = current.pendingProposal == nil ? " Refresh the Ticket for its current proposal." : " The proposal still waits."
-        guard current.ceiling == choice.ceiling, current.ceilingHolder == choice.holder else {
-            needsCheck = true
-            canRetry = true
-            message = "Current settings do not match your choice. The change is not confirmed." + waiting + " No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        needsCheck = false
-        canRetry = false
-        message = "Current settings match your choice." + waiting + " No proposal approval was sent."
-        return current
+    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal) async throws -> TicketDetail {
+        try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
+        // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
+        return try await api.ticket(ticket.id)
     }
 }
 
 /// A draft belongs to the exact proposal the person read, including its revision.
+/// When a card whose decision is saved leaves: at once, or once its open sheet closes.
+/// A reviewer move on the stream can close the sheet before the save returns; a save that
+/// then waited for the close would hold the card, and the queue, for the rest of the run.
+struct ReviewCardExit: Equatable {
+    private var waitsForDismiss = false
+    /// The decision is saved. True when the card leaves now.
+    mutating func saved(sheetOpen: Bool) -> Bool {
+        waitsForDismiss = sheetOpen
+        return !sheetOpen
+    }
+    /// The sheet closed. True when a saved decision was waiting for it.
+    mutating func dismissed() -> Bool {
+        defer { waitsForDismiss = false }
+        return waitsForDismiss
+    }
+}
+
 @MainActor @Observable final class ReviewDecision {
-    var approvalFlow = DecisionApprovalFlow()
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
     let scopeChange = DecisionScopeChange()
@@ -138,6 +71,9 @@ struct DecisionGuidance: Sendable, Equatable {
     private var draftServer: String?
     private var draftIdentity: String?
     var revisionDraftID: String? { draftIdentity.map { $0 + ":guidance" } }
+    /// The note's pictures and files. The shared composer model prepares and keeps them
+    /// beside the note's words, under the same draft identity.
+    let noteAttachments = ConversationModel()
     private var restoringDrafts = false
     private func persistDraft(_ text: String, old: String, suffix: String) {
         guard !restoringDrafts, text != old, let server = draftServer, let id = draftIdentity else { return }
@@ -149,12 +85,33 @@ struct DecisionGuidance: Sendable, Equatable {
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
         revisionDraft = LocalStore.shared.draft(server: draftServer!, id: id + ":guidance") ?? ""
+        noteAttachments.restore(owner: .ticket(ticket.id), api: api, draftID: id + ":guidance", recoverConversationID: false)
         restoringDrafts = false
+    }
+    /// A refused decision's card shows its saved note and attachments even when its
+    /// proposal no longer waits.
+    func restoreRefusedNote(api: APIClient, item: ReviewItem) {
+        guard draftIdentity == nil, let revision = item.proposalRevision else { return }
+        let id = "review:\(item.ticketId):\(item.field):\(item.waitingSince):\(revision)"
+        let server = LocalStore.server(api.baseURL)
+        restoringDrafts = true
+        draftServer = server; draftIdentity = id
+        revisionDraft = LocalStore.shared.draft(server: server, id: id + ":guidance") ?? ""
+        noteAttachments.restore(owner: .ticket(item.ticketId), api: api, draftID: id + ":guidance", recoverConversationID: false)
+        restoringDrafts = false
+    }
+    /// The note's prepared pictures and files, ready to freeze with a decision.
+    private func preparedAttachments() async -> [ConversationSend.Piece]? {
+        do { return try await noteAttachments.preparedContent().filter { $0.piece != "text" } }
+        catch is CancellationError { error = "A photo is still being prepared."; return nil }
+        catch { self.error = error.localizedDescription; return nil }
     }
     func refreshVoiceDraft() {
         guard let server = draftServer, let id = revisionDraftID else { return }
         let saved = LocalStore.shared.draft(server: server, id: id) ?? ""
         if saved != revisionDraft { restoringDrafts = true; revisionDraft = saved; restoringDrafts = false }
+        // The Ticket page edits the same note's pictures and files.
+        noteAttachments.reloadDraft()
     }
     var error: String?
     var changed = false
@@ -212,10 +169,12 @@ struct DecisionGuidance: Sendable, Equatable {
             restoreDrafts(api: api, ticket: fetched, proposal: incoming, discard: discardDraft)
             ticket = fetched; manifest = lifecycle; changed = false
             let facts = (try? LocalStore.shared.outgoing.decisionSummaries(server: LocalStore.server(api.baseURL), ticketID: fetched.id)) ?? []
-            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.state == "changed" }
+            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.refused }
             error = terminal?.note
         } catch {
-            guard !Task.isCancelled else { return }
+            // A read that cannot reach the server says nothing: the card keeps what it
+            // has, and its decision is saved and sent when the server answers.
+            guard !Task.isCancelled, !(error is URLError) else { return }
             self.error = error.localizedDescription
         }
     }
@@ -251,17 +210,23 @@ struct DecisionGuidance: Sendable, Equatable {
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
                                   editedBody: nil,
                                   nextCeiling: finalApproval ? nil : ceiling, nextHolder: finalApproval ? nil : holder)
-        return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
-            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
-            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
+        guard let attachments = await preparedAttachments(), ready else { return false }
+        var work = PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
+            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text,
+            draftID: guidance?.draftID ?? (attachments.isEmpty ? nil : revisionDraftID), decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionAttachments = attachments.isEmpty ? nil : attachments
+        return enqueue(work, api: api)
     }
 
     func sendBack(api: APIClient, message: String) async -> Bool {
         guard ready, canReturn, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let ticket else { return false }
-        guard let proposal else { return false }
-        return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
+        guard let proposal, let attachments = await preparedAttachments(), ready else { return false }
+        var work = PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
             ticketID: ticket.id, proposal: proposal, guidance: message, draftID: revisionDraftID,
-            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionAttachments = attachments.isEmpty ? nil : attachments
+        return enqueue(work, api: api)
     }
 
     private func enqueue(_ work: PendingWork, api: APIClient) -> Bool {
@@ -271,66 +236,6 @@ struct DecisionGuidance: Sendable, Equatable {
             return true
         } catch { self.error = "Couldn’t save this decision: \(error.localizedDescription)"; return false }
     }
-}
-
-/// Skip is local, like the web. It never resolves a proposal or reduces the live badge.
-/// Skip acts on a whole card; a decision resolves one part, and the card stays while
-/// any part is unresolved. A new part on a skipped card brings the card back.
-struct ReviewQueue {
-    /// Skipped part identities, each with its card's identity.
-    private(set) var skipped: [String: String] = [:]
-    private(set) var resolved: Set<String> = []
-    /// Retain a painted message only while its canonical owner remains eligible.
-    /// A proposal decided here stays until its local exit finishes.
-    func parts(of card: ReviewCard, in cards: [ReviewCard], holdingProposals: Set<String> = [], view: ViewSnapshot?) -> [ReviewItem] {
-        let held = card.parts.filter { part in
-            !resolved.contains(part.id) && (part.isMessage ? Self.messageEligible(part, in: view) : holdingProposals.contains(part.id))
-        }
-        let live = (cards.first { $0.id == card.id }?.parts ?? []).filter { part in
-            !resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
-        }
-        let all = live + held
-        return all.filter { !$0.isMessage } + all.filter(\.isMessage)
-    }
-    private static func messageEligible(_ item: ReviewItem, in view: ViewSnapshot?) -> Bool {
-        guard let view else { return true }
-        let context = view.content.reviewContext.first { $0.conversationId == item.conversationId }
-        if let context {
-            guard let canonical = context.canonicalAddressId, canonical == item.addressId else { return false }
-        } else {
-            // Until the held scope arrives, the admitted canonical address governs.
-            let addresses = view.content.records.compactMap { record -> (String, ViewAddressValue)? in
-                if case .address(let id, let value) = record, value.conversationId == item.conversationId { return (id, value) }
-                return nil
-            }.sorted { ($0.1.current ? 0 : 1, $0.0) < ($1.1.current ? 0 : 1, $1.0) }
-            if let canonical = addresses.first?.0, canonical != item.addressId { return false }
-        }
-        let owner = view.content.records.first { $0.key.kind == item.ownerKind && $0.key.id == item.ownerId }
-        switch item.ownerKind {
-        case "ticket":
-            if case .ticket(_, let value) = owner { return value.stage != "done" && !value.isBacklogged }
-            return context == nil
-        case "manager":
-            if case .manager(_, let value) = owner { return !value.settled }
-            return context == nil
-        default: return true
-        }
-    }
-    func pending(_ card: ReviewCard) -> [ReviewItem] { card.parts.filter { !resolved.contains($0.id) } }
-    func isSkipped(_ card: ReviewCard) -> Bool {
-        let parts = pending(card)
-        return !parts.isEmpty && parts.allSatisfy { skipped[$0.id] != nil }
-    }
-    func current(in cards: [ReviewCard]) -> ReviewCard? {
-        cards.first { !pending($0).isEmpty && !isSkipped($0) }
-    }
-    func skippedCount(in cards: [ReviewCard]) -> Int { cards.filter(isSkipped).count }
-    /// Skipped cards, including those on pages that are no longer loaded.
-    var skippedCardCount: Int { Set(skipped.filter { !resolved.contains($0.key) }.values).count }
-    mutating func skip(_ card: ReviewCard) { for part in pending(card) { skipped[part.id] = card.id } }
-    mutating func resolve(_ item: ReviewItem) { resolved.insert(item.id) }
-    mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped[item.id] = nil }
-    mutating func revisit() { skipped.removeAll() }
 }
 
 /// One snapshot for Review and its badge. Rendering reads memory, never the store.
@@ -345,7 +250,7 @@ struct ReviewQueue {
     private var saved: [OutgoingStore.Summary] = []
     init(outbox: Outbox = .shared, read: ((String) -> [OutgoingStore.Summary])? = nil) {
         self.outbox = outbox
-        self.read = read ?? outbox.decisionSummaries
+        self.read = read ?? outbox.reviewSummaries
     }
     func refresh(_ server: String) {
         let next = Key(server: server, revision: outbox.store.outgoingRevision(server))
@@ -357,20 +262,71 @@ struct ReviewQueue {
     func messages(_ server: String, conversationID: String) -> [PendingWork] { outbox.entries(server, conversationID: conversationID) }
     func voice(_ server: String, draftID: String) -> [PendingWork] { outbox.entries(server, draftID: draftID) }
     /// Only a visible exact proposal can justify subtracting a pending card badge.
-    static func pendingDecisionTickets(in cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> Set<String> {
-        Set(cards.flatMap(\.parts).filter { item in
-            !item.isMessage && item.proposalRevision != nil && decisions.contains {
-                $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince
-                    && $0.proposalRevision == item.proposalRevision && ["waiting", "sending"].contains($0.state)
+    static func pendingDecisionTickets(in items: [ReviewItem], decisions: [OutgoingStore.Summary]) -> Set<String> {
+        Set(items.filter { item in
+            item.isProposal && item.proposalRevision != nil && decisions.contains {
+                decides($0, item) && $0.state == "waiting"
             }
         }.map(\.ticketId))
     }
-    static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
-        cards.compactMap { card in
-            let parts = card.parts.filter { item in
-                !decisions.contains { item.proposalRevision != nil && $0.proposalRevision == item.proposalRevision && $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
+    private static func decides(_ saved: OutgoingStore.Summary, _ item: ReviewItem) -> Bool {
+        ["approval", "sendBack"].contains(saved.kind) && item.proposalRevision != nil && saved.proposalRevision == item.proposalRevision
+            && saved.ticketID == item.ticketId && saved.proposalField == item.field && saved.proposalCreatedAt == item.waitingSince
+    }
+    /// A saved mark read or reply covers the messages read before it, until the server's
+    /// own read point catches up. A newer message then shows again.
+    private static func covers(_ saved: OutgoingStore.Summary, _ item: ReviewItem) -> Bool {
+        ["markRead", "message"].contains(saved.kind) && saved.conversationID != nil && saved.conversationID == item.conversationId
+            && (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence
+    }
+    /// Decided proposals, handled messages and answered asks leave Review at once. A
+    /// refusal brings them back. An ask stays hidden while its saved answer waits to be
+    /// sent, including after a relaunch.
+    static func cards(_ items: [ReviewItem], decisions: [OutgoingStore.Summary]) -> [ReviewItem] {
+        items.filter { item in
+            if item.isAsk {
+                return !decisions.contains { $0.kind == "askAnswer" && $0.state == "waiting" && $0.conversationID == item.conversationId }
             }
-            return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
+            return !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
+        }
+    }
+    /// Each proposal whose latest saved decision was refused, as a card. A card in the
+    /// window keeps its own facts; one that left takes its Ticket's title from `title`.
+    /// One that left is kept only while the view shows its proposal still waiting (`waits`
+    /// is true): a decided, replaced or unknown proposal is not shown or counted.
+    static func refusals(_ decisions: [OutgoingStore.Summary], live: [ReviewItem], title: (OutgoingStore.Summary) -> String?,
+                         waits: (ReviewItem) -> Bool? = { _ in nil }) -> [ReviewRefusal] {
+        var latest: [String: OutgoingStore.Summary] = [:]
+        var order: [String] = []
+        for saved in decisions where ["approval", "sendBack"].contains(saved.kind) {
+            guard let ticket = saved.ticketID, let field = saved.proposalField, let created = saved.proposalCreatedAt else { continue }
+            let key = "\(ticket):\(field):\(created):\(saved.proposalRevision ?? 0)"
+            if latest[key] == nil { order.append(key) }
+            if latest[key].map({ $0.sequence < saved.sequence }) ?? true { latest[key] = saved }
+        }
+        // A refused reply or mark read brings its message card forward the same way. Only the
+        // conversation's latest reply or read counts, and only while the server's read
+        // point has not passed it: a newer action or a later read point settles it.
+        var lastAction: [String: OutgoingStore.Summary] = [:]
+        for saved in decisions where ["message", "markRead"].contains(saved.kind) {
+            guard let conversation = saved.conversationID else { continue }
+            if lastAction[conversation].map({ $0.sequence < saved.sequence }) ?? true { lastAction[conversation] = saved }
+        }
+        let replies = live.compactMap { item -> ReviewRefusal? in
+            guard item.isMessage, let conversation = item.conversationId, let saved = lastAction[conversation], saved.refused,
+                  (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence else { return nil }
+            return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
+        }
+        return replies + order.compactMap { key in
+            guard let saved = latest[key], saved.refused, let ticket = saved.ticketID, let field = saved.proposalField,
+                  let created = saved.proposalCreatedAt else { return nil }
+            if let item = live.first(where: { $0.isProposal && decides(saved, $0) }) {
+                return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
+            }
+            let item = ReviewItem(reviewItemType: "proposal", ticketId: ticket, field: field, title: title(saved) ?? "Proposal",
+                                  waitingSince: created, proposalRevision: saved.proposalRevision)
+            guard waits(item) == true else { return nil }
+            return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
         }
     }
 }

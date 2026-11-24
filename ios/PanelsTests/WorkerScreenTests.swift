@@ -47,7 +47,7 @@ final class WorkerScreenTests: XCTestCase {
         XCTAssertEqual(refused.note, "Not delivered · backend did not start")
         let uncertain = try await api.requestRecap(target: Principal(kind: "manager", id: "uncertain"))
         XCTAssertFalse(uncertain.accepted)
-        XCTAssertEqual(uncertain.note, "Delivery uncertain · do not resend")
+        XCTAssertNil(uncertain.note, "An uncertain delivery shows no connection note")
     }
 
     func testApprovedPageActionsUseExistingWriteContracts() async throws {
@@ -57,11 +57,6 @@ final class WorkerScreenTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let api = APIClient(baseURL: URL(string: "https://panels.invalid")!, session: session)
         try await api.setManagerSettled("manager", settled: true)
-        try await api.saveManagerGoal("manager", goal: "goal text")
-        try await api.saveAgentRecap(target: Principal(kind: "manager", id: "manager"), recap: "recap text")
-        try await api.saveAgentRecap(target: Principal(kind: "chief", id: "chief"), recap: "recap text")
-        try await api.setWorkerBacklog("worker", backlogged: true)
-        try await api.setWorkerBacklog("worker", backlogged: false)
     }
 
     func testHolderRefreshRetainsLoadedWindowAndScopesEveryPage() async throws {
@@ -115,14 +110,11 @@ private final class WorkerScreenMockProtocol: URLProtocol, @unchecked Sendable {
                 case ("manager", "uncertain"): data = Data(#"{"fate":"uncertain"}"#.utf8)
                 default: throw URLError(.badServerResponse)
                 }
-            } else if url.path.hasPrefix("/api/managers/") || url.path == "/api/workers/chief-of-staff/recap" || url.path.hasPrefix("/api/tickets/worker/") {
+            } else if url.path.hasPrefix("/api/managers/") {
                 let object = try XCTUnwrap(try bodyObject() as? [String: AnyHashable])
                 let valid: Bool
                 switch (url.path, request.httpMethod) {
                 case ("/api/managers/manager/settled", "PATCH"): valid = object == ["settled": true]
-                case ("/api/managers/manager", "PATCH"): valid = object == ["goal": "goal text"] || object == ["recap": "recap text"]
-                case ("/api/workers/chief-of-staff/recap", "PUT"): valid = object == ["recap": "recap text"]
-                case ("/api/tickets/worker/backlog", "POST"), ("/api/tickets/worker/resume", "POST"): valid = object.isEmpty
                 default: valid = false
                 }
                 guard valid, request.value(forHTTPHeaderField: "Content-Type") == "application/json" else { throw URLError(.badServerResponse) }

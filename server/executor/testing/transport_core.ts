@@ -36,8 +36,8 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     store,
     backend_registry: registry_of_factories(for_every_built_in_backend(() => remote)),
     message_files: endpoint.message_files,
-    delivery_model_refusal: (backend, model, ticket_id) =>
-      new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, conversation_id) =>
+      new BackendStateStore(database).delivery_model_refusal(backend, model, conversation_id),
     execution_refusal: () => null,
     remote_recovery: executor_remote_recovery(database, () => core),
     unix_time_now: () => 1760000000,

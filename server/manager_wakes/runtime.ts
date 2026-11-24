@@ -1,6 +1,6 @@
 /** Durable notices use the same conversation doors as ordinary messages. */
 import { randomUUID } from 'node:crypto';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import { automatic_ticket_admitted } from '../runtime/automatic_work.ts';
 import type {
   Database,
@@ -259,10 +259,13 @@ async function admitted_deliver_batch(
           throw error;
         }
         if (starts !== undefined) {
-          const destination =
+          const destination = database.read((sql) =>
             agent_key === null
-              ? database.read((sql) => read_ticket(sql, target.id).machine_id)
-              : HOME_MACHINE_ID;
+              ? read_ticket(sql, target.id).machine_id
+              : current === null
+                ? resolved.machine_id
+                : (conversation_machine_id(sql, current) ?? resolved.machine_id),
+          );
           const request = {
             identity: batch.sender_message_id,
             work_class: agent_key === null ? ('worker' as const) : ('supervisor' as const),

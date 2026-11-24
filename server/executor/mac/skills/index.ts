@@ -29,7 +29,7 @@ export class MacSkillsPublisher {
   /** native_home is the configured provider target from the trusted adapter host, never a command field. */
   install_native_skill_snapshot(
     snapshot: CanonicalSkillSnapshot,
-    options: { root: string; native_home: string; native_skills_directory: string },
+    options: Omit<SkillInstallation, 'snapshot'>,
   ): Promise<string> {
     if (this.closed)
       return Promise.reject(

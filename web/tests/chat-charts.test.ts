@@ -56,3 +56,11 @@ it('keeps chart metadata separate from sanitized HTML and associates nested code
   expect(reposted).toHaveLength(1);
   expect(reposted[0].chart?.block).toEqual(found[0].chart?.block);
 });
+
+it('gives a second compared series its own hue, not a dimmer step of the first', async () => {
+  const { comparisonColor } = await import('../src/lib/charts/components/bar-chart');
+  expect(comparisonColor({}, 1, 'composition')).toBe('var(--chart-compare-second)');
+  expect(comparisonColor({}, 2, 'composition')).toBe('var(--chart-composition-blue-dark)');
+  // An authored colour still wins.
+  expect(comparisonColor({ color: 'blue' }, 1, 'composition')).toBe('var(--chart-composition-blue)');
+});

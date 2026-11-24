@@ -3,9 +3,12 @@
   import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
-  import { transcriptHistoryEdges } from '../../../lib/conversation/view/presentation';
-  import { untrack } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { transcriptHistoryEdges, rowForBody } from '../../../lib/conversation/view/presentation';
+  import { summarizeToolRun } from '../../../lib/conversation/toolCallPresentation';
+  import type { ToolCallRow as ToolCallRowType } from '../../../lib/conversation/transcript';
+  import ToolRunSummary from '../ToolRunSummary.svelte';
+  import { getContext, untrack } from 'svelte';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { compareItems } from '../../../lib/conversation/view/reader.svelte';
   import type { ConversationViewItem, ViewHistoryScope, ViewPageCursor } from '../../../lib/conversation/view/contracts';
@@ -14,7 +17,10 @@
   import ProjectedRow from './ProjectedRow.svelte';
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
-  import { TURN_STOPPED_SENTENCE, backgroundTasksAfterTheTurn, backgroundWorkSentence } from '../../../lib/conversation/transcript';
+  import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
+  import { turnHeadAtTop } from '../../../lib/conversation/view/liveEdge';
+  import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
+  import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
   let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
@@ -27,15 +33,41 @@
       ownSenderLabel: string | null;
       livenessPulse: number;
   } = $props();
+  const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
+  /** The key request the composer is asking in its own place; drawn there, not here. */
+  const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   let openRows = $derived(reader.openTools);
   let wholeDetails = new SvelteMap<string, string>();
   // Only a deferred ending needs a body read to discover that it has no visual
   // output. Keep the disposition, not the body, and bind it to that exact version.
   let emptyEndings = new SvelteMap<string, string>();
-  const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
+  // Which runs of tool calls the reader opened in Full. Every run starts closed.
+  let openRuns = new SvelteSet<string>();
+  const everyItem = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
+          map.set(item.key, item); return map; });
+  /** A run of more than one call stands behind its summary; a run of one is its own row. */
+  function summarized(group: ConversationViewItem | undefined): boolean {
+      return group?.kind === 'work_group' && group.entry_count > 1;
+  }
+  const items = $derived.by(() => { const map = everyItem; return [...map.values()].filter(item => {
+      const isWork = item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call';
+      // Focus is focus: no tool call, no run and no count of them is drawn there.
+      if (reader.lens === 'focus' && isWork) return false;
+      if (reader.lens === 'full' && item.kind === 'row' && item.row_kind === 'tool_call' && item.work_group_key !== null && summarized(map.get(item.work_group_key)) && !openRuns.has(item.work_group_key)) return false;
+      if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  /** Each run's calls that are at hand, as rows, for its summary line. */
+  const runRows = $derived.by(() => {
+      const rows = new Map<string, ToolCallRowType[]>();
+      for (const item of [...everyItem.values()].sort(compareItems)) {
+          if (item.kind !== 'row' || item.row_kind !== 'tool_call' || item.work_group_key === null || item.body.kind !== 'inline') continue;
+          const row = rowForBody(item, item.body.value);
+          if (row.kind !== 'tool_call') continue;
+          rows.set(item.work_group_key, [...(rows.get(item.work_group_key) ?? []), row]);
+      }
+      return rows;
+  });
   const historyEdges = $derived(transcriptHistoryEdges(reader.pages, items));
   const exits = new MessageExits<MessageDisplaySlot>();
   let exitRevision = $state(0);
@@ -54,13 +86,38 @@
     previousDisplay = retained;
     return retained;
   });
+  /** v5.1: turn timing has one place, the top of the turn. A running turn's head ("Working ·
+   *  2m 14s" with its spinner) stands where "Worked for 7m" stands on a finished one; nothing
+   *  counts at the tail of the transcript. */
+  const drawnSlots = $derived(displaySlots);
+  /** What a running turn waits on the person for: its ask is docked over the composer. */
+  function turnWaiting(item: ConversationViewItem & { kind: 'turn' }): 'permission' | 'question' | null {
+      if (item.settled || reader.status?.turn_key !== item.key) return null;
+      return reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null;
+  }
+  /** A turn the person stopped ends with its one line ("Stopped after 8m 45s"). Focus shows
+   *  only that line; Full also heads the turn with "Worked for …", as it does every turn. */
+  function headDrawn(item: ConversationViewItem & { kind: 'turn' }): boolean {
+      return turnHeadAtTop(item, reader.status) && (reader.lens === 'full' || !(item.settled && item.ending === 'interrupted'));
+  }
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
-          return !item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0;
+          // A turn held by the person has no head: the docked ask says so, once.
+          // v6: a live turn's head is the live edge at the end of the transcript, not here.
+          return headDrawn(item)
+              && !(turnWaiting(item) !== null && !activityUncertain)
+              && (!item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0);
+      // In Full a run of more than one call is drawn as its summary line.
       if (item.kind === 'work_group')
-          return reader.lens !== 'full' && item.entry_count > 1;
+          return reader.lens === 'full' && item.entry_count > 1;
       if (item.row_kind === 'token_usage')
           return false;
+      if (item.body.kind === 'inline' && item.body.value.kind === 'permission_ask')
+          return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('permission', item.body.value.ask_id) ?? false);
+      if (item.body.kind === 'inline' && item.body.value.kind === 'user_input')
+          return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('user_input', item.body.value.request_id) ?? false);
+      if (item.body.kind === 'inline' && item.body.value.kind === 'credential_request')
+          return item.body.value.request_id !== (dockedCredential?.() ?? null);
       if (item.row_kind !== 'turn_ended')
           return true;
       if (item.body.kind === 'deferred')
@@ -71,31 +128,66 @@
   function endingVersion(reference: { body_id: string; version: string }): string {
       return JSON.stringify([reference.body_id, reference.version]);
   }
+  /** Where each drawn item stands in the thread's rhythm (design direction 2.5), from what
+   *  it is and what was drawn before it. Items that draw nothing take no space. */
+  type Rhythm = 'first' | 'turn' | 'meta' | 'block' | 'row' | 'none';
+  type Beat = 'prompt' | 'head' | 'work' | 'prose' | 'other';
   const presentation = $derived.by(() => {
-      const result = new Map<string, { assistantContinuation: boolean; toolContinuation: boolean }>();
-      const before = new Set<string>();
-      const after = new Set<string>();
-      for (const boundary of historyEdges) {
-          if (boundary.anchorKey !== null)
-              (boundary.direction === 'older' ? before : after).add(boundary.anchorKey);
-      }
-      let previous: ConversationViewItem | undefined;
-      for (const item of items) {
-          // A held page edge does not establish who is adjacent across the gap.
-          if (before.has(item.key))
-              previous = undefined;
-          if (hasPresentation(item)) {
-              result.set(item.key, {
-                  assistantContinuation: reader.lens === 'focus' && item.kind === 'row' && item.row_kind === 'agent_message' && previous?.kind === 'row' && previous.row_kind === 'agent_message',
-                  toolContinuation: item.kind === 'row' && item.row_kind === 'tool_call' && item.work_group_key !== null && previous?.kind === 'row' && previous.row_kind === 'tool_call' && previous.work_group_key === item.work_group_key
-              });
-              previous = item;
-          }
-          if (after.has(item.key))
-              previous = undefined;
-      }
+      const result = new Set<string>();
+      for (const item of items)
+          if (hasPresentation(item))
+              result.add(item.key);
       return result;
   });
+  const layout = $derived.by(() => {
+      const result = new Map<string, Rhythm>();
+      const before = new Set<string>();
+      for (const boundary of historyEdges)
+          if (boundary.anchorKey !== null && boundary.direction === 'older')
+              before.add(boundary.anchorKey);
+      let previous: Beat | null = null;
+      // A turn whose head draws nothing still starts a turn: what comes first in it takes
+      // the turn gap.
+      let turnOpens = false;
+      for (const slot of drawnSlots) {
+          const item = slot.item;
+          // A held page edge does not establish who is adjacent across the gap.
+          if (item !== null && before.has(item.key)) previous = null;
+          if (item !== null && item.kind === 'turn' && !presentation.has(item.key)) { turnOpens = true; result.set(slot.key, 'none'); continue; }
+          let beat: Beat | null;
+          if (slot.local !== null || item !== null && isMessageRow(item)) beat = 'prompt';
+          else if (item === null || !presentation.has(item.key)) beat = null;
+          else if (item.kind === 'turn') beat = 'head';
+          else if (item.kind === 'work_group' || item.row_kind === 'tool_call') beat = 'work';
+          else if (item.row_kind === 'agent_message') beat = 'prose';
+          else beat = 'other';
+          if (beat === null) { result.set(slot.key, 'none'); continue; }
+          const opens = turnOpens; turnOpens = false;
+          result.set(slot.key,
+              previous === null ? 'first'
+              // A message keeps its hover row's room under it (4 + 24, and 4 clear): what
+              // follows it stands a turn's gap below, whatever it is.
+              : beat === 'prompt' || beat === 'head' || opens || messageBeat(previous) ? 'turn'
+              : previous === 'head' ? 'meta'
+              : beat === 'work' && previous === 'work' ? 'row'
+              : 'block');
+          previous = beat;
+      }
+      return { rhythm: result, endsWithMessage: messageBeat(previous) };
+  });
+  const rhythm = $derived(layout.rhythm);
+  /** A message (the person's or the agent's) carries the time-and-Copy row under it. */
+  function messageBeat(beat: Beat | null): boolean {
+      return beat === 'prompt' || beat === 'prose';
+  }
+  /** A line drawn after the last item (live output, the stopped line, the live edge) keeps
+   *  the turn gap under a message too. */
+  const endsWithMessage = $derived(layout.endsWithMessage);
+  const liveOutputDrawn = $derived(reader.lens === 'full' && (reader.status?.live_output?.byte_count ?? 0) > 0);
+  const stoppedLineDrawn = $derived(reader.status?.stopped_without_ending === true);
+  const backgroundTasks = $derived(activityUncertain ? [] : backgroundTasksAfterTheTurn(reader.status));
+  /** The first line drawn after the items, if any, takes the turn gap under a message. */
+  const trailing = $derived(liveOutputDrawn ? 'live-output' : stoppedLineDrawn ? 'stopped' : backgroundTasks.length > 0 ? 'background' : null);
   // Bodies that stopped being true are dropped where they are held, so the rows that
   // read them read again. Nothing is unmounted to achieve it.
   $effect(() => { reader.discardedBodies; untrack(() => { wholeDetails.clear(); emptyEndings.clear(); }); });
@@ -136,7 +228,9 @@
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
           if (['loading','placing','error'].includes(reader.entryPhase)) return;
-          if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
+          // Focus reaches a run through its opened turn rather than one run at a time.
+          const opened = reader.lens === 'full' || reader.isExpanded(scope) || (item.kind === 'work_group' && item.turn_key !== null && reader.isExpanded({ kind: 'turn', key: item.turn_key }));
+          if (!opened) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
       };
@@ -147,30 +241,36 @@
       return { destroy: () => observer.disconnect() };
   }
 </script>
-<div class="c2-transcript" data-conversation-transcript>
+<!-- The live edge after the transcript reads data-conversation-ends-with-message (app.css). -->
+<div class="c2-transcript" data-conversation-transcript data-conversation-ends-with-message={endsWithMessage && trailing === null ? '' : undefined}>
   {#if reader.status?.diagnostics_expired}<p class="diagnostic-expiry-notice" data-conversation-diagnostics-expired>Some diagnostic history expired.</p>{/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
   {/each}
-  {#each displaySlots as slot (slot.key)}
+  {#each drawnSlots as slot (slot.key)}
     {@const item = slot.item}
     {#each historyEdges.filter(boundary => boundary.direction === 'older' && boundary.anchorKey === item?.key) as boundary (`older:${boundary.scope.kind}:${boundary.scope.key}`)}
       <div use:edge={boundary} data-conversation-history-edge="older" aria-hidden="true"></div>
     {/each}
     {#if slot.local !== null || item !== null && isMessageRow(item)}
-      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register} rhythm={rhythm.get(slot.key) ?? 'block'}>
         <ProjectedMessage item={item?.kind === 'row' ? item : null} local={slot.local} {reader} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
     {#if item.kind!=='row'||presentation.has(item.key)}
-    <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
+    <ViewItem itemKey={item.key} rhythm={rhythm.get(slot.key) ?? 'block'}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          {#if headDrawn(item)}
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          {/if}
         </div>
       {:else if item.kind==='work_group'}
-        <div use:demand={item} data-conversation-work-group>
-          {#if reader.lens!=='full'&&item.entry_count>1}<button type="button" class="c2-run-toggle" data-conversation-work-fold onclick={()=>void reader.expand({kind:'work_group',key:item.key},!reader.isExpanded({kind:'work_group',key:item.key}))}>{item.entry_count-1} earlier tool calls</button>{/if}
+        {@const groupKey = item.key}
+        <div use:demand={item} data-conversation-work-group data-conversation-work-expanded={openRuns.has(groupKey) ? 'true' : 'false'}>
+          {#if presentation.has(groupKey)}
+            <ToolRunSummary summary={summarizeToolRun(runRows.get(groupKey) ?? [], item.entry_count)} callCount={item.entry_count} open={openRuns.has(groupKey)} {activityUncertain} onToggle={() => { if (openRuns.has(groupKey)) openRuns.delete(groupKey); else openRuns.add(groupKey); }}/>
+          {/if}
         </div>
       {:else}
         <ProjectedRow {activityUncertain} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
@@ -186,20 +286,18 @@
     <div use:edge={boundary} data-conversation-history-edge={boundary.direction} aria-hidden="true"></div>
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
-    <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>
+    <ViewItem itemKey="live-output" rhythm={reader.status.live_output.byte_count===0 ? 'none' : endsWithMessage ? 'turn' : 'block'}><LiveOutput {reader}/></ViewItem>
   {/if}
-  {#if reader.status?.stopped_without_ending}<div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>{/if}
+  {#if stoppedLineDrawn}<TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped" data-rhythm={endsWithMessage && trailing === 'stopped' ? 'turn' : undefined}/>{/if}
   <!-- The turn has ended but work it started is still live: say so, one line per task,
        from the record the sidebar spinner reads, until that task ends. -->
-  {#if !activityUncertain}
-    {#each backgroundTasksAfterTheTurn(reader.status) as task (task.task_id)}
-      <div class="c2-background-work" role="status" data-conversation-background-task>
+  {#each backgroundTasks as task, index (task.task_id)}
+      <div class="c2-background-work" role="status" data-conversation-background-task data-rhythm={index === 0 && endsWithMessage && trailing === 'background' ? 'turn' : undefined}>
         <span class="live-text-shimmer">{backgroundWorkSentence([task.task_description])}</span>
       </div>
-    {/each}
-  {/if}
+  {/each}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
   {/each}
 </div>
-<style>.c2-background-work{justify-self:start;padding:var(--space-1) 0;color:var(--text-faintest);font-family:var(--font-mono);font-size:var(--type-xs);letter-spacing:var(--tracking-mono)}.diagnostic-expiry-notice{color:var(--text-muted);font-size:var(--type-xs);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>
+<style>.c2-background-work{align-self:flex-start;color:var(--cv-t3);font-family:var(--cv-font);font-size:var(--cv-type-meta);line-height:var(--cv-leading-meta)}.diagnostic-expiry-notice{color:var(--cv-t3);font-family:var(--cv-font);font-size:var(--cv-type-caption);line-height:var(--cv-leading-caption);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block:-1px 0}</style>

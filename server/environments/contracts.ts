@@ -1,4 +1,6 @@
+import type { FastifyPluginAsync } from 'fastify';
 import type { Area } from '../core/authority/register.ts';
+import type { ServerMoveNotice } from '../executor/wire.generated.ts';
 import type { ResourceProvider } from '../resource_versions/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { UpdateBarrier } from './update_barrier.ts';
@@ -12,8 +14,14 @@ export interface EnvironmentRuntime {
   /** Startup and bounded retry probe; holds the installer lock during orphan recovery. */
   recover_update_barrier?(): void;
   update_attempt_id?(): string;
+  /** Only an admitted waiting release can supply a prefetched screen snapshot. */
+  waiting_screens_root?(): string | null;
   reopen_update_work?(attempt_id: string): void;
   readonly areas: readonly Area[];
+  /** Executor routes with their own machine admission, outside the ordinary area door. */
+  readonly executor_routes?: readonly FastifyPluginAsync[];
+  /** The server move notice for one machine's lease reply, or null. */
+  server_move_notice?(machine_id: string): ServerMoveNotice | null;
   readonly resourceProviders: readonly ResourceProvider[];
   before_worker_readiness_poll(): boolean;
   start(): void | Promise<void>;

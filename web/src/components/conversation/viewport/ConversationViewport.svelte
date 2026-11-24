@@ -5,7 +5,9 @@
    * arriving stream text funds line travel, so a relayout cannot replay a backlog.
    */
   import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
+  import type { ConversationJump } from "./viewportConfiguration";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
+  import LiveEdge from '../view/LiveEdge.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
@@ -45,8 +47,10 @@
     activityUncertain = false,
     conversationState,
     emptyState,
+    afterTranscript,
     reader = null,
-    viewAnchor = $bindable(null)
+    viewAnchor = $bindable(null),
+    jump = $bindable(null)
   }: {
     reader?: ConversationViewReader | null;
     viewAnchor?: ViewReaderAnchor | null;
@@ -68,6 +72,12 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
+    /** What stands at the very end of the thread after everything said: the person's
+     *  messages that are waiting to be sent. */
+    afterTranscript?: Snippet;
+    /** The way back to the newest line while the reader is away from it, for the pane to
+     *  draw in the composer stack's status slot (never over the transcript), or null. */
+    jump?: ConversationJump | null;
   } = $props();
 
   let threadElement = $state<HTMLDivElement | null>(null);
@@ -88,6 +98,21 @@
     navigationTop = thread.scrollTop;
     navigationHeight = thread.clientHeight;
     navigationBase = threadGeometry(thread, reservedSpaceElement).baseHeight();
+  }
+
+  /** The thread's shape when the follow decision was last made. A newest line that leaves
+   * the view because the layout changed (a docked card or ask taking the composer's
+   * place, a picture or chart finishing loading, the Latest shelf itself) has not been
+   * left by the reader. Only a change of position on an unchanged shape is the reader's. */
+  let followHeight = 0;
+  let followBase = 0;
+  function noteFollowShape(thread: HTMLDivElement): void {
+    followHeight = thread.clientHeight;
+    followBase = threadGeometry(thread, reservedSpaceElement).baseHeight();
+  }
+  function layoutMovedTheNewestLine(thread: HTMLDivElement): boolean {
+    return thread.clientHeight !== followHeight
+      || Math.abs(threadGeometry(thread, reservedSpaceElement).baseHeight() - followBase) > .01;
   }
 
   function actualNewestIsHeld(): boolean {
@@ -136,6 +161,12 @@
   let newestLineOutOfSight = $state(false);
   // Latest points down, so a newest line above the view does not call for it.
   let newestLineBelowTheView = $state(false);
+  /** v8 (11): how far the thread's end was below the view at the last scroll or resize. */
+  let endGapBeforeResize = 0;
+  /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
+  let newestLineFarBelow = $state(false);
+  /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
+  let atTheTop = $state(true);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
   const newerThanUnplacedAnchor = $derived.by(() => {
@@ -332,6 +363,7 @@
     } else if (withTheNewestLineBeforeTheWrite && streamWrites.size === 0 && liveArrivalPixels === 0 && pendingFullMessageKey === null && arrivingMessages.size === 0) {
       moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
     }
+    noteFollowShape(thread);
   }
 
   /** Was the reader with the newest line? Read before the write, while it is still true. */
@@ -462,6 +494,7 @@
     newestLineBottomPixels = reading.newestLineBottomPixels;
     newestLineOutOfSight = !reading.newestLineIsInSight;
     newestLineBelowTheView = reading.newestLineIsBelowTheView;
+    newestLineFarBelow = reading.newestLineIsFarBelow;
   }
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
@@ -498,7 +531,14 @@
       manualReader = false;
       retirementOwner = null;
       withTheNewestLineBeforeTheWrite = true;
-    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !newestLineOutOfSight;
+    } else if (!manualReader) {
+      // A scroll the layout made (native anchoring, a clamp as the thread shrank) keeps a
+      // reader who was with the newest line there; the next layout pass puts it back in view.
+      const keptByLayout = newestLineOutOfSight && withTheNewestLineBeforeTheWrite && layoutMovedTheNewestLine(thread);
+      withTheNewestLineBeforeTheWrite = !newestLineOutOfSight || keptByLayout;
+      if (keptByLayout) requestReconciliation();
+    }
+    noteFollowShape(thread);
     rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
@@ -905,6 +945,7 @@
         takeTheReading(geometry.read(reservedSpacePixels));
         newestLineOutOfSight = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
         newestLineBelowTheView = geometry.newestLineIsBelowTheView(newestLineBottomPixels) && !followingMore;
+        newestLineFarBelow = geometry.newestLineIsFarBelow(newestLineBottomPixels) && !followingMore;
         const finalRow = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
@@ -912,6 +953,7 @@
           && !newestLineOutOfSight && latestPresented;
         if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
         withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !newestLineOutOfSight) && !latestPending && heldSent === null;
+        noteFollowShape(thread);
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -1018,7 +1060,12 @@
       const thread = threadElement;
       navigationPending = false;
       if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
-      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) {
+        // Measured before the write, unless only the layout has moved the newest line
+        // since the reader was last seen with it.
+        withTheNewestLineBeforeTheWrite = withTheNewestLine(thread) || withTheNewestLineBeforeTheWrite && layoutMovedTheNewestLine(thread);
+        noteFollowShape(thread);
+      }
       noteMessageArrivals();
       requestReconciliation();
     });
@@ -1081,8 +1128,23 @@
       }
       repairLayout(thread);
     });
+    let observedHeight = thread.clientHeight;
     const observer = new ResizeObserver(() => {
       navigationPending = false;
+      // v8 (11): the composer grew (attachments, a longer draft, an ask) and the thread lost
+      // height. A transcript that was at its end stays at its end, so its last line keeps the
+      // thread's 24px bottom edge above the composer and no text stands behind its edge.
+      const height = thread.clientHeight;
+      if (height !== observedHeight) {
+        const shrank = height < observedHeight;
+        observedHeight = height;
+        if (shrank && endGapBeforeResize <= 1 && heldSent === null && !pendingOpen && placementReady)
+          moveTheThread(thread, thread.scrollHeight);
+      }
+      endGapBeforeResize = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+      // A height change no motion made (the Latest shelf coming or going) is not one the
+      // next motion frame should compensate for, so it becomes the new baseline.
+      if (!(thread.closest('[data-conversation-pane]') ?? thread).hasAttribute('data-conversation-motion')) previousThreadHeight = thread.clientHeight;
       if (!canMeasure()) { dirty = true; return; }
       repairLayout(thread);
       requestReconciliation();
@@ -1116,6 +1178,35 @@
       document.removeEventListener("focusin", onFocusIn);
     };
   });
+
+  // One column. The scroller keeps a stable gutter for its scrollbar, which would pull every
+  // line of the transcript in from the column's right edge by the scrollbar's width while the
+  // header, the asks and the composer reach it. The scroller instead reaches past the column
+  // by exactly that width, measured, so its content box is the column itself and the scrollbar
+  // stands just outside it.
+  $effect(() => {
+    const thread = threadElement;
+    if (thread === null) return;
+    const measure = (): void => {
+      const gutter = Math.max(0, thread.offsetWidth - thread.clientWidth);
+      thread.style.setProperty("--cv-scrollbar-gutter", `${gutter}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(thread);
+    return () => observer.disconnect();
+  });
+
+  // The jump is drawn by the pane, straddling the composer's top edge. v5.4: it shows only
+  // while the newest content is more than one viewport below the visible area (or newer
+  // history is not loaded yet, or a jump is under way).
+  const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);
+  $effect(() => {
+    jump = jumpShown
+      ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
+          go: (button) => void jumpToTheNewestLine(button) }
+      : null;
+  });
 </script>
 
 <div class="chat-thread-shell">
@@ -1133,12 +1224,13 @@
     tabindex="0"
     bind:this={threadElement}
     onloadcapture={() => { navigationPending = false; requestReconciliation(); }}
-    onscroll={onThreadScroll}
+    onscroll={(event) => { const t = event.currentTarget; atTheTop = t.scrollTop <= 0.5; endGapBeforeResize = t.scrollHeight - t.scrollTop - t.clientHeight; onThreadScroll(); }}
     onscrollend={() => { navigationPending = false; }}
     onwheel={stopAutomaticTravel}
     ontouchmove={stopAutomaticTravel}
     onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
+    data-at-top={atTheTop ? "true" : "false"}
     data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
@@ -1163,7 +1255,10 @@
       {onSendAgain}
     />
     {/if}
-
+    <!-- v8 (3): the Working line right after the running turn's content (its steered
+         messages are inside the turn), then the queued messages, which send after it. -->
+    {#if reader!==null}<LiveEdge {reader} {activityUncertain} {livenessPulse}/>{/if}
+    {#if afterTranscript}{@render afterTranscript()}{/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1176,21 +1271,35 @@
       ></div>
     {/if}
   </div>
-  {#if newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending}
-    <button
-      type="button"
-      class="chat-jump"
-      aria-label="Jump to latest message"
-      onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
-    >{belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Latest"}</button>
-  {/if}
 </div>
 
 <style>
-  /* Ordinary navigation stays reachable while exact transcript placement waits. */
-  .chat-jump { visibility: visible; }
-  /* The browser keeps the reader's place when history arrives above them. Nothing
-     here competes with it, so it is left on. */
-  /* Answer room is not content and never shrinks to make room for content. */
+  /* The thread's edges. The header above is a solid canvas: while anything is scrolled up under
+     it, the thread fades in over 40px from the header's bottom edge, so a line or a card edge
+     passing under it is drawn out softly, never sliced and never ruled off. At the top there is
+     nothing beyond the edge and it stands sharp. At the bottom, only while newer content is
+     below the view, the last 16px above the composer dissolve. The thread reaches over its
+     scrollbar's gutter so the column's text stays put (the gutter is measured into
+     --cv-scrollbar-gutter). */
+  .chat-thread {
+    margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
+    --c2-top-fade: transparent 0, rgb(0 0 0 / 0.35) 16px, #000 40px;
+    --c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-top-fade));
+  }
+  .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
+  .chat-thread[data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));
+  }
+  .chat-thread[data-at-top="true"][data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
+  }
+  /* An empty conversation takes the whole view, so its one line stands in the middle. */
+  .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
+  /* Answer room is not content and never shrinks to make room for content. The browser keeps
+     the reader's place when history arrives above them; nothing here competes with it. */
   .c2-reserved { flex: none; overflow-anchor: none; }
 </style>

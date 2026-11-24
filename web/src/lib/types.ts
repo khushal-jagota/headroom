@@ -315,7 +315,7 @@ export type ManagerArtifact = {
 };
 
 export type {
-  ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem,
+  ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem, ReviewAskItem,
   ReviewTicketItem, NavigationReviewTicketItem, NavigationReviewItem, ReviewItem,
 } from "./navigation/contracts";
 import type { ReviewItem } from "./navigation/contracts";
@@ -378,10 +378,6 @@ export type BoardCard = WorkAttention & {
   conversation_id: string | null;
   manager_id: string | null;
   manager_title: string | null;
-};
-
-export type IdeasResponse = {
-  ideas: AnyRecord[];
 };
 
 export type NotificationTypeSetting = {

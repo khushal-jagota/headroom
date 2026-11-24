@@ -22,6 +22,24 @@
   src: url("/assets/fonts/InterVariable-Italic.woff2") format("woff2");
 }
 
+/* JetBrains Mono, self-hosted (OFL; see THIRD_PARTY_NOTICES.md): the conversation's one code
+ * face, so code reads the same on a Mac and on Linux (where ui-monospace falls to DejaVu). */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/assets/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
 :root {
   /* Machine identity colors stay separate from action and attention. */
   --machine-jade: #83b7a7;
@@ -513,14 +531,19 @@
    * 32px row on an 8px/12px inset; an unread message under it adds up to three Body lines. */
   --composer-height: 44px;
   --composer-control: 32px;
-  --composer-status-height: 52px;
+  /* The dock's status line: a 40px row and the 8px stack gap under it (ConversationRestBar). */
+  --composer-status-height: 48px;
+  /* The conversation composer at rest is two rows (the field, then its controls), not the
+   * single-line --composer-height other note fields use. Only the zone's fallback reads it;
+   * the dock measures itself (--conversation-layer-height) once it is on the screen. */
+  --conversation-composer-rest-height: 86px;
   --composer-preview-room: 70px;
   /* The run chips (model, delivery) are small print: 12.5px, secondary tone; the provider mark
    * is drawn at the same size in the same tone. */
   --composer-mark: 12.5px;
   /* The run chip's quieter word (the effort) on the composer's #2a2a2a: 4.85:1. */
   --composer-quiet-tone: #969696;
-  --composer-zone: calc(var(--composer-status-height) + var(--composer-height) + var(--space-4));
+  --composer-zone: calc(var(--composer-status-height) + var(--conversation-composer-rest-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-needs-you-fill: transparent;
 }
@@ -548,3 +571,179 @@
 }
 
 
+
+/* === The conversation system (--cv-*) ===================================================
+   Conversation styles take their values from these names only. :root holds the shared values,
+   which the Markdown code blocks and charts also read wherever they render; the
+   [data-conversation-pane] block below holds the values that differ inside the conversation
+   pane. Contrast is WCAG 2.x on each surface. */
+:root {
+  /* Surfaces: four levels plus one floating plane. A container never sits on its own level. */
+  --cv-canvas: #121212;  /* page, transcript, header, dock; the command well inside an ask */
+  --cv-well: #191919;    /* block shell: code, chart, tool detail, callout, task pill, segment track */
+  --cv-raised: #212121;  /* what the person must act on: the drop face over the composer */
+  --cv-control: #2a2a2a; /* secondary button, selected segment/option */
+  --cv-control-hover: #333333;
+  --cv-float: #262626;   /* popovers, menus, tooltips: the only planes with a shadow */
+  --cv-line: rgb(255 255 255 / 7%);
+  --cv-line-strong: rgb(255 255 255 / 12%);
+  --cv-shadow-float: 0 12px 32px rgb(0 0 0 / 50%);
+
+  /* Text: three tones and the placeholder (contrast on canvas / well / raised / control / float). */
+  --cv-t1: #f2f2f2; /* 16.7 15.7 14.4 12.8 13.5 titles, user text, bold, links, active */
+  --cv-t2: #d9d9d9; /* 13.3 12.5 11.4 10.2 10.7 agent prose, verbs, ghost labels */
+  --cv-t3: #a3a3a3; /*  7.4  7.0  6.4  5.7  6.0 meta, targets, descriptions, headers, disabled */
+  --cv-placeholder: #8c8c8c;
+
+  /* One accent ("needs you"), two status colours. Working has no colour. */
+  --cv-accent: #a9bbe3;
+  --cv-accent-wash: rgb(169 187 227 / 12%);
+  --cv-accent-line: rgb(169 187 227 / 45%);
+  --cv-danger: #ec8a83;
+  --cv-caution: #dcb069;
+
+  /* Primary button: the one action that commits in a decision area. */
+  --cv-primary-fill: #ededed;
+  --cv-primary-ink: #141414;
+
+  /* Links: t1 with a soft underline. */
+  --cv-link-underline: rgb(255 255 255 / 35%);
+
+  /* Charts: the grid under the plot. */
+  --cv-chart-grid: rgb(255 255 255 / 6%);
+
+  /* Syntax: code only, all at least 5.2:1 on the well. */
+  --cv-code-ink: #cfcfcf;
+  --cv-syntax-keyword: #b9a7e6;
+  --cv-syntax-string: #a9c99b;
+  --cv-syntax-number: #e2b47c;
+  --cv-syntax-type: #92bbd8;
+  --cv-syntax-comment: #8c8c8c;
+
+  /* Type: Inter for everything; JetBrains Mono only for code, commands, paths, URLs, output.
+     Body 14, headings 15, code and controls 12.5, the system line 13. Leadings sit on the 4px
+     grid. */
+  --cv-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --cv-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --cv-type-prose: 14px;     --cv-leading-prose: 24px;
+  --cv-type-heading: 15px;   --cv-leading-heading: 24px;
+  --cv-type-ui: 14px;        --cv-leading-ui: 20px;
+  --cv-type-meta: 13px;      --cv-leading-meta: 20px;
+  --cv-type-control: 12.5px; --cv-leading-control: 20px;
+  --cv-type-caption: 12px;   --cv-leading-caption: 16px;
+  --cv-type-code: 12.5px;    --cv-leading-code: 20px;
+  --cv-type-output: 12px;    --cv-leading-output: 18px;
+  --cv-weight-body: 400;
+  --cv-weight-label: 500;
+  --cv-weight-title: 600;
+
+  /* Spacing scale: 4 8 12 16 24 32 48. */
+  --cv-s1: 4px;
+  --cv-s2: 8px;
+  --cv-s3: 12px;
+  --cv-s4: 16px;
+  --cv-s5: 24px;
+  --cv-s6: 32px;
+  --cv-s7: 48px;
+
+  /* THE TRANSCRIPT GRID. One grid for every element in the thread.
+   *  Horizontal: all text starts at the column's left edge (x = 0): prose, system lines, the
+   *    hover row, tool rows. A leading mark (a spinner, a dot, a tool's glyph, a list marker)
+   *    hangs in the mark gutter, a 16px slot at x = -24 to -8, so it never pushes the text in.
+   *    The thread's scroll box reaches one gutter left of the text so a hung mark is not
+   *    clipped. User bubbles and their captions keep the right edge.
+   *  Vertical: every gap is a margin on the item below it, in steps of 4 8 12 16 24 32 only.
+   *    turn     32  the end of one turn to the next message, between waiting messages, and
+   *                 under every message (room for its hover row, below)
+   *    meta      8  a system line ("Worked for") to the content under it
+   *    block    16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
+   *                 end-of-turn system line
+   *    row       0  tool rows stack with no gap; each is its own 32px line
+   *    hover   4 + 24  the hover row (time, copy) is 24 tall and always sits 4 under its
+   *                 message, as in chat apps. So whatever follows a message stands at least a
+   *                 turn's gap (32) below it, and the row never covers anything.
+   *  The thread pads 28 over its first line (room for that line's hover row) and 32 under its
+   *  newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is that value). */
+  --cv-gap-turn: 32px;
+  --cv-gap-meta: 8px;
+  --cv-gap-block: 16px;
+  --cv-gap-paragraph: 16px;
+  --cv-gap-heading-above: 24px;
+  --cv-gap-heading-below: 8px;
+  --cv-gap-list-item: 8px;
+  --cv-gap-bubble-stack: 12px;
+  --cv-hover-row-offset: 4px;
+  --cv-hover-row-height: 24px;
+  --cv-mark-slot: 16px;
+  --cv-mark-hang: 24px;
+  --cv-transcript-pad-top: 28px;
+  --cv-transcript-pad-bottom: 32px;
+  /* The system line: Inter 13/20, its ink, its actions, and the one failure red. */
+  --cv-system-ink: #8f8f8f;
+  --cv-system-action-ink: #d0d0d0;
+  --cv-failure-ink: #ff8f85;
+
+  /* Layout: the opened transcript, header, composer, and asks share this reading column. */
+  --cv-col: 760px;
+
+  /* Radii */
+  --cv-r-sm: 6px;
+  --cv-r-md: 8px;
+  --cv-r-lg: 12px;
+  --cv-r-xl: 16px;
+  --cv-r-pill: 999px;
+
+  /* Focus: 2px accent ring, offset 2. */
+  --cv-focus-width: 2px;
+  --cv-focus-offset: 2px;
+
+  /* Motion */
+  --cv-dur-fast: 120ms;
+  --cv-dur-base: 180ms;
+  --cv-dur-expand: 220ms;
+  --cv-ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --cv-spin: 1s;
+  --cv-shimmer: 2s;
+}
+
+/* Inside the conversation pane (transcript, composer, header, dock) the accent, the quiet tone
+   and the placeholder are a step lighter, and the pane's own roles are named. Pages around the
+   pane (the proposal card, a ticket's document) keep the :root values. */
+[data-conversation-pane] {
+  --cv-accent: #bccbf0;
+  --cv-accent-wash: rgb(188 203 240 / 12%);
+  --cv-accent-line: rgb(188 203 240 / 45%);
+  --cv-danger: #f08a7e;       /* failure only */
+  --cv-t3: #b0b0b0;          /* also status details and descriptions */
+  --cv-placeholder: #9e9e9e;
+
+  /* Ink */
+  --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */
+  --cv-hover-ink: #ffffff;
+  --cv-quiet-ink: #bdbdbd;    /* quiet buttons, icons */
+  --cv-narration-ink: #c4c4c4;
+  --cv-narration-code-ink: #dcdcdc;
+  --cv-narration-compact-ink: #b4b4b4;
+  --cv-leading-narration-compact: 22px;
+  --cv-list-marker: #8f8f8f;
+  --cv-inline-code-surface: #232323;
+  --cv-inline-code-ink: #e0e0e0;
+  --cv-answer-link-underline: rgb(236 236 236 / 50%);
+
+  /* Surfaces: the composer, an ask, the newest error, attachment cards and charts are one
+     Surface; code blocks sit on their own. */
+  --cv-surface: #1c1c1c;
+  --cv-bubble: #242424;       /* the person's message */
+  --cv-surface-edge: #2a2a2a;
+  --cv-surface-radius: 20px;
+  --cv-code-surface: #1a1a1a;
+  --cv-control-edge: #3a3a3a;
+  --cv-media-edge: rgb(255 255 255 / 16%);
+  --cv-spinner-track: #4a4a4a;
+
+  /* Charts draw their two series in the accent and a warm amber. */
+  --cv-data-1: #bccbf0;
+  --cv-data-2: #e0b36b;
+
+  --cv-dur-status-icon: 150ms;
+}

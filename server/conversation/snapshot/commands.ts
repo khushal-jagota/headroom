@@ -46,19 +46,25 @@ export class BackendCommands {
         },
         stop_owned,
       );
-      const kill_group = () => stop_owned(child);
-      const abort = () => kill_group();
+      const close_pipes = () => {
+        child.stdout!.destroy();
+        child.stderr!.destroy();
+      };
+      const stop_or_close_pipes = () => {
+        if (reaped || child.exitCode !== null || child.signalCode !== null) close_pipes();
+        else stop_owned(child);
+      };
+      const abort = () => stop_or_close_pipes();
       signal.addEventListener('abort', abort, { once: true });
-      if (signal.aborted) kill_group();
+      if (signal.aborted) stop_or_close_pipes();
       const timer = setTimeout(() => {
         timed_out = true;
-        kill_group();
+        stop_or_close_pipes();
       }, options.timeout_seconds * 1000);
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
-        child.stdout!.destroy();
-        child.stderr!.destroy();
+        close_pipes();
       };
       child.stdout!.on('data', (chunk: Buffer) => output.push(chunk));
       child.stderr!.on('data', (chunk: Buffer) => error.push(chunk));
@@ -68,30 +74,31 @@ export class BackendCommands {
         if (signal.aborted) reject(signal.reason);
         else resolve({ exit_code: -1, standard_output: '', standard_error: failure.message });
       });
-      child.once('exit', (code) => {
+      child.once('exit', () => {
+        // Exit retires signal authority, but stdout/stderr can still contain unread bytes.
         reaped = true;
-        // Descendants can retain pipes. Close our ends without signaling the
-        // retired leader's numeric group, which can now be reused.
-        setImmediate(() => {
-          cleanup();
-          if (signal.aborted) {
-            reject(signal.reason);
-            return;
-          }
-          resolve(
-            timed_out
-              ? {
-                  exit_code: -1,
-                  standard_output: '',
-                  standard_error: `${argv[0]} did not answer within ${options.timeout_seconds}s`,
-                }
-              : {
-                  exit_code: code ?? -1,
-                  standard_output: Buffer.concat(output).toString('utf8'),
-                  standard_error: Buffer.concat(error).toString('utf8'),
-                },
-          );
-        });
+        // A prior stop can leave inherited pipes after its only timeout/abort callback.
+        if (timed_out || signal.aborted) close_pipes();
+      });
+      child.once('close', (code) => {
+        cleanup();
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        resolve(
+          timed_out
+            ? {
+                exit_code: -1,
+                standard_output: '',
+                standard_error: `${argv[0]} did not answer within ${options.timeout_seconds}s`,
+              }
+            : {
+                exit_code: code ?? -1,
+                standard_output: Buffer.concat(output).toString('utf8'),
+                standard_error: Buffer.concat(error).toString('utf8'),
+              },
+        );
       });
     });
     this.pending.add(operation);

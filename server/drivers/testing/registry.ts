@@ -105,6 +105,11 @@ function scripted_driver(
       accent_color: '#000000',
     },
     manifest: scripted_manifest(key),
+    capabilities: {
+      sessions: { supportsModelSwitchInSession: true },
+      turns: { supportsActiveSteering: true },
+    },
+    plan_selection_transition: turn_scoped_selection_transition,
     config: NO_DRIVER_CONFIG,
     create: async ({ instance_id }, host) =>
       scripted_instance(instance_id, driver_kind, child_factory(host)),

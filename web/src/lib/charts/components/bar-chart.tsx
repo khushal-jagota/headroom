@@ -1,5 +1,5 @@
 /** Production adapter of the approved app.tsx BarCard (period and composition). */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contracts';
@@ -8,6 +8,13 @@ import { chartHeadline, chartTone, formatReading, formatAxisTick, hasCountAxis, 
 import { motionTokens } from '../lib/chart-motion';
 import { SeriesLegend } from './series-legend';
 import { seriesColor } from './goal-indicators';
+
+/** Side-by-side series are compared, not summed, so the second one cannot be a dimmer step
+ *  of the first's blue: on the dark card it all but vanished. It takes the warm sand
+ *  instead, a different hue and lightness, at least 3:1 on the card. An authored colour
+ *  still wins, and a stack keeps its one-hue composition ramp. */
+export const comparisonColor = (series: { color?: string }, index: number, palette = 'allocation') =>
+  index === 1 && !series.color ? 'var(--chart-compare-second)' : seriesColor(series as Parameters<typeof seriesColor>[0], index, palette);
 
 Chart.register(...registerables);
 
@@ -31,14 +38,18 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && summary.comparison !== null && summary.meets_expectation === null;
   const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
-  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : seriesColor(item, i, 'composition') }));
+  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : showLegend ? comparisonColor(item, i, 'composition') : seriesColor(item, i, 'composition') }));
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
+  const [legendInset, setLegendInset] = useState(0);
   useEffect(() => {
     if (!ref.current) return;
     const tokens = getComputedStyle(ref.current), color = (token: string) => tokens.getPropertyValue(token).trim();
     const resolve = (css: string) => css.replace(/var\((--[a-z-]+)\)/g, (_, name: string) => color(name));
+    // A chat snapshot (the one bar chart with its own key) reads its axes a step larger and
+    // brighter: it stands alone in a conversation, with no page around it to carry the scale.
+    const axis = { color: (showLegend && color('--chart-axis')) || color('--chart-muted'), font: showLegend ? { size: 13, lineHeight: 16 / 13 } : { size: 11 } }; // v10 (9): a chat snapshot's axis labels 13/16
     const datasets: ChartDataset<'bar' | 'line', (number | null)[]>[] = entries.map(entry => entry.key === 'target' ? {
       type: 'line', label: entry.label, data: data.map(d => d.values.target ?? null),
       borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
@@ -67,8 +78,8 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
             callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'No reading' : formatReading(block, ctx.parsed.y)}` } },
         },
         scales: {
-          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
-          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
+          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { ...axis, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
+          y: { stacked: block.stacked, position: showLegend ? 'left' : 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { ...axis, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (event, elements) => {
           const i = elements[0]?.index ?? null;
@@ -82,7 +93,9 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
-  }, [data, block, series, reduce, projection, range, dateAxis]);
+    // v5.2: a chat snapshot's key starts on the plot area's left edge (past the y-axis numbers).
+    if (showLegend) setLegendInset(Math.max(0, Math.round(chart.current.chartArea?.left ?? 0)));
+  }, [data, block, series, reduce, projection, range, dateAxis, showLegend]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 
@@ -101,8 +114,13 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const selected = index === null ? undefined : data[index];
   const reading = chartHeadline(block, data, selected?.key ?? null, projection, range).value;
   const readingLabel = selected?.label ?? (block.binding ? categoryRange(projection, range)?.label : data.at(-1)?.label) ?? 'No readings';
+  // The key stands above the plot, under the title, so it is read before the bars and is
+  // never the part a scrolled card leaves below the fold.
   return <>
-    <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
+    {showLegend && <SeriesLegend series={entries} inset={legendInset} />}
+    {/* A chat snapshot is a figure in a sentence, not a dashboard: a shorter plot, so the
+        whole of it, axis labels included, reads in one glance with the words around it. */}
+    <div className="bar-plot" style={{ height: block.plot_height ?? (showLegend ? 156 : compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
         aria-valuetext={`${readingLabel}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}
@@ -119,6 +137,5 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
           inspect(next, 'keyboard');
         }} />
     </div>
-    {showLegend && <SeriesLegend series={entries} />}
   </>;
 }

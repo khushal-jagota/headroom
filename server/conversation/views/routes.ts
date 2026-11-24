@@ -302,16 +302,21 @@ export function conversation_view_changes(
   if (after < 0 || after > coverage) {
     return null;
   }
-  let query =
+  const query =
     "SELECT 'row' kind,sequence,'e'||sequence key,removed,CASE WHEN row_kind='tool_call' THEN 1 ELSE 0 END slot FROM conversation_view_rows WHERE conversation_id=? AND changed_sequence>? " +
-    (lens === 'focus' ? 'AND focus_visible=1 ' : '') +
-    "UNION ALL SELECT 'turn',source_sequence,turn_key,0,1 FROM conversation_view_turns WHERE conversation_id=? AND changed_sequence>? ";
-  const parameters: SqlValue[] = [conversation_id, after, conversation_id, after];
-  if (lens === 'full') {
-    query +=
-      " UNION ALL SELECT 'work_group',source_sequence,group_key,0,0 FROM conversation_view_groups WHERE conversation_id=? AND changed_sequence>?";
-    parameters.push(conversation_id, after);
-  }
+    // Focus holds tool calls behind an opened turn, so their changes reach the scopes
+    // that hold them; scope_contains_item keeps them off the Focus timeline.
+    (lens === 'focus' ? "AND (focus_visible=1 OR row_kind='tool_call') " : '') +
+    "UNION ALL SELECT 'turn',source_sequence,turn_key,0,1 FROM conversation_view_turns WHERE conversation_id=? AND changed_sequence>? " +
+    "UNION ALL SELECT 'work_group',source_sequence,group_key,0,0 FROM conversation_view_groups WHERE conversation_id=? AND changed_sequence>?";
+  const parameters: SqlValue[] = [
+    conversation_id,
+    after,
+    conversation_id,
+    after,
+    conversation_id,
+    after,
+  ];
   parameters.push(SUBSCRIBER_CHANGE_LIMIT + 1);
   const changes = sql.all<{
     kind: 'row' | 'turn' | 'work_group';

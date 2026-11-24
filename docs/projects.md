@@ -1,6 +1,6 @@
 # Projects
 
-A Project is a named catalog entry that classifies work and points at a folder. Projects exist so Tickets, Managers, Ideas, goals, and measures can say what they belong to, and so agents start work in the right place. The catalog is data: adding a Project needs no code change.
+A Project is a named catalog entry that classifies work and points at a folder. Projects exist so Tickets, Managers, goals, and measures can say what they belong to, and so agents start work in the right place. The catalog is data: adding a Project needs no code change. A new install starts with an empty catalog, and the owner adds the first Project.
 
 ## What it is made of
 
@@ -8,7 +8,7 @@ A stable id, a display name, a summary, an optional folder on disk, and an optio
 
 ## How work is classified
 
-Managers, standalone Tickets, and Ideas each store a Project. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
+Managers and standalone Tickets each store a Project. A standalone Ticket made without one has none. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
 
 ## What the folder and repository do
 
@@ -18,10 +18,10 @@ The optional folder on disk is where a Ticket's application preview is found on 
 
 ## Where it shows up
 
-Project selectors on Idea capture and Ticket and Manager editing. `panels project` and `/api/projects` read and write the same catalog.
+Project selectors on Ticket and Manager editing. `panels project` and `/api/projects` read and write the same catalog.
 
 ## Code
 
 `server/projects/`. Workspace preparation is in `server/ticket_workspaces/filesystem/preparation.ts`, conversation start is in `server/runtime/conversation_start.ts`, and previews read the folder in `server/previews/`.
 
-_Last verified: 2026-11-18._
+_Last verified: 2026-11-22._

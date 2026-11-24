@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { retirementGeometry } from '../src/components/conversation/viewport/threadGeometry';
+import { jumpToLatestWanted, retirementGeometry } from '../src/components/conversation/viewport/threadGeometry';
 import { currentPlacement, streamArrivalBudget, streamTravelFits, threadPlacement } from '../src/components/conversation/viewport/placement';
 
 describe('conversation placement causes', () => {
@@ -80,5 +80,15 @@ describe('reply tail retirement range', () => {
     // Resize or content shrink invalidates a retirement pass. It cannot grow the budget.
     expect(retirementGeometry(1831, 600, 2023, 308)).toBeNull();
     expect(retirementGeometry(1831, 500, 1923, 308)).toBeNull();
+  });
+});
+
+describe('the jump to the latest message', () => {
+  it('is wanted only when the newest content is more than one viewport below the visible area', () => {
+    expect(jumpToLatestWanted(0, 600)).toBe(false);
+    expect(jumpToLatestWanted(300, 600)).toBe(false);
+    expect(jumpToLatestWanted(600, 600)).toBe(false);
+    expect(jumpToLatestWanted(601, 600)).toBe(true);
+    expect(jumpToLatestWanted(5000, 0)).toBe(false);
   });
 });

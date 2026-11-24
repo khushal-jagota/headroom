@@ -38,6 +38,7 @@ test('Mac publication binds source, attempt, Node proof, and sealed TypeScript a
       join(runtime, 'mac-runtime.json'),
       JSON.stringify({
         schema_version: 1,
+        build_id: 'a'.repeat(64),
         application_revision: source.source_sha,
         platform: 'darwin',
         architecture: 'arm64',
@@ -51,6 +52,9 @@ test('Mac publication binds source, attempt, Node proof, and sealed TypeScript a
     ]);
     const receipt: MacRuntimePublication = {
       schema_version: 1,
+      build_id: 'a'.repeat(64),
+      repeat_build_id: 'a'.repeat(64),
+      launcher_sha256: 'b'.repeat(64),
       application_revision: source.source_sha,
       platform: 'darwin',
       architecture: 'arm64',

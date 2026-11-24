@@ -1,3 +1,4 @@
+import { selected_machine } from '../snapshot/routes.ts';
 /** Thin HTTP transport for local recorded usage and persisted provider allowances. */
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -94,7 +95,7 @@ function summary_input(raw: Record<string, unknown>): UsageSummaryInput {
 }
 
 export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync<AreaServices> {
-  return async (app) => {
+  return async (app, services) => {
     app.get('/summary', async (request) => {
       const input = summary_input(request.query as Record<string, unknown>);
       try {
@@ -106,13 +107,14 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
         throw error;
       }
     });
-    app.get('/limits', async () => {
+    app.get('/limits', async (request) => {
+      const machine_id = selected_machine({ database: services.database }, request.query);
       if (!runtime.conversation_runtime_available)
         throw new HttpError(503, 'the conversation system is unavailable');
       if (runtime.backend_state === null) return {};
       const result: Record<string, ReturnType<typeof presentProviderLimits>> = {};
       for (const backend of runtime.backend_ids) {
-        const observation = runtime.backend_state.read_usage(backend);
+        const observation = runtime.backend_state.read_usage(backend, machine_id);
         if (observation !== null) result[backend] = presentProviderLimits(observation);
       }
       return result;

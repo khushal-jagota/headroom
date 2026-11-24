@@ -158,6 +158,7 @@ export class MacCommandQueues {
   }
   private async model_list(command: MailboxCommand): Promise<void> {
     let snapshot: CanonicalCatalogResult | undefined;
+    let work_move_result: CommandResult['work_move_result'];
     let finished = false;
     let primary: unknown,
       failed = false;
@@ -165,7 +166,16 @@ export class MacCommandQueues {
     try {
       if (!runner.admission_stopped) {
         try {
-          snapshot = await catalog.read_result(command.command_id, command.model_list_request!);
+          if (command.work_move_request != null) {
+            work_move_result = (await runner.inspect_work_move?.(command.work_move_request)) ?? {
+              proof: null,
+              error: 'Machine code does not support work moves.',
+            };
+          } else
+            snapshot =
+              command.backend_request != null
+                ? await catalog.backend_result?.(command.command_id, command.backend_request)
+                : await catalog.read_result(command.command_id, command.model_list_request!);
         } catch (error) {
           if (error instanceof ServerLifecycleError) throw error;
           console.warn('Model list read failed:', failure_name(error));
@@ -175,6 +185,7 @@ export class MacCommandQueues {
         command_id: command.command_id,
         child_outcome: null,
         model_list: null,
+        ...(work_move_result === undefined ? {} : { work_move_result }),
       };
       const fallback =
         snapshot === undefined

@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Config } from '../core/config.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { is_executor_link_connection } from '../core/http/executor_link.ts';
 /** The same dedicated gate applies to safe requests and raw upgrade events. */
 export function require_preview_ingress(request: IncomingMessage, config: Config): void {
   const headers = new Map<string, string[]>();
@@ -9,7 +10,10 @@ export function require_preview_ingress(request: IncomingMessage, config: Config
     headers.set(name, [...(headers.get(name) ?? []), request.rawHeaders[i + 1]!.trim()]);
   }
   let message: string | undefined;
-  if (
+  // Raw upgrades skip the request hooks that keep the local executor link to executor routes.
+  if (is_executor_link_connection(request.socket))
+    message = 'the local executor link serves executor routes only';
+  else if (
     config.trusted_ingress_provider !== 'tailscale' ||
     !config.trusted_ingress_allowed_login ||
     !config.trusted_ingress_canonical_origin?.startsWith('https://')

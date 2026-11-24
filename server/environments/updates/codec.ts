@@ -1,12 +1,15 @@
 /** Plain JSON records for persisted updates. */
 import type {
   PublishedUpdate,
+  ArtifactSource,
+  ReleaseParts,
   UpdateAttempt,
   UpdateAttemptState,
   UpdateMode,
 } from './contracts.ts';
 import { parse_optional_runtime_contract } from './logic/runtime_contract.ts';
 import { is_record as is_object } from '../../core/records.ts';
+import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
 export { is_record as is_object } from '../../core/records.ts';
 
@@ -24,18 +27,97 @@ function integer(value: unknown): number {
   if (!Number.isSafeInteger(number)) throw new Error('invalid publication integer');
   return number;
 }
+function artifact_source(payload: Record<string, unknown>): { artifact_source?: ArtifactSource } {
+  if (payload.artifact_source === undefined) return {};
+  if (payload.artifact_source !== 'github-release') throw new Error('invalid artifact source');
+  return { artifact_source: payload.artifact_source };
+}
+function parse_compatibility(value: unknown): ClientCompatibility {
+  if (
+    !is_object(value) ||
+    !is_object(value.ios) ||
+    !is_object(value.desktop_shell) ||
+    !is_object(value.machine)
+  )
+    throw new Error('invalid release compatibility');
+  const positive_integer = (input: unknown): number => {
+    if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < 1)
+      throw new Error('invalid release compatibility');
+    return input;
+  };
+  const result: ClientCompatibility = {
+    ios: { minimum_build: positive_integer(value.ios.minimum_build) },
+    desktop_shell: {
+      minimum_bridge_version: positive_integer(value.desktop_shell.minimum_bridge_version),
+    },
+    machine: {
+      minimum_protocol_version: positive_integer(value.machine.minimum_protocol_version),
+      maximum_protocol_version: positive_integer(value.machine.maximum_protocol_version),
+    },
+    outbox_format: positive_integer(value.outbox_format),
+  };
+  if (result.machine.minimum_protocol_version > result.machine.maximum_protocol_version)
+    throw new Error('invalid release compatibility');
+  return result;
+}
+function parse_parts(value: unknown): ReleaseParts {
+  if (
+    !is_object(value) ||
+    !is_object(value.server) ||
+    !is_object(value.screens) ||
+    !is_object(value.machines)
+  )
+    throw new Error('invalid release parts');
+  const digest = (input: unknown): string => {
+    if (typeof input !== 'string' || !/^[0-9a-f]{64}$/.test(input))
+      throw new Error('invalid part digest');
+    return input;
+  };
+  if (typeof value.server.app_sha !== 'string' || !/^[0-9a-f]{40}$/.test(value.server.app_sha))
+    throw new Error('invalid server part SHA');
+  return {
+    server: {
+      app_sha: value.server.app_sha,
+      artifact_digest: digest(value.server.artifact_digest),
+    },
+    screens: { sha256: digest(value.screens.sha256) },
+    machines: Object.fromEntries(
+      Object.entries(value.machines).map(([system, machine]) => {
+        if (
+          !is_object(machine) ||
+          (machine.build_id !== null && typeof machine.build_id !== 'string')
+        )
+          throw new Error('invalid machine part');
+        return [
+          system,
+          { archive_sha256: digest(machine.archive_sha256), build_id: machine.build_id },
+        ];
+      }),
+    ),
+  };
+}
 export function parse_release(payload: Record<string, unknown>): PublishedUpdate {
   const manifest = required(payload, 'manifest');
   if (!is_object(manifest)) throw new Error('publication manifest must be an object');
   const mac = payload.mac ?? null;
   if (mac !== null && !is_object(mac)) throw new Error('Mac publication must be an object');
   const linux = payload.linux_executor ?? null;
+  const source = artifact_source(payload);
+  const expiry = required(payload, 'expires_at');
+  if (expiry === null && source.artifact_source !== 'github-release')
+    throw new Error('Only GitHub Releases can have no expiry');
   return {
+    ...source,
+    ...(payload.parts === undefined ? {} : { parts: parse_parts(payload.parts) }),
+    ...(payload.compatibility === undefined
+      ? {}
+      : { compatibility: parse_compatibility(payload.compatibility) }),
     linux_executor:
       !is_object(linux) ||
       !['artifact_id', 'archive_sha256', 'archive_size'].every((key) => Object.hasOwn(linux, key))
         ? null
         : {
+            ...artifact_source(linux),
             artifact_id: required(linux, 'artifact_id') as number,
             archive_sha256: required(linux, 'archive_sha256') as string,
             archive_size: required(linux, 'archive_size') as number,
@@ -51,11 +133,12 @@ export function parse_release(payload: Record<string, unknown>): PublishedUpdate
     },
     archive_sha256: text(required(payload, 'archive_sha256')),
     schema_floor: text(required(payload, 'schema_floor')),
-    expires_at: text(required(payload, 'expires_at')),
+    expires_at: expiry === null ? null : text(expiry),
     mac:
       mac === null
         ? null
         : {
+            ...artifact_source(mac),
             artifact_id: required(mac, 'artifact_id') as number,
             archive_sha256: required(mac, 'archive_sha256') as string,
             archive_size: required(mac, 'archive_size') as number,

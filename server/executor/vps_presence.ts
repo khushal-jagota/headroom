@@ -1,3 +1,4 @@
+import type { BackendRequest, ServerMoveNotice } from './wire.generated.ts';
 /** The committed lease cache, incarnation fence, contact flush and memory-only stalls. */
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -72,6 +73,8 @@ function empty_record(): PresenceRecord {
 export class MacPresenceService {
   readonly machine_id: string;
   update_check: UpdateCheck = no_update_check;
+  /** The server move this machine is the target of, for its lease reply. */
+  server_move_notice: () => ServerMoveNotice | null = () => null;
   incarnation_replaced: IncarnationReplaced | null = null;
   returned: (() => void) | null = null;
   private loaded_record: PresenceRecord | null = null;
@@ -242,11 +245,14 @@ export class MacPresenceService {
       }
     }
     if (!this.closed && returned && this.returned !== null) this.returned();
+    const server_move = this.closed ? null : this.server_move_notice();
     let reply: WireValue<'LeaseReply'> = {
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),
       mailbox_high_sequence: this.mailbox.high_sequence(),
+      // Other machines get no field, so their replies stay as before.
+      ...(server_move === null ? {} : { server_move }),
     };
     try {
       encode_bounded(reply, 'LeaseReply');
@@ -478,6 +484,13 @@ export class MacPresenceService {
   }
   is_present(): boolean {
     return this.judgement().presence === 'present';
+  }
+  supports_backend_controls(operation?: BackendRequest['operation']): boolean {
+    const record = this.get_record();
+    return (
+      record?.lease?.backend_controls === true &&
+      (operation !== 'update_backend' || (record.identity?.protocol_version ?? 0) >= 27)
+    );
   }
   current_identity(): ExecutorIdentity | null {
     const record = this.get_record();

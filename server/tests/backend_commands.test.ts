@@ -89,7 +89,7 @@ test.skipIf(process.platform !== 'linux')(
         'const marker=process.env.P21_PROBE_MARKER;',
         "fs.writeFileSync(marker+'.tmp',JSON.stringify({parent:process.pid,descendant:process.pid}));",
         "fs.renameSync(marker+'.tmp',marker);",
-        "process.stdout.write('2.1.219 (Claude Code)\\n');setInterval(()=>{},1000);",
+        "process.stdout.write('2.1.259 (Claude Code)\\n');setInterval(()=>{},1000);",
       ].join('\n');
     writeFileSync(probe, probe_source, { mode: 0o700 });
     writeFileSync(join(bin, 'ps'), probe_source, { mode: 0o700 });
@@ -191,3 +191,87 @@ test.skipIf(process.platform !== 'linux')(
   },
   15_000,
 );
+
+// Exit can precede delivery of bytes already in a native command's pipes.
+// A controlled child reproduces that boundary deterministically without another process host.
+test('commands retain bytes delivered after exit and settle only after pipe close', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const child = Object.assign(new EventEmitter(), {
+    pid: 12345,
+    exitCode: null as number | null,
+    signalCode: null,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+  });
+  const children = {
+    spawn: vi.fn(() => child),
+  } as unknown as import('../lifecycle/contracts.ts').OwnedOneShotChildren;
+  const commands = new BackendCommands(children);
+  const pending = commands.run(['sysctl-fixture'], { timeout_seconds: 2 });
+  child.exitCode = 0;
+  child.emit('exit', 0, null);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  child.stdout.end('01234567-89ab-cdef-0123-456789abcdef\n');
+  child.stderr.end('diagnostic\n');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  child.emit('close', 0, null);
+  expect(await pending).toEqual({
+    exit_code: 0,
+    standard_output: '01234567-89ab-cdef-0123-456789abcdef\n',
+    standard_error: 'diagnostic\n',
+  });
+});
+
+test('deadline and abort close inherited pipes before or after leader exit without late signals', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const signal = vi.spyOn(process, 'kill').mockImplementation(() => true);
+  try {
+    for (const mode of ['timeout', 'abort', 'timeout-before-exit', 'abort-before-exit'] as const) {
+      const child = Object.assign(new EventEmitter(), {
+        pid: 12345,
+        exitCode: null as number | null,
+        signalCode: null,
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      let closed = 0;
+      for (const stream of [child.stdout, child.stderr])
+        stream.once('close', () => {
+          if (++closed === 2) child.emit('close', 0, null);
+        });
+      const children = {
+        spawn: vi.fn(() => child),
+      } as unknown as import('../lifecycle/contracts.ts').OwnedOneShotChildren;
+      const commands = new BackendCommands(children);
+      const controller = new AbortController();
+      const pending = commands.run(['inherited-pipe-fixture'], {
+        timeout_seconds: mode.startsWith('timeout') ? 0.01 : 2,
+        signal: controller.signal,
+      });
+      const settled = pending.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      const first_signal = signal.mock.calls.length;
+      if (mode.endsWith('before-exit')) {
+        if (mode.startsWith('abort')) controller.abort(new Error('stop exited command'));
+        else await pause(20);
+      }
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      if (mode === 'abort') controller.abort(new Error('stop exited command'));
+      expect(signal.mock.calls.length - first_signal).toBe(mode.endsWith('before-exit') ? 1 : 0);
+      const outcome = await settled;
+      if ('value' in outcome) {
+        expect(outcome.value.exit_code).toBe(-1);
+        expect(outcome.value.standard_error).toContain('did not answer within');
+      } else expect((outcome.error as Error).message).toBe('stop exited command');
+      expect(child.stdout.destroyed).toBe(true);
+      expect(child.stderr.destroyed).toBe(true);
+    }
+  } finally {
+    signal.mockRestore();
+  }
+});

@@ -110,7 +110,7 @@ struct VPSView: View {
             try Task.checkCancellation()
             latest = result; error = nil
             await loadProcesses(reset: true)
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
     @MainActor private func loadProcesses(reset: Bool) async {
         guard !loadingProcesses else { return }
@@ -132,13 +132,13 @@ struct VPSView: View {
             }
             nextOffset = page.nextOffset; totalProcesses = page.total
             processError = page.availability == "unavailable" ? page.reason ?? "Processes unavailable" : nil
-        } catch { if !Task.isCancelled { processError = error.localizedDescription } }
+        } catch { if !Task.isCancelled { processError = ServerReadFailure.note(error) } }
     }
     @MainActor private func loadHistory() async {
         do {
             let result = try await store.client.vpsHistory(window: window)
             try Task.checkCancellation()
             history = result; historyError = nil
-        } catch { if !Task.isCancelled { historyError = error.localizedDescription } }
+        } catch { if !Task.isCancelled { historyError = ServerReadFailure.note(error) } }
     }
 }

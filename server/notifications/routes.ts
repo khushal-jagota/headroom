@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { requireOwner } from '../core/authority/identity.ts';
@@ -12,6 +13,8 @@ import type { APNsDevice } from './contracts.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
+import { desktop_notification_streams } from './desktop_streams.ts';
+import { SSE_HEARTBEAT_MS } from '../core/config.ts';
 function settings(sql: ReadSql) {
   const preferences = data.resolved_preferences(sql);
   const identity = data.read_web_push_identity(sql);
@@ -48,6 +51,35 @@ const deviceBody = {
 };
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   app.get('/notifications/settings', async () => services.database.read(settings));
+  // The desktop app's live stream. Each event is one notification the policy allowed.
+  const desktop_streams = new Set<Readable>();
+  app.addHook('preClose', async () => {
+    for (const stream of desktop_streams) stream.destroy();
+  });
+  app.get('/notifications/desktop', { config: { uncompressed: true } }, async (request, reply) => {
+    requireOwner(services.identity(request));
+    const stream = new Readable({ read() {} });
+    const stop_listening = desktop_notification_streams(services.database).listen(
+      (notification) => {
+        if (!stream.destroyed) stream.push(`data: ${JSON.stringify(notification)}\n\n`);
+      },
+    );
+    const timer = setInterval(() => {
+      if (!stream.destroyed) stream.push(': keep-alive\n\n');
+    }, SSE_HEARTBEAT_MS);
+    timer.unref();
+    desktop_streams.add(stream);
+    stream.once('close', () => {
+      clearInterval(timer);
+      stop_listening();
+      desktop_streams.delete(stream);
+    });
+    reply.raw.once('close', () => stream.destroy());
+    reply.header('content-type', 'text/event-stream; charset=utf-8');
+    reply.raw.setHeader('content-type', 'text/event-stream; charset=utf-8');
+    reply.raw.flushHeaders();
+    return reply.send(stream);
+  });
   app.put<{
     Params: { subject_key: string; notification_type: string };
     Body: { enabled: boolean };

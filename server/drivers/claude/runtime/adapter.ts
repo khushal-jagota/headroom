@@ -59,7 +59,7 @@ import {
   CLAUDE_CAPABILITIES,
   claude_selection_transition,
   is_live_reasoning_effort,
-} from './selection.ts';
+} from '../models.ts';
 import { selection_target } from '../../../conversation/logic/selection_target.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
@@ -410,6 +410,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     const asked = await this.query_argument(delivered, uuid);
     await this.apply_reasoning_effort(client, reasoning_effort);
     const turn = new TurnInFlight(turn_token);
+    turn.prompt_uuid = uuid;
+    turn.sent_user_message_uuids.add(uuid);
     this.turn = turn;
     client.watch_user_message(uuid);
     let failure: unknown = null;
@@ -475,6 +477,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     }
     client.watch_user_message(uuid);
     turn.owned_steer_uuids.add(uuid);
+    turn.sent_user_message_uuids.add(uuid);
     if (this.turn !== turn || turn.cancel_requested || this.client !== client || this.wire_broken) {
       turn.owned_steer_uuids.delete(uuid);
       client.forget_user_message(uuid);
@@ -711,12 +714,20 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       if (client.user_message_is_settled(uuid)) turn.owned_steer_uuids.delete(uuid);
   }
   private async result_message(turn: TurnInFlight, message: ClaudeSdkMessage): Promise<void> {
-    await this.events.usage(turn, message);
     const client = this.connected_client();
-    for (const uuid of client.user_message_uuids_for_result(
+    const named = client.user_message_uuids_for_result(
       typeof message.uuid === 'string' ? message.uuid : null,
-    ))
-      turn.owned_steer_uuids.delete(uuid);
+    );
+    // Claude runs turns of its own, such as one for a task notification after a resume. Their
+    // results name none of this turn's messages, so they neither end nor charge this turn.
+    if (
+      !turn.cancel_requested &&
+      turn.prompt_uuid !== null &&
+      ![...named].some((uuid) => turn.sent_user_message_uuids.has(uuid))
+    )
+      return;
+    await this.events.usage(turn, message);
+    for (const uuid of named) turn.owned_steer_uuids.delete(uuid);
     this.forget_settled_steers(turn, client);
     if (turn.owned_steer_uuids.size) {
       turn.held_result = message;
