@@ -12,7 +12,7 @@ const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & ManagerWor
 } as BoardCard & ManagerWorkspaceTicket);
 const item = (id:string, values:Partial<BoardManager> = {}): BoardManager => ({
   ...quiet, id, title:id, recap:"",recap_preview:"", created_at:1, updated_at:1, conversation_id:`manager-${id}`,
-  ticket_rollup:quiet, tickets:[], ...values
+  tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({
   employee_id:"chief", label:"Chief of Staff", recap:"",
@@ -54,7 +54,7 @@ describe("exact unread conversation discovery", () => {
     const rows = workspaceMessageConversations([
       card("ask", {awaiting_answer:true}), card("approval", {awaiting_approval:true}),
       card("errored", {agent_state:"errored"}), card("missing", {awaiting_reply:true,conversation_id:null})
-    ], [item("aggregate", {ticket_rollup:{...quiet,awaiting_reply:true}})], chief());
+    ], [item("aggregate")], chief());
     expect(rows).toEqual([]);
   });
 

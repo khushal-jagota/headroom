@@ -10,18 +10,20 @@ import { parse } from './parser.ts';
 export async function run(
   argv: string[],
   environment: NodeJS.ProcessEnv = process.env,
-  stdin: () => Promise<Buffer> = async () => {
+  stdin?: () => Promise<Buffer>,
+  write_stderr?: Invocation['write_stderr'],
+): Promise<CommandResult> {
+  const stdin_is_terminal = stdin === undefined && process.stdin.isTTY === true;
+  stdin ??= async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks);
-  },
-  write_stderr?: Invocation['write_stderr'],
-): Promise<CommandResult> {
+  };
   let invocation: Invocation | undefined;
   try {
     const parsed = parse(argv, create_commands, environment);
     if (parsed.help) return { exit_code: 0, stdout: parsed.help, stderr: '' };
-    invocation = { ...parsed, environment, stdin, write_stderr };
+    invocation = { ...parsed, environment, stdin, stdin_is_terminal, write_stderr };
     switch (parsed.command.path[0]) {
       case 'legacy-agents': {
         const { inspect_legacy_agents } = await import('../conversation/legacy_agents.ts');
@@ -40,7 +42,6 @@ export async function run(
       case 'stalls':
       case 'serve':
       case 'restart':
-      case 'server-event-loop-tasks':
         return await (await import('./operator_commands.ts')).run_operator_command(invocation);
       case 'goal':
         return await (await import('../goals/cli/index.ts')).run_goal_command(invocation);

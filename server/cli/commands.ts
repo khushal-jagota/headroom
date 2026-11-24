@@ -10,69 +10,97 @@ import {
   choice,
   readable_path,
   readable_file,
+  type Audience,
 } from './declarations.ts';
+import { TICKET_NEEDS } from '../tickets/contracts.ts';
+
+/** `--json` means one thing on every command. */
+const json_output = (key = 'as_json') =>
+  option(key, '--json', boolean, { default: false, description: 'Print the result as JSON.' });
+/** The JSON input rule: `--input-json FILE`, `-` for stdin, or stdin when the flag is absent. */
+const json_input = () =>
+  option('input_json', '--input-json <FILE>', readable_file, {
+    description: 'Read the JSON object from this file, or - for stdin. Default: stdin.',
+  });
+/** The text input rule: the inline flag, `--body-file FILE`, or stdin when neither is given. */
+const text_input = (inline: 'message' | 'value' = 'message') => [
+  inline === 'message'
+    ? option('message', '--message <TEXT>', text, { description: 'Use this text.' })
+    : option('value', '--value <TEXT>', text, { description: 'Set the field to this text.' }),
+  option('body_file', '--body-file <FILE>', readable_file, {
+    description: 'Read the text from this file, or - for stdin. Default: stdin.',
+  }),
+];
+const page_inputs = () => [
+  option('limit', '--limit <INTEGER>', integer(1), { default: 30 }),
+  option('offset', '--offset <INTEGER>', integer(0), { default: 0 }),
+];
+const MANAGER_ID = () => argument('manager_id', '<MANAGER_ID>', text);
+const TICKET_ID = () => argument('ticket_id', '<TICKET_ID>', text);
 
 export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand {
-  const root = new CliCommand([], 'Operate the local planner server.');
+  const root = new CliCommand(
+    [],
+    'Read and change Panels work: Tickets, Managers, pages, and data.',
+  );
   const by_path = new Map<string, CliCommand>([['', root]]);
+  const group_audiences = new Map<string, Audience>();
+  /** A group: its leaves take the group's audience unless they state their own. */
+  const group = (path: string, description: string, audience: Audience | null = null) => {
+    const words = path.split(' ');
+    const current = new CliCommand(words, description);
+    by_path.get(words.slice(0, -1).join(' '))!.addCommand(current);
+    by_path.set(path, current);
+    if (audience) group_audiences.set(path, audience);
+  };
   const command = (
     path: string,
     description: string,
     inputs: Parameters<CliCommand['addInputs']>[0] = [],
-    hidden = false,
+    settings: { audience?: Audience; hidden?: boolean } = {},
   ) => {
     const words = path.split(' ');
     const current = new CliCommand(words, description).addInputs(inputs, environment);
-    by_path.get(words.slice(0, -1).join(' '))!.addCommand(current, { hidden });
+    const audience = settings.audience ?? group_audiences.get(words.slice(0, -1).join(' '));
+    if (audience === undefined) throw new Error(`command has no audience: ${path}`);
+    current.audience = audience;
+    by_path.get(words.slice(0, -1).join(' '))!.addCommand(current, { hidden: settings.hidden });
     by_path.set(path, current);
   };
+
   command(
     'api',
-    "Call a Panels API path with this conversation's automatic authentication.",
+    "Call a Panels API path with this conversation's credential.",
     [
       argument('method', '<METHOD>', text),
       argument('path', '<PATH>', text),
-      option('input_json', '--input-json <FILENAME>', readable_file, {}),
-      option('as_json', '--json', boolean, { default: false }),
-    ],
-    true,
-  );
-  command('legacy-agents', 'Inspect agents from an old Panels build.');
-  command(
-    'legacy-agents dry-run',
-    'Read startup retirement candidates without source writes or target signals.',
-    [
-      option('database_path', '--database-path <PATH>', readable_path('any', false), {
-        required: true,
+      option('input_json', '--input-json <FILE>', readable_file, {
+        description: 'Send the JSON body in this file, or - for stdin.',
       }),
+      json_output(),
     ],
+    { audience: 'everyone', hidden: true },
   );
-  command('attention', 'Read where owner involvement went over selected dates.');
-  command(
-    'attention setup-collection',
-    'Configure daily retained figures through existing source and measure APIs.',
-    [
-      option('project_id', '--project <TEXT>', text, { required: true }),
-      option('database_path', '--database-path <PATH>', readable_path('any', false), {
-        description: 'Absolute database path on the Panels server, read-only during collection.',
-        required: true,
-      }),
-      option('local_time', '--local-time <TEXT>', text, { default: '00:05' }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
+
+  group('attention', 'Read where owner involvement went over selected dates.', 'data');
+  command('attention setup-collection', 'Set up daily collection of attention figures.', [
+    option('project_id', '--project <TEXT>', text, { required: true }),
+    option('database_path', '--database-path <PATH>', readable_path('any', false), {
+      description: 'Absolute database path on the Panels server, read-only during collection.',
+      required: true,
+    }),
+    option('local_time', '--local-time <TEXT>', text, { default: '00:05' }),
+    json_output(),
+  ]);
   command(
     'attention summary',
-    'Compare recorded involvement with the preceding date range.\n\nOmit both dates for the last seven local dates. Filters select one work scope;\n--group-by selects its breakdown. These figures do not measure owner hours.',
+    'Compare recorded owner involvement with the preceding date range.',
     [
       option('first_date', '--first-date <TEXT>', text, {
-        description: 'First inclusive local date (YYYY-MM-DD).',
+        description: 'First inclusive local date (YYYY-MM-DD). Default: seven dates ago.',
       }),
       option('last_date', '--last-date <TEXT>', text, {
-        description: 'Last inclusive local date (YYYY-MM-DD).',
+        description: 'Last inclusive local date (YYYY-MM-DD). Default: today.',
       }),
       option('group_by', '--group-by <CHOICE>', choice(['project', 'manager', 'ticket', 'goal']), {
         default: 'project',
@@ -90,93 +118,82 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       ),
       option('limit', '--limit <INTEGER>', integer(), { default: 50 }),
       option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
+      json_output(),
     ],
   );
-  command('credential', 'Discover credential references. Secret writes use the owner API.');
-  command('credential list', 'List reusable names and metadata without secret values.', [
+
+  group('credential', 'List and request credentials by name, never by secret value.', 'data');
+  command('credential list', 'List credential names and metadata without secret values.', [
     option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
     option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command(
-    'credential rename',
-    'Rename a reusable credential as the owner without exposing its value.',
-    [
-      argument('credential_id', '<CREDENTIAL_ID>', text, {}),
-      option('name', '--name <TEXT>', text, { required: true }),
-      option('expected_revision', '--expected-revision <INTEGER>', integer(1), { required: true }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'credential request',
-    "Request a named API key in this employee's conversation. No secret input.",
-    [
-      option('request_id', '--request-id <UUID>', uuid, { required: true }),
-      option('name', '--name <TEXT>', text, { required: true }),
-      option('provider', '--provider <TEXT>', text, { required: true }),
-      option('use_context', '--use <TEXT>', text, { required: true }),
-      option('auth_kind', '--auth-kind <CHOICE>', choice(['bearer', 'header']), { required: true }),
-      option('header_name', '--header-name <TEXT>', text, {}),
-      option('help_hint', '--help-text <TEXT>', text, {}),
-      option('help_url', '--help-url <TEXT>', text, {}),
-      option('replace_id', '--replace-id <TEXT>', text, {}),
-      option('expected_revision', '--expected-revision <INTEGER>', integer(1), {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('dataset', 'Define datasets and read their retained dated rows.');
-  command('dataset create', 'Read the complete dataset definition as JSON from stdin.', [
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+  command('credential rename', 'Rename a credential without exposing its value.', [
+    argument('credential_id', '<CREDENTIAL_ID>', text, {}),
+    option('name', '--name <TEXT>', text, { required: true }),
+    option('expected_revision', '--expected-revision <INTEGER>', integer(1), { required: true }),
+    json_output(),
   ]);
-  command('dataset edit', 'Read changes and expected_revision as JSON from stdin.', [
+  command('credential request', 'Ask Khushal for a named API key in this conversation.', [
+    option('request_id', '--request-id <UUID>', uuid, { required: true }),
+    option('name', '--name <TEXT>', text, { required: true }),
+    option('provider', '--provider <TEXT>', text, { required: true }),
+    option('use_context', '--use <TEXT>', text, { required: true }),
+    option('auth_kind', '--auth-kind <CHOICE>', choice(['bearer', 'header']), { required: true }),
+    option('header_name', '--header-name <TEXT>', text, {}),
+    option('help_hint', '--help-text <TEXT>', text, {}),
+    option('help_url', '--help-url <TEXT>', text, {}),
+    option('replace_id', '--replace-id <TEXT>', text, {}),
+    option('expected_revision', '--expected-revision <INTEGER>', integer(1), {}),
+    json_output(),
+  ]);
+
+  group('dataset', 'Define datasets and read their dated rows.', 'data');
+  command('dataset create', 'Create a dataset from a JSON definition.', [
+    json_input(),
+    json_output(),
+  ]);
+  command('dataset edit', 'Change a dataset from a JSON object with expected_revision.', [
     argument('dataset_id', '<DATASET_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_input(),
+    json_output(),
   ]);
-  command('dataset list', 'List a bounded page of complete definitions.', [
+  command('dataset list', 'List dataset definitions.', [
     option('project_id', '--project-id <TEXT>', text, {}),
     option('source_id', '--source-id <TEXT>', text, {}),
     option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
     option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command('dataset read', 'Read {dataset_ids, first_date, last_date, limit?} JSON from stdin.', [
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('dataset show', 'Show one complete definition.', [
+  command(
+    'dataset read',
+    'Read dated rows from a JSON request {dataset_ids, first_date, last_date, limit?}.',
+    [json_input(), json_output()],
+  );
+  command('dataset show', 'Show one dataset definition.', [
     argument('dataset_id', '<DATASET_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command('environment', 'Prepare and run isolated Panels environments.', [], true);
-  command('environment app-build', 'Build and validate one host-native exact-SHA app.', [
+
+  const environment_inputs = (kinds: string[]) => [
+    option('kind', '--kind <CHOICE>', choice(kinds), { required: true }),
+    option('instance_id', '--instance-id <TEXT>', text, {}),
+    option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
+      required: true,
+    }),
+    option('port', '--port <INTEGER>', integer(), {}),
+    option(
+      'credentials_env_file',
+      '--credentials-env-file <PATH>',
+      readable_path('any', false),
+      {},
+    ),
+    option('repository_roots', '--repository-root <DIRECTORY>', readable_path('directory', true), {
+      repeat: true,
+    }),
+  ];
+  group('environment', 'Prepare and run isolated Panels environments.', 'host');
+  command('environment app-build', 'Build and validate one host-native app at an exact SHA.', [
     option('source_root', '--source-root <DIRECTORY>', readable_path('directory', true), {
       required: true,
     }),
@@ -185,7 +202,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       required: true,
     }),
   ]);
-  command('environment app-identity', 'Print the validated SHA for one app directory.', [
+  command('environment app-identity', 'Print the validated SHA of one app directory.', [
     option('app', '--app <DIRECTORY>', readable_path('directory', true), { required: true }),
   ]);
   command(
@@ -220,101 +237,29 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
         default: false,
         description: 'Apply a fresh, immediately re-proven inventory.',
       }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the inventory or result as JSON.',
-      }),
+      json_output(),
     ],
   );
   command(
     'environment inspect',
     'Inspect one environment instance without exposing credential values.',
-    [
-      option('kind', '--kind <CHOICE>', choice(['live', 'staging']), { required: true }),
-      option('instance_id', '--instance-id <TEXT>', text, {}),
-      option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
-        required: true,
-      }),
-      option('port', '--port <INTEGER>', integer(), {}),
-      option(
-        'credentials_env_file',
-        '--credentials-env-file <PATH>',
-        readable_path('any', false),
-        {},
-      ),
-      option(
-        'repository_roots',
-        '--repository-root <DIRECTORY>',
-        readable_path('directory', true),
-        { repeat: true },
-      ),
-      option('json_output', '--json', boolean, { default: false }),
-    ],
+    [...environment_inputs(['live', 'staging']), json_output('json_output')],
   );
   command('environment prepare', 'Materialize one isolated environment instance.', [
-    option('kind', '--kind <CHOICE>', choice(['live', 'staging']), { required: true }),
-    option('instance_id', '--instance-id <TEXT>', text, {}),
-    option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
-      required: true,
-    }),
-    option('port', '--port <INTEGER>', integer(), {}),
-    option(
-      'credentials_env_file',
-      '--credentials-env-file <PATH>',
-      readable_path('any', false),
-      {},
-    ),
-    option('repository_roots', '--repository-root <DIRECTORY>', readable_path('directory', true), {
-      repeat: true,
-    }),
-    option('json_output', '--json', boolean, { default: false }),
+    ...environment_inputs(['live', 'staging']),
+    json_output('json_output'),
   ]);
   command('environment remove', 'Remove the stopped staging environment.', [
-    option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
-    option('instance_id', '--instance-id <TEXT>', text, {}),
-    option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
-      required: true,
-    }),
-    option('port', '--port <INTEGER>', integer(), {}),
-    option(
-      'credentials_env_file',
-      '--credentials-env-file <PATH>',
-      readable_path('any', false),
-      {},
-    ),
-    option('repository_roots', '--repository-root <DIRECTORY>', readable_path('directory', true), {
-      repeat: true,
-    }),
-    option('json_output', '--json', boolean, { default: false }),
+    ...environment_inputs(['staging']),
+    json_output('json_output'),
+  ]);
+  command('environment reset', 'Rebuild staging fake state while keeping its prepared identity.', [
+    ...environment_inputs(['staging']),
+    json_output('json_output'),
   ]);
   command(
-    'environment reset',
-    'Rebuild staging fake state while preserving its prepared identity.',
-    [
-      option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
-      option('instance_id', '--instance-id <TEXT>', text, {}),
-      option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
-        required: true,
-      }),
-      option('port', '--port <INTEGER>', integer(), {}),
-      option(
-        'credentials_env_file',
-        '--credentials-env-file <PATH>',
-        readable_path('any', false),
-        {},
-      ),
-      option(
-        'repository_roots',
-        '--repository-root <DIRECTORY>',
-        readable_path('directory', true),
-        { repeat: true },
-      ),
-      option('json_output', '--json', boolean, { default: false }),
-    ],
-  );
-  command(
     'environment restore',
-    "Restore a verified snapshot's database and file tree into a stopped live environment.",
+    "Restore a verified snapshot's database and files into a stopped live environment.",
     [
       option('snapshot', '--snapshot <DIRECTORY>', readable_path('directory', true), {
         required: true,
@@ -325,42 +270,17 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       option('live_stopped', '--live-stopped', boolean, { required: true }),
     ],
   );
-  command(
-    'environment run',
-    'Replace this process with `panels serve` for one prepared instance.',
-    [
-      option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
-      option('instance_id', '--instance-id <TEXT>', text, {}),
-      option('environment_root', '--environment-root <PATH>', readable_path('any', false), {
-        required: true,
-      }),
-      option('port', '--port <INTEGER>', integer(), {}),
-      option(
-        'credentials_env_file',
-        '--credentials-env-file <PATH>',
-        readable_path('any', false),
-        {},
-      ),
-      option(
-        'repository_roots',
-        '--repository-root <DIRECTORY>',
-        readable_path('directory', true),
-        { repeat: true },
-      ),
-      option('test_mode', '--test-mode', boolean, { default: false, hidden: true }),
-    ],
-  );
+  command('environment run', 'Replace this process with panels serve for one prepared instance.', [
+    ...environment_inputs(['staging']),
+    option('test_mode', '--test-mode', boolean, { default: false, hidden: true }),
+  ]);
   command(
     'environment status',
     'Collect a local operational snapshot without contacting the HTTP server.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the sanitized status snapshot as JSON.',
-      }),
-    ],
+    [json_output()],
   );
-  command('executor', 'Run the native Mac executor through the app HTTPS service.');
+
+  group('executor', 'Run a Panels executor on this machine.', 'host');
   command(
     'executor credential',
     'Install a registration or replacement credential into this executor root.',
@@ -368,11 +288,11 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   );
   command(
     'executor health',
-    "Print this executor's identity, process, last accepted lease and any refusal.",
+    "Print this executor's identity, process, last accepted lease, and any refusal.",
   );
   command(
     'executor permissions',
-    'Show narrow access needs. Only --check touches the selected directories.',
+    'Show the access this executor needs. Only --check touches the directories.',
     [
       option('workspace', '--workspace <TEXT>', text, { required: true }),
       option('output', '--output <TEXT>', text, { required: true }),
@@ -382,794 +302,120 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       }),
     ],
   );
-  command('executor quiesce', '', [
+  command('executor quiesce', 'Ask the running executor to stop taking new work.', [
     option('exit_when_ready', '--exit-when-ready', boolean, { default: false }),
   ]);
-  command('executor retry', 'Inspect the original submission. Never repeat or replace its write.', [
+  command('executor retry', 'Look up the receipt of one earlier submission.', [
     argument('submission_id', '<SUBMISSION_ID>', text, {}),
-    option('as_json', '--json', boolean, { default: false }),
+    json_output(),
   ]);
   command('executor server-address', 'Check and save the HTTPS address of this machine’s server.', [
     option('url', '--url <URL>', text, { required: true }),
   ]);
-  command('executor run', '', [
+  command('executor run', 'Run the executor service for one registered machine.', [
     option('executor_id', '--executor-id <TEXT>', text, { required: true }),
     option('application_revision', '--application-revision <TEXT>', text, { required: true }),
     option('panels_server_url', '--panels-server-url <TEXT>', text, { required: true }),
   ]);
-  command(
-    'goal',
-    'Read, edit, and permanently delete goals.\n\nSee goal schema create|edit|primary-chart for request contracts.',
-  );
-  command('goal artifact', 'Read and write supporting files, with paths relative to artifacts/.');
-  command('goal artifact delete', '', [
+
+  group('goal', 'Read, edit, and delete goals.', 'data');
+  group('goal artifact', 'Read and write the supporting files of a goal.', 'data');
+  command('goal artifact delete', 'Delete one goal artifact.', [
     argument('goal_id', '<GOAL_ID>', text, {}),
     argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command('goal artifact list', 'List openable paths. Index folders hide their supporting files.', [
+  command('goal artifact list', 'List the openable artifact paths of a goal.', [
     argument('goal_id', '<GOAL_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command('goal artifact read', '', [
+  command('goal artifact read', 'Print one goal artifact as exact text.', [
     argument('goal_id', '<GOAL_ID>', text, {}),
     argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command('goal artifact write', '', [
+  command('goal artifact write', 'Write one goal artifact.', [
     argument('goal_id', '<GOAL_ID>', text, {}),
     argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('body_file', '--body-file <TEXT>', text, { required: true }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    ...text_input(),
+    json_output(),
   ]);
-  command(
-    'goal create',
-    'Read JSON from stdin with an explicit display. See goal schema create --json.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'goal delete',
-    'Delete a goal permanently. The owner, Chief, and holding Manager can delete it.',
-    [
-      argument('goal_id', '<GOAL_ID>', text, {}),
-      option('yes', '--yes', boolean, {
-        default: false,
-        description: 'Permanently delete the goal, page, and artifacts.',
-      }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'goal edit',
-    'Read changes from stdin. Discover display switches with goal schema edit.',
-    [
-      argument('goal_id', '<GOAL_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('goal list', '', [
+  command('goal create', 'Create a goal from a JSON object.', [json_input(), json_output()]);
+  command('goal delete', 'Delete a goal, its page, and its artifacts permanently.', [
+    argument('goal_id', '<GOAL_ID>', text, {}),
+    option('yes', '--yes', boolean, {
+      default: false,
+      description: 'Confirm the permanent deletion.',
+    }),
+    json_output(),
+  ]);
+  command('goal edit', 'Change a goal from a JSON object.', [
+    argument('goal_id', '<GOAL_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+  command('goal list', 'List goals.', [
     option('active', '--active <BOOLEAN>', boolean, {}),
     option('project_id', '--project-id <TEXT>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command(
-    'goal make-manager',
-    'Move one Chief goal to a new Manager. Read the request body from stdin.',
-    [
-      argument('goal_id', '<GOAL_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('goal read', '', [
+  command('goal make-manager', 'Move one Chief goal to a new Manager.', [
+    argument('goal_id', '<GOAL_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+  command('goal read', "Read a goal's measure readings over a date range.", [
     argument('goal_id', '<GOAL_ID>', text, {}),
     option('first_date', '--first-date <TEXT>', text, {}),
     option('last_date', '--last-date <TEXT>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
-  command(
-    'goal schema',
-    'Show request schema, named examples and notes; no stdin or server needed.',
-    [
-      argument('operation', '<OPERATION>', choice(['create', 'edit', 'primary-chart']), {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('goal show', '', [
+  command('goal schema', 'Show the goal request schema, examples, and notes.', [
+    argument('operation', '<OPERATION>', choice(['create', 'edit', 'primary-chart']), {}),
+    json_output(),
+  ]);
+  command('goal show', 'Show one goal and its page.', [
     argument('goal_id', '<GOAL_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
+    json_output(),
   ]);
+
+  group('legacy-agents', 'Inspect agents from an old Panels build.', 'host');
   command(
-    'manager',
-    'Manage ordinary Managers. Settled Managers are finished destinations.\n\nChoose an active Manager for new work. Reads expose the boolean settled key.\nAn absent settled field does not establish that a Manager is active.\n\nRead manager workspace ID for the visible page and its edit command.\nUse panels page show|edit --manager ID for its own page document.',
-  );
-  command('manager add-ticket', 'Classify one Ticket under one Manager.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager artifact', "Read and write a Manager's own artifacts.");
-  command('manager artifact delete', 'Delete one Manager artifact.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'manager artifact list',
-    'List openable artifact paths from the workspace. Index folders hide supporting files.',
+    'legacy-agents dry-run',
+    'Read startup retirement candidates without source writes or target signals.',
     [
-      argument('item_id', '<ITEM_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('manager artifact read', 'Read one Manager artifact as exact text.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager artifact write', 'Write one Manager artifact.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
-    option('body_file', '--body-file <TEXT>', text, { required: true }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'manager conversation',
-    'Compatibility and recovery paths for a Manager conversation.',
-    [],
-    true,
-  );
-  command('manager conversation reset', '', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager conversation send', '', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    option('message', '--message <TEXT>', text, { description: 'Message text.' }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Read message text from this file, or -.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager create', 'Create one Manager.', [
-    option('title', '--title <TEXT>', text, { description: 'Manager title.', required: true }),
-    option('project', '--project <TEXT>', text, { description: 'Project name.' }),
-    option('project_id', '--project-id <TEXT>', text, { description: 'Project id.' }),
-    option('goal_file', '--goal-file <TEXT>', text, {
-      description: 'Optional goal file, or - for stdin.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager delete', 'Permanently delete one empty Manager.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    option('yes', '--yes', boolean, {
-      default: false,
-      description: 'Permanently delete the manager and its history.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'manager list',
-    'List Managers as bounded summaries with the settled boolean. Without --active or --settled, include both states. Settled Managers are finished destinations. Choose an active Manager for new work. An absent settled field does not establish active state.',
-    [
-      option('search', '--search <TEXT>', text, { description: 'Find a Manager by title.' }),
-      option('active', '--active', boolean, {
-        default: false,
-        description: 'Only show active Managers (settled=false).',
-      }),
-      option('settled', '--settled', boolean, {
-        default: false,
-        description: 'Only show settled Managers (finished destinations).',
-      }),
-      option('project', '--project <TEXT>', text, { description: 'Only show project name.' }),
-      option('project_id', '--project-id <TEXT>', text, { description: 'Only show project id.' }),
-      option('limit', '--limit <INTEGER>', integer(1), { default: 30 }),
-      option('offset', '--offset <INTEGER>', integer(0), { default: 0 }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('manager remove-ticket', "Remove one Ticket's Manager classification.", [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('manager request-recap', 'Ask a Manager below you for a fresh recap.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'manager set',
-    'Change one plain Manager field. The goal field is its purpose, not its page. Use panels manager workspace ID for the visible page and its edit command. Use panels page edit --manager ID for its own page document.',
-    [
-      argument('item_id', '<ITEM_ID>', text, {}),
-      argument('field', '<FIELD>', choice(['goal', 'project', 'project-id', 'recap', 'title']), {}),
-      option('value', '--value <TEXT>', text, { description: 'Set the field to this value.' }),
-      option('body_file', '--body-file <TEXT>', text, {
-        description: 'Read field text from this file, or - for stdin.',
-      }),
-      option('clear', '--clear', boolean, {
-        default: false,
-        description: 'Clear nullable fields.',
-      }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('manager settle', 'Set the owner-controlled settled state of an ordinary manager.', [
-    argument('item_id', '<ITEM_ID>', text, {}),
-    option('active', '--active', boolean, {
-      default: false,
-      description: 'Return to active instead.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'manager show',
-    'Read one Manager record or selected parts, including the settled boolean. Settled Managers are finished destinations. Choose an active Manager for new work. An absent settled field does not establish active state. Parts include goal, recap, and page. Read manager workspace ID to identify the visible document before a page edit.',
-    [
-      argument('item_id', '<ITEM_ID>', text, {}),
-      argument('part_names', '[PART_NAMES]', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command(
-    'manager workspace',
-    "Read one Manager's purpose, recap, held goals, artifacts, and child Tickets. Identify the visible page and its exact read and edit commands. Exactly one held goal supplies the page instead of the Manager document.",
-    [
-      argument('item_id', '<ITEM_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command(
-    'measure',
-    'Define measures and read their dated values. See measure schema for create input.',
-  );
-  command(
-    'measure create',
-    'Read JSON from stdin. See measure schema --json for the complete create contract.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure delete', 'Delete a definition when canonical dependency checks permit it.', [
-    argument('measure_id', '<MEASURE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('measure edit', 'Read changes and expected_revision as JSON from stdin.', [
-    argument('measure_id', '<MEASURE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('measure list', 'List a bounded page of definitions.', [
-    option('project_id', '--project-id <TEXT>', text, {}),
-    option('source_id', '--source-id <TEXT>', text, {}),
-    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
-    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('measure manual-state', "Read a manual measure's current or selected date state.", [
-    argument('measure_id', '<MEASURE_ID>', text, {}),
-    option('selected_date', '--date <TEXT>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure manual-write',
-    'Read a manual replace or increment request as JSON from stdin.',
-    [
-      argument('measure_id', '<MEASURE_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure read', 'Read {measure_ids, first_date, last_date, limit?} JSON from stdin.', [
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure schema',
-    'Show create request schema, named examples and semantic notes; no server needed.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure show', 'Show one definition.', [
-    argument('measure_id', '<MEASURE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure-source',
-    'Configure sources and runs. Discover contracts with schema and runtime --json.',
-  );
-  command(
-    'measure-source create',
-    'Read JSON from stdin. Discover fields with measure-source schema create --json.\n\nAfter creating a source, read measure-source runtime --json before writing its script.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure-source delete', 'Delete a source when canonical dependency checks permit it.', [
-    argument('source_id', '<SOURCE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('measure-source list', 'List a bounded page of sources and their collection health.', [
-    option('project_id', '--project-id <TEXT>', text, {}),
-    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
-    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure-source request-run',
-    'Enqueue JSON from stdin; see measure-source schema run --json for fields.\n\nRead measure-source runtime --json for candidates, collection and script behavior.',
-    [
-      argument('source_id', '<SOURCE_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'measure-source run-show',
-    'Show an explicit run ID, safe failure details, and test candidates.',
-    [
-      argument('run_id', '<RUN_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure-source runs', 'List a bounded page of runs for one source.', [
-    argument('source_id', '<SOURCE_ID>', text, {}),
-    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
-    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure-source runtime',
-    'Show script helpers, context and an executable example; no server or stdin needed.\n\nRequest envelopes are in measure-source schema script|run --json.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'measure-source schema',
-    'Show request contracts offline. See runtime --json for script execution helpers.',
-    [
-      argument('operation', '[OPERATION]', choice(['create', 'script', 'run']), {
-        default: 'create',
-      }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'measure-source set-responsible',
-    'Read {expected_responsibility_revision, responsible} JSON from stdin.',
-    [
-      argument('source_id', '<SOURCE_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'measure-source set-schedule',
-    'Read {expected_revision, enabled, local_time} JSON from stdin.',
-    [
-      argument('source_id', '<SOURCE_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('measure-source show', 'Show configuration and script revisions.', [
-    argument('source_id', '<SOURCE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('measure-source status', 'Show collection health, its failure, and current activity.', [
-    argument('source_id', '<SOURCE_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command(
-    'measure-source submit-script',
-    'Save JSON from stdin; see measure-source schema script --json for fields.\n\nRead measure-source runtime --json for Python helpers and dated outputs first.',
-    [
-      argument('source_id', '<SOURCE_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'page',
-    "Read and edit the page documents that Managers and Chief can change.\n\nSelect --manager ID or --chief. For a sole held goal's visible document,\nuse goal show|edit. Start with manager workspace ID to find the visible source.",
-  );
-  command(
-    'page edit',
-    'Read {page: DOCUMENT} from stdin. See page schema before a whole-document edit.',
-    [
-      option('manager_id', '--manager <TEXT>', text, {
-        description: "Edit this Manager's own page document.",
-      }),
-      option('chief', '--chief', boolean, {
-        default: false,
-        description: 'Edit the Chief page document.',
-      }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command(
-    'page schema',
-    'Show the page edit envelope, shared document schema, examples, and notes.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print the canonical JSON response.',
-      }),
-    ],
-  );
-  command('page show', 'Read the saved holder document and its page_revision.', [
-    option('manager_id', '--manager <TEXT>', text, {
-      description: "Read this Manager's own page document.",
-    }),
-    option('chief', '--chief', boolean, {
-      default: false,
-      description: 'Read the Chief page document.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print the canonical JSON response.',
-    }),
-  ]);
-  command('preview', "Prepare, publish, inspect, or stop your Ticket's application preview.");
-  command('preview prepare', 'Reserve a generation prefix before starting your application.', [
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('preview register', 'Verify a loopback listener and return its application link.', [
-    option('port', '--port <INTEGER>', integer(1024, 65535), { required: true }),
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('preview show', 'Show the current generation and link.', [
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('preview stop', 'End this generation and close its active requests.', [
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('project', 'List, inspect, create, and update projects.');
-  command('project create', 'Create one Project.', [
-    option('name', '--name <TEXT>', text, { description: 'Project display name.', required: true }),
-    option('summary', '--summary <TEXT>', text, { description: 'Optional project summary text.' }),
-    option('folder_path', '--folder-path <TEXT>', text, {
-      description: 'Optional absolute Project folder path.',
-    }),
-    option('repository_url', '--repository-url <TEXT>', text, {
-      description: 'Optional Git repository URL for Ticket checkouts.',
-    }),
-    option('default_branch', '--default-branch <TEXT>', text, {
-      description: 'Optional default Git branch for Ticket checkouts.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('project list', 'List Projects as bounded summaries.', [
-    option('limit', '--limit <INTEGER>', integer(1), { default: 30 }),
-    option('offset', '--offset <INTEGER>', integer(0), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('project set', 'Change one Project field.', [
-    argument('project_id', '<PROJECT_ID>', text, {}),
-    argument(
-      'field',
-      '<FIELD>',
-      choice(['default-branch', 'folder-path', 'name', 'repository-url', 'summary']),
-      {},
-    ),
-    option('value', '--value <TEXT>', text, { description: 'Set the field to this value.' }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Read field text from this file, or - for stdin.',
-    }),
-    option('clear', '--clear', boolean, {
-      default: false,
-      description: 'Set the field to empty text.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('project show', 'Read one Project record or selected parts.', [
-    argument('project_id', '<PROJECT_ID>', text, {}),
-    argument('part_names', '[PART_NAMES]', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'restart',
-    'Ask the foreground Panels supervisor to replace its application child.',
-    [],
-    true,
-  );
-  command(
-    'send-message',
-    'Send one message to one existing Panels conversation.\n\nMessages support Markdown tables and inline charts. Put chart JSON in a closed panels-chart fence. Use --body-file to preserve the fence and newlines. Charts use inline snapshot numbers, not live measure or dataset bindings.\n\n\b\n```panels-chart\n{"kind":"bar","series":[{"name":"PRs","points":[{"label":"Week 1","value":4}]}]}\n```\n\nUse kind bar or line. Add more named series for comparisons. Optional fields: title, unit, format (prefix, suffix, decimals), and stacked for bars. Values accept fractions and range from -9007199254740991 to 9007199254740991. Decimals must be an integer from 0 to 20. Point labels must be unique within each series. A null point value marks missing data. Invalid, unsupported, or incomplete specs stay visible as code.',
-    [
-      option('owner', '--owner', boolean, { default: false, description: 'Send to Khushal.' }),
-      option('chief', '--chief', boolean, {
-        default: false,
-        description: 'Send to the Chief of Staff.',
-      }),
-      option('ticket_id', '--ticket <TEXT>', text, { description: 'Send to a Ticket worker.' }),
-      option('manager_id', '--manager <TEXT>', text, { description: 'Send to a Manager.' }),
-      option('mode', '--mode <CHOICE>', choice(['queue', 'steer', 'send_now']), {
-        default: 'steer',
-        description: 'Steer into the running turn, queue behind it, or interrupt it and send now.',
-      }),
-      option('message', '--message <TEXT>', text, {
-        description: 'Message text. Addressed agent turns must reply through Send Message.',
-      }),
-      option('body_file', '--body-file <TEXT>', text, {
-        description: 'Read message text from this file, or -.',
-      }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('serve', 'Start the web server and background planner runtime.', [], true);
-  command(
-    'server-event-loop-tasks',
-    'List what the running server waits on: every asyncio task on its event loop.\n\nEach task shows its name, coroutine, the line it is awaiting, and its age, oldest\nfirst. Reads only: no task is cancelled, woken, or changed.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-    true,
-  );
-  command('skill', 'Inspect and edit the managed skills.', [], true);
-  command('skill apply', 'Atomically apply a reviewed skill manifest.', [
-    option('input_json', '--input-json <TEXT>', text, {
-      default: '-',
-      description: 'Exact manifest file, or - for stdin.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'skill check',
-    'Report every skill row naming a command, Stage or skill this build lacks.',
-    [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command(
-    'skill delete',
-    'Delete a skill and its whole folder. Refuses a skill a Worker type uses.',
-    [
-      argument('name', '<NAME>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('skill edit', 'Edit a skill. Optional Markdown body on redirected stdin.', [
-    argument('name', '<NAME>', text, {}),
-    option('description', '--description <TEXT>', text, {
-      description: 'The one-line description in the frontmatter.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('skill list', 'List the managed skill names.', [
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('skill show', "Print a skill's Markdown body, or its full record as JSON.", [
-    argument('name', '<NAME>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'skill write-file',
-    "Write a file at PATH inside a skill's folder. File text on redirected stdin.\n\nThe skill's own SKILL.md is not writable here; use `panels skill edit`.",
-    [
-      argument('name', '<NAME>', text, {}),
-      argument('path', '<PATH>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('stalls', 'Alarms on stalled Panels work.', [], true);
-  command(
-    'stalls watchdog',
-    'Alarm once on each open stall finding and on a stale checker heartbeat.\n\nReads the database read-only. Push settings come from the live configuration\n(PLAN_CONFIG_PATH and the PLAN_APNS_* environment); the Chief message goes to the\nlocal server on the configured port.',
-    [
-      option('db_path', '--db <FILE>', readable_path('file', true), { required: true }),
-      option('state_dir', '--state-dir <DIRECTORY>', readable_path('directory', false), {
+      option('database_path', '--database-path <PATH>', readable_path('any', false), {
         required: true,
       }),
     ],
   );
-  command('machine', 'Read named execution destinations.');
-  command('machine list', 'List stable destination identities and their current availability.', [
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('machine move-work', 'Move work to a machine with a fresh conversation. Owner only.', [
-    argument('machine_id', '<MACHINE_ID>', text, {}),
-    option('ticket_id', '--ticket <TEXT>', text, {}),
-    option('manager_id', '--manager <TEXT>', text, {}),
-    option('chief', '--chief', boolean, { default: false }),
-    option('everything', '--everything', boolean, { default: false }),
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
-  command('machine register', 'Register an extra machine and print its credential once.', [
-    argument('name', '<NAME>', text, {}),
-    option('as_json', '--json', boolean, { default: false }),
+
+  group('machine', 'Read and register named execution destinations.', 'data');
+  command('machine list', 'List destination machines and whether each is available.', [
+    json_output(),
   ]);
   command(
+    'machine move-work',
+    'Move work to a machine with a fresh conversation. Owner only.',
+    [
+      argument('machine_id', '<MACHINE_ID>', text, {}),
+      option('ticket_id', '--ticket <TEXT>', text, {}),
+      option('manager_id', '--manager <TEXT>', text, {}),
+      option('chief', '--chief', boolean, { default: false }),
+      option('everything', '--everything', boolean, { default: false }),
+      json_output(),
+    ],
+    { audience: 'host' },
+  );
+  command(
+    'machine register',
+    'Register an extra machine and print its credential once.',
+    [argument('name', '<NAME>', text, {}), json_output()],
+    { audience: 'host' },
+  );
+  command(
     'machine join-command',
-    "Register a machine and print its private join command. With --server-machine, issue the home identity to the machine code on the server's own machine instead.",
+    "Register a machine, or the server's own machine code with --server-machine, and print its private join command.",
     [
       argument('name', '[NAME]', text, {}),
       option('home_url', '--home <TEXT>', text, { required: true }),
@@ -1179,366 +425,599 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
           "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. This replaces the earlier home credential, so machine code that holds it is cut off until it gets the new one.",
       }),
     ],
+    { audience: 'host' },
   );
   command(
     'machine replace-credential',
-    'Revoke the old credential and print its replacement once.',
-    [
-      argument('machine_id', '<MACHINE_ID>', text, {}),
-      option('as_json', '--json', boolean, { default: false }),
-    ],
+    'Revoke the credential of a machine and print its replacement once.',
+    [argument('machine_id', '<MACHINE_ID>', text, {}), json_output()],
+    { audience: 'host' },
   );
-  command('ticket', 'Create, inspect, organize, and approve tickets.');
-  command(
-    'ticket assign',
-    'Assign one Worker to an explicit Manager.\n\nChoose an active Manager for new work. Settled Managers are finished\ndestinations. Read the settled boolean first. An absent settled field does not\nestablish active state.',
-    [
-      argument('ticket_id', '<TICKET_ID>', text, {}),
-      option('chief', '--chief', boolean, { default: false, description: 'Assign to Chief.' }),
-      option('item_id', '--manager <TEXT>', text, { description: 'Ordinary manager id.' }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('ticket backlog', "Defer automatic worker steps while preserving the Ticket's work.", [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+
+  group('manager', 'Read and change Managers.', 'supervisor');
+  group('manager artifact', "Read and write a Manager's own artifacts.", 'supervisor');
+  command('manager artifact delete', 'Delete one Manager artifact.', [
+    MANAGER_ID(),
+    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
+    json_output(),
   ]);
-  command('ticket block', 'Add one blocking Ticket relationship.', [
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('blocker_id', '--by <TEXT>', text, {
-      description: 'Blocking ticket id.',
-      required: true,
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+  command('manager artifact list', 'List the openable artifact paths of a Manager.', [
+    MANAGER_ID(),
+    json_output(),
   ]);
-  command('ticket complete', 'Complete one user-owned Stage directly.', [
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    argument('field', '<FIELD>', text, {}),
-    option('value', '--value <TEXT>', text, { description: 'Complete the gate with this value.' }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Read the value from this file, or - for stdin.',
+  command('manager artifact read', 'Print one Manager artifact as exact text.', [
+    MANAGER_ID(),
+    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
+    json_output(),
+  ]);
+  command('manager artifact write', 'Write one Manager artifact.', [
+    MANAGER_ID(),
+    argument('artifact_path', '<ARTIFACT_PATH>', text, {}),
+    ...text_input(),
+    json_output(),
+  ]);
+  command('manager create', 'Create one Manager.', [
+    option('title', '--title <TEXT>', text, { description: 'Manager title.', required: true }),
+    option('project', '--project <TEXT>', text, { description: 'Project name.' }),
+    option('project_id', '--project-id <TEXT>', text, { description: 'Project id.' }),
+    option('goal_file', '--goal-file <FILE>', readable_file, {
+      description: 'Read the Manager purpose from this file, or - for stdin.',
     }),
-    option('as_json', '--json', boolean, {
+    json_output(),
+  ]);
+  command('manager delete', 'Delete one empty Manager permanently.', [
+    MANAGER_ID(),
+    option('yes', '--yes', boolean, {
       default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      description: 'Confirm the permanent deletion.',
     }),
+    json_output(),
   ]);
   command(
-    'ticket create',
-    'Create one Ticket from one JSON object. Choose an active Manager for new work. Settled Managers are finished destinations. Read the settled boolean first. An absent settled field does not establish active state.',
+    'manager list',
+    'List active Managers and the needs of their Tickets.',
     [
-      option('input_json', '--input-json <TEXT>', text, {
-        description: 'Read one Ticket create object from this file, or - for standard input.',
-        required: true,
-      }),
-      option('machine_id', '--machine-id <TEXT>', text, {
-        description: 'Destination identity from panels machine list. Defaults to the home.',
-      }),
-      option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {
-        description: 'Legacy alias for the original home or Mac.',
-      }),
-      option('as_json', '--json', boolean, {
+      option('search', '--search <TEXT>', text, { description: 'Find a Manager by title.' }),
+      option('settled', '--settled', boolean, {
         default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+        description: 'Show settled Managers only.',
       }),
-    ],
-  );
-  command('ticket delete', 'Permanently delete one Ticket after explicit confirmation.', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('force', '--force', boolean, {
-      default: false,
-      description: 'Delete even a ticket that still looks running, for a stuck ticket status.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('ticket edit', 'Apply one or more Ticket field edits from one JSON object.', [
-    argument('ticket_id', '[TICKET_ID]', text, {}),
-    option('input_json', '--input-json <TEXT>', text, {
-      description: 'Read one Ticket edit object from this file, or - for standard input.',
-      required: true,
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command(
-    'ticket employee-configuration',
-    "Set what this Ticket's worker launches on: backend, model, reasoning effort.\n\nAll three go together because the door takes them together — a model id belongs to the\nbackend that named it, so there is no such thing as changing one of them on its own.",
-    [
-      argument('ticket_id', '<TICKET_ID>', text, {}),
-      option('backend', '--backend <TEXT>', text, {
-        description: 'Registered employee backend.',
-        required: true,
-      }),
-      option('model', '--model <TEXT>', text, {
-        description: "Model that backend runs this Ticket's worker on.",
-        required: true,
-      }),
-      option('reasoning_effort', '--reasoning-effort <TEXT>', text, {
-        description: 'Reasoning effort for that model; leave it out for a model that takes none.',
-      }),
-      option('as_json', '--json', boolean, {
+      option('all', '--all', boolean, {
         default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+        description: 'Show active and settled Managers.',
       }),
+      option('project', '--project <TEXT>', text, { description: 'Only this project name.' }),
+      option('project_id', '--project-id <TEXT>', text, { description: 'Only this project id.' }),
+      ...page_inputs(),
+      json_output(),
     ],
-    true,
+    { audience: 'everyone' },
   );
-  command('ticket history', 'Read the current Worker conversation for one Ticket.', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('limit', '--limit <INTEGER>', integer(1, 100), { default: 30 }),
-    option('before', '--before <INTEGER>', integer(), {
-      description: 'Read the page before this sequence.',
-    }),
-    option('after', '--after <INTEGER>', integer(), {
-      description: 'Read forwards from this sequence instead of back from the end.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+  command('manager request-recap', 'Ask a Manager below you for a fresh recap.', [
+    MANAGER_ID(),
+    json_output(),
   ]);
-  command('ticket list', 'List Tickets with bounded filters.', [
+  command('manager set', 'Change one Manager field. The goal field is its purpose.', [
+    MANAGER_ID(),
+    argument('field', '<FIELD>', choice(['goal', 'project', 'project-id', 'recap', 'title']), {}),
+    ...text_input('value'),
+    option('clear', '--clear', boolean, { default: false, description: 'Clear a nullable field.' }),
+    json_output(),
+  ]);
+  command('manager settle', 'Mark a Manager settled, or active again with --active.', [
+    MANAGER_ID(),
     option('active', '--active', boolean, {
       default: false,
-      description: 'Only unfinished, non-backlogged Tickets.',
+      description: 'Return the Manager to active.',
     }),
-    option('is_backlogged', '--backlogged', boolean, {
-      description: 'Filter explicit Ticket deferral.',
-    }),
-    option('is_backlogged', '--not-backlogged', boolean, {
-      inverse: true,
-      description: 'Filter explicit Ticket deferral.',
-    }),
-    option('worker_type', '--worker-type <TEXT>', text, {
-      description: 'Filter Worker type. Repeat for more.',
-      repeat: true,
-    }),
-    option('stage', '--stage <TEXT>', text, {
-      description: 'Include this Stage. Repeat for more.',
-      repeat: true,
-    }),
-    option('exclude_stage', '--exclude-stage <TEXT>', text, {
-      description: 'Exclude this Stage. Repeat for more.',
-      repeat: true,
-    }),
-    option('ticket_status', '--ticket-status <TEXT>', text, {
-      description: 'Include this ticket status. Repeat for more.',
-      repeat: true,
-    }),
-    option('exclude_ticket_status', '--exclude-ticket-status <TEXT>', text, {
-      description: 'Exclude this ticket status. Repeat for more.',
-      repeat: true,
-    }),
-    option('include_terminal', '--include-terminal', boolean, {
-      default: false,
-      description: 'Include done Tickets.',
-    }),
-    option('search', '--search <TEXT>', text, {
-      description: 'Case-insensitive Ticket text search.',
-    }),
-    option('project', '--project <TEXT>', text, { description: 'Only show project name.' }),
-    option('project_id', '--project-id <TEXT>', text, { description: 'Only show project id.' }),
-    option('manager', '--manager <TEXT>', text, { description: 'Only show tickets in this item.' }),
-    option('limit', '--limit <INTEGER>', integer(1), { default: 30 }),
-    option('offset', '--offset <INTEGER>', integer(0), { default: 0 }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('ticket proposal', 'Submit, accept, or revise the current Ticket proposal.', [
-    argument('proposal_args', '[PROPOSAL_ARGS...]', text, {}),
-    option('ceiling', '--ceiling <TEXT>', text, {
-      description: 'Next ceiling for an accepted proposal.',
-    }),
-    option('holder', '--holder <TEXT>', text, {
-      description: 'Next ceiling holder for an accepted proposal.',
-    }),
-    option('edit_file', '--edit-file <TEXT>', text, {
-      description: 'Edited accepted body, or - for stdin.',
-    }),
-    option('kickoff_title', '--kickoff-title <TEXT>', text, {
-      description: 'Edited Kickoff title.',
-    }),
-    option('kickoff_note_file', '--kickoff-note-file <TEXT>', text, {
-      description: 'Edited Kickoff note, or - for stdin.',
-    }),
-    option('message', '--message <TEXT>', text, { description: 'Revision guidance for revise.' }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Revision guidance file for revise, or - for stdin.',
-    }),
-    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
-      description:
-        'The revision of the proposal you inspected. Omission pins the command-time read.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('ticket request-recap', 'Ask a Ticket below you for a fresh recap.', [
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+    json_output(),
   ]);
   command(
-    'ticket recheck-worker-cleanup',
-    'Recheck exact Worker cleanup without starting work or discarding evidence.',
+    'manager show',
+    'Read one Manager, or your own, with its visible page and Ticket needs.',
     [
-      argument('ticket_id', '<TICKET_ID>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      argument('manager_id', '[MANAGER_ID]', text, {}),
+      argument('part_names', '[PART_NAMES...]', text, {
+        description: 'Parts to print: goal, recap. Separate them by spaces or commas.',
       }),
+      json_output(),
     ],
+    { audience: 'everyone' },
   );
-  command('ticket restart-worker', 'Restart one dead Worker through the existing recovery route.', [
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('backend', '--backend <TEXT>', text, {
-      description: 'Registered employee backend to restart on.',
-    }),
-    option('model', '--model <TEXT>', text, {
-      description: "Model that backend runs this Ticket's worker on.",
-    }),
-    option('reasoning_effort', '--reasoning-effort <TEXT>', text, {
-      description: 'Reasoning effort for that model; leave it out for a model that takes none.',
-    }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+
+  group('measure', 'Define measures and read their dated values.', 'data');
+  command('measure create', 'Create a measure from a JSON definition.', [
+    json_input(),
+    json_output(),
   ]);
-  command('ticket resume', "Resume automatic steps under the Ticket's existing gates.", [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+  command('measure delete', 'Delete a measure that nothing depends on.', [
+    argument('measure_id', '<MEASURE_ID>', text, {}),
+    json_output(),
   ]);
-  command('ticket show', "Read the current Worker's Ticket or one named Ticket.", [
-    argument('ticket_id', '[TICKET_ID]', text, {}),
-    argument('part_names', '[PART_NAMES]', text, {}),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+  command('measure edit', 'Change a measure from a JSON object with expected_revision.', [
+    argument('measure_id', '<MEASURE_ID>', text, {}),
+    json_input(),
+    json_output(),
   ]);
-  command('ticket unblock', 'Remove one blocking Ticket relationship.', [
-    argument('ticket_id', '<TICKET_ID>', text, {}),
-    option('blocker_id', '--by <TEXT>', text, {
-      description: 'Blocking ticket id.',
+  command('measure list', 'List measure definitions.', [
+    option('project_id', '--project-id <TEXT>', text, {}),
+    option('source_id', '--source-id <TEXT>', text, {}),
+    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
+    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
+    json_output(),
+  ]);
+  command('measure manual-state', "Read a manual measure's state for today or one date.", [
+    argument('measure_id', '<MEASURE_ID>', text, {}),
+    option('selected_date', '--date <TEXT>', text, {}),
+    json_output(),
+  ]);
+  command('measure manual-write', 'Replace or increment a manual value from a JSON request.', [
+    argument('measure_id', '<MEASURE_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+  command(
+    'measure read',
+    'Read dated values from a JSON request {measure_ids, first_date, last_date, limit?}.',
+    [json_input(), json_output()],
+  );
+  command('measure schema', 'Show the measure create schema, examples, and notes.', [
+    json_output(),
+  ]);
+  command('measure show', 'Show one measure definition.', [
+    argument('measure_id', '<MEASURE_ID>', text, {}),
+    json_output(),
+  ]);
+
+  group('measure-source', 'Configure measure sources and their runs.', 'data');
+  command('measure-source create', 'Create a measure source from a JSON definition.', [
+    json_input(),
+    json_output(),
+  ]);
+  command('measure-source delete', 'Delete a measure source that nothing depends on.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_output(),
+  ]);
+  command('measure-source list', 'List measure sources and their collection health.', [
+    option('project_id', '--project-id <TEXT>', text, {}),
+    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
+    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
+    json_output(),
+  ]);
+  command('measure-source request-run', 'Queue a run of a measure source from a JSON request.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+  command('measure-source run-show', 'Show one run, its failure details, and test candidates.', [
+    argument('run_id', '<RUN_ID>', text, {}),
+    json_output(),
+  ]);
+  command('measure-source runs', 'List the runs of one measure source.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    option('limit', '--limit <INTEGER>', integer(), { default: 30 }),
+    option('offset', '--offset <INTEGER>', integer(), { default: 0 }),
+    json_output(),
+  ]);
+  command(
+    'measure-source runtime',
+    'Show the script helpers, context, and an executable example.',
+    [json_output()],
+  );
+  command('measure-source schema', 'Show a measure-source request schema.', [
+    argument('operation', '[OPERATION]', choice(['create', 'script', 'run']), {
+      default: 'create',
+    }),
+    json_output(),
+  ]);
+  command(
+    'measure-source set-responsible',
+    'Set who answers for a measure source from a JSON object.',
+    [argument('source_id', '<SOURCE_ID>', text, {}), json_input(), json_output()],
+  );
+  command('measure-source set-schedule', 'Set the daily schedule of a measure source from JSON.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+  command('measure-source show', 'Show the configuration and script revisions of a source.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_output(),
+  ]);
+  command('measure-source status', 'Show the collection health and current activity of a source.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_output(),
+  ]);
+  command('measure-source submit-script', 'Save a new script for a measure source from JSON.', [
+    argument('source_id', '<SOURCE_ID>', text, {}),
+    json_input(),
+    json_output(),
+  ]);
+
+  group('page', 'Read and edit the page documents of Managers and the Chief.', 'data');
+  command('page edit', 'Replace a Manager or Chief page from a JSON object {page}.', [
+    option('manager_id', '--manager <MANAGER_ID>', text, {
+      description: "Edit this Manager's own page document.",
+    }),
+    option('chief', '--chief', boolean, {
+      default: false,
+      description: 'Edit the Chief page document.',
+    }),
+    json_input(),
+    json_output(),
+  ]);
+  command('page schema', 'Show the page edit envelope, document schema, and examples.', [
+    json_output(),
+  ]);
+  command('page show', 'Read a saved Manager or Chief page and its page_revision.', [
+    option('manager_id', '--manager <MANAGER_ID>', text, {
+      description: "Read this Manager's own page document.",
+    }),
+    option('chief', '--chief', boolean, {
+      default: false,
+      description: 'Read the Chief page document.',
+    }),
+    json_output(),
+  ]);
+
+  group('preview', "Publish your Ticket's application preview.", 'worker');
+  command('preview prepare', 'Reserve a preview prefix before starting your application.', [
+    json_output(),
+  ]);
+  command('preview register', 'Check a loopback listener and return its preview link.', [
+    option('port', '--port <INTEGER>', integer(1024, 65535), { required: true }),
+    json_output(),
+  ]);
+  command('preview show', 'Show the current preview and its link.', [json_output()]);
+  command('preview stop', 'End the preview and close its open requests.', [json_output()]);
+
+  group('project', 'List, read, create, and change projects.', 'data');
+  command('project create', 'Create one project.', [
+    option('name', '--name <TEXT>', text, { description: 'Project display name.', required: true }),
+    option('summary', '--summary <TEXT>', text, { description: 'Project summary text.' }),
+    option('folder_path', '--folder-path <TEXT>', text, {
+      description: 'Absolute project folder path.',
+    }),
+    option('repository_url', '--repository-url <TEXT>', text, {
+      description: 'Git repository URL for Ticket checkouts.',
+    }),
+    option('default_branch', '--default-branch <TEXT>', text, {
+      description: 'Default Git branch for Ticket checkouts.',
+    }),
+    json_output(),
+  ]);
+  command('project list', 'List projects.', [...page_inputs(), json_output()]);
+  command('project set', 'Change one project field.', [
+    argument('project_id', '<PROJECT_ID>', text, {}),
+    argument(
+      'field',
+      '<FIELD>',
+      choice(['default-branch', 'folder-path', 'name', 'repository-url', 'summary']),
+      {},
+    ),
+    ...text_input('value'),
+    option('clear', '--clear', boolean, { default: false, description: 'Clear the field.' }),
+    json_output(),
+  ]);
+  command('project show', 'Read one project or its summary.', [
+    argument('project_id', '<PROJECT_ID>', text, {}),
+    argument('part_names', '[PART_NAMES...]', text, {
+      description: 'Parts to print: summary.',
+    }),
+    json_output(),
+  ]);
+
+  command('recap', 'Write your own recap: your Ticket, your Manager, or the Chief.', text_input(), {
+    audience: 'everyone',
+  });
+  command(
+    'review',
+    'Show what waits on Khushal, oldest first, as Review shows it.',
+    [json_output()],
+    {
+      audience: 'supervisor',
+    },
+  );
+
+  command('restart', 'Ask the foreground Panels supervisor to replace its application.', [], {
+    audience: 'host',
+  });
+  command(
+    'send-message',
+    'Send one message to Khushal, the Chief, a Ticket, or a Manager.',
+    [
+      option('owner', '--owner', boolean, { default: false, description: 'Send to Khushal.' }),
+      option('chief', '--chief', boolean, {
+        default: false,
+        description: 'Send to the Chief of Staff.',
+      }),
+      option('ticket_id', '--ticket <TICKET_ID>', text, {
+        description: "Send to a Ticket's Worker.",
+      }),
+      option('manager_id', '--manager <MANAGER_ID>', text, { description: 'Send to a Manager.' }),
+      option('mode', '--mode <CHOICE>', choice(['queue', 'steer', 'send_now']), {
+        default: 'steer',
+        description: 'Steer into the running turn, queue behind it, or interrupt it.',
+      }),
+      ...text_input(),
+      json_output(),
+    ],
+    { audience: 'everyone' },
+  );
+  command('serve', 'Start the Panels web server and its background work.', [], {
+    audience: 'host',
+  });
+
+  group('skill', 'Read and edit the managed skills.', 'config');
+  command('skill apply', 'Apply a reviewed skill manifest in one step.', [
+    json_input(),
+    json_output(),
+  ]);
+  command(
+    'skill check',
+    'Report every skill that names a command, Stage, or skill this build lacks.',
+    [json_output()],
+  );
+  command('skill delete', 'Delete a skill and its folder, unless a Worker type uses it.', [
+    argument('name', '<NAME>', text, {}),
+    json_output(),
+  ]);
+  command('skill edit', "Change a skill's description or its Markdown body.", [
+    argument('name', '<NAME>', text, {}),
+    option('description', '--description <TEXT>', text, {
+      description: 'The one-line description in the frontmatter.',
+    }),
+    ...text_input(),
+    json_output(),
+  ]);
+  command('skill list', 'List the managed skill names.', [json_output()]);
+  command('skill show', 'Print the Markdown body of a skill.', [
+    argument('name', '<NAME>', text, {}),
+    json_output(),
+  ]);
+  command('skill write-file', "Write a supporting file inside a skill's folder.", [
+    argument('name', '<NAME>', text, {}),
+    argument('path', '<PATH>', text, {}),
+    ...text_input(),
+    json_output(),
+  ]);
+
+  group('stalls', 'Alarm on stalled Panels work.', 'host');
+  command('stalls watchdog', 'Alarm once on each open stall and on a stale checker heartbeat.', [
+    option('db_path', '--db <FILE>', readable_path('file', true), { required: true }),
+    option('state_dir', '--state-dir <DIRECTORY>', readable_path('directory', false), {
       required: true,
     }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
   ]);
-  command('worker', 'Worker-only ticket and item writes.', [], true);
-  command(
-    'worker my-ticket',
-    "Show the worker's Ticket manifest or selected comma-separated PART_NAMES.",
-    [
-      argument('part_names', '[PART_NAMES]', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('worker propose', '', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Removed: pipe proposal text on stdin instead.',
+
+  group('ticket', 'Read, decide, create, and steer Tickets.', 'supervisor');
+  command('ticket approve', 'Approve the pending proposal of a Ticket and set its next ceiling.', [
+    TICKET_ID(),
+    option('ceiling', '--ceiling <STAGE>', text, {
+      description: 'The next ceiling. Not needed for the final approval.',
     }),
-    option('recap', '--recap <TEXT>', text, {
-      description: 'Removed: use `worker recap` instead.',
+    option('holder', '--holder <HOLDER>', text, {
+      description:
+        'Who holds the next ceiling: owner, chief, or a Manager id. Default: the caller.',
     }),
-    option('recap_file', '--recap-file <TEXT>', text, {
-      description: 'Removed: use `worker recap` instead.',
+    option('edit_file', '--edit-file <FILE>', readable_file, {
+      description: 'Approve this edited text instead, or - for stdin.',
     }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+    option('kickoff_title', '--kickoff-title <TEXT>', text, {
+      description: 'Retitle the Ticket while approving its brief.',
     }),
+    option('kickoff_note_file', '--kickoff-note-file <FILE>', readable_file, {
+      description: 'Approve the brief with this edited kickoff note, or - for stdin.',
+    }),
+    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
+      description: 'The proposal revision you read. Default: the revision read now.',
+    }),
+    json_output(),
   ]);
-  command('worker recap', '', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('body_file', '--body-file <TEXT>', text, {
-      description: 'Removed: pipe recap text on stdin instead.',
+  command('ticket assign', 'Move a Ticket to a Manager or to the Chief.', [
+    TICKET_ID(),
+    option('chief', '--chief', boolean, { default: false, description: 'Assign to the Chief.' }),
+    option('manager_id', '--manager <MANAGER_ID>', text, {
+      description: 'Assign to this active Manager.',
     }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
+    json_output(),
   ]);
-  command('worker-type', 'Inspect and declare the Worker types.', [], true);
-  command(
-    'worker-type delete',
-    'Remove a Worker type. Its Tickets keep their own workflow and skill.',
-    [
-      argument('worker_type', '<WORKER_TYPE>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
-    ],
-  );
-  command('worker-type list', '', [
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+  command('ticket backlog', 'Defer automatic Worker steps and keep the work.', [
+    TICKET_ID(),
+    json_output(),
+  ]);
+  command('ticket block', 'Make a Ticket wait for another Ticket.', [
+    TICKET_ID(),
+    option('blocker_id', '--by <TICKET_ID>', text, {
+      description: 'The Ticket it waits for.',
+      required: true,
     }),
+    json_output(),
+  ]);
+  command('ticket complete', 'Complete a Stage that Khushal owns with its value.', [
+    TICKET_ID(),
+    argument('field', '<FIELD>', text, {}),
+    ...text_input('value'),
+    json_output(),
+  ]);
+  command('ticket create', 'Create one Ticket from a JSON object.', [
+    json_input(),
+    option('machine_id', '--machine-id <MACHINE_ID>', text, {
+      description: 'Destination from panels machine list. Default: the home.',
+    }),
+    option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {
+      description: 'Legacy name for the original home or the Mac.',
+    }),
+    json_output(),
+  ]);
+  command('ticket delete', 'Delete one Ticket permanently.', [
+    TICKET_ID(),
+    option('force', '--force', boolean, {
+      default: false,
+      description: 'Delete a Ticket that still looks running.',
+    }),
+    json_output(),
+  ]);
+  command('ticket edit', 'Change Ticket fields from a JSON object.', [
+    argument('ticket_id', '[TICKET_ID]', text, { description: 'Default: your own Ticket.' }),
+    json_input(),
+    json_output(),
   ]);
   command(
-    'worker-type save',
-    'Declare a Worker type, or replace the one with this id. Record on stdin.',
+    'ticket history',
+    "Read the messages in a Ticket's Worker conversation.",
     [
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      argument('ticket_id', '[TICKET_ID]', text, {
+        envNames: ['PLAN_TICKET_ID'],
+        description: 'Default: your own Ticket.',
       }),
+      option('limit', '--limit <INTEGER>', integer(1, 100), { default: 30 }),
+      option('before', '--before <INTEGER>', integer(), {
+        description: 'Read the page before this sequence.',
+      }),
+      option('after', '--after <INTEGER>', integer(), {
+        description: 'Read forward from this sequence.',
+      }),
+      json_output(),
     ],
+    { audience: 'everyone' },
   );
   command(
-    'worker-type show',
-    "Print one Worker type's stored record, in the shape `save` takes back.",
+    'ticket list',
+    'List live Tickets and what each needs.',
     [
-      argument('worker_type', '<WORKER_TYPE>', text, {}),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      option('manager', '--manager <MANAGER_ID>', text, {
+        description: "Only this Manager's Tickets.",
       }),
+      option('chief', '--chief', boolean, {
+        default: false,
+        description: "Only the Chief's own Tickets.",
+      }),
+      option('needs', '--needs <NEED>', choice([...TICKET_NEEDS]), {
+        description: `Only Tickets with this need. Repeat for more: ${TICKET_NEEDS.join(', ')}.`,
+        repeat: true,
+      }),
+      option('backlog', '--backlog', boolean, {
+        default: false,
+        description: 'Show backlogged Tickets instead.',
+      }),
+      option('done', '--done', boolean, {
+        default: false,
+        description: 'Show done Tickets instead.',
+      }),
+      option('all', '--all', boolean, {
+        default: false,
+        description: 'Show live, backlogged, and done Tickets.',
+      }),
+      option('worker_type', '--worker-type <TEXT>', text, {
+        description: 'Only this Worker type. Repeat for more.',
+        repeat: true,
+      }),
+      option('stage', '--stage <STAGE>', text, {
+        description: 'Only this Stage. Repeat for more.',
+        repeat: true,
+      }),
+      option('exclude_stage', '--exclude-stage <STAGE>', text, {
+        description: 'Leave out this Stage. Repeat for more.',
+        repeat: true,
+      }),
+      option('search', '--search <TEXT>', text, { description: 'Case-insensitive text search.' }),
+      option('project', '--project <TEXT>', text, { description: 'Only this project name.' }),
+      option('project_id', '--project-id <TEXT>', text, { description: 'Only this project id.' }),
+      ...page_inputs(),
+      json_output(),
     ],
+    { audience: 'everyone' },
   );
+  command(
+    'ticket propose',
+    'File the proposal for the current Stage of your own Ticket.',
+    text_input().concat([json_output()]),
+    { audience: 'worker' },
+  );
+  command(
+    'ticket recheck-worker-cleanup',
+    'Recheck Worker cleanup without starting work or discarding evidence.',
+    [TICKET_ID(), json_output()],
+  );
+  command('ticket request-recap', 'Ask a Ticket below you for a fresh recap.', [
+    TICKET_ID(),
+    json_output(),
+  ]);
+  command('ticket restart-worker', 'Restart the Worker of a Ticket, optionally on another model.', [
+    TICKET_ID(),
+    option('backend', '--backend <BACKEND>', text, { description: 'Backend to restart on.' }),
+    option('model', '--model <MODEL>', text, { description: 'Model on that backend.' }),
+    option('reasoning_effort', '--reasoning-effort <TEXT>', text, {
+      description: 'Reasoning effort, for a model that takes one.',
+    }),
+    json_output(),
+  ]);
+  command('ticket resume', 'Resume automatic Worker steps under the existing gates.', [
+    TICKET_ID(),
+    json_output(),
+  ]);
+  command('ticket schema', 'Show the keys that ticket create and ticket edit accept.', [
+    argument('operation', '[OPERATION]', choice(['create', 'edit']), {
+      description: 'create or edit. Default: both.',
+    }),
+    json_output(),
+  ]);
+  command('ticket send-back', 'Send the pending proposal of a Ticket back with guidance.', [
+    TICKET_ID(),
+    ...text_input(),
+    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
+      description: 'The proposal revision you read. Default: the revision read now.',
+    }),
+    json_output(),
+  ]);
+  command(
+    'ticket show',
+    'Read a Ticket, or your own, as a header and its parts.',
+    [
+      argument('ticket_id', '[TICKET_ID]', text, {
+        description: 'A Ticket id (t_...). Default: your own Ticket.',
+      }),
+      argument('part_names', '[PART_NAMES...]', text, {
+        description: 'Parts to print. Separate them by spaces or commas.',
+      }),
+      json_output(),
+    ],
+    { audience: 'everyone' },
+  );
+  command('ticket unblock', 'Stop a Ticket waiting for another Ticket.', [
+    TICKET_ID(),
+    option('blocker_id', '--by <TICKET_ID>', text, {
+      description: 'The Ticket it waits for.',
+      required: true,
+    }),
+    json_output(),
+  ]);
+
+  group('worker-type', 'Read and declare the Worker types.', 'config');
+  command('worker-type delete', 'Remove a Worker type. Its Tickets keep their stages and skill.', [
+    argument('worker_type', '<WORKER_TYPE>', text, {}),
+    json_output(),
+  ]);
+  command('worker-type list', 'List the Worker types.', [json_output()]);
+  command('worker-type save', 'Declare or replace a Worker type from a JSON record.', [
+    json_input(),
+    json_output(),
+  ]);
+  command('worker-type show', 'Print one Worker type in the shape that save takes.', [
+    argument('worker_type', '<WORKER_TYPE>', text, {}),
+    json_output(),
+  ]);
   command(
     'worker-type skill',
-    "Edit this Worker type's skill. Optional Markdown body on redirected stdin.",
+    "Change the description or Markdown body of a Worker type's skill.",
     [
       argument('worker_type', '<WORKER_TYPE>', text, {}),
       option('description', '--description <TEXT>', text, {
         description: 'The one-line description in the frontmatter.',
       }),
-      option('as_json', '--json', boolean, {
-        default: false,
-        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-      }),
+      ...text_input(),
+      json_output(),
     ],
   );
   return root;

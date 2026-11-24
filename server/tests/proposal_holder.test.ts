@@ -7,7 +7,8 @@ import { admitCommand } from '../core/authority/intake.ts';
 import * as authority from '../core/authority/service.ts';
 import * as attention from '../notifications/attention.ts';
 import * as data from '../tickets/data/index.ts';
-import { review_view } from '../tickets/views.ts';
+import { eligibleForOwnerReview } from '../navigation/views/logic.ts';
+import { gating_field } from '../tickets/logic/machine.ts';
 import type { Ticket, ReviewTransferNotice } from '../tickets/contracts.ts';
 import type { Database, TransactionSql } from '../core/database/index.ts';
 import {
@@ -54,9 +55,23 @@ function under(db: Database, id: string): Ticket {
     11,
   );
 }
+// Review admits a proposal by the navigation rule. These cases feed it the stored Ticket facts.
 function review(db: Database): string[] {
   return db.read((sql) =>
-    (review_view(sql) as { items: { ticket_id: string }[] }).items.map((item) => item.ticket_id),
+    sql
+      .all<{ id: string }>('SELECT id FROM tickets ORDER BY id')
+      .map((row) => data.read_ticket(sql, row.id))
+      .filter((t) =>
+        eligibleForOwnerReview({
+          ticket_status: t.ticket_status,
+          is_backlogged: t.is_backlogged,
+          ceiling_holder: { kind: t.ceiling_holder.kind, id: t.ceiling_holder.id },
+          gating_field: gating_field(t.workflow, t.stage),
+          proposal_field: t.pending_proposal?.field ?? null,
+          proposal_created_at: t.pending_proposal?.created_at ?? null,
+        }),
+      )
+      .map((t) => t.id),
   );
 }
 function guidanceDigest(db: Database, id: string): string {
