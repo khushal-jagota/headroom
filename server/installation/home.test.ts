@@ -23,7 +23,7 @@ import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { install_home, check_home_port } from './home.ts';
-import { home_install_fixture as fixture } from './testing/home_fixture.ts';
+import { crash_restart_jobs, home_install_fixture as fixture } from './testing/home_fixture.ts';
 import type { HomeInstallDependencies, HomeServicePlan } from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
@@ -328,7 +328,8 @@ test('replacement root and changed service files retain their trees before any u
         ...darwin.deps,
         system: 'darwin',
         architecture: 'arm64',
-        service: async (request, host) => (plan = await create_darwin_home_service(request, host)),
+        service: async (request, host) =>
+          (plan = await create_darwin_home_service(request, host, true, crash_restart_jobs)),
         async command(argv) {
           if (argv[0] === '/usr/bin/plutil')
             return { code: 0, stdout: readFileSync(argv.at(-1)!, 'utf8'), stderr: '' };
@@ -366,6 +367,7 @@ test('replacement root and changed service files retain their trees before any u
     assert(existsSync(loaded));
     const path = loaded,
       bytes = readFileSync(path);
+    assert.deepEqual(JSON.parse(bytes.toString()).KeepAlive, { SuccessfulExit: false });
     const assert_owned = async (current: string) => {
       assert.equal(current, path);
       assert.deepEqual(readFileSync(current), bytes);

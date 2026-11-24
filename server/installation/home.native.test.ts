@@ -25,6 +25,7 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
+import { crash_restart_jobs } from './testing/home_fixture.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { HOME_COMMAND } from './configuration.ts';
@@ -273,21 +274,16 @@ test.skipIf(!admitted)(
           command,
           service: async (value, host) => {
             plan = await (system === 'darwin'
-              ? create_darwin_home_service(value, host)
+              ? create_darwin_home_service(
+                  value,
+                  host,
+                  true,
+                  fault === 'none' ? crash_restart_jobs : undefined,
+                )
               : create_linux_home_service(value, host));
             if (system === 'darwin') {
               const job = JSON.parse(plan.files[0]!.content);
               expect(job.EnvironmentVariables.PATH.split(':')[0]).toBe(join(account, '.local/bin'));
-              if (fault === 'none') {
-                // The native mini home restarts a crash but stays loaded without a PID after a
-                // clean exit. This holds the failed candidate in that state until rollback.
-                const [home, ...other] = plan.files;
-                job.KeepAlive = { SuccessfulExit: false };
-                plan = {
-                  ...plan,
-                  files: [{ ...home!, content: JSON.stringify(job) + '\n' }, ...other],
-                };
-              }
             }
             return plan;
           },

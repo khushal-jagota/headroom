@@ -5,12 +5,20 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AppManifest } from '../../environments/release/contracts.ts';
+import { darwin_home_jobs } from '../darwin.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import type {
   HomeInstallDependencies,
   HomeInstallSubmission,
   HomeServicePlan,
 } from '../contracts.ts';
+
+/** Hold a cleanly exited candidate registered without a PID until rollback boots it out. */
+export const crash_restart_jobs: typeof darwin_home_jobs = (request, ...bindings) => {
+  const jobs = darwin_home_jobs(request, ...bindings);
+  jobs[request.service]!.KeepAlive = { SuccessfulExit: false };
+  return jobs;
+};
 
 async function unused_port(): Promise<number> {
   const server = createServer();
