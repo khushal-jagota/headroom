@@ -61,7 +61,8 @@ An HTML page always tries the server first, as before: same origin, WebKit's own
 streaming, redirects and downloads. A launch or a return to the app, while the app is still
 connecting, is not offline. When the page finishes, the reader saves it and the images,
 styles and scripts that it loaded from its own Ticket or Manager, off the main thread. A
-file whose Content-Length is over the limit is not read. The copy opens only when the load
+file whose Content-Length is over the limit is not read, and a read with no such length
+stops once it passes the limit. The copy opens only when the load
 of the artifact's own page cannot reach the server, or at once while the app is
 reconnecting. A failed link inside the page never switches to the copy. The copy loads
 through the app's `panels-artifact` scheme, with one host for each server. That scheme
@@ -77,6 +78,9 @@ Known limits:
   list, are not saved.
 - Query strings are ignored, so the same file with different queries shares one copy.
 - A file that a page no longer loads stays in its copy until eviction.
+- On each return to following the server, a visible copy gives way to the server's page
+  before that page is known to load. On a half-open connection, the spinner then shows
+  until WebKit's load times out.
 
 All copies stay under 256 MiB, and one page's copy never takes more. The copy opened least
 recently leaves first, and a copy not opened for 30 days leaves. Copies are kept per server address. A Ticket's file list is a

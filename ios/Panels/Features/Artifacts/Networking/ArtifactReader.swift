@@ -132,16 +132,23 @@ extension APIClient {
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         // The headers arrive before the body, so a file too large to keep is never read.
         guard let (bytes, response) = try? await session.bytes(for: request), let http = response as? HTTPURLResponse else { return nil }
-        if http.statusCode == 200, http.expectedContentLength > ArtifactCopies.fileLimit {
+        /// Too large to keep: the copy no longer holds an older version of it.
+        func refuse() async -> Bool {
             bytes.task.cancel()
-            // The copy no longer holds an older version of it.
             if path == main { await copies.remove(server: server, id: target.id) }
             else { await copies.drop(server: server, id: target.id, path: path) }
             return false
         }
+        if http.statusCode == 200, http.expectedContentLength > ArtifactCopies.fileLimit { return await refuse() }
+        // A chunked or compressed body can outgrow its header, so the read stops at the limit.
         var data = Data()
-        data.reserveCapacity(max(0, Int(http.expectedContentLength)))
-        do { for try await byte in bytes { data.append(byte) } } catch { return nil }
+        data.reserveCapacity(min(ArtifactCopies.fileLimit, max(0, Int(http.expectedContentLength))))
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > ArtifactCopies.fileLimit { return await refuse() }
+            }
+        } catch { return nil }
         switch http.statusCode {
         case 304 where etag != nil: return false
         case 404:

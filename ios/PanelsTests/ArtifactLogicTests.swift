@@ -207,6 +207,15 @@ final class ArtifactLogicTests: XCTestCase {
         let saved = await ArtifactCopies.shared.data(server: server, id: target.id, path: shot.path)
         XCTAssertEqual(saved, Data("B".utf8))
 
+        // A reply with no Content-Length that grows past the limit: the read stops there,
+        // and the older version leaves the copy.
+        ArtifactFileProtocol.undeclaredSize = [shot.path: ArtifactCopies.fileLimit + 1]
+        let grown = await client.refreshPageCopy(target, files: [shot])
+        XCTAssertEqual(grown, false)
+        let grownCopy = await ArtifactCopies.shared.location(server: server, id: target.id, path: shot.path)
+        XCTAssertNil(grownCopy, "A file that outgrows the limit without a Content-Length is not kept")
+        ArtifactFileProtocol.undeclaredSize = [:]
+
         ArtifactFileProtocol.missing = [pagePath]
         _ = await client.refreshPageCopy(target, files: [shot])
         let deletedPage = await ArtifactCopies.shared.open(server: server, id: target.id)
@@ -222,7 +231,7 @@ final class ArtifactLogicTests: XCTestCase {
         catch { XCTAssertEqual((error as? APIError)?.status, 404) }
         let deletedNote = await client.savedArtifactDocument(note)
         XCTAssertNil(deletedNote, "The server's 404 removes the copy, so the viewer shows the server's answer")
-        ArtifactFileProtocol.missing = []; ArtifactFileProtocol.declaredLength = [:]
+        ArtifactFileProtocol.missing = []; ArtifactFileProtocol.declaredLength = [:]; ArtifactFileProtocol.undeclaredSize = [:]
     }
 
     /// Bounds: the copy opened least recently leaves first, the copy just saved stays, one
@@ -292,12 +301,15 @@ private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
     /// Paths that answer 404, and a Content-Length to declare in place of the real one.
     nonisolated(unsafe) static var missing: Set<String> = []
     nonisolated(unsafe) static var declaredLength: [String: Int] = [:]
+    /// Bodies of this many bytes, sent with no Content-Length, as a chunked reply would be.
+    nonisolated(unsafe) static var undeclaredSize: [String: Int] = [:]
     nonisolated(unsafe) static var conditionalReads = 0
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("artifact-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         if Self.failing.contains(request.url!.path) { client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost)); return }
-        let data = Data((Self.bodies[request.url!.path] ?? Self.body).utf8)
+        let data = Self.undeclaredSize[request.url!.path].map { Data(repeating: 7, count: $0) }
+            ?? Data((Self.bodies[request.url!.path] ?? Self.body).utf8)
         let etag = "\"\(data.hashValue)\""
         let conditional = request.value(forHTTPHeaderField: "If-None-Match")
         if conditional != nil { Self.conditionalReads += 1 }
@@ -305,6 +317,7 @@ private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
         let status = Self.missing.contains(path) ? 404 : conditional == etag ? 304 : 200
         var headers = ["ETag": etag]
         if let length = Self.declaredLength[path] { headers["Content-Length"] = String(length) }
+        else if Self.undeclaredSize[path] == nil { headers["Content-Length"] = String(data.count) }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!, cacheStoragePolicy: .notAllowed)
         if status == 200 { client?.urlProtocol(self, didLoad: data) }
         client?.urlProtocolDidFinishLoading(self)
