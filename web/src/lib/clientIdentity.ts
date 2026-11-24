@@ -1,4 +1,6 @@
 import type { ClientIdentity } from '../../../server/client_versions/contracts';
+import { REQUEST_LIMIT_MS } from './requestLimit/config';
+import { signalWithLimit } from './requestLimit/limit';
 
 const DEVICE_KEY = 'panels.client-device-id';
 let transientDeviceId: string | null = null;
@@ -34,8 +36,14 @@ export function clientIdentityHeaders(headers?: HeadersInit): Record<string, str
   return result;
 }
 
-/** Explicit Panels fetch boundary. External file links receive no device identity. */
-export function clientFetch(input: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Explicit Panels fetch boundary. External file links receive no device identity.
+ *
+ * Every request has a time limit. A request that names no limit gets the ordinary one.
+ * At the limit the request ends with a `RequestLimitError`.
+ */
+export function clientFetch(input: string, init: RequestInit = {}, limitMs = REQUEST_LIMIT_MS): Promise<Response> {
+  init = { ...init, signal: signalWithLimit(limitMs, init.signal) };
   const relative = /^\/(api|files)(\/|$)/.test(input);
   const sameServer = typeof location !== 'undefined' && (() => {
     try {

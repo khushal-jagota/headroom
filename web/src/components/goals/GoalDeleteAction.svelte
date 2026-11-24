@@ -1,6 +1,6 @@
 <script lang="ts">
  import type {GoalResponse} from '../../lib/goals/contracts';
- import {mutateJson} from '../../lib/mutate';
+ import {mutateJsonAndWaitForScreen} from '../../lib/mutate';
  import ErrorLine from '../ErrorLine.svelte';
  let {goal}:{goal:GoalResponse}=$props();
  let deleting=$state(false),error=$state<unknown>(null);
@@ -8,7 +8,7 @@
   if(deleting||!window.confirm(`Permanently delete “${goal.title}” and its page, files, and outcome history? Shared measurements and datasets will remain.`))return;
   const deletedId=goal.id,deletedAddress=window.location.hash;deleting=true;error=null;
   try{
-   await mutateJson(`/api/goals/${encodeURIComponent(deletedId)}`,{method:'DELETE'});
+   await mutateJsonAndWaitForScreen(`/api/goals/${encodeURIComponent(deletedId)}`,{method:'DELETE'});
    if(window.location.hash===deletedAddress)window.location.hash='#/goals';
   }catch(failure){error=failure;}finally{deleting=false;}
  }

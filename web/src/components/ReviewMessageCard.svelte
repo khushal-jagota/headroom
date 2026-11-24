@@ -11,7 +11,7 @@
   import { mutateJson } from '../lib/mutate';
 
   import { readConversation, readEventsAfter, advanceOwnerRead, messageContentOf, type DeliveredMessage } from '../lib/conversation/wire';
-  import { mintOutgoingMessage, recallOutgoingMessages, rememberOutgoingMessages, type OutgoingMessage } from '../lib/conversation/outgoing';
+  import { mintOutgoingMessage, recallOutgoingMessages, rememberOutgoingMessages, sendRequestLimitMs, type OutgoingMessage } from '../lib/conversation/outgoing';
   import { readComposerDraft, writeComposerDraft } from '../lib/conversation/composerDraft';
   import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../lib/conversation/pendingFiles';
   import { pendingImagesAsPieces, restoredPendingImages, releasePendingImages, type PendingConversationImage } from '../lib/conversation/pendingImages';
@@ -148,7 +148,7 @@
       const result=await mutateJson<DeliveredMessage>(reviewReplyEndpoint(item),{method:'POST',body:{
         conversation_id:conversationId,content:sending.content,sender_label:'owner',mode:'queue',sender_message_id:sending.messageId,
         sent_at_unix_milliseconds:sending.sentAtUnixMilliseconds,owner_read_through_sequence:sending.ownerReadThroughSequence
-      }});
+      },limitMs:sendRequestLimitMs(sending.content)});
       if(result.fate==='started' || result.fate==='injected' || result.fate==='queued') { await accepted(sending.ownerReadThroughSequence!); }
       else { if(result.fate!=='uncertain')await clearAttempt(); error=new Error(fateSentence(result) || 'The reply did not reach the agent.'); }
     } catch(problem){

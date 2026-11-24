@@ -10,7 +10,7 @@ export type ResourceQueryData<T = unknown> = {
   decodedBytes: number;
 };
 
-export function resourceQuery<T>(queryKey: readonly unknown[], path: string, versioned = false) {
+export function resourceQuery<T>(queryKey: readonly unknown[], path: string, versioned = false, limitMs?: number) {
   return queryOptions<ResourceQueryData<T>, Error, T>({
     queryKey,
     meta: { resourceBody: true, resourceKey: versioned ? path : undefined },
@@ -25,7 +25,7 @@ export function resourceQuery<T>(queryKey: readonly unknown[], path: string, ver
         return { body: result.body as T, epoch: result.epoch, revision: result.revision,
           decodedBytes: metadata.decodedBytes ?? 0 };
       }
-      const body = await fetchJson<T>(path, { signal, responseMetadata: metadata });
+      const body = await fetchJson<T>(path, { signal, responseMetadata: metadata, limitMs });
       return { body, epoch: null, revision: null, decodedBytes: metadata.decodedBytes ?? 0 };
     },
     select: (result) => result.body

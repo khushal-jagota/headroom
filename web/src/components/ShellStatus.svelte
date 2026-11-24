@@ -3,7 +3,7 @@
   import { get } from "svelte/store";
   import { connectionStatus } from "../lib/changeStream";
   import { desktopBridge } from "../desktop/bridge";
-  import { queryClient } from "../lib/queryClient";
+  import { refreshScreen } from "../lib/resourceVersions/refresh";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
   import { requestReleaseReload } from "../lib/releaseMonitor";
@@ -42,7 +42,7 @@
         return;
       }
       retryChangeStream();
-      void queryClient.refetchQueries({ type: "active" });
+      void refreshScreen();
       reachDialog?.close();
     } catch {
       reachFailed = get(connectionStatus) !== "connected";

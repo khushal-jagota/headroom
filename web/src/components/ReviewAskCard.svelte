@@ -21,6 +21,7 @@
   import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { createQuery } from "@tanstack/svelte-query";
+  import { withinScreenWait } from "../lib/mutate";
   import type { ReviewAskItem } from "../lib/types";
   import { queries } from "../lib/queryCatalogue";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
@@ -122,18 +123,24 @@
     return () => { destroyed = true; for (const entry of Object.values(attachmentDrafts)) releasePendingImages(entry.images); };
   });
 
+  /** The ask that the server took an answer for. The card can stay for a moment after
+   *  that, and a second press must not send a second answer. */
+  let answered: string | null = null;
   function sentence(fate: "applied" | "saved" | "refused", refused: string): string | null {
     return fate === "refused" ? refused : fate === "saved" ? executorAnswerSentence("saved") : null;
   }
   async function answerPermission(optionId: string): Promise<void> {
     const ask = permission;
-    if (!ask || busy || !available) return;
+    if (!ask || busy || !available || answered === ask.ask_id) return;
     busy = true;
     note = null;
     try {
       const { fate } = await answerPermissionAsk(conversationId, ask.ask_id, optionId);
+      if (fate !== "refused") answered = ask.ask_id;
       note = sentence(fate, "The backend did not take that answer. Open the conversation to stop the turn.");
-      await load();
+      // The card leaves when the conversation is read again. Review waits for that only
+      // a short, limited time.
+      await withinScreenWait(load());
     } catch (problem) {
       error = problem;
     } finally {
@@ -142,14 +149,15 @@
   }
   async function submitUserInput(): Promise<void> {
     const request = userInput;
-    if (!request || !answers || busy || attachmentReadBusy || !available) return;
+    if (!request || !answers || busy || attachmentReadBusy || !available || answered === request.request_id) return;
     busy = true;
     note = null;
     try {
       const { fate } = await answerUserInput(conversationId, request.request_id, answers);
+      if (fate !== "refused") answered = request.request_id;
       note = sentence(fate, "The backend did not take those answers. You can try again.");
       if (fate !== "refused") releaseAttachments();
-      await load();
+      await withinScreenWait(load());
     } catch (problem) {
       error = problem;
     } finally {

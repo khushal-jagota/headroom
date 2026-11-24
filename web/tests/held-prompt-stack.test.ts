@@ -91,6 +91,6 @@ describe("a waiting message's menu", () => {
     // The tests run without a DOM; the wiring is read from the source.
     const stack = readFileSync(new URL("../src/components/conversation/composer/HeldPromptStack.svelte", import.meta.url), "utf8") as string;
     expect(stack).toContain("onclick={() => { menuOpenFor = null; if (row.heldPromptId !== null) void act(row.key, () => onEdit?.(row.heldPromptId!, words)); }}");
-    expect(stack).toMatch(/async function act\(key: string, action: \(\) => Promise<void> \| void\): Promise<void> \{[\s\S]*?await fadeConversationExit\(row \?\? null\);[\s\S]*?await action\(\);/);
+    expect(stack).toMatch(/async function act\(key: string, action: \(\) => Promise<unknown> \| void\): Promise<void> \{[\s\S]*?await fadeConversationExit\(row \?\? null\);[\s\S]*?await action\(\);/);
   });
 });

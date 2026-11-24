@@ -8,7 +8,7 @@
   import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
@@ -33,6 +33,7 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
+  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import CeilingPicker from "../components/CeilingPicker.svelte";
   import ClampedText from "../components/ClampedText.svelte";
@@ -237,7 +238,7 @@
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
     const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
       method: "POST",
-      body});
+      body, limitMs: sendRequestLimitMs(body.content)});
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
@@ -268,12 +269,12 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
       method: "PATCH", body: { field_values: { [field]: body } }});
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}/complete/${field}`, {
       method: "POST", body: { body }});
   }
 
@@ -404,7 +405,7 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}`, {
+                  mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
                     method: "PATCH", body: { recap: raw }
                   })}
               />

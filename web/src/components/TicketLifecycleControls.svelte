@@ -2,7 +2,7 @@
   import Button from "./Button.svelte";
   import type { Snippet } from "svelte";
   import type { TicketDetail } from "../lib/types";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJsonAndWaitForScreen } from "../lib/mutate";
   import ErrorLine from "./ErrorLine.svelte";
   import { recheckWorkerCleanup, workerCleanupMessage } from "../lib/workerCleanup";
 
@@ -32,7 +32,7 @@
     busy = true;
     error = null;
     try {
-      await mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
+      await mutateJsonAndWaitForScreen(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
         method: "POST",
         body: {}
       });
