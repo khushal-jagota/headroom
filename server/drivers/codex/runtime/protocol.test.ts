@@ -73,3 +73,29 @@ describe('consumed Codex contracts', () => {
     ).toThrow(P.CodexProtocolError);
   });
 });
+
+// Risk: collaboration items become opaque and lose native agent identities/statuses.
+it('decodes sub-agent collaboration identities and rejects malformed states', () => {
+  const item = {
+    type: 'collabAgentToolCall',
+    id: 'spawn',
+    tool: 'spawnAgent',
+    status: 'completed',
+    senderThreadId: 'root',
+    receiverThreadIds: ['child'],
+    prompt: 'Check the output',
+    agentsStates: { child: { status: 'running', message: null } },
+  };
+  expect(P.decode_item(item)).toEqual({
+    type: item.type,
+    id: 'spawn',
+    tool: 'spawnAgent',
+    senderThreadId: 'root',
+    receiverThreadIds: ['child'],
+    prompt: item.prompt,
+    agentsStates: { child: { status: 'running' } },
+  });
+  expect(() => P.decode_item({ ...item, agentsStates: { child: { status: 'future' } } })).toThrow(
+    P.CodexProtocolError,
+  );
+});

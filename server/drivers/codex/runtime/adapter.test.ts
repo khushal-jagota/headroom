@@ -18,7 +18,10 @@ import { CodexAppServerBackendChild } from './adapter.ts';
 import type { CodexClient } from './adapter.ts';
 import { Deferred } from '../../../core/deferred.ts';
 
-async function setup(message_files = {} as ConversationMessageFiles) {
+async function setup(
+  message_files = {} as ConversationMessageFiles,
+  start_agent_turn?: B.BackendEventSink['start_agent_turn'],
+) {
   let handler!: CodexServerMessageHandler;
   let next = 0;
   const pending = new Map<number, Deferred<unknown>>();
@@ -68,7 +71,7 @@ async function setup(message_files = {} as ConversationMessageFiles) {
     child_processes: new ChildProcesses(),
     launch: { argv: ['/never/run/codex', 'app-server'] },
     resolved_start: start,
-    event_sink: { report },
+    event_sink: { report, start_agent_turn },
     message_files,
     client_factory(options) {
       handler = options.handler;
@@ -442,4 +445,145 @@ test('Codex receives a readable managed file reference in its structured answer 
     await state.child.stop();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// Risk: a root turn ends before its direct agent, so the completion never reaches Panels.
+// Existing prompted-turn cases cover neither child-thread events nor background lifetimes.
+test('tracks direct sub-agent work beyond the root turn and deduplicates terminal notices', async () => {
+  const admit = vi.fn(async () => null);
+  const state = await setup(undefined, admit);
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    await state.handler.on_notification('turn/started', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'inProgress', error: null },
+    });
+    state.reply(1, { turn: { id: 'root-turn', status: 'inProgress' } });
+    await writing;
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'spawn',
+        tool: 'spawnAgent',
+        senderThreadId: 'thread',
+        receiverThreadIds: ['child'],
+        prompt: 'Inspect the result',
+        agentsStates: { child: { status: 'running' } },
+      },
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'completed', error: null },
+    });
+    expect(admit).not.toHaveBeenCalled();
+    const completed = {
+      threadId: 'child',
+      turn: { id: 'child-turn', status: 'completed', error: null },
+    };
+    await state.handler.on_notification('turn/completed', {
+      ...completed,
+      threadId: 'unrelated',
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toHaveLength(0);
+    await state.handler.on_notification('turn/completed', completed);
+    await state.handler.on_notification('turn/completed', completed);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:child',
+          task_description: 'Inspect the result',
+        }),
+      ],
+    ]);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [null, new B.BackgroundTaskEnded({ task_id: 'agent:child', task_status: 'completed' })],
+    ]);
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'later-root-turn',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'resume',
+        tool: 'resumeAgent',
+        senderThreadId: 'thread',
+        receiverThreadIds: ['resumed-child'],
+        prompt: null,
+        agentsStates: { 'resumed-child': { status: 'running' } },
+      },
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'resumed-child',
+      turn: { id: 'resumed-turn', status: 'failed', error: null },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded).at(-1),
+    ).toEqual([
+      null,
+      new B.BackgroundTaskEnded({ task_id: 'agent:resumed-child', task_status: 'failed' }),
+    ]);
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: native turns have no prompted token and their output is silently lost.
+test('admits a native root turn and records its output and ending under its core token', async () => {
+  const token = { conversation_id: 'conversation', turn_number: 2 };
+  const admit = vi.fn(async () => token);
+  const state = await setup(undefined, admit);
+  try {
+    await state.handler.on_notification('turn/started', {
+      threadId: 'thread',
+      turn: { id: 'native', status: 'inProgress', error: null },
+    });
+    await state.handler.on_notification('item/agentMessage/delta', {
+      threadId: 'thread',
+      turnId: 'native',
+      itemId: 'message',
+      delta: 'Resumed',
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'native', status: 'completed', error: null },
+    });
+    expect(admit).toHaveBeenCalledOnce();
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.AgentMessageCompleted),
+    ).toEqual([[token, new B.AgentMessageCompleted({ content: text_message_content('Resumed') })]]);
+    expect(state.report.mock.calls.find(([, event]) => event instanceof B.TurnEnded)?.[0]).toEqual(
+      token,
+    );
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: a pending native activation receipt prevents client drain on shutdown.
+test('cancels a pending native admission before stopping the client', async () => {
+  const admitted = new Deferred<void>();
+  const state = await setup(undefined, async (_reason, signal) => {
+    admitted.resolve();
+    await new Promise<void>((resolve) =>
+      signal!.addEventListener('abort', () => resolve(), { once: true }),
+    );
+    return null;
+  });
+  const notification = state.handler.on_notification('turn/started', {
+    threadId: 'thread',
+    turn: { id: 'native', status: 'inProgress', error: null },
+  });
+  await admitted.promise;
+  await state.child.stop();
+  await notification;
+  expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
 });

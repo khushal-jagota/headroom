@@ -90,6 +90,7 @@ export interface ThreadStartParams {
   approvalsReviewer: 'user';
   sandbox: 'danger-full-access' | 'workspace-write';
   developerInstructions?: string | null;
+  config?: Record<string, unknown>;
 }
 export interface ThreadResumeParams extends ThreadStartParams {
   threadId: string;
@@ -284,6 +285,42 @@ export const CommandExecutionThreadItem = {
   },
 };
 export type CommandExecutionThreadItem = ReturnType<typeof CommandExecutionThreadItem.read>;
+export const CollabAgentState = {
+  read(value: unknown) {
+    const item = object(value);
+    return {
+      status: literal(item.status, [
+        'pendingInit',
+        'running',
+        'interrupted',
+        'completed',
+        'errored',
+        'shutdown',
+        'notFound',
+      ]),
+    };
+  },
+};
+export const CollabAgentToolCallThreadItem = {
+  read(value: unknown) {
+    const item = object(value);
+    return {
+      type: literal(item.type, ['collabAgentToolCall']),
+      id: identifier(item.id),
+      tool: string(item.tool),
+      senderThreadId: identifier(item.senderThreadId),
+      receiverThreadIds: list(item.receiverThreadIds, identifier),
+      prompt: optional(item.prompt, string),
+      agentsStates: Object.fromEntries(
+        Object.entries(object(item.agentsStates)).map(([id, state]) => [
+          identifier(id),
+          CollabAgentState.read(state),
+        ]),
+      ),
+    };
+  },
+};
+export type CollabAgentToolCallThreadItem = ReturnType<typeof CollabAgentToolCallThreadItem.read>;
 export const FileChangeKind = {
   read(value: unknown) {
     return { type: string(object(value).type) };
@@ -340,6 +377,7 @@ export type ThreadItem =
   | ReasoningThreadItem
   | ContextCompactionThreadItem
   | CommandExecutionThreadItem
+  | CollabAgentToolCallThreadItem
   | FileChangeThreadItem
   | McpToolCallThreadItem
   | UnconsumedThreadItem;
@@ -354,6 +392,8 @@ export function decode_item(value: unknown): ThreadItem {
       return ContextCompactionThreadItem.read(item);
     case 'commandExecution':
       return CommandExecutionThreadItem.read(item);
+    case 'collabAgentToolCall':
+      return CollabAgentToolCallThreadItem.read(item);
     case 'fileChange':
       return FileChangeThreadItem.read(item);
     case 'mcpToolCall':
