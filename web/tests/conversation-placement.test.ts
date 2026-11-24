@@ -84,11 +84,11 @@ describe('reply tail retirement range', () => {
 });
 
 describe('the jump to the latest message', () => {
-  it('is wanted only when the newest content is more than one viewport below the visible area', () => {
+  it('is wanted as soon as the newest content is out of view, not at the bottom', () => {
     expect(jumpToLatestWanted(0, 600)).toBe(false);
-    expect(jumpToLatestWanted(300, 600)).toBe(false);
-    expect(jumpToLatestWanted(600, 600)).toBe(false);
-    expect(jumpToLatestWanted(601, 600)).toBe(true);
+    expect(jumpToLatestWanted(48, 600)).toBe(false);
+    expect(jumpToLatestWanted(49, 600)).toBe(true);
+    expect(jumpToLatestWanted(300, 600)).toBe(true);
     expect(jumpToLatestWanted(5000, 0)).toBe(false);
   });
 });
