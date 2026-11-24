@@ -276,7 +276,10 @@ the dock under an opened artifact with block Markdown (`ArtifactDockTests`, run 
 Review composer appearance, the shell (`SidebarNavigationTests/testDestinationsBackSwipeAndOneComposer`:
 Sidebar cards, destination switches, Back swipe over a root page, edge-only Sidebar
 swipe, one composer under an open conversation, and a Chief draft kept across
-destinations), and a live read-only review. The live walk
+destinations), the Sidebar under the thumb (`SidebarNavigationTests/testSidebarFollowsTheThumb`:
+open and close drags from the edge, the panel, a card and the scrim, part-way releases,
+flicks, a vertical drag and the stretch; record it to see tracking, and run it again
+with Reduce Motion on), and a live read-only review. The live walk
 contains historical selectors; review its comments before use. A one-off walk is a
 review tool, not a permanent gate. Record its result and diagnose failures.
 
@@ -439,7 +442,17 @@ The Sidebar slides over the current page. It opens from the Sidebar button at th
 leading edge of a root page's bar, or a drag from the leading screen edge of a root
 page. That drag is the system screen-edge pan, so taps and page drags are untouched;
 on a pushed page the same edge is the system Back swipe. It closes on a tap on the
-scrim, a drag back, or a choice.
+scrim, a choice, or a drag back that starts anywhere on the panel or the scrim.
+
+One offset places the panel, the scrim and the shadow (`SidebarPresentation`). A
+finger moves the panel 1:1, and past fully open it stretches with resistance. A
+mostly vertical drag stays with the card lists, and a card under a sideways drag
+does not open. On release, a flick faster than 300 points per second goes its
+way, and a slower release goes to the nearer side (`SidebarMotion`). The panel then
+continues at the finger's speed and stops without a bounce. The button, a tap and
+a choice use the 0.22 s open and 0.15 s close curves. The panel stays on screen
+until it has slid away, and a finger can catch it on the way. With Reduce Motion,
+drags still follow the finger; other moves fade in 0.15 s.
 
 Chief comes first, with the eyebrow "All projects". The active Managers follow, each
 with its project eyebrow, the worst active goal's status tag ("Off track", "At risk"
