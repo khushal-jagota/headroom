@@ -1,8 +1,6 @@
 name: TypeScript server foundation
 on:
   workflow_call:
-  pull_request:
-    branches: [staging]
   push:
     branches: [staging]
   schedule:

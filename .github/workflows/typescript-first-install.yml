@@ -12,6 +12,7 @@ on:
         options: [both, linux, darwin]
         default: both
   pull_request:
+    branches-ignore: [staging, main, feature/server-and-machine-code, feature/update-rework]
     paths:
       - "server/installation/**"
       - "server/environments/release/**"
@@ -20,7 +21,7 @@ on:
       - ".github/workflows/typescript-first-install.yml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: first-install-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

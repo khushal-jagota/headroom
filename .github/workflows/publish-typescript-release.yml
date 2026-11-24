@@ -415,9 +415,12 @@ jobs:
   mac-machine-suite:
     uses: ./.github/workflows/typescript-mac-executor.yml
 
+  first-install:
+    uses: ./.github/workflows/typescript-first-install.yml
+
   release-gate:
     name: Release qualification
-    needs: [linux, mac, linux-executor, machine-compatibility, linux-upgrade, mac-upgrade, server-suite, web-suite, mac-machine-suite]
+    needs: [linux, mac, linux-executor, machine-compatibility, linux-upgrade, mac-upgrade, server-suite, web-suite, mac-machine-suite, first-install]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
