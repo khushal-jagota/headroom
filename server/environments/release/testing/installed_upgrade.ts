@@ -203,6 +203,33 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     await headline.getByText('Up to date', { exact: true }).waitFor();
     await card.locator(`[data-machine-update="${o.machine_id}"][data-state="current"]`).waitFor();
     await page.screenshot({ path: join(o.base, 'evidence/update-complete.png') });
+    let originalStart:
+      | { entry: string; feed_entry: string; running_sha: string; conversation_id: string }
+      | undefined;
+    if (process.platform === 'linux') {
+      await promisify(execFile)('python3', [
+        'server/environments/release/testing/configure_feed.py',
+        o.base,
+        '--restore',
+        o.service,
+      ]);
+      await wait_for(async () => {
+        try {
+          const response = await fetch(url + '/api/health', { signal: AbortSignal.timeout(3000) });
+          const health = await response.json();
+          return response.ok && health.ready === true && health.app_sha === candidate;
+        } catch {
+          return false;
+        }
+      }, 'waiting for the original installed Linux launcher to start the candidate');
+      const restarted = await turn();
+      originalStart = {
+        entry: 'app/bin/panels-launcher serve',
+        feed_entry: 'app/bin/panels serve',
+        running_sha: candidate,
+        conversation_id: restarted.conversation_id,
+      };
+    }
     await writeFile(
       join(o.base, 'evidence/upgrade.json'),
       JSON.stringify(
@@ -213,6 +240,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           reported_build: expectedBuild,
           conversations: [before.conversation_id, after.conversation_id],
           rollback_sha: o.predecessor,
+          original_linux_start: originalStart,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
         },
         null,
