@@ -6,7 +6,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { write_turn_diagnostics } from './turn_diagnostics.ts';
 import { chromium } from 'playwright';
 import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
@@ -56,12 +55,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         workspace,
       },
       o.machine_id,
-    ).catch(async (error) => {
-      await write_turn_diagnostics(o.base, workspace, o.machine_id).catch(() =>
-        console.warn('Could not collect the joined-machine turn diagnostics.'),
-      );
-      throw error;
-    });
+    );
   const before = await turn();
   await promisify(execFile)('python3', [
     'server/environments/release/testing/configure_feed.py',

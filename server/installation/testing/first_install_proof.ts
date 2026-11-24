@@ -210,6 +210,8 @@ try {
   if (qualifying) {
     const bin = join(home, '.local/bin');
     await mkdir(bin, { recursive: true });
+    // The scripted account has the same native skill directory as a configured Codex account.
+    await mkdir(join(home, '.codex'), { recursive: true, mode: 0o700 });
     await write_default_backend_peer(base, source, bin);
   }
   install_attempted = true;
