@@ -1,3 +1,4 @@
+import { WORKER_STATUS_LABEL } from "../../server/tickets/logic/status_presentation";
 import { managerPageGroups } from "../src/lib/managerPage";
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { describe, expect, it, vi } from "vitest";
@@ -86,7 +87,7 @@ describe("manager rail projection", () => {
     const rail = buildWorkspaceRail(rows, managers(rows));
     for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
       expect(groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
-        .toEqual([["Agent", ["working"]], ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["closeout", "idle"]]]);
+        .toEqual([[WORKER_STATUS_LABEL, ["working"]], ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["closeout", "idle"]]]);
     }
     expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
     const released = rows.map((row) => dependencies.includes(row) ? {...row, blocked:false, activity_at:100} : row);
