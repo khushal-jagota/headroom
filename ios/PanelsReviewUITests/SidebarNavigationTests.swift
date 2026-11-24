@@ -132,6 +132,10 @@ final class SidebarNavigationTests: XCTestCase {
         func step(_ name: String) { print("SIDEBAR-STEP \(name) \(Date().timeIntervalSince1970)") }
         app.openSidebar()
         let resting = chief.frame.minX
+        // VoiceOver keeps the modal Sidebar layer, so its close must sit inside it.
+        let layer = app.descendants(matching: .any)["sidebar-layer"]
+        XCTAssertTrue(layer.exists, "The Sidebar layer is not one accessibility container")
+        XCTAssertTrue(layer.descendants(matching: .any)["Close sidebar"].exists, "VoiceOver has no close inside the Sidebar")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         XCTAssertTrue(chief.waitForNonExistence(timeout: 5), "A tap on the dim did not close the Sidebar")
         /// The panel is back at its resting place within the settle time.

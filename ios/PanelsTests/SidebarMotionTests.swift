@@ -26,4 +26,23 @@ final class SidebarMotionTests: XCTestCase {
         XCTAssertGreaterThan(large, small)
         XCTAssertLessThan(large, SidebarMotion.stretchLimit, "The stretch never passes its limit")
     }
+
+    /// A second finger's tap on a card (a choice) or the button ends the first finger's drag:
+    /// its later moves and release do nothing, and a rotation still fits an open Sidebar.
+    @MainActor func testButtonAndChoiceEndADragUnderWay() {
+        let sidebar = SidebarPresentation()
+        sidebar.beginDrag()
+        sidebar.drag(100, width: width)
+        sidebar.hide(reduceMotion: false)
+        sidebar.drag(250, width: width)
+        XCTAssertEqual(sidebar.offset, 100, "The first finger moved the panel after a choice")
+        XCTAssertFalse(sidebar.endDrag(velocity: 1000, width: width, reduceMotion: false), "The first finger's release reopened the Sidebar")
+        XCTAssertFalse(sidebar.open)
+
+        sidebar.beginDrag()
+        sidebar.drag(50, width: width)
+        sidebar.show(width: width, reduceMotion: false)
+        sidebar.fit(width: 400)
+        XCTAssertEqual(sidebar.offset, 400, "A rotation after the button skipped the fit")
+    }
 }

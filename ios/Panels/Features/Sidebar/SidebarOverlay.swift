@@ -76,7 +76,10 @@ import UIKit
 
     // MARK: Button, dim and choice
 
+    /// The button, a tap on the dim and a choice end any drag under way, so a second
+    /// finger's tap and the first finger's drag do not both move the panel.
     func show(width: CGFloat, reduceMotion: Bool) {
+        dragging = false
         open = true
         shown = true
         if reduceMotion {
@@ -91,6 +94,7 @@ import UIKit
     }
 
     func hide(reduceMotion: Bool) {
+        dragging = false
         guard shown else { return }
         open = false
         if reduceMotion {
@@ -178,6 +182,8 @@ import UIKit
     func start() {
         guard link == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
+        // ProMotion screens settle at their full rate, as the finger moves.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
         self.link = link
     }
@@ -216,9 +222,13 @@ struct SidebarOverlay: View {
                 .background(PanelsTheme.Web.surface.padding(.leading, -SidebarMotion.stretchLimit).ignoresSafeArea())
                 .shadow(color: .black.opacity(0.65 * shown), radius: 21, x: 18)
                 .offset(x: presentation.offset - width)
-                .accessibilityAddTraits(.isModal)
         }
         .opacity(presentation.opacity)
+        // The dim and the panel form one modal container, so VoiceOver keeps the dim's
+        // "Close sidebar" button and leaves the page beneath.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityIdentifier("sidebar-layer")
         .gesture(SidebarPan(began: beginDrag, changed: drag, ended: endDrag))
         .accessibilityAction(.escape) { close() }
     }
