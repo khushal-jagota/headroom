@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { chromium } from 'playwright';
+import { healthy } from '../../updates/installer/health.ts';
+import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
 import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
 import { credential_path } from '../../../executor/credential_file.ts';
@@ -199,7 +201,10 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     const card = page.locator('[data-shell-status]:visible');
     const headline = card.locator('.status-base');
     await headline.getByText("Update didn't install", { exact: true }).waitFor();
-    await page.screenshot({ path: join(o.base, 'evidence/update-rolled-back.png') });
+    await page.screenshot({
+      path: join(o.base, 'evidence/update-rolled-back.png'),
+      animations: 'disabled',
+    });
     const retried = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -232,7 +237,10 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     await page.reload();
     await headline.getByText('Up to date', { exact: true }).waitFor();
     await card.locator(`[data-machine-update="${o.machine_id}"][data-state="current"]`).waitFor();
-    await page.screenshot({ path: join(o.base, 'evidence/update-complete.png') });
+    await page.screenshot({
+      path: join(o.base, 'evidence/update-complete.png'),
+      animations: 'disabled',
+    });
     let originalStart:
       | { entry: string; feed_entry: string; running_sha: string; conversation_id: string }
       | undefined;
@@ -243,15 +251,17 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         '--restore',
         o.service,
       ]);
-      await wait_for(async () => {
-        try {
-          const response = await fetch(url + '/api/health', { signal: AbortSignal.timeout(3000) });
-          const health = await response.json();
-          return response.ok && health.ready === true && health.app_sha === candidate;
-        } catch {
-          return false;
-        }
-      }, 'waiting for the original installed Linux launcher to start the candidate');
+      assert.ok(
+        await healthy(
+          url + '/api/health',
+          candidate,
+          HOME_HEALTH_TIMEOUT_SECONDS,
+          new AbortController().signal,
+          process.env,
+          true,
+        ),
+        'Original installed Linux launcher did not start the ready candidate',
+      );
       const restarted = await turn();
       originalStart = {
         entry: 'app/bin/panels-launcher serve',

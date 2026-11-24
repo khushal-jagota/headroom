@@ -20,6 +20,7 @@ import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes
 import { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
 import { LinuxWorkerProcesses } from '../../platform_runtime/linux/worker_processes.ts';
 import type { WorkerProcess } from '../../worker_supervision/contracts.ts';
+import { record_native_processes } from './native_process_births.ts';
 import { check_home_port } from '../home.ts';
 import { run_release_command } from '../../environments/release/process.ts';
 import type { ReleaseExecution } from '../../environments/release/contracts.ts';
@@ -215,6 +216,20 @@ async function absent(path: string) {
   }
   throw new Error('The clean-runner destination already exists: ' + path);
 }
+const births = new Map<string, WorkerProcess>();
+async function capture_processes(roots: Iterable<number>, required: ReadonlySet<number>) {
+  try {
+    record_native_processes(
+      births,
+      await primitives.snapshot(performance.now() / 1000 + 10),
+      roots,
+      required,
+    );
+  } catch (error) {
+    report.process_capture_error = String(error);
+    throw error;
+  }
+}
 const started_ms = Date.now();
 try {
   await absent(root);
@@ -300,6 +315,7 @@ try {
     'The first machine needs an accepted lease from this installation',
   );
   report.first_machine = health;
+  if (health.process_id) await capture_processes([health.process_id], new Set([health.process_id]));
   const cli_environment = {
     ...environment,
     PLAN_SERVER_URL: `http://127.0.0.1:${port}`,
@@ -350,6 +366,7 @@ try {
     'The second machine needs an accepted credentialed lease',
   );
   report.second_machine = second;
+  if (second.process_id) await capture_processes([second.process_id], new Set([second.process_id]));
   const machines = JSON.parse(
     await run('server-machine-list', [panels, 'machine', 'list', '--json'], cli_environment),
   );
@@ -389,6 +406,7 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
+  await capture_processes(pids, new Set(pids));
   if (qualifying) {
     await Promise.all([rm(archive), rm(machine_archive)]);
     const launcher = system === 'darwin' ? await installed_mac_launcher(base, mac) : undefined;
@@ -489,7 +507,6 @@ try {
                 ]
               : []),
           ];
-    const births = new Map<number, WorkerProcess>();
     try {
       const pids = new Set<number>();
       const required_pids = new Set<number>();
@@ -511,43 +528,14 @@ try {
           }
         }
       }
-      for (const value of [report.first_machine, report.second_machine]) {
-        const runtime = value as { process_id?: number } | undefined;
-        if (runtime?.process_id) {
-          pids.add(runtime.process_id);
-          required_pids.add(runtime.process_id);
-        }
-      }
-      const snapshot = await primitives.snapshot(performance.now() / 1000 + 10);
-      for (const pid of pids) {
-        const birth = snapshot.get(pid);
-        // An auxiliary oneshot can finish between the job query and this snapshot.
-        // Persistent jobs and health-reported runtimes must still have native birth evidence.
-        if (!birth) {
-          assert.ok(
-            !required_pids.has(pid),
-            'Cannot capture the native birth of an installed process: ' + pid,
-          );
-          continue;
-        }
-        births.set(pid, birth);
-      }
-      // Include runtime children and any commands that were still in flight at the snapshot.
-      let expanded = true;
-      while (expanded) {
-        expanded = false;
-        for (const birth of snapshot.values()) {
-          if (births.has(birth.parent) && !births.has(birth.pid)) {
-            births.set(birth.pid, birth);
-            expanded = true;
-          }
-        }
-      }
-      report.process_births = [...births.values()];
+      // The upgrade may have retired the original healthy processes. Capture this
+      // generation under the native job manager and keep earlier birth identities.
+      await capture_processes(pids, required_pids);
     } catch (error) {
       report.process_capture_error = String(error);
       failed = new AggregateError([failed, error].filter(Boolean), 'Proof process capture failed');
     }
+    report.process_births = [...births.values()];
     for (const job of jobs) {
       if (system === 'linux') {
         const stopped = await run_release_command(
@@ -603,8 +591,9 @@ try {
     }
     assert.ok(retired, 'An installed process or captured descendant survives service stop');
     await check_home_port(port);
-    report.cleanup =
-      'all attempted jobs stopped, captured native process births retired, server port free';
+    report.cleanup = report.process_capture_error
+      ? 'Jobs stopped and port free; process capture was incomplete.'
+      : 'all attempted jobs stopped, captured native process births retired, server port free';
   } catch (error) {
     report.cleanup = String(error);
     failed = new AggregateError([failed, error].filter(Boolean), 'Proof cleanup failed');
