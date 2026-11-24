@@ -1,3 +1,4 @@
+import { count_live_stream } from '../core/http/live_streams/index.ts';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -148,6 +149,7 @@ export function createRoutes(): PreparedAreaRoutes {
         'Cache-Control': 'no-store',
         'X-Accel-Buffering': 'no',
       });
+      count_live_stream(reply);
       delivery.open(
         reply.raw,
         authority,
