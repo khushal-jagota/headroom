@@ -579,6 +579,7 @@ it('copies Node and its selected closure independently and refuses changed sourc
       'server/skills/seeds/panels/SKILL.md',
       'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
+      'web/src/lib/conversation/attachmentPolicy.ts',
       'assets/tokens.css',
       'assets/app.css',
       'assets/fonts/InterVariable.woff2',

@@ -2,6 +2,7 @@
 import { GLIBC_LIBRARIES } from '../updates/logic/runtime_contract.ts';
 import { SYSTEM_LIBRARY_DIRECTORIES } from './native/configuration.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+import { NODE_RUNTIME_FILES } from './configuration.ts';
 
 /** The server packages drivers ship: release files at server/node_modules/<package>/package.json. */
 const DRIVER_SERVER_PACKAGES = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
@@ -21,6 +22,13 @@ import { createSecureContext } from 'node:tls';
 import { brotliCompressSync, brotliDecompressSync, deflateSync, inflateSync } from 'node:zlib';
 
 const root = realpathSync(process.argv[1]);
+const { verify_static_runtime_imports } = await import(${JSON.stringify(new URL('./static_imports.ts', import.meta.url).href)});
+verify_static_runtime_imports(root, ${JSON.stringify([
+  'server/main.ts',
+  'server/cli/main.ts',
+  'server/installation/database_main.ts',
+  ...NODE_RUNTIME_FILES.filter((name) => name.endsWith('.ts')),
+])});
 const state = realpathSync(process.cwd());
 const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
 assert(version && Number(version[1]) >= 18, 'runtime requires Node 22 >=22.18.0');
