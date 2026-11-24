@@ -264,3 +264,77 @@ test('an accepted native agent turn survives startup reconciliation with its rec
     await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
 });
+
+// A start needs the prior end, but it must not await unrelated work queued after it.
+test('local activation takes a FIFO position after its prior ending', async () => {
+  const { ComposerCatalogReported } = await import('../conversation/backends/contracts.ts');
+  const { Deferred } = await import('../core/deferred.ts');
+  const f = setup();
+  const later = new Deferred<void>();
+  try {
+    await f.start();
+    await f.send();
+    const state = f.core.conversations.get('core')!;
+    const sink = state.child_event_sink!;
+    const original = state.running_turn!.token;
+    state.backend_events.push(async () => {
+      await f.core.take_local_backend_event(
+        state,
+        original,
+        new TurnEnded({ ending: 'completed' }),
+      );
+    });
+    await sink.report(null, new ComposerCatalogReported({ composer_catalog: [] }));
+    const activation = sink.start_agent_turn!('Background finished');
+    state.backend_events.push(() => later.promise);
+    const { observe_promise } = await import('../core/promise_observer.ts');
+    const observed = await observe_promise(activation, 1000);
+    expect(observed).toEqual({
+      completed: true,
+      value: { conversation_id: 'core', turn_number: 2 },
+    });
+    expect(later.settled).toBe(false);
+  } finally {
+    later.resolve();
+    await f.core.wait_until_quiescent();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// The native sink observes reader cancellation. Local activation must not open a turn after that reader stops.
+test('aborted local activation returns before a held core lock and creates no late turn', async () => {
+  const f = setup();
+  let release: (() => void) | undefined;
+  try {
+    await f.start();
+    await f.send();
+    const state = f.core.conversations.get('core')!;
+    await f.core.take_local_backend_event(
+      state,
+      state.running_turn!.token,
+      new TurnEnded({ ending: 'completed' }),
+    );
+    release = await state.lock.acquire();
+    const cancelled = new AbortController();
+    const activation = state.child_event_sink!.start_agent_turn!(
+      'Background finished',
+      cancelled.signal,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    cancelled.abort();
+    expect(await activation).toBeNull();
+    state.closing = true;
+    release();
+    release = undefined;
+    await state.backend_event_pump;
+    expect(state.backend_event_failures).toBe(0);
+    state.closing = false;
+    expect(state.running_turn).toBeNull();
+    expect(
+      f.store.read_events_after('core', 0).some((event) => event.kind === 'agent_turn_started'),
+    ).toBe(false);
+  } finally {
+    release?.();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});

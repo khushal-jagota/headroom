@@ -45,6 +45,8 @@ import {
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
 import { randomUUID } from 'node:crypto';
+import { observe_promise } from '../../core/promise_observer.ts';
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
@@ -75,6 +77,7 @@ export async function take_backend_event_with_receipt(
     expected_sink?: BackendEventSink;
     in_commit?: RecordCommitParticipant<JsonObject>;
     retry_later_at?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<AcceptedRecordEvent<JsonObject>> {
   await host.wait_for_reservation(state, token, options.retry_later_at);
@@ -93,7 +96,7 @@ export async function take_backend_event_with_receipt(
     event instanceof BackgroundTaskEnded ||
     event instanceof BackendStreamEnded;
   try {
-    if (host.shutting_down) return accepted;
+    if (host.shutting_down || options.signal?.aborted) return accepted;
     if (event instanceof AgentTurnStarted) {
       const can_start =
         token === null &&
@@ -487,23 +490,49 @@ export function make_sink(
   const generation = randomUUID().replaceAll('-', '');
   const sink: CoreBackendEventSink = {
     generation,
-    start_agent_turn: (reason) =>
-      own_settlement(
-        state,
-        (async () => {
-          await state.backend_event_pump;
-          const result = await take_backend_event_with_receipt(
+    start_agent_turn: (reason, cancellation) => {
+      const signal =
+        cancellation === undefined
+          ? host.shutdown_signal
+          : AbortSignal.any([host.shutdown_signal, cancellation]);
+      if (signal.aborted) return Promise.resolve(null);
+      const result = Promise.withResolvers<TurnToken | null>();
+      // Take a FIFO position now, rather than waiting for later pump work as well.
+      enqueue_backend_event(host, state, async () => {
+        if (signal.aborted) {
+          result.resolve(null);
+          return;
+        }
+        try {
+          const accepted = await take_backend_event_with_receipt(
             host,
             state,
             null,
             new AgentTurnStarted({ reason }),
-            { expected_sink: sink },
+            { expected_sink: sink, signal },
           );
-          return result.result.applied === true
-            ? (result.result.turn as unknown as TurnToken)
-            : null;
+          result.resolve(
+            accepted.result.applied === true
+              ? (accepted.result.turn as unknown as TurnToken)
+              : null,
+          );
+        } catch (error) {
+          if (signal.aborted && is_shutdown_business_cancellation(error)) {
+            result.resolve(null);
+            return;
+          }
+          result.reject(error);
+          throw error;
+        }
+      });
+      return own_settlement(
+        state,
+        (async () => {
+          const observed = await observe_promise(result.promise, signal);
+          return observed.completed ? observed.value : null;
         })(),
-      ),
+      );
+    },
     report: (token, event) =>
       own_settlement(
         state,
