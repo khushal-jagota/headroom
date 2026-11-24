@@ -34,7 +34,12 @@ async function setup(
     async stop() {},
     async request(method, params) {
       calls.push([method, params]);
-      if (method === 'thread/start') return { thread: { id: 'thread', ephemeral: false } };
+      if (method === 'thread/start') {
+        await handler.on_notification('thread/started', {
+          thread: { id: 'thread', parentThreadId: null },
+        });
+        return { thread: { id: 'thread', ephemeral: false } };
+      }
       if (method === 'skills/list') return { data: [] };
       if (method === 'plugin/installed') return { marketplaces: [] };
       if (method === 'app/installed') return { apps: [] };
@@ -536,6 +541,79 @@ test('tracks direct sub-agent work beyond the root turn and deduplicates termina
   }
 });
 
+// Risk: code-mode sub-agents emit no root collaboration item, only native child events.
+test('tracks code-mode activity without a collaboration tool item', async () => {
+  const state = await setup();
+  try {
+    await state.handler.on_notification('thread/started', {
+      thread: { id: 'metadata-child', parentThreadId: 'thread' },
+    });
+    await state.handler.on_notification('thread/started', {
+      thread: { id: 'nested', parentThreadId: 'child' },
+    });
+    for (const method of ['item/started'])
+      await state.handler.on_notification(method, {
+        threadId: 'thread',
+        turnId: 'root-turn',
+        item: {
+          type: 'subAgentActivity',
+          id: 'spawn',
+          kind: 'started',
+          agentThreadId: 'child',
+        },
+      });
+    for (const id of ['child', 'nested', 'metadata-child']) {
+      await state.handler.on_notification('turn/started', {
+        threadId: id,
+        turn: { id: `${id}-turn`, status: 'inProgress', error: null },
+      });
+      await state.handler.on_notification('turn/completed', {
+        threadId: id,
+        turn: { id: `${id}-turn`, status: 'completed', error: null },
+      });
+    }
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'subAgentActivity',
+        id: 'spawn',
+        kind: 'started',
+        agentThreadId: 'child',
+      },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:child',
+          task_description: 'Codex sub-agent',
+        }),
+      ],
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:metadata-child',
+          task_description: 'Codex sub-agent',
+        }),
+      ],
+    ]);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [null, new B.BackgroundTaskEnded({ task_id: 'agent:child', task_status: 'completed' })],
+      [
+        null,
+        new B.BackgroundTaskEnded({ task_id: 'agent:metadata-child', task_status: 'completed' }),
+      ],
+    ]);
+  } finally {
+    await state.child.stop();
+  }
+});
+
 // Risk: native turns have no prompted token and their output is silently lost.
 test('admits a native root turn and records its output and ending under its core token', async () => {
   const token = { conversation_id: 'conversation', turn_number: 2 };
@@ -586,4 +664,60 @@ test('cancels a pending native admission before stopping the client', async () =
   await state.child.stop();
   await notification;
   expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
+});
+
+// Risk: foreground commands cause wake prompts, or a command outlives its parent unnoticed.
+// Existing coverage proves agents, not commandExecution items that remain inProgress.
+test('reports only commands that outlive their parent and consumes their late terminal item', async () => {
+  const state = await setup();
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    state.reply(1, { turn: { id: 'root-turn', status: 'inProgress' } });
+    await writing;
+    const command = (id: string, status: string) => ({
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'commandExecution',
+        id,
+        command: 'sleep 25',
+        cwd: '/workspace',
+        status,
+        aggregatedOutput: null,
+      },
+    });
+    await state.handler.on_notification('item/started', command('foreground', 'inProgress'));
+    await state.handler.on_notification('item/completed', command('foreground', 'completed'));
+    await state.handler.on_notification('item/started', command('background', 'inProgress'));
+    expect(
+      state.report.mock.calls.some(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toBe(false);
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'completed', error: null },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'command:background',
+          task_description: 'sleep 25',
+        }),
+      ],
+    ]);
+    await state.handler.on_notification('item/completed', command('background', 'completed'));
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskEnded({ task_id: 'command:background', task_status: 'completed' }),
+      ],
+    ]);
+  } finally {
+    await state.child.stop();
+  }
 });

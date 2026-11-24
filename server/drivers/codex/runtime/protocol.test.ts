@@ -99,3 +99,18 @@ it('decodes sub-agent collaboration identities and rejects malformed states', ()
     P.CodexProtocolError,
   );
 });
+
+it('reads native child ancestry and leaves old root metadata compatible', () => {
+  expect(
+    P.decode_notification('thread/started', { thread: { id: 'child', parentThreadId: 'root' } }),
+  ).toEqual({ thread: { id: 'child', parentThreadId: 'root' } });
+  expect(P.decode_notification('thread/started', { thread: { id: 'root' } })).toEqual({
+    thread: { id: 'root', parentThreadId: null },
+  });
+});
+
+it('reads code-mode activity identities and exact lifecycle kinds', () => {
+  const item = { type: 'subAgentActivity', id: 'call', kind: 'started', agentThreadId: 'child' };
+  expect(P.decode_item(item)).toEqual(item);
+  expect(() => P.decode_item({ ...item, kind: 'future' })).toThrow(P.CodexProtocolError);
+});

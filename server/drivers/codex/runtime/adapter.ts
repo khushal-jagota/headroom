@@ -987,6 +987,12 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     method: string,
     notification: P.ConsumedNotification,
   ): Promise<void> {
+    if (method === 'thread/started') {
+      const value = notification as P.ThreadStartedNotification;
+      if (this.thread_id !== null && value.thread.parentThreadId === this.thread_id)
+        this.child_threads.add(value.thread.id);
+      return;
+    }
     if (method === 'turn/completed') {
       const value = notification as P.TurnCompletedNotification;
       if (this.child_threads.has(value.threadId) && value.turn.status !== 'inProgress')
@@ -1003,7 +1009,15 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     const value = notification as P.ItemNotification;
     if (value.threadId !== this.thread_id) return;
     const item = value.item;
-    if (item.type === 'collabAgentToolCall') {
+    if (item.type === 'subAgentActivity') {
+      // The completion frame repeats the action, not the agent's current state.
+      if (method !== 'item/started') return;
+      const activity = item as P.SubAgentActivityThreadItem;
+      this.child_threads.add(activity.agentThreadId);
+      if (activity.kind === 'started' || activity.kind === 'interacted')
+        await this.start_background(`agent:${activity.agentThreadId}`, 'Codex sub-agent');
+      else await this.end_background(`agent:${activity.agentThreadId}`, activity.kind);
+    } else if (item.type === 'collabAgentToolCall') {
       const call = item as P.CollabAgentToolCallThreadItem;
       if (call.senderThreadId !== this.thread_id) return;
       for (const id of call.receiverThreadIds) {
