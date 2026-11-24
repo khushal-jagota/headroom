@@ -225,6 +225,7 @@ extension NavigationReviewMessage {
                               ownerKind: ownerKind, ownerId: ownerId, ownerReadThroughSequence: ownerReadThroughSequence, addressCurrent: addressCurrent)
         item.addressId = addressId
         item.recap = recap
+        item.latestOwnerMessageSequence = latestOwnerMessageSequence
         return item
     }
 }
@@ -234,6 +235,7 @@ extension NavigationReviewAsk {
         var item = ReviewItem(reviewItemType: "ask", title: title, waitingSince: waitingSince, conversationId: conversationId,
                               ownerKind: ownerKind, ownerId: ownerId)
         item.recap = recap
+        item.pendingAsk = pendingAsk?.state
         return item
     }
 }

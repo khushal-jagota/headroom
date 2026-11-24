@@ -898,10 +898,23 @@ def main() -> int:
                 cards[key] = min(cards.get(key, waiting), waiting)
         for identity, read, unread_at in conversations:
             records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+            if REVIEW_MESSAGES:
+                # The newest message to the owner, as the server's record carries it.
+                records[("conversation", identity)]["value"]["latest_owner_message_sequence"] = (
+                    8 if identity == "history" else 4 if state["new_message"] else 3
+                )
         for identity, ask in state["asks"].items():
             conversation = conversation_record(identity, 0, None)
             waiting = bool(ask["pending_user_input"] or ask["pending_permission_ask"])
             conversation["value"]["latest_ask_at"] = ask["at"]
+            # The waiting ask in the conversation route's shape, as the server's record carries it.
+            conversation["value"]["pending_ask"] = (
+                dict(kind="permission", **ask["pending_permission_ask"])
+                if ask["pending_permission_ask"]
+                else dict(kind="user_input", **ask["pending_user_input"])
+                if ask["pending_user_input"]
+                else None
+            )
             conversation["value"]["attention"]["current"]["awaiting_answer"] = waiting
             conversation["value"]["attention"]["current"]["signal"]["working"] = True
             records[("conversation", identity)] = conversation
@@ -1405,6 +1418,10 @@ def main() -> int:
                     state["stall_refresh"] = False
                 elif name == "offline":
                     state["offline"] = True
+                elif name == "card-reads-offline":
+                    # Every read of a Review card's conversation fails as offline, while the
+                    # view still arrives: the phone never reads these cards.
+                    state["card_reads_offline"] = True
                 elif name == "online":
                     state["offline"] = False
                     state["slow"] = False
@@ -1466,6 +1483,11 @@ def main() -> int:
                 self.respond({})
                 return
             if self.disconnected():
+                return
+            if state.get("card_reads_offline") and path.startswith(
+                "/api/conversation/conversations/"
+            ) and (path.endswith("/events") or path.count("/") == 4):
+                self.drop_connection()
                 return
             # The store's refresh reads the deployment status. Held here, the refresh after a
             # reviewer change stalls as on a slow connection, until the proof releases it.

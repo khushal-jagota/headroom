@@ -18,7 +18,7 @@ struct ReviewAskCard: View {
 
     var body: some View {
         ReviewCardFrame(title: item.title, recap: item.recap, motion: motion, locked: finished, onSkip: onSkip,
-                        refresh: { await decision.load(item: item, api: store.client) }) {
+                        refresh: { await decision.load(item: item, api: store.client, viewFreshAt: store.viewFreshAt) }) {
             VStack(alignment: .leading, spacing: 14) {
                 if let permission = decision.permission {
                     askCard(label: "Permission ask") {
@@ -44,7 +44,7 @@ struct ReviewAskCard: View {
                 }
                 if let error = decision.error {
                     Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
-                    if !decision.loaded { Button("Try again") { Task { await decision.load(item: item, api: store.client) } }.panelsScaledFont(size: 13) }
+                    if !decision.loaded { Button("Try again") { Task { await decision.load(item: item, api: store.client, viewFreshAt: store.viewFreshAt) } }.panelsScaledFont(size: 13) }
                 }
             }
         } dock: {
@@ -76,7 +76,7 @@ struct ReviewAskCard: View {
         }
         .task(id: "\(isActive):\(store.connectionSession)") {
             guard isActive else { return }
-            await decision.load(item: item, api: store.client)
+            await decision.load(item: item, api: store.client, viewFreshAt: store.viewFreshAt)
             if decision.gone { finish() }
         }
         .onChange(of: decision.gone) { _, gone in if gone, isActive { finish() } }

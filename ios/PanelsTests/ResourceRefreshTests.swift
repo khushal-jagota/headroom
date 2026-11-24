@@ -195,6 +195,20 @@ import XCTest
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 4)
     }
 
+    /// Risk: a quiet view only receives checkpoints, so its fresh time stops at the last
+    /// content change and a waiting ask the stream confirmed seconds ago is refused offline
+    /// an hour later. A checkpoint on the active stream refreshes the time.
+    func testCheckpointKeepsTheViewFresh() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.checkpointStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        defer { run.cancel() }
+        try await until { store.view?.contentVersion == "1" && store.view?.mode == "current" }
+        let snapshotAt = try XCTUnwrap(store.viewFreshAt)
+        try await until { (store.viewFreshAt ?? .distantPast) > snapshotAt }
+        XCTAssertEqual(store.view?.contentVersion, "1", "The checkpoint changed no content")
+    }
+
     /// SwiftUI starts the next run before the cancelled one unwinds, as when the server
     /// address changes. The old run's exit must not stop the new run from opening streams.
     func testCancelledRunUnwindingAfterNewRunKeepsItFollowing() async throws {
@@ -326,6 +340,8 @@ private struct RefreshFixture {
     var pullStreams = false
     var openStreams = 0
     var failStreams = false
+    /// The first stream sends one snapshot, then a checkpoint with the same content.
+    var checkpointStreams = false
     var maxOpenStreams = 0
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
@@ -389,6 +405,11 @@ private struct RefreshFixture {
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
         }
         if failStreams { throw URLError(.notConnectedToInternet) }
+        if checkpointStreams {
+            let checkpoint: [String: Any] = ["event": "checkpoint", "wire_version": 3, "projection_version": 7, "view_id": "v", "scope_generation": generation,
+                "ordering_generation": "o", "coverage": Self.coverage("2"), "previous_coverage": Self.coverage("1"), "content_version": "1", "authority": Self.authority]
+            return ([(0, [try Self.frame(snapshot("1", working: false, updated: 1))]), (0.5, [try Self.frame(checkpoint)])], false)
+        }
         if pullStreams {
             let frame = try Self.frame(snapshot(String(events.count), working: false, updated: 1))
             return ([(events.count == 1 ? 0 : 0.3, [frame])], false)
