@@ -143,6 +143,7 @@ final class ArtifactLogicTests: XCTestCase {
         let target = ArtifactTarget(owner: .init(kind: .ticket, id: "t_copy\(UUID().uuidString.prefix(6))"), path: "artifacts/plan.md", title: "Plan")
         ArtifactFileProtocol.body = "# First"
         ArtifactFileProtocol.bodies = [:]; ArtifactFileProtocol.failing = []; ArtifactFileProtocol.conditionalReads = 0
+        ArtifactFileProtocol.missing = []; ArtifactFileProtocol.declaredLength = [:]
         let read = try await client.artifactDocument(target)
         XCTAssertEqual(read.text, "# First")
 
@@ -170,37 +171,58 @@ final class ArtifactLogicTests: XCTestCase {
     }
 
     /// An HTML page's copy holds the page and the files it loaded from its own owner, and
-    /// only those. A refresh that could not read every file is not fresh (nil), so the
-    /// viewer reads again at the next connection.
-    @MainActor func testPageCopyKeepsOwnFilesAndAPartialRefreshIsNotFresh() async throws {
+    /// only those. A refresh that could not read every file is not fresh (nil). A file the
+    /// server says is over the limit is not read and leaves the copy. A page the server no
+    /// longer has loses its whole copy, and so does any other artifact (the reader's 404).
+    @MainActor func testPageCopyKeepsOwnFilesAndADeletedArtifactLosesItsCopy() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ArtifactFileProtocol.self]
         let base = URL(string: "https://artifact-test-page.example")!
         let client = APIClient(baseURL: base, session: URLSession(configuration: configuration))
+        let server = LocalStore.server(base)
         let owner = "t_page\(UUID().uuidString.prefix(6))"
         let target = ArtifactTarget(owner: .init(kind: .ticket, id: owner), path: "artifacts/report.html", title: "Report")
+        let pagePath = "/files/tickets/\(owner)/artifacts/report.html"
         let shot = base.appendingPathComponent("files/tickets/\(owner)/artifacts/shots/a.png")
-        ArtifactFileProtocol.bodies = ["/files/tickets/\(owner)/artifacts/report.html": "<img src=shots/a.png>", shot.path: "A"]
-        ArtifactFileProtocol.failing = []
-        let loaded = [shot, URL(string: "https://elsewhere.example/files/tickets/\(owner)/x.png")!,
+        let big = base.appendingPathComponent("files/tickets/\(owner)/artifacts/shots/big.png")
+        ArtifactFileProtocol.bodies = [pagePath: "<img src=shots/a.png>", shot.path: "A", big.path: "B"]
+        ArtifactFileProtocol.failing = []; ArtifactFileProtocol.missing = []
+        ArtifactFileProtocol.declaredLength = [big.path: ArtifactCopies.fileLimit + 1]
+        let loaded = [shot, big, URL(string: "https://elsewhere.example/files/tickets/\(owner)/x.png")!,
                       base.appendingPathComponent("files/tickets/t_other/x.png"), base.appendingPathComponent("files/tickets/\(owner)/clip.mp4")]
         let first = await client.refreshPageCopy(target, files: loaded)
         XCTAssertEqual(first, true)
-        let server = LocalStore.server(base)
         let entry = await ArtifactCopies.shared.open(server: server, id: target.id)
-        XCTAssertEqual(Set(entry?.files.keys.map { $0 } ?? []), ["/files/tickets/\(owner)/artifacts/report.html", shot.path],
-                       "Only the page and its own owner's files join the copy; video and other hosts do not")
-        let unchanged = await client.refreshPageCopy(target)
+        XCTAssertEqual(Set(entry?.files.keys.map { $0 } ?? []), [pagePath, shot.path],
+                       "Only the page and its own owner's files join the copy; video, other hosts and a file over the limit do not")
+        let unchanged = await client.refreshPageCopy(target, files: [shot])
         XCTAssertEqual(unchanged, false, "Every saved file answers 304")
         ArtifactFileProtocol.failing = [shot.path]
-        let partial = await client.refreshPageCopy(target)
+        let partial = await client.refreshPageCopy(target, files: [shot])
         XCTAssertNil(partial, "A file that could not be read leaves the refresh unfinished")
         ArtifactFileProtocol.failing = []
         ArtifactFileProtocol.bodies[shot.path] = "B"
-        let changed = await client.refreshPageCopy(target)
+        let changed = await client.refreshPageCopy(target, files: [shot])
         XCTAssertEqual(changed, true)
         let saved = await ArtifactCopies.shared.data(server: server, id: target.id, path: shot.path)
         XCTAssertEqual(saved, Data("B".utf8))
+
+        ArtifactFileProtocol.missing = [pagePath]
+        _ = await client.refreshPageCopy(target, files: [shot])
+        let deletedPage = await ArtifactCopies.shared.open(server: server, id: target.id)
+        XCTAssertNil(deletedPage, "A page the server no longer has loses its copy")
+
+        let note = ArtifactTarget(owner: target.owner, path: "artifacts/note.md", title: "Note")
+        let notePath = "/files/tickets/\(owner)/artifacts/note.md"
+        ArtifactFileProtocol.bodies[notePath] = "# Note"
+        _ = try await client.artifactDocument(note)
+        ArtifactFileProtocol.missing = [notePath]
+        let shown = await client.savedArtifactDocument(note)
+        do { _ = try await client.refreshedArtifactDocument(note, shown: shown); XCTFail("A deleted artifact reads as 404") }
+        catch { XCTAssertEqual((error as? APIError)?.status, 404) }
+        let deletedNote = await client.savedArtifactDocument(note)
+        XCTAssertNil(deletedNote, "The server's 404 removes the copy, so the viewer shows the server's answer")
+        ArtifactFileProtocol.missing = []; ArtifactFileProtocol.declaredLength = [:]
     }
 
     /// Bounds: the copy opened least recently leaves first, the copy just saved stays, one
@@ -267,6 +289,9 @@ private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
     /// Bodies by request path, over `body`; a path in `failing` loses its connection.
     nonisolated(unsafe) static var bodies: [String: String] = [:]
     nonisolated(unsafe) static var failing: Set<String> = []
+    /// Paths that answer 404, and a Content-Length to declare in place of the real one.
+    nonisolated(unsafe) static var missing: Set<String> = []
+    nonisolated(unsafe) static var declaredLength: [String: Int] = [:]
     nonisolated(unsafe) static var conditionalReads = 0
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("artifact-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -276,8 +301,11 @@ private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
         let etag = "\"\(data.hashValue)\""
         let conditional = request.value(forHTTPHeaderField: "If-None-Match")
         if conditional != nil { Self.conditionalReads += 1 }
-        let status = conditional == etag ? 304 : 200
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["ETag": etag])!, cacheStoragePolicy: .notAllowed)
+        let path = request.url!.path
+        let status = Self.missing.contains(path) ? 404 : conditional == etag ? 304 : 200
+        var headers = ["ETag": etag]
+        if let length = Self.declaredLength[path] { headers["Content-Length"] = String(length) }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!, cacheStoragePolicy: .notAllowed)
         if status == 200 { client?.urlProtocol(self, didLoad: data) }
         client?.urlProtocolDidFinishLoading(self)
     }

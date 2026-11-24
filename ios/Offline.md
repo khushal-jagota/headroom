@@ -57,15 +57,26 @@ answers 304 for an unchanged file; without one, the phone compares the bytes. On
 changed file draws again, so the scroll position stays. A failed read keeps the copy with
 no note. Until a read succeeds, the next connection reads again.
 
-An HTML page opens from the server as before while the app follows the server: same origin,
-WebKit's own streaming, redirects and downloads. When it finishes, the reader saves the page
-and the images, styles and scripts that it loaded from its own Ticket or Manager, off the
-main thread. Offline, or when the server load fails, a page with a copy opens from it
+An HTML page always tries the server first, as before: same origin, WebKit's own
+streaming, redirects and downloads. A launch or a return to the app, while the app is still
+connecting, is not offline. When the page finishes, the reader saves it and the images,
+styles and scripts that it loaded from its own Ticket or Manager, off the main thread. A
+file whose Content-Length is over the limit is not read. The copy opens only when the load
+of the artifact's own page cannot reach the server, or at once while the app is
+reconnecting. A failed link inside the page never switches to the copy. The copy loads
 through the app's `panels-artifact` scheme, with one host for each server. That scheme
 serves only saved files and forwards nothing, so any other request fails quietly. When the
-connection returns, the copy is checked whole; a changed page loads from the server in its
-place, and a check that could not read every file counts as not fresh. A file that the
-server no longer has leaves the copy, and so does a file that can no longer be kept.
+app follows the server again, the same viewer loads the server's page, changed or not. A
+file that the server no longer has leaves the copy. When the server no longer has the
+artifact itself, its whole copy leaves, and the viewer shows the server's answer.
+
+Known limits:
+
+- The first save of an HTML page reads the page a second time, beside WebKit's own load.
+- Files that a page loads after its load event, or that are missing from its resource-timing
+  list, are not saved.
+- Query strings are ignored, so the same file with different queries shares one copy.
+- A file that a page no longer loads stays in its copy until eviction.
 
 All copies stay under 256 MiB, and one page's copy never takes more. The copy opened least
 recently leaves first, and a copy not opened for 30 days leaves. Copies are kept per server address. A Ticket's file list is a

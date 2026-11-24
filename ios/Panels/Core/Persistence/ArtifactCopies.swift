@@ -116,6 +116,14 @@ actor ArtifactCopies {
         return true
     }
 
+    /// An artifact the server no longer has loses its whole copy.
+    func remove(server: String, id: String) {
+        var index = entries()
+        guard index[Self.key(server, id)] != nil else { return }
+        remove(Self.key(server, id), from: &index)
+        loaded = index; persist()
+    }
+
     /// A page's file that the server no longer has leaves the copy.
     func drop(server: String, id: String, path: String) {
         let key = Self.key(server, id)

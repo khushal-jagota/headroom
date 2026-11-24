@@ -14,12 +14,13 @@ struct ArtifactWebView: UIViewRepresentable {
     let reload: () -> Void
     let navigated: (URL) -> Void
     let openExternal: (URL) -> Void
-    /// The page could not reach the server.
-    var unreachable: () -> Void = {}
+    /// The load of the artifact's own page failed; true when it could not reach the server.
+    /// Other navigations, such as a followed link, never report here.
+    var pageFailed: (Bool) -> Void = { _ in }
     /// A page finished: its address and the files it loaded (images, styles, scripts).
     var loaded: (URL, [URL]) -> Void = { _, _ in }
 
-    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal, unreachable: unreachable, loaded: loaded) }
+    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal, pageFailed: pageFailed, loaded: loaded) }
     func makeUIView(context: Context) -> ArtifactWebContainer {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -42,16 +43,18 @@ struct ArtifactWebView: UIViewRepresentable {
         if context.coordinator.url != url {
             context.coordinator.url = url
             context.coordinator.reloadSignal = reloadSignal
-            container.webView.load(URLRequest(url: url))
+            context.coordinator.pageNavigation = container.webView.load(URLRequest(url: url))
         } else if context.coordinator.reloadSignal != reloadSignal {
             context.coordinator.reloadSignal = reloadSignal
-            container.webView.reload()
+            context.coordinator.pageNavigation = container.webView.reload()
         }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         var url: URL?
         var reloadSignal = 0
+        /// The navigation that loads the artifact's own page.
+        weak var pageNavigation: WKNavigation?
         weak var mainView: WKWebView?
         private var urlObservation: NSKeyValueObservation?
         func observeNavigation(in view: WKWebView) {
@@ -68,13 +71,13 @@ struct ArtifactWebView: UIViewRepresentable {
         let reload: () -> Void
         let navigated: (URL) -> Void
         let openExternal: (URL) -> Void
-        let unreachable: () -> Void
+        let pageFailed: (Bool) -> Void
         let loaded: (URL, [URL]) -> Void
         @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
         init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void,
-             unreachable: @escaping () -> Void, loaded: @escaping (URL, [URL]) -> Void) {
+             pageFailed: @escaping (Bool) -> Void, loaded: @escaping (URL, [URL]) -> Void) {
             self.failed = failed; self.ready = ready; self.reload = reload; self.navigated = navigated; self.openExternal = openExternal
-            self.unreachable = unreachable; self.loaded = loaded
+            self.pageFailed = pageFailed; self.loaded = loaded
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
@@ -165,10 +168,15 @@ struct ArtifactWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
-            else if webView === mainView, (error as NSError).code != NSURLErrorCancelled { unreachable() }
+            pageFailure(navigation, error)
+        }
+        private func pageFailure(_ navigation: WKNavigation?, _ error: Error) {
+            guard let navigation, navigation === pageNavigation, (error as NSError).code != NSURLErrorCancelled else { return }
+            pageFailed(ServerReadFailure.isPassing(error))
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
+            pageFailure(navigation, error)
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             if webView === mainView, let url = webView.url {

@@ -124,6 +124,10 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
+        // A page on its copy goes back to the server's page once the app follows it again.
+        .onChange(of: store.connection) { _, connection in
+            if connection == "Following changes", pageSource != nil, let remote = try? store.client.artifactURL(target) { showServerPage(remote) }
+        }
         // Until the server's file was read, the next connection reads again.
         .task(id: "\(target.id)|\(loadVersion)|\(isFresh ? 0 : store.connectionSession)") { await load() }
         .task(id: waitingForPreview) {
@@ -142,8 +146,8 @@ struct ArtifactViewerView: View {
                 Text("Fit desktop").tag(true)
             }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
                 .accessibilityIdentifier("artifact-preview-width")
-            ArtifactWebView(url: pageSource?.pageURL ?? url, source: pageSource, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0; serverPageFailed = true }, ready: { webReady = true; if pageSource == nil { isFresh = true } }, reload: { reloadPreview() }, navigated: { currentHTMLURL = pageSource?.remote($0) ?? $0 }, openExternal: { openURL($0) },
-                            unreachable: { serverPageFailed = true; Task { await openCopy() } }, loaded: { saveCopy(page: $0, files: $1) })
+            ArtifactWebView(url: pageSource?.pageURL ?? url, source: pageSource, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true; if pageSource == nil { isFresh = true } }, reload: { reloadPreview() }, navigated: { currentHTMLURL = pageSource?.remote($0) ?? $0 }, openExternal: { openURL($0) },
+                            pageFailed: { passing in serverPageFailed = true; if passing { Task { await openCopy() } } }, loaded: { saveCopy(page: $0, files: $1) })
                 .id(renderVersion)
                 .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
         }
@@ -226,25 +230,25 @@ struct ArtifactViewerView: View {
             }
             isFresh = true
         } catch {
+            // The server no longer has this artifact: its answer replaces the copy.
+            if (error as? APIError)?.status == 404 { document = nil; image = nil }
             if !Task.isCancelled, !hasContent, let note = ServerReadFailure.note(error) {
                 self.error = note
                 Haptics.error()
             }
         }
     }
-    /// Online, the page loads from the server exactly as before, and its copy is saved beside
-    /// it. Offline, a page with a copy opens from it. When the connection returns, the copy
-    /// is checked, and a changed page loads from the server in its place.
+    /// The page loads from the server exactly as before, and its copy is saved beside it.
+    /// Only when that load cannot reach the server, or the app already knows it is offline,
+    /// does a page with a copy open from it. Back online, the server's page takes over again.
     private func loadPage() async throws {
         document = nil
         let remote = try store.client.artifactURL(target)
-        let online = store.connection == "Following changes"
         if pageSource != nil {
-            guard online, let changed = await store.client.refreshPageCopy(target) else { return }
-            if changed { showServerPage(remote) } else { isFresh = true }
+            if store.connection == "Following changes" { showServerPage(remote) }
             return
         }
-        if !online, await openCopy() { return }
+        if store.connection == "Reconnecting", await openCopy() { return }
         // A server page still loading or already drawn is left alone.
         if htmlURL == remote, !serverPageFailed { return }
         showServerPage(remote)

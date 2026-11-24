@@ -1579,11 +1579,11 @@ def main() -> int:
                 self.wfile.write(content)
                 return
             if ARTIFACT_DOCK_SMOKE and path == "/api/artifact-catalog/ticket/offline-1":
-                # The Ticket page keeps its two files behind the collapsed Artifacts row.
-                self.respond(dict(revision="dock", directory="", offset=0, total=2, entries=[
+                # The Ticket page keeps its three files behind the collapsed Artifacts row.
+                self.respond(dict(revision="dock", directory="", offset=0, total=3, entries=[
                     dict(key=f"managed:{name}", path=name, label=name, kind="2",
                          href=f"/files/tickets/offline-1/{name}", directory=None, child_count=0)
-                    for name in ("dock-proof.md", "nested-dock.md")
+                    for name in ("dock-proof.md", "nested-dock.md", "proof.html")
                 ]))
                 return
             if ARTIFACT_DOCK_SMOKE and path in (
@@ -1785,6 +1785,7 @@ def main() -> int:
                     b"<img src='shots/proof-shot.png' width='120' alt='' "
                     b"onload=\"document.getElementById('shot').textContent='Screenshot loaded'\">"
                     b"<p id='shot'></p><p id='post'></p>"
+                    b"<p><a href='http://127.0.0.1:1/nowhere'>Broken link</a></p>"
                     b"<script>fetch('page-post', {method: 'POST', body: 'proof'}).then(r => { if (r.ok) "
                     b"document.getElementById('post').textContent = 'Page post landed' })</script></body></html>"
                 )

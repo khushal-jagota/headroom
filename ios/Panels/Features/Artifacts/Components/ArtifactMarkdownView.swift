@@ -320,6 +320,10 @@ private struct ArtifactInlineMediaPreview: View {
                 image = loadedImage; document = result; error = nil
             }
             isFresh = true
-        } catch { if !Task.isCancelled, document == nil { self.error = ServerReadFailure.note(error) } }
+        } catch {
+            // The server no longer has this file: its answer replaces the copy.
+            if (error as? APIError)?.status == 404 { image = nil; document = nil }
+            if !Task.isCancelled, document == nil { self.error = ServerReadFailure.note(error) }
+        }
     }
 }

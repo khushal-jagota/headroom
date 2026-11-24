@@ -67,6 +67,10 @@ extension APIClient {
         let (download, response) = try await session.download(for: request)
         defer { try? FileManager.default.removeItem(at: download) }
         if etag != nil, (response as? HTTPURLResponse)?.statusCode == 304 { return nil }
+        // The server no longer has this artifact: its copy leaves, and the caller shows why.
+        if (response as? HTTPURLResponse)?.statusCode == 404 {
+            await ArtifactCopies.shared.remove(server: LocalStore.server(baseURL), id: target.id)
+        }
         try Self.validate(response)
         try Task.checkCancellation()
         let folder = Self.temporaryFolder()
@@ -86,34 +90,30 @@ extension APIClient {
         }
     }
 
-    /// Brings an HTML page's copy up to date, off the main thread: the page, then the files
-    /// it loads from its own owner. `files` names what the page just loaded on screen; without
-    /// it, the files already saved are read again. Returns whether anything changed, or nil
-    /// when a read failed, so a partial refresh never counts as fresh.
-    func refreshPageCopy(_ target: ArtifactTarget, files: [URL]? = nil) async -> Bool? {
+    /// Saves an HTML page that just loaded from the server, off the main thread: the page,
+    /// then the files in `files` that it loaded from its own owner. A page the server no
+    /// longer has loses its copy. Returns whether anything changed, or nil when a read failed.
+    func refreshPageCopy(_ target: ArtifactTarget, files: [URL]) async -> Bool? {
         guard let page = try? artifactURL(target) else { return nil }
         let server = LocalStore.server(baseURL)
         let copies = ArtifactCopies.shared
         let saved = await copies.open(server: server, id: target.id)
-        guard let pageChanged = await refreshCopyFile(target, main: page.path, path: page.path, url: page, etag: saved?.files[page.path]?.etag) else { return nil }
+        guard let pageChanged = await refreshCopyFile(target, main: page.path, path: page.path, url: page, etag: saved?.files[page.path]?.etag),
+              let entry = await copies.open(server: server, id: target.id) else { return nil }
         let prefix = "/files/\(target.owner.collection)/\(target.owner.id)/"
-        let paths: [String]
-        if let files {
-            paths = files.compactMap { url in
-                guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port,
-                      url.path.hasPrefix(prefix), url.path != page.path, ArtifactCopies.keepsPageFile(url.path) else { return nil }
-                return url.path
-            }
-        } else { paths = saved?.files.keys.filter { $0 != page.path } ?? [] }
-        let entry = await copies.open(server: server, id: target.id)
+        let paths = Set(files.compactMap { url -> String? in
+            guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port,
+                  url.path.hasPrefix(prefix), url.path != page.path, ArtifactCopies.keepsPageFile(url.path) else { return nil }
+            return url.path
+        })
         var changed: Bool? = pageChanged
         await withTaskGroup(of: Bool?.self) { group in
-            for (index, path) in Set(paths).enumerated() {
+            for (index, path) in paths.enumerated() {
                 if index >= 4, let result = await group.next() { changed = result.flatMap { r in changed.map { $0 || r } } }
                 var parts = URLComponents(url: page, resolvingAgainstBaseURL: false)!
                 parts.path = path; parts.query = nil; parts.fragment = nil
                 guard let url = parts.url else { continue }
-                let etag = entry?.files[path]?.etag
+                let etag = entry.files[path]?.etag
                 group.addTask { await self.refreshCopyFile(target, main: page.path, path: path, url: url, etag: etag) }
             }
             for await result in group { changed = result.flatMap { r in changed.map { $0 || r } } }
@@ -121,26 +121,41 @@ extension APIClient {
         return changed
     }
 
-    /// One conditional read into the copy. True when the saved file changed or left.
+    /// One conditional read into the copy. True when the saved file changed or left. A file
+    /// the server says is over the size limit is not read at all.
     private func refreshCopyFile(_ target: ArtifactTarget, main: String, path: String, url: URL, etag: String?) async -> Bool? {
         let server = LocalStore.server(baseURL)
+        let copies = ArtifactCopies.shared
         guard var request = try? self.request(url) else { return nil }
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
-        guard let (download, response) = try? await session.download(for: request), let http = response as? HTTPURLResponse else { return nil }
-        defer { try? FileManager.default.removeItem(at: download) }
+        // The headers arrive before the body, so a file too large to keep is never read.
+        guard let (bytes, response) = try? await session.bytes(for: request), let http = response as? HTTPURLResponse else { return nil }
+        if http.statusCode == 200, http.expectedContentLength > ArtifactCopies.fileLimit {
+            bytes.task.cancel()
+            // The copy no longer holds an older version of it.
+            if path == main { await copies.remove(server: server, id: target.id) }
+            else { await copies.drop(server: server, id: target.id, path: path) }
+            return false
+        }
+        var data = Data()
+        data.reserveCapacity(max(0, Int(http.expectedContentLength)))
+        do { for try await byte in bytes { data.append(byte) } } catch { return nil }
         switch http.statusCode {
         case 304 where etag != nil: return false
-        case 404 where path != main:
-            let had = await ArtifactCopies.shared.location(server: server, id: target.id, path: path) != nil
-            await ArtifactCopies.shared.drop(server: server, id: target.id, path: path)
+        case 404:
+            let had = await copies.location(server: server, id: target.id, path: path) != nil
+            if path == main { await copies.remove(server: server, id: target.id) }
+            else { await copies.drop(server: server, id: target.id, path: path) }
             return had
         case 200:
-            let old = await ArtifactCopies.shared.data(server: server, id: target.id, path: path)
-            if let old, (try? Data(contentsOf: download)) == old { return false }
-            await ArtifactCopies.shared.save(server: server, id: target.id, main: main, path: path, file: download,
-                                             etag: http.value(forHTTPHeaderField: "ETag"))
+            if await copies.data(server: server, id: target.id, path: path) == data { return false }
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("artifact-file-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard (try? data.write(to: file)) != nil else { return nil }
+            await copies.save(server: server, id: target.id, main: main, path: path, file: file,
+                              etag: http.value(forHTTPHeaderField: "ETag"))
             return true
         default: return nil
         }
@@ -177,3 +192,4 @@ extension APIClient {
     }
     if let fresh = try await client.refreshedArtifactDocument(target, shown: current) { try await draw(fresh) }
 }
+

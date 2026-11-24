@@ -77,7 +77,7 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertTrue(app.buttons["review.attach"].waitForExistence(timeout: 10), "The Ticket page note takes attachments")
         let artifactsRow = app.buttons["Artifacts"].firstMatch
         XCTAssertTrue(artifactsRow.waitForExistence(timeout: 8))
-        XCTAssertEqual(artifactsRow.value as? String, "2 files, collapsed")
+        XCTAssertEqual(artifactsRow.value as? String, "3 files, collapsed")
         capture("ticket-note-attach")
         let line = app.buttons["conversation-line"]
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
@@ -155,6 +155,7 @@ final class ArtifactDockTests: XCTestCase {
         let markdown = app.staticTexts["Dock artifact proof"]
         let page = app.webViews.staticTexts["Inline artifact proof"]
         let screenshot = app.webViews.staticTexts["Screenshot loaded"]
+        let postLanded = app.webViews.staticTexts["Page post landed"]
         // Built at each use: a first match stays bound to the process it resolved in.
         var ticketFile: XCUIElement {
             app.otherElements.matching(NSPredicate(format: "identifier == 'ticket-artifacts' AND label == 'dock-proof.md'")).firstMatch
@@ -201,7 +202,7 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertTrue(viewer.waitForExistence(timeout: 8))
         XCTAssertTrue(page.waitForExistence(timeout: 10)); XCTAssertTrue(screenshot.waitForExistence(timeout: 10))
         // Online, the page loads from the server's own address, so its write is accepted.
-        XCTAssertTrue(app.webViews.staticTexts["Page post landed"].waitForExistence(timeout: 10), "The page's POST lands online")
+        XCTAssertTrue(postLanded.waitForExistence(timeout: 10), "The page's POST lands online")
         let (posts, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/page-posts")!)
         let origins = try XCTUnwrap(JSONSerialization.jsonObject(with: posts) as? [Any])
         XCTAssertEqual(origins.count, 1)
@@ -217,9 +218,14 @@ final class ArtifactDockTests: XCTestCase {
         // back to its copy when that load fails. After the relaunch below it opens at once.
         XCTAssertTrue(page.waitForExistence(timeout: 10), "The HTML page falls back to its saved copy")
         XCTAssertTrue(screenshot.waitForExistence(timeout: 3), "The page's screenshot comes from its copy")
+        XCTAssertFalse(postLanded.exists, "The copy forwards nothing, so the page's write does not land")
         XCTAssertTrue(app.textFields["conversation-input"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["review.markRead"].exists)
         noCover("Message artifact"); capture("offline-message-artifact-dock")
+        // Back online, the same viewer returns to the server's page though the copy is unchanged.
+        try await proof("online")
+        XCTAssertTrue(postLanded.waitForExistence(timeout: 20), "The server's page replaces the copy after the reconnect")
+        try await proof("offline")
         app.backButton.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 8)); skip.tap()
         XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10)); skip.tap()
@@ -265,6 +271,23 @@ final class ArtifactDockTests: XCTestCase {
         noCover("Revised proposal artifact"); capture("online-revised-artifact")
         app.backButton.tap()
         XCTAssertTrue(dockLink.waitForExistence(timeout: 8))
+
+        // A cold launch online: the app is still connecting, and the page opens from the
+        // server, not from its copy. A link that fails leaves the server's page in place.
+        app.terminate(); app.launch()
+        // The walk read the message, so the page opens from the Ticket page's file list.
+        app.openReviewCards()
+        XCTAssertTrue(dockLink.waitForExistence(timeout: 10))
+        openTicketFiles()
+        app.otherElements.matching(NSPredicate(format: "identifier == 'ticket-artifacts' AND label == 'proof.html'")).firstMatch.tap()
+        XCTAssertTrue(postLanded.waitForExistence(timeout: 10), "After a cold launch online the page loads from the server")
+        let broken = app.webViews.links["Broken link"]
+        XCTAssertTrue(broken.waitForExistence(timeout: 5)); broken.tap()
+        // The failed link would reload the copy, whose write never lands; wait out that load.
+        XCTAssertFalse(postLanded.waitForNonExistence(timeout: 5), "A failed link does not switch the page to its copy")
+        capture("cold-launch-online-html")
+        app.backButton.tap()
+        XCTAssertTrue(ticketFile.waitForExistence(timeout: 8))
     }
 
     /// A long conversation whose rows carry tables, code and charts still scrolls freely.
