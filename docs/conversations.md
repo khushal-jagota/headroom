@@ -66,6 +66,8 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 | suppressed | Dropped on purpose before the wire, usually because a notice went stale. |
 | recorded | A message to the owner was written. No backend was called. |
 
+On the web, Send clears the draft and puts the message into the conversation at once. The message shows upload progress and its send result. Replies that wait for a busy agent appear as queued messages in the transcript, with the existing queue actions on each message. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
+
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
 The phone keeps at most 300 transcript items and 512 KiB of inline and ordinary expanded bodies. One visible deferred expansion can exceed that budget, up to 2 MB. Another oversized expansion replaces it, and it leaves decoded memory when it leaves view. The reader preserves the visible neighborhood. Older ranges remain available through Earlier messages, and Latest returns to the newest window. The reader retains at most 20 server history scopes. A late older page survives reconnect only while its history window remains valid. A replacement snapshot invalidates the pending page and supplies the current Earlier messages cursor.

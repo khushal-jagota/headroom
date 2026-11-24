@@ -1,3 +1,4 @@
+import { clear_owner_send_payload } from '../owner_send_receipts.ts';
 import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { conversation_machine_id } from '../../../machines/conversation_machine.ts';
@@ -938,6 +939,7 @@ export class ConversationStore
           created_at,
         ],
       );
+      clear_owner_send_payload(tx, conversation_id, payload);
       for (const operation of operations) {
         if (
           'sender_message_id' in payload &&

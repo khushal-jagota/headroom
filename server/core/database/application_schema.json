@@ -96,6 +96,7 @@
     "CREATE TABLE \"notification_preferences\" (subject_key TEXT NOT NULL CHECK (subject_key IN ('tickets','chief_of_staff','managers','goals','panels')),notification_type TEXT NOT NULL CHECK (notification_type IN ('awaiting_reply','awaiting_answer','awaiting_approval','assigned','errored','stall_alarm')),enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),updated_at INTEGER NOT NULL, PRIMARY KEY(subject_key, notification_type))",
     "CREATE TABLE notification_push_subscriptions (\n          subscription_id TEXT PRIMARY KEY,\n          endpoint        TEXT NOT NULL UNIQUE,\n          p256dh          TEXT NOT NULL,\n          auth            TEXT NOT NULL,\n          created_at      INTEGER NOT NULL,\n          updated_at      INTEGER NOT NULL,\n          disabled_at     INTEGER\n        )",
     "CREATE TABLE notification_web_push_identity (\n          singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),\n          private_key TEXT NOT NULL,\n          public_key  TEXT NOT NULL,\n          created_at  INTEGER NOT NULL\n        )",
+    "CREATE TABLE owner_send_receipts (\n      owner_kind TEXT NOT NULL,\n      owner_id TEXT NOT NULL,\n      message_id TEXT NOT NULL,\n      body_digest TEXT NOT NULL,\n      conversation_id TEXT,\n      epoch TEXT,\n      response TEXT,\n      pending_kind TEXT,\n      pending_payload TEXT,\n      PRIMARY KEY(owner_kind, owner_id, message_id),\n      UNIQUE(message_id)\n    )",
     "CREATE TABLE \"projects\" (id         TEXT PRIMARY KEY, name       TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, summary TEXT NOT NULL DEFAULT '', folder_path TEXT, repository_url TEXT, default_branch TEXT)",
     "CREATE TABLE resource_source_versions (\n        source_kind TEXT NOT NULL, source_id TEXT NOT NULL, revision INTEGER NOT NULL,\n        PRIMARY KEY(source_kind,source_id)\n    )",
     "CREATE TABLE server_link (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), server_id TEXT NOT NULL, move_number INTEGER NOT NULL CHECK(move_number >= 0 AND move_number <= 9007199254740991), server_url TEXT, state TEXT NOT NULL CHECK(state IN ('active','moved')), CHECK(state != 'moved' OR server_url IS NOT NULL))",
@@ -126,6 +127,7 @@
     "CREATE INDEX automatic_start_bindings_turn ON automatic_start_bindings(conversation_id,turn_number)",
     "CREATE INDEX conversation_history_order ON conversation_history_catalog(owner_kind,owner_id,created_at,conversation_id)",
     "CREATE INDEX conversation_owner_message_latest\n        ON conversation_events(conversation_id,sequence) WHERE kind='message_to_owner'",
+    "CREATE INDEX conversation_owner_sender_message ON conversation_events(json_extract(payload,'$.sender_message_id'),conversation_id,sequence)\n      WHERE kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded')",
     "CREATE INDEX conversation_view_groups_open ON conversation_view_groups(conversation_id, latest_entry_sequence, group_key, turn_key) WHERE ending_sequence IS NULL",
     "CREATE INDEX conversation_view_groups_order ON conversation_view_groups(conversation_id, source_sequence)",
     "CREATE INDEX conversation_view_groups_turn ON conversation_view_groups(conversation_id, turn_key, source_sequence)",
@@ -200,6 +202,7 @@
     "CREATE INDEX navigation_view_parent ON navigation_view_index(parent_kind,parent_id,kind,id)",
     "CREATE INDEX navigation_view_pointer ON navigation_view_index(conversation_id,kind,id)",
     "CREATE INDEX navigation_view_window ON navigation_view_memberships(section_key,profile,locale,rank,title_key,id_key,kind,id)",
+    "CREATE INDEX owner_send_unsettled ON owner_send_receipts(epoch) WHERE pending_kind IS NOT NULL",
     "CREATE UNIQUE INDEX preview_one_live_port ON ticket_application_previews(port) WHERE state = 'active'",
     "CREATE UNIQUE INDEX preview_one_live_ticket ON ticket_application_previews(ticket_id) WHERE state != 'ended'",
     "CREATE INDEX ticket_decision_messages_pending ON ticket_decision_messages(ticket_id,created_at) WHERE delivery_status != 'delivered'",
@@ -372,5 +375,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0012_empty_attachments"
+  "alembicRevision": "ts_0013_owner_send_receipts"
 }

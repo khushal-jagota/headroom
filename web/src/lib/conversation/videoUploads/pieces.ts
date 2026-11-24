@@ -13,4 +13,3 @@ export function restoredPendingUploads(pieces: readonly { piece: string; upload_
   return [...current, ...pieces.filter((piece) => (piece.piece === "attachment_upload" || piece.piece === "video_upload") && piece.upload_id && !existing.has(piece.upload_id))
     .map((piece, id): PendingAttachment => ({ id: id + nextId, fileName: "Attached file", byteCount: 0, mediaType: "application/octet-stream", destination: { ...destination }, uploadId: piece.upload_id, phase: "validating", receivedBytes: 0 }))];
 }
-

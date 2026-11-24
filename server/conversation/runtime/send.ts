@@ -1,3 +1,4 @@
+import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
 /** Sends, held prompts, and the drain that delivers them. */
 import { ConversationState, own_settlement, set_phase } from './state.ts';
 import { HeldPromptsChangedFrame, MessageToOwnerEventPayload } from '../events.ts';
@@ -318,6 +319,13 @@ export function hold_prompt(
     snapshot_sent_at_unix_milliseconds:
       message.sent_at_unix_milliseconds ?? Math.floor(host.unix_time_now() * 1000),
   };
+  note_pending_owner_sends(
+    host.options.store.start_admission_database,
+    state.record.conversation_id,
+    [held],
+    PromptDeliveryMode.queue,
+    false,
+  );
   host.start_admission.queue(message.sender_message_id);
   state.held_prompts.splice(position, 0, held);
   host.mark_eligible_held(state);

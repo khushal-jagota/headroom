@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ownerSendPath, postOwnerSend } from "../lib/conversation/ownerSend";
   /** A managed file outside an existing conversation pane belongs beside its owner's
    * current conversation. Opening the file leaves that conversation at rest. */
   import { PlannerFetchError } from "../lib/api";
@@ -11,11 +12,9 @@
   import { goalQueries } from "../lib/goals/queries";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { targetFromPreviewQuery, previewHashHref } from "../lib/filePreview";
-  import { mutateJson } from "../lib/mutate";
 
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { readBackends, type BackendSnapshot, type DeliveredMessage, type OwnerSendBody } from "../lib/conversation/wire";
-  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
 
   let { target: suppliedTarget = null, onClose }: {
     target?: ManagedFileTarget | null;
@@ -46,7 +45,6 @@
   let shownFile = $state<ManagedFileTarget | null>(null);
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
-  let sentConversationId = $state<string | null>(null);
   // A send can assign the first conversation before its owner query catches up.
   // Subsequent canonical pointer changes still replace that transient assignment.
   let observedPointer = "";
@@ -54,11 +52,10 @@
     const pointer = owner ? JSON.stringify([owner.kind, owner.id, owner.conversationId]) : "";
     if (pointer !== observedPointer) {
       observedPointer = pointer;
-      sentConversationId = null;
     }
   });
   let identity = $derived(target ? previewHashHref(target) : "");
-  $effect(() => { identity; shownFile = target; conversationState = "rest"; sentConversationId = null; });
+  $effect(() => { identity; shownFile = target; conversationState = "rest"; });
   onMount(() => { void readBackends().then(value => backends = value).catch(() => undefined); });
 
   function close(): void {
@@ -71,14 +68,7 @@
   }
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
     if (!owner || ownerError) throw new Error("The artifact's conversation is unavailable.");
-    const recipient = owner;
-
-    const operation = () => mutateJson<DeliveredMessage>(
-      recipient.kind === "chief" ? "/api/chief/conversation/send" : `/api/${recipient.kind === "ticket" ? "tickets" : "managers"}/${encodeURIComponent(recipient.id)}/conversation/send`,
-      { method: "POST", body, limitMs: sendRequestLimitMs(body.content) });
-    const delivered = await operation();
-    if (delivered.conversation_id !== null) sentConversationId = delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(ownerSendPath(owner), body);
   }
 </script>
 
@@ -91,7 +81,7 @@
       {#snippet conversation()}
         {#if owner && !ownerError}
           {#key identity}
-            <LiveConversation bind:conversationState conversationId={sentConversationId ?? owner.conversationId}
+            <LiveConversation bind:conversationState conversationId={owner.conversationId}
               persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={{kind: owner.kind, id: owner.id}}
               label={owner.title} title={owner.title} locale={"locale" in owner ? owner.locale : undefined}
               composerPlaceholder={`Message ${owner.title}...`} {backends} startValues={startValues ?? null}

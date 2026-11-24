@@ -192,6 +192,7 @@ export type HeldPrompt = StoredMessageContent & {
   sender?: Principal | null;
   recipient?: Principal | null;
   queue_reason: PromptQueueReason;
+  delivery_uncertain?: boolean;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */

@@ -56,9 +56,11 @@ test('test_video_upload_early_send_and_native_range_playback', async ({
   await editor.fill('Show this recording to the agent');
   await expect(page.locator('[data-conversation-send]')).toBeEnabled({ timeout: WAIT_MS });
   await page.locator('[data-conversation-send]').click();
-  const pending = page.locator('[data-local-video-send]');
+  const pending = page.locator('[data-conversation-content] [data-local-video-send]');
   await expect(pending).toContainText('Show this recording to the agent', { timeout: WAIT_MS });
-  await expect(pending).toContainText('not sent yet', { timeout: WAIT_MS });
+  await expect(pending).toContainText('Uploading', { timeout: WAIT_MS });
+  await expect(editor).toHaveValue('');
+  await expect(editor).toBeEditable();
   // The pending row can paint before the upload request reaches its route.
   const transferDeadline = performance.now() + WAIT_MS;
   while (!heldTransfers.length && performance.now() < transferDeadline) {

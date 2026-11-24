@@ -337,13 +337,13 @@ const REFUSAL_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> =
 /** The refusals that sending the same message again can get past: the backend or the
  *  moment was the problem, not the message or the conversation. Under these the message
  *  offers Resend, and its next step names that button. */
-const WHILE_A_TURN_RUNS = "Resend it. While a turn is running, it waits for that turn to end.";
+const WHILE_A_TURN_RUNS = "Try again. While a turn is running, it waits for that turn to end.";
 const RESEND_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> = {
-  model_resolution_failed: "Choose another model in the composer, then resend it.",
-  backend_did_not_start: "Resend it, or choose another model in the composer first.",
-  session_did_not_load: "Resend it to retry.",
-  write_to_backend_failed: "Resend it to retry.",
-  no_running_turn_to_steer_into: "The turn had already ended. Resend it to start a new one.",
+  model_resolution_failed: "Choose another model in the composer, then try again.",
+  backend_did_not_start: "Try again, or choose another model in the composer first.",
+  session_did_not_load: "Try again to retry.",
+  write_to_backend_failed: "Try again to retry.",
+  no_running_turn_to_steer_into: "The turn had already ended. Try again to start a new one.",
   backend_cannot_steer: WHILE_A_TURN_RUNS,
   running_turn_changed_before_steer: WHILE_A_TURN_RUNS,
   running_turn_cannot_accept_steer: WHILE_A_TURN_RUNS,
@@ -368,7 +368,7 @@ export function promptOutcomeStatus(
 ): TranscriptStatus {
   if (row.kind !== "prompt_refused") {
     return row.kind === "prompt_uncertain"
-      ? { tone: "warning", title: "Delivery not confirmed. It may have arrived, so do not send it again.", detail: null }
+      ? { tone: "warning", title: "The agent did not confirm receipt.", detail: null }
       : { tone: "neutral", title: "Discarded without being delivered", detail: null };
   }
   const plain = REFUSAL_SENTENCES[row.reason] ?? "the delivery was impossible";

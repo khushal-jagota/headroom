@@ -49,7 +49,7 @@ export type HeldPromptRowAction =
  * a question that is about to answer itself.
  */
 export function heldPromptRowActions(row: HeldPromptRow): readonly HeldPromptRowAction[] {
-  if (row.heldPromptId !== null) return ["discard", "send_now", "steer"];
+  if (row.heldPromptId !== null) return row.state === "unknown" ? [] : ["discard", "send_now", "steer"];
   if (row.state === "unknown") return ["stop_drawing", "send_again"];
   return [];
 }
@@ -90,7 +90,7 @@ export function heldPromptRows(
       content: local?.content ?? messageContentOf(held),
       senderLabel: held.sender_label,
       sentAtUnixMilliseconds: held.sent_at_unix_milliseconds,
-      state: "held",
+      state: held.delivery_uncertain ? "unknown" : "held",
       queueReason: held.queue_reason
     };
   });

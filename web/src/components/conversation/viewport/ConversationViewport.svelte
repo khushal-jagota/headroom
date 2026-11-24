@@ -46,7 +46,6 @@
     activityUncertain = false,
     conversationState,
     emptyState,
-    afterTranscript,
     reader = null,
     viewAnchor = $bindable(null),
     jump = $bindable(null)
@@ -70,9 +69,6 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
-    /** What stands at the very end of the thread after everything said: the person's
-     *  messages that are waiting to be sent. */
-    afterTranscript?: Snippet;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
     jump?: ConversationJump | null;
@@ -1253,10 +1249,7 @@
       {onSendAgain}
     />
     {/if}
-    <!-- v8 (3): the Working line right after the running turn's content (its steered
-         messages are inside the turn), then the queued messages, which send after it. -->
     {#if reader!==null}<LiveEdge {reader} {activityUncertain}/>{/if}
-    {#if afterTranscript}{@render afterTranscript()}{/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div

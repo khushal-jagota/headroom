@@ -38,6 +38,8 @@ export type PendingVideo = {
 };
 export type ComposerSendContext = {
   messageId: string;
+  sentAtUnixMilliseconds?: number;
+  attachmentNames?: readonly string[];
   expectedConversationId: string | null;
   destination?: UploadDestination;
 };

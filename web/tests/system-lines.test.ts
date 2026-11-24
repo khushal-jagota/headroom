@@ -135,13 +135,13 @@ describe("a message's system lines", () => {
     }
   });
 
-  it("a message the offline Mac turned away is not delivered, in its bubble, with Resend and the server's words", () => {
+  it("a message the offline Mac turned away is not delivered, in its bubble, with Try Again and the server's words", () => {
     const local = { messageId: "m1", content: words, senderLabel: "owner", mode: "queue" as const, sentAtUnixMilliseconds: 1,
       knownFate: "machine_offline" as const, refusal: { reason: "The Mac is offline", detail: "Mac Tickets cannot start: no compatible Mac executor has leased yet" } };
-    const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner" } }).body;
+    const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner", onSendAgain: () => undefined } }).body;
     expect(html).toMatch(/class="c2-bubble[^"]*is-failed/);
     expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
-    expect(html).toMatch(/data-conversation-held-send-again="m1"[^>]*>Resend</);
+    expect(html).toMatch(/data-conversation-held-send-again="m1"[^>]*>Try Again</);
     expect(html).toContain("Mac Tickets cannot start");
   });
 

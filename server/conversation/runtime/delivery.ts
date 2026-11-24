@@ -1,3 +1,4 @@
+import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
@@ -365,6 +366,16 @@ export async function deliver_prompt(
     let wire_content = await compose(host, state, sender_content);
     if (interruption_notice !== null)
       wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
+    owned(host, state, reservation);
+    await host.persist(state, () =>
+      note_pending_owner_sends(
+        host.options.store.start_admission_database,
+        state.record.conversation_id,
+        survivors,
+        reservation.mode,
+        true,
+      ),
+    );
     owned(host, state, reservation);
     host.start_admission.bind_source(reservation.token, target);
     reservation.messages = survivors;
