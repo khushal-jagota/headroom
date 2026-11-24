@@ -162,10 +162,19 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.match(expectedBuild, /^[a-f0-9]{64}$/);
     const rolledBackAttempt = rolledBack.attempt.attempt_id;
     await page.goto(url);
-    await page
-      .getByRole('button', { name: /retry|try again/i })
-      .first()
-      .click();
+    const card = page.locator('[data-shell-status]');
+    const headline = card.locator('.status-base');
+    await headline.getByText("Update didn't install", { exact: true }).waitFor();
+    await page.screenshot({ path: join(o.base, 'evidence/update-rolled-back.png') });
+    const retried = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname ===
+          `/api/updates/attempts/${encodeURIComponent(rolledBackAttempt)}/retry`,
+    );
+    await headline.getByRole('button', { name: 'Try again', exact: true }).click();
+    const retryResponse = await retried;
+    assert.ok(retryResponse.ok(), await retryResponse.text());
     await wait_for(async () => {
       const status = await read_status();
       if (status?.attempt?.attempt_id === rolledBackAttempt) return false;
@@ -187,7 +196,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.notEqual(before.conversation_id, after.conversation_id);
     await verify_smoke_history(url, preserved);
     await page.reload();
-    await page.getByText('Up to date', { exact: true }).first().waitFor();
+    await headline.getByText('Up to date', { exact: true }).waitFor();
+    await card.locator(`[data-machine-update="${o.machine_id}"][data-state="current"]`).waitFor();
     await page.screenshot({ path: join(o.base, 'evidence/update-complete.png') });
     await writeFile(
       join(o.base, 'evidence/upgrade.json'),
