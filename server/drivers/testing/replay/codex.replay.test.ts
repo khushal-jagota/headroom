@@ -41,11 +41,17 @@ const CODEX: DriverExpectations = {
     child_dispositions: ['reusable', 'reusable'],
     event_classes: [...ANSWERED, 'TurnEnded'],
   },
-  // Codex reports no BackendStreamEnded when its process dies: the turn's failed ending says it.
+  // Stream death also clears background work that can outlive the failed turn.
   child_crash_mid_turn: {
     turn_endings: ['failed'],
     child_dispositions: ['broken'],
-    event_classes: [...STARTED, 'AgentMessageDelta', 'AgentMessageCompleted', 'TurnEnded'],
+    event_classes: [
+      ...STARTED,
+      'AgentMessageDelta',
+      'BackendStreamEnded',
+      'AgentMessageCompleted',
+      'TurnEnded',
+    ],
   },
 };
 replay_driver_tests('codex', CODEX);
