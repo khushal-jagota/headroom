@@ -68,5 +68,5 @@ export async function cli(server: ServerHandle, args: string[], options: CliOpti
   const data = runCli(server, args, env, options.stdin);
   if (!options.settleBrief) return data;
   expect(args.slice(0, 2)).toEqual(['ticket', 'create']);
-  return runCli(server, ['ticket', 'proposal', data.id, 'accept', '--ceiling', 'none'], env);
+  return runCli(server, ['ticket', 'approve', data.id, '--ceiling', 'none'], env);
 }

@@ -103,7 +103,6 @@ export interface OperatorArguments extends EnvironmentCommandArguments {
   run: EnvironmentRequest & { readonly test_mode: boolean };
   serve: Record<string, never>;
   restart: Record<string, never>;
-  'server-event-loop-tasks': { readonly json: boolean };
   watchdog: WatchdogArguments;
 }
 export type OperatorName = keyof OperatorArguments;

@@ -24,7 +24,7 @@
   }: {
     /** The leading mark, if any. "failure" is the one red dot. */
     mark?: "spinner" | "dot" | "failure" | null;
-    /** Whether a spinner turns. It holds still when live frames stop arriving. */
+    /** Whether a spinner turns. */
     turning?: boolean;
     /** A caption under a person's message keeps the bubble's right edge; "center" is the
      *  empty conversation's one line. Everything else starts at the column's left edge. */

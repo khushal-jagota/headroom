@@ -10,7 +10,7 @@ The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **M
 
 Each agent conversation receives a private launch credential. The CLI sends it automatically. The server checks its hash and resolves the caller from the conversation’s current Ticket, Chief or Manager association. Role names, ids and `X-Plan-*` headers grant no authority. A missing, invalid or revoked agent credential never makes an agent the owner.
 
-Agents use `panels api` when no dedicated command covers a route. This keeps the credential inside the same automatic transport as ordinary commands. Recap requests and deployment recovery prompts give agents that command rather than an unauthenticated HTTP instruction.
+Agents use `panels api` when no dedicated command covers a route. This keeps the credential inside the same automatic transport as ordinary commands. Deployment recovery prompts give agents that command rather than an unauthenticated HTTP instruction. Recap requests name `panels recap`, which writes the caller's own recap.
 
 On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header. This owner path is separate from agent credentials.
 
@@ -77,4 +77,4 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `server/core/authority/identity.ts`: turns a request into a caller. Executor self-reads enter through a verified in-process context.
 - `server/agent_identity/`: conversation credentials, hash storage and private launch delivery.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-23._

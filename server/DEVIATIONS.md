@@ -283,8 +283,8 @@ Synchronous signal subscribers therefore read the committed presence state.
 
 ## Server event-loop task inspection — accepted, deferred
 
-The Manager accepted explicit refusal because the TypeScript runtime cannot enumerate Promise await chains.
-The typed `server-event-loop-tasks` callback returns exit 1, empty stdout, and an `unsupported` error.
+The TypeScript runtime cannot enumerate Promise await chains.
+The `server-event-loop-tasks` command only refused, so it was removed with its callback.
 Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
 Node's built-in diagnostic report is the operator alternative.
 Unexpected operator failures, including cleanup AggregateErrors, print the error text at exit 1.

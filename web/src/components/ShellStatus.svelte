@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
+  import { get } from "svelte/store";
+  import { connectionStatus } from "../lib/changeStream";
+  import { desktopBridge } from "../desktop/bridge";
+  import { refreshScreen } from "../lib/resourceVersions/refresh";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
   import { requestReleaseReload } from "../lib/releaseMonitor";
@@ -15,16 +19,52 @@
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth; showsSavedSession?: boolean;
     status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
   } = $props();
+  const desktop = typeof location !== "undefined" && location.protocol === "panels:" && location.host === "app";
+  let reachDialog = $state<HTMLDialogElement | null>(null);
+  let serverAddress = $state("");
+  let checking = $state(false);
+  let reachFailed = $state(false);
+  const reachTitle = $props.id();
+
+  async function openReachDialog(): Promise<void> {
+    reachFailed = false;
+    serverAddress = await desktopBridge().storedServerAddress() ?? "";
+    if (!reachDialog?.open) reachDialog?.showModal();
+  }
+
+  async function retryServer(): Promise<void> {
+    checking = true;
+    reachFailed = false;
+    try {
+      const response = await fetch("/api/meta", { signal: AbortSignal.timeout(5_000) });
+      if (get(connectionStatus) !== "connected" && !response.ok) {
+        reachFailed = true;
+        return;
+      }
+      retryChangeStream();
+      void refreshScreen();
+      reachDialog?.close();
+    } catch {
+      reachFailed = get(connectionStatus) !== "connected";
+      if (!reachFailed) reachDialog?.close();
+    } finally { checking = false; }
+  }
+
+  $effect(() => {
+    if (connectionState === "connected") reachDialog?.close();
+  });
+
   // The desktop app opens with the last session's data. Until the server replaces it on
   // screen, the line says so. A navigation warning, when there is one, says more.
   const SAVED_SESSION = { state: "saved_session" } as const;
   type ShownHealth = NavigationHealth | typeof SAVED_SESSION;
   // An update restarts Panels, which drops navigation for a moment. That is part of the
   // one "Updating…" wait, not a second thing to report.
-  const shownHealth = $derived<ShownHealth>(presentation === "updating" ? null
+  const shownHealth = $derived<ShownHealth>((presentation === "updating" || desktop && presentation === "unreachable") ? null
     : navigationHealth ?? (showsSavedSession ? SAVED_SESSION : null));
   const statusKey = $derived(presentation ?? (shownHealth ? "navigation" : null));
   let displayedWord = $state<UpdateCardState | "navigation" | null>(null);
+  const desktopUnreachable = $derived(desktop && displayedWord === "unreachable");
   let displayedHealth = $state.raw<ShownHealth>(null);
   let textOut = $state(false);
   let actions = $state<UpdateActions | null>(null);
@@ -191,11 +231,14 @@
           <span class="status-base">
             <span class="status-mark" aria-hidden="true"></span>
             <span class:status-sentence={card.sentence} class:status-word={!card.sentence} class="swap" data-out={textOut ? "" : undefined}>{card.word}</span>
-            {#if card.action}
+            {#if card.action && !desktopUnreachable}
               <button type="button" class="swap status-action" data-out={textOut ? "" : undefined}
                 data-shell-refresh={card.action.does === "refresh" ? "" : undefined} onclick={activate}>{card.action.label}</button>
             {/if}
-            {#if card.info}
+            {#if desktopUnreachable}
+              <button type="button" class="swap status-info status-info--alone" aria-label="Server connection details" data-out={textOut ? "" : undefined}
+                data-desktop-connection-info onclick={openReachDialog}>i</button>
+            {:else if card.info}
               <button type="button" class="swap status-info" class:status-info--alone={!card.action} aria-label="Update details" data-out={textOut ? "" : undefined}
                 data-update-info={card.info} onclick={() => card?.info && actions?.openDialog(card.info)}>i</button>
             {/if}
@@ -212,7 +255,7 @@
             {#if machineError}<span role="alert">{machineError}</span>{/if}
           {/if}
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}
-          {#if card.detail}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
+          {#if card.detail && !desktopUnreachable}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
         {/if}
         {#if displayedHealth}
           <span class="navigation-health" data-navigation-health={displayedHealth.state} data-state={"changing"}>
@@ -227,8 +270,37 @@
 </div>
 {#if status}<UpdateActions bind:this={actions} {status} {now} />{/if}
 
+{#if desktop}
+  <dialog bind:this={reachDialog} aria-labelledby={reachTitle} data-desktop-connection-dialog
+    onclick={(event) => { if (event.target === reachDialog) reachDialog?.close(); }}>
+    <div class="reach-dialog">
+      <h2 id={reachTitle}>Can't reach the server</h2>
+      <p>{serverAddress}</p>
+      {#if reachFailed}<p class="reach-problem" role="alert">Still no answer.</p>{/if}
+      <footer>
+        <a class="button button--ghost" href="panels://setup/">Change server…</a>
+        <button type="button" class="button button--primary" onclick={retryServer} disabled={checking}>
+          {#if checking}<span class="reach-spinner" aria-hidden="true"></span>{/if}{checking ? "Checking…" : "Try again"}
+        </button>
+      </footer>
+    </div>
+  </dialog>
+{/if}
 
 <style>
+  dialog { width: min(var(--desktop-dialog-width), calc(100% - var(--space-5))); margin: auto; padding: 0; border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--text-default); box-shadow: var(--shadow-float); }
+  dialog[open] { animation: reach-in var(--motion-slow) var(--motion-ease); }
+  dialog::backdrop { background: var(--scrim); }
+  .reach-dialog { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
+  .reach-dialog h2 { font-size: var(--type-row); font-weight: var(--weight-title); color: var(--text-strong); margin: 0; }
+  .reach-dialog p { font-size: var(--type-body); color: var(--text-muted); overflow-wrap: anywhere; margin: 0; }
+  .reach-dialog .reach-problem { color: var(--accent-error); }
+  .reach-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+  .reach-spinner { width: var(--button-icon); height: var(--button-icon); border: var(--border-hairline) solid currentColor; border-right-color: transparent; border-radius: var(--radius-pill); animation: reach-spin var(--motion-loop-spin) linear infinite; }
+  @keyframes reach-spin { to { transform: rotate(360deg); } }
+  @keyframes reach-in { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { dialog[open], .reach-spinner { animation: none; } }
+
   .status-slot { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--glide-space) var(--glide-ease); }
   .status-slot > div { min-height: 0; overflow: hidden; }
   .status-slot[data-open] { grid-template-rows: 1fr; }

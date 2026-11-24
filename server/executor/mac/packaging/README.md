@@ -12,6 +12,8 @@ The payload keeps any driver's own scripts, static skill/Worker seed data, versi
 server JSON/bash assets and complete production packages. It contains no Python interpreter.
 `launcher/Panels TypeScript.app` is the launcher that every account shares, so the archive digest covers it.
 The package holds no account path. A join writes the account's console and LaunchAgent on the machine.
+The signed launcher remains alive while its Node child runs, forwards termination signals, and reaps the child's exit.
+Worker mode preserves its release command and environment. Executor and console modes use the fixed supervisor command.
 
 `launcher_main.ts` compiles the launcher with `clang` and signs it. The release workflow signs it with the
 project's Developer ID. The pull-request rehearsals pass `-` for an ad-hoc signature.

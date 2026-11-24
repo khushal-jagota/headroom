@@ -62,6 +62,8 @@ A Ticket stores one control fact, the worker-step claim: at rest, out, or errore
 
 The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
 
+Lists and the command line also give each Ticket one need word: what it waits on, and from whom. It maps the browser's group for the Ticket, except that backlog and done win over every other fact, so a deferred or finished Ticket never reads as waiting on anyone. See [the command line](cli.md).
+
 A parked proposal remains actionable even if an older claim is errored. An errored claim stops automatic progress. Restart the Worker for explicit repair. A restart first kills the Ticket's conversation. After a successful kill, it unlinks the conversation, gives back any claim, and starts a fresh step. The claim does not determine whether a restart can proceed. A revision also starts in a fresh conversation. Its undelivered decision notes carry over.
 
 If new launch settings fail after the old Worker ends, restart clears its old link and marks the claim errored when the database permits cleanup. The settings error remains visible. The Ticket stays stopped until an explicit restart, so old launch settings cannot start another Worker automatically.
@@ -70,7 +72,7 @@ If cleanup cannot establish that the old Worker ended, restart refuses before th
 
 ## Backlog and delete
 
-Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. Deferred children do not contribute to a Manager's active-work rollup. Their direct records retain the proposal and conversation facts.
+Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. A Manager's counts by need put deferred children in their own backlog count. Their direct records retain the proposal and conversation facts.
 
 Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
 

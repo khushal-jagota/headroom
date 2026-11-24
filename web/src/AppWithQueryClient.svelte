@@ -1,6 +1,5 @@
 <script lang="ts">
   import { QueryClientProvider } from "@tanstack/svelte-query";
-  import DesktopConnection from "./desktop/DesktopConnection.svelte";
   import App from "./App.svelte";
   import { queryClient } from "./lib/queryClient";
 </script>
@@ -13,5 +12,3 @@
 <QueryClientProvider client={queryClient}>
   <App />
 </QueryClientProvider>
-
-{#if typeof location !== "undefined" && location.protocol === "panels:" && location.host === "app"}<DesktopConnection />{/if}

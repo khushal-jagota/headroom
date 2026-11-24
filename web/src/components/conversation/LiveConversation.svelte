@@ -44,6 +44,8 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { refreshScreen } from "../../lib/resourceVersions/refresh";
+  import { withinScreenWait } from "../../lib/mutate";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import SystemLine from "./SystemLine.svelte";
@@ -211,7 +213,6 @@
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
    *  nothing: a frame with no words in it moves this and touches no row. */
-  let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
   /** Sends whose confirmed queue fate precedes the next server snapshot. */
@@ -229,6 +230,10 @@
   $effect(() => { if (conversationState !== "rest") dockedUndeliveredReason = null; });
   let askNote = $state<string | null>(null);
   let askNoteKey = $state<string | null>(null);
+  /** The asks that the server took an answer for. A card stays until the tail says that
+   *  its ask is over, and a second press in that moment must not send a second answer. */
+  let answeredPermissionAsk: string | null = null;
+  let answeredUserInput: string | null = null;
   let busy = $state(false);
   let opening = $state(false);
   // Focus or Full is one reading preference for this browser: it opens the way it was left.
@@ -278,6 +283,9 @@
     const pending=view?.pending_user_input;
     return pending&&pending.request_id===askStatus?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
+  // An ask that is over can come again under the same id, so its answer is forgotten.
+  $effect(() => { if (ask === null) answeredPermissionAsk = null; });
+  $effect(() => { if (userInput === null) answeredUserInput = null; });
   let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
     askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
@@ -361,9 +369,9 @@
           );
           if (latestOwnerMessage > previouslyReadThrough && latestOwnerMessage <= advanced) {
             refreshedReadThrough.set(reading.conversation_id, advanced);
-            // The server accepted this read. Ask mounted queries for current truth,
+            // The server accepted this read. Start the ordinary refresh for current truth,
             // even if the owner switched conversations while the request was pending.
-            void queryClient.invalidateQueries();
+            void refreshScreen();
           }
           if (view?.conversation_id === reading.conversation_id) {
             view = {
@@ -574,7 +582,6 @@
     const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
-      livenessPulse++;
       if(local.coverage!==lastCoverage){
         lastCoverage=local.coverage;
         void refreshView(id);
@@ -756,12 +763,16 @@
           errorNote = "The browser could not carry the pending file into this conversation.";
         }
       }
+      // The send ends here, with the server's answer. The reads that bring the screen up
+      // to date start now and are not waited for, so a slow read cannot hold the composer.
+      let opens = false;
       if (delivered.conversation_id !== null && delivered.conversation_id !== openedId) {
         // The message made a conversation. Pointed at it and opened, without recalling:
         // what this browser is holding is the message being sent right now, which is newer
         // than anything remembered.
         openedId = delivered.conversation_id;
-        await openConversation(delivered.conversation_id);
+        opens = true;
+        void openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
       // A durable refusal/uncertainty speaks on its bubble, not a second receipt.
@@ -774,7 +785,7 @@
         const recordedOutcome = delivered.conversation_id !== null;
         if (recordedOutcome) acknowledgedMessageIds.add(message.messageId);
         await stopDrawing(message.messageId, recordedOutcome);
-        await refreshView();
+        if (!opens) void refreshView();
         return recordedOutcome;
       }
       if (fate.fate === "started" || fate.fate === "injected") {
@@ -789,7 +800,7 @@
           composerStackMessageIds = [...composerStackMessageIds, message.messageId];
         }
       }
-      await refreshView();
+      if (!opens) void refreshView();
       return true;
     } catch (error) {
       // The correlated record already settled this send. A later transport failure
@@ -898,7 +909,7 @@
     if (readOnly || openedId === null) return;
     try {
       await interruptConversation(openedId);
-      await refreshView();
+      void refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -911,19 +922,27 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(heldPromptId: string, forEdit = false): Promise<void> {
-    if (readOnly || openedId === null) return;
+  async function discard(heldPromptId: string, forEdit = false): Promise<boolean> {
+    if (readOnly || openedId === null) return false;
     errorNote = null;
+    const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
+    let discarded: boolean;
     try {
-      const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
-      await discardHeldPrompt(openedId, heldPromptId, forEdit);
-      // Taken back to edit: the record keeps no row for it, so nothing else takes this
-      // tab's copy off the screen. Its words are in the composer now.
-      if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
-      await refreshView();
+      ({ discarded } = await discardHeldPrompt(openedId, heldPromptId, forEdit));
     } catch (error) {
       errorNote = sentenceFor(error);
+      // No answer is not a refusal: the server can still discard the message. Only the
+      // record says what happened, so this one case waits for it.
+      await refreshView();
+      return !(view?.held_prompts ?? []).some((held) => held.held_prompt_id === heldPromptId);
     }
+    // Taken back to edit: the record keeps no row for it, so nothing else takes this
+    // tab's copy off the screen. Its words are in the composer now.
+    if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
+    // The write is answered. The row leaves when the record is read again, and the
+    // caller waits for that only a short, limited time.
+    await withinScreenWait(refreshView());
+    return discarded;
   }
 
   async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
@@ -942,7 +961,7 @@
         fateNoteIsTerminal = true;
         fateNoteMessageId = promotedMessageId;
       }
-      await refreshView();
+      await withinScreenWait(refreshView());
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -951,6 +970,7 @@
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
     if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    if (answeredPermissionAsk === askId) return;
     askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
@@ -959,7 +979,8 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take that answer. Cancelling the turn always works.";
-      await refreshView();
+      if (fate !== "refused") answeredPermissionAsk = askId;
+      void refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -970,6 +991,7 @@
   async function submitUserInput(answers: UserInputAnswers): Promise<boolean> {
     const requestId = userInput?.requestId;
     if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return false;
+    if (answeredUserInput === requestId) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
@@ -978,7 +1000,8 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take those answers. You can try again or stop the turn.";
-      await refreshView();
+      if (fate !== "refused") answeredUserInput = requestId;
+      void refreshView();
       return fate !== "refused";
     } catch (error) {
       askNote = sentenceFor(error);
@@ -1109,7 +1132,6 @@
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
-  {livenessPulse}
   {running}
   {ask}
   {userInput}
@@ -1143,7 +1165,7 @@
   bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
-  composerDisabled={busy || opening}
+  composerDisabled={busy || (opening && view === null)}
   onSend={(content, mode, picked, context) => send(content, mode, picked, undefined, context)}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}

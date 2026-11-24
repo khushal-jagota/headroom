@@ -1,21 +1,20 @@
 import { writable } from "svelte/store";
 import { ensureDebug } from "./debug";
 import { queryClient } from "./queryClient";
-import { createResourceCoordinator } from "./resourceVersions/coordinator";
+import { refreshScreen, stopScreenRefresh } from "./resourceVersions/refresh";
 import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
 import { UPDATE_RECOVERY_POLL_MS } from "./updates/config";
 
 // The server sends one contentless "something changed" frame per commit. The
 // browser probes versions for mounted resources and refetches changed bodies.
-// Unregistered reads retain explicit invalidation. The signal stays contentless.
+// A read with no registered revision is read again on each round. The signal stays contentless.
 export type ConnectionStatus = "connected" | "reconnecting";
 
 // Commits inside one fixed window collapse into one round of refetches. A working agent
 // commits in bursts of dozens, and each round asks the server for everything on screen
 // again. The first commit starts the deadline so a sustained stream cannot keep the visible
-// screen stale. Confirmed browser actions can refresh immediately without this delay.
+// screen stale. An own write starts the same refresh at once, without this delay.
 export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
-const resources = createResourceCoordinator(queryClient);
 
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 
@@ -23,24 +22,25 @@ let stream: EventSource | null = null;
 let flushTimer: number | null = null;
 let reconnectTimer: number | null = null;
 let started = false;
-/** Something was committed while nobody was looking at this tab. */
-let changedWhileHidden = false;
 
 function reconcileResources(): Promise<void> {
   ensureDebug().flushes += 1;
-  return resources.refresh();
+  return refreshScreen();
 }
 
 function flush(): void {
   flushTimer = null;
-  if (document.visibilityState === "hidden") { changedWhileHidden = true; return; }
+  if (document.visibilityState === "hidden") return;
   void reconcileResources();
 }
 
-/** Coming back to the tab is when what happened while it was away is worth fetching. */
+/**
+ * A hidden tab reads nothing. Its return is the one occasion that answers for all of the
+ * time away, whether a frame arrived or the stream went silent. The revision check finds
+ * what changed, so the cache library's own re-read of every query on focus is off.
+ */
 function onVisibilityChange(): void {
-  if (document.visibilityState !== "visible" || !changedWhileHidden) return;
-  changedWhileHidden = false;
+  if (document.visibilityState !== "visible") return;
   void reconcileResources();
 }
 
@@ -62,7 +62,7 @@ function openStream(): void {
     connectionStatus.set("connected");
     // A connection just opened, so anything that changed while it was down is
     // still unseen: reconcile by refetching what is on screen.
-    if (document.visibilityState === "hidden") { changedWhileHidden = true; return; }
+    if (document.visibilityState === "hidden") return;
     void reconcileResources().then(() => {
       if (stream !== source) return;
       ensureDebug().sseReconciliations += 1;
@@ -73,10 +73,7 @@ function openStream(): void {
     // A hidden tab has nothing on screen to bring up to date, and refetching everything
     // for it is the whole cost with none of the point. One round when it comes back
     // answers everything that landed while it was away, however much that was.
-    if (document.visibilityState === "hidden") {
-      changedWhileHidden = true;
-      return;
-    }
+    if (document.visibilityState === "hidden") return;
     if (flushTimer === null) {
       flushTimer = window.setTimeout(flush, INVALIDATE_DEBOUNCE_MS);
     }
@@ -110,9 +107,8 @@ export function retryChangeStream(): void {
 export function stopChangeStream(): void {
   started = false;
   clearReconnect();
-  resources.stop();
+  stopScreenRefresh();
   document.removeEventListener("visibilitychange", onVisibilityChange);
-  changedWhileHidden = false;
   if (flushTimer !== null) {
     window.clearTimeout(flushTimer);
     flushTimer = null;

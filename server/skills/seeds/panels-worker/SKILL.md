@@ -11,9 +11,9 @@ Tickets generally have stages, these are not there to show all of your working, 
 
 ## Your ticket and its workflow guide
 
-Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Panels copies it from a Worker type when the Ticket is made, and a later edit to that type does not change it. Run `panels worker my-ticket` to read the current Stage, ownership, and scope.
+Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Panels copies it from a Worker type when the Ticket is made, and a later edit to that type does not change it. Run `panels ticket show` to read the current Stage, ownership, and scope.
 
-Panels sends the complete guide at kickoff. Read it again with `panels worker my-ticket workflow`, and after context recovery. Follow your Ticket's own guide. Do not load a Worker type's specialist skill for your Ticket. That skill is the current guide of the type, and it can differ from the copy your Ticket holds.
+Panels sends the complete guide at kickoff. Read it again with `panels ticket show workflow`, and after context recovery. Follow your Ticket's own guide. Do not load a Worker type's specialist skill for your Ticket. That skill is the current guide of the type, and it can differ from the copy your Ticket holds.
 
 ### Who owns the current Stage
 
@@ -25,15 +25,15 @@ Every non-terminal Stage has a default ownership mode.
 
 ### The CLI
 
-Everything runs through the `panels` command — `panels --help` for full usage. You often use panels worker and panels ticket.
+Everything runs through the `panels` command — `panels --help` for full usage. You often use panels ticket, panels recap and panels send-message.
 
-`panels worker propose` and `recap` take their text on stdin only.
+Commands that take text read it from stdin, `--message TEXT`, or `--body-file FILE`.
 
-- `panels worker propose <id>`, with the proposal text piped on stdin. A proposal does
+- `panels ticket propose`, with the proposal text. A proposal does
   not carry the recap. Write the recap when you propose, and whenever what the Ticket is
   waiting on has changed since you last wrote it.
-- `panels worker recap <id>`, with the recap text piped on stdin.
-- `panels send-message` sends an ordinary message. Select exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>`. Supply text with `--message TEXT` or `--body-file FILE` (`-` reads stdin).
+- `panels recap`, with the recap text.
+- `panels send-message` sends an ordinary message. Select exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>`. Supply text on stdin, with `--message TEXT`, or with `--body-file FILE`.
 
 Choose the owner when they raised the matter or the decision belongs to them. Otherwise, choose your assigned Manager or Chief. There is no default recipient. Keep the message short.
 
@@ -49,7 +49,7 @@ When the current approved step creates a Ticket, load and follow `panels-ticket-
 
 File proposals canonically and stop at the gate. Let Panels route review and continuation. Do not duplicate a proposal or its status in chat.
 
-After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels worker propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
+After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels ticket propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
 
 Explicit owner requests still apply.
 

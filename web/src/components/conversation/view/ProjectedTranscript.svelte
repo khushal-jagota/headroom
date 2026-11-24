@@ -21,7 +21,7 @@
   import { turnHeadAtTop } from '../../../lib/conversation/view/liveEdge';
   import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
-  let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+  let { activityUncertain = false, reader, models, ownSenderLabel, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
       withdrawnDisplayIds?: ReadonlySet<string>;
@@ -31,7 +31,6 @@
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
-      livenessPulse: number;
   } = $props();
   const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
   /** The key request the composer is asking in its own place; drawn there, not here. */
@@ -262,7 +261,7 @@
       {#if item.kind==='turn'}
         <div use:demand={item}>
           {#if headDrawn(item)}
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
           {/if}
         </div>
       {:else if item.kind==='work_group'}
