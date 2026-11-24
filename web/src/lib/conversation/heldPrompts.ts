@@ -9,6 +9,7 @@ import {
   messageContentText,
   type HeldPrompt,
   type MessagePiece,
+  type PromptDeliveryMode,
   type PromptQueueReason,
   type SentMessagePiece
 } from "./wire";
@@ -25,6 +26,7 @@ export type HeldPromptRow = Readonly<{
   sentAtUnixMilliseconds: number;
   state: HeldPromptRowState;
   queueReason: PromptQueueReason | null;
+  mode?: PromptDeliveryMode;
 }>;
 
 /** What can be done with one row in the stack.
@@ -88,6 +90,7 @@ export function heldPromptRows(
       heldPromptId: held.held_prompt_id,
       senderMessageId,
       content: local?.content ?? messageContentOf(held),
+      mode: held.requested_mode,
       senderLabel: held.sender_label,
       sentAtUnixMilliseconds: held.sent_at_unix_milliseconds,
       state: held.delivery_uncertain ? "unknown" : "held",
@@ -102,6 +105,7 @@ export function heldPromptRows(
       heldPromptId: null,
       senderMessageId: message.messageId,
       content: message.content,
+      mode: message.mode,
       senderLabel: message.senderLabel,
       sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
       state: stateForLocal(message),

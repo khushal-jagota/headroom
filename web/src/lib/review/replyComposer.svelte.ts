@@ -9,7 +9,10 @@ import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES, pendingConversationImageBytes, pe
 import { attachmentTransfersFor, clearAttachmentDraft, openAttachmentDraft, pendingUploadsAsPieces, publishAttachmentDraft, restoredPendingUploads } from '../conversation/videoUploads/uploads';
 import { videoUploadAdapter } from '../conversation/videoUploads/adapter';
 import type { PendingAttachment, UploadDestination } from '../conversation/videoUploads/contracts';
-import { messageContentText, type DeliveredMessage, type SentMessagePiece } from '../conversation/wire';
+import {
+  discardHeldPrompt, messageContentText, openConversationTail, promoteHeldPrompt, readConversation,
+  type ConversationView, type DeliveredMessage, type SentMessagePiece
+} from '../conversation/wire';
 import { readReviewDraft, saveReviewDraft } from './messages';
 import { recallReviewAttempts, rememberReviewAttempts, type ReviewReplyAttempt } from './sendAttempts';
 
@@ -67,6 +70,8 @@ export class ReviewReplyComposer {
   #unsubscribe: (() => void) | null = null;
   #checking = new Set<string>();
   #watchUploads: (() => void) | null = null;
+  #watchQueue: (() => void) | null = null;
+  #refreshQueue?: () => Promise<void>;
   #text = $state('');
   #files = $state.raw<PendingConversationFile[]>([]);
   #images = $state.raw<PendingConversationImage[]>([]);
@@ -77,6 +82,7 @@ export class ReviewReplyComposer {
   #attemptWrite = Promise.resolve(true);
   #nextAttachmentId = 0;
   attempts = $state<ReviewOutgoingReply[]>([]);
+  queueView = $state.raw<ConversationView | null>(null);
   ready = $state(false);
   submitting = $state(false);
   intakeBusy = $state(false);
@@ -91,6 +97,7 @@ export class ReviewReplyComposer {
   }
 
   get draftKey() { return this.#key; }
+  get hasHeldReply() { return this.attempts.some(attempt => attempt.status === 'queued'); }
   get hasUnsettled() { return this.attempts.some(attempt => !isAccepted(attempt)); }
   get canAttach() {
     return this.attachmentReady && (this.uploadDestination.expected_conversation_id !== null || !this.attempts.some(attempt =>
@@ -150,6 +157,12 @@ export class ReviewReplyComposer {
           untrack(() => { void this.#pump(); });
         });
       });
+      this.#watchQueue = $effect.root(() => {
+        $effect(() => {
+          const id = this.uploadDestination.expected_conversation_id;
+          return untrack(() => this.#observeQueue(id));
+        });
+      });
       if (!this.ready) void this.#restore(scope.signal);
       this.#unsubscribe = connectionStatus.subscribe(state => {
         if (state === 'connected') void this.reconcile(scope.signal);
@@ -160,8 +173,90 @@ export class ReviewReplyComposer {
       if (entry.mounts > 0) return;
       this.#mountsAbort?.abort();
       this.#unsubscribe?.();
+      this.#watchQueue?.();
       this.#disposeIfIdle();
     };
+  }
+
+  #observeQueue(id: string | null): (() => void) | undefined {
+    this.queueView = null;
+    if (id === null) return;
+
+    const scope = new AbortController();
+    let closeTail: (() => void) | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let reading = false;
+    let requested = false;
+    const refresh = async () => {
+      requested = true;
+      if (reading || scope.signal.aborted) return;
+      reading = true;
+      try {
+        while (requested && !scope.signal.aborted) {
+          requested = false;
+          const view = await readConversation(id);
+          if (scope.signal.aborted) return;
+          this.queueView = view;
+          closeTail ??= openConversationTail(id, view.latest_sequence, {
+            onLiveFrame: frame => { if (frame.frame === 'held_prompts_changed') void refresh(); },
+            onCommittedEvent: event => {
+              if (event.kind === 'prompt' || event.kind === 'turn_ended'
+                || event.kind === 'prompt_delivery_refused' || event.kind === 'prompt_delivery_uncertain'
+                || event.kind === 'prompt_discarded') void refresh();
+            },
+            onTrouble: () => { closeTail = undefined; scheduleRetry(); }
+          });
+          const held = new Set(view.held_prompts.filter(prompt => !prompt.delivery_uncertain)
+            .map(prompt => prompt.sender_message_id));
+          await Promise.all(this.attempts.filter(attempt => attempt.status === 'queued'
+            && attempt.conversationId === id && !held.has(attempt.message.messageId))
+            .map(attempt => this.#check(attempt, scope.signal)));
+
+        }
+      } catch {
+        scheduleRetry();
+      } finally {
+        reading = false;
+      }
+    };
+    const scheduleRetry = () => {
+      if (scope.signal.aborted || retry !== undefined) return;
+      retry = setTimeout(() => {
+        retry = undefined;
+        void refresh();
+      }, 1500);
+    };
+
+    this.#refreshQueue = refresh;
+    void refresh();
+    return () => {
+      this.#refreshQueue = undefined;
+      scope.abort();
+      clearTimeout(retry);
+      closeTail?.();
+    };
+  }
+
+  async discardHeld(heldPromptId: string, words?: string): Promise<boolean> {
+    const id = this.uploadDestination.expected_conversation_id;
+    if (!id || this.submitting) return false;
+    const senderId = this.queueView?.held_prompts.find(row => row.held_prompt_id === heldPromptId)?.sender_message_id;
+    const { discarded } = await discardHeldPrompt(id, heldPromptId, words !== undefined);
+    if (!discarded || id !== this.uploadDestination.expected_conversation_id) return false;
+    if (this.queueView?.conversation_id === id) {
+      this.queueView = { ...this.queueView, held_prompts: this.queueView.held_prompts.filter(row => row.held_prompt_id !== heldPromptId) };
+    }
+    if (words !== undefined) {
+      this.text = [this.text.trimEnd(), words].filter(Boolean).join('\n\n');
+    }
+    if (senderId) await this.#remove(senderId);
+    return true;
+  }
+
+  async promoteHeld(heldPromptId: string, mode: 'send_now' | 'steer'): Promise<void> {
+    const id = this.uploadDestination.expected_conversation_id;
+    if (!id || this.submitting) return;
+    await promoteHeldPrompt(id, heldPromptId, mode);
   }
 
   #disposeIfIdle(): void {
@@ -292,13 +387,30 @@ export class ReviewReplyComposer {
 
   async #apply(attempt: ReviewReplyAttempt, delivery: DeliveredMessage): Promise<void> {
     const id = attempt.message.messageId;
+    const current = this.attempts.find(entry => entry.message.messageId === id);
+    if (!current) return;
+    if (current.status === 'queued' && delivery.fate === 'suppressed') {
+      await this.#remove(id);
+      return;
+    }
     if (delivery.fate === 'started' || delivery.fate === 'injected' || delivery.fate === 'queued') {
-      this.accepted = { through: attempt.message.ownerReadThroughSequence, fate: delivery.fate };
-      if (this.#options.legacyConversationId === undefined && !this.uploads.length) this.#updateUploadDestination(delivery.conversation_id);
+      const firstQueueReceipt = delivery.fate === 'queued' && current.status !== 'queued';
+      const through = attempt.message.ownerReadThroughSequence;
+      if (this.accepted?.through === undefined || (through !== undefined && through >= this.accepted.through)) {
+        this.accepted = { through, fate: delivery.fate };
+      }
+      if (this.#options.legacyConversationId === undefined && !this.uploads.length
+        && delivery.conversation_id !== this.uploadDestination.expected_conversation_id
+        && attempt.conversationId === this.uploadDestination.expected_conversation_id) {
+        this.#updateUploadDestination(delivery.conversation_id);
+      }
+      this.attempts = this.attempts.map(entry => entry.message.messageId === id
+        ? { ...entry, conversationId: delivery.conversation_id } : entry);
       this.#update(id, {
         status: delivery.fate === 'queued' ? 'queued' : 'sent',
         note: delivery.fate === 'queued' ? 'Queued' : delivery.fate === 'injected' ? 'Sent to the running turn' : 'Sent'
       });
+      if (firstQueueReceipt) void this.#refreshQueue?.();
       await this.#store(this.attempts);
       return;
     }
@@ -330,7 +442,7 @@ export class ReviewReplyComposer {
   }
 
   #noteMissingResult(attempt: ReviewOutgoingReply): void {
-    if (attempt.status === 'uncertain') return;
+    if (attempt.status === 'uncertain' || attempt.status === 'queued') return;
     this.#update(attempt.message.messageId, { status: 'connection-failed', note: 'Panels did not confirm the send.' });
   }
 
@@ -377,7 +489,10 @@ export class ReviewReplyComposer {
     const originalText = this.text;
     const content = this.#content([...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files)]);
     const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : this.uploadDestination.expected_conversation_id;
-    const message = mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' });
+    const message = {
+      ...mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' }),
+      queueWhilePending: this.queueView?.is_running === true
+    };
     if (through !== undefined) message.ownerReadThroughSequence = through;
     const entry: ReviewOutgoingReply = { conversationId, message, pendingUploads: uploads, status: 'preparing', note: null };
 

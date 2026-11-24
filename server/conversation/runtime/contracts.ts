@@ -19,6 +19,7 @@ import type { Deferred } from '../../core/deferred.ts';
 
 export type ConversationPhase = 'idle' | 'starting' | 'running' | 'ending' | 'draining';
 export interface Message {
+  readonly requested_mode?: PromptDeliveryMode;
   readonly held_prompt_id: string;
   readonly content: MessageContent;
   readonly sender_label: string;

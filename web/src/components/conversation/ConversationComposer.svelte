@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageNotDelivered } from "../../lib/conversation/transcript";
   /** The one place text goes in, and the one place a change to the run rides out on.
    *
    * What is typed here is this component's own and nothing arriving from the server ever
@@ -649,6 +650,7 @@
       pending = {
         context: capturedRetryContext ?? {
           messageId,
+          queueWhilePending: capturedMode === "queue" && running,
           expectedConversationId: conversationId,
           destination: uploadDestination ? {...uploadDestination} : undefined
         },
@@ -1553,7 +1555,7 @@
       <span>{intakeError ?? errorNote}</span>
     </div>
   {:else if undeliveredReason}
-    <SystemLine mark="failure" role="alert" data-conversation-undelivered-note="">Not delivered<span aria-hidden="true">{" · "}</span>{undeliveredReason}</SystemLine>
+    <SystemLine mark="failure" role="alert" data-conversation-undelivered-note="">{messageNotDelivered(undeliveredReason)}</SystemLine>
   {:else if fateNote}
     <div class="c2-fate" data-conversation-fate>{fateNote}</div>
   {/if}

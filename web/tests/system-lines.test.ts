@@ -39,7 +39,7 @@ describe("what a status says", () => {
     expect(statusReason(turnEndingStatus("failed", rateLimited)!)).toBe("The model's rate limit was reached. It resets in 41m");
     expect(statusReason(turnEndingStatus("failed", "stream disconnected before completion")!)).toBe("The connection to the model dropped");
     expect(statusReason(turnEndingStatus("failed", "something nobody has seen")!)).toBe("An error");
-    expect(statusReason(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence: "" }))).toBe("The backend did not start");
+    expect(statusReason(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence: "" }))).toBe("The agent did not start");
   });
 
   it("says an interrupted turn and a turn with no ending the same way", () => {
@@ -115,7 +115,7 @@ describe("a message's system lines", () => {
     const bubble = html.slice(html.indexOf("data-conversation-bubble"));
     expect(html).toMatch(/class="c2-bubble[^"]*is-failed/);
     expect(bubble.indexOf("Are you still on this?")).toBeLessThan(bubble.indexOf("c2-undelivered"));
-    expect(bubble).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The backend did not start/);
+    expect(bubble).toMatch(/Not delivered\. The agent did not start\./);
     expect(bubble).toContain('role="alert"');
     expect(bubble.indexOf("data-conversation-status-choose-model")).toBeLessThan(bubble.indexOf("data-conversation-status-details"));
     // Details wears the same chevron as the failed turn's Details (hands-on test 1, item 18).
@@ -139,9 +139,18 @@ describe("a message's system lines", () => {
       knownFate: "machine_offline" as const, refusal: { reason: "The Mac is offline", detail: "Mac Tickets cannot start: no compatible Mac executor has leased yet" } };
     const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner", onSendAgain: () => undefined } }).body;
     expect(html).toMatch(/class="c2-bubble[^"]*is-failed/);
-    expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
+    expect(html).toMatch(/Not delivered\. The Mac is offline\./);
     expect(html).toMatch(/data-conversation-held-send-again="m1"[^>]*>Try Again</);
     expect(html).toContain("Mac Tickets cannot start");
+  });
+
+  it("renders a saved refusal with one label and a plain reason", () => {
+    const local = { messageId: "m2", content: words, senderLabel: "owner", mode: "queue" as const,
+      sentAtUnixMilliseconds: 1, knownFate: "not_sent" as const,
+      failureNote: "Not delivered · Not delivered · the write to the backend did not succeed" };
+    const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner" } }).body;
+    expect(html).toContain("Not delivered. The agent did not receive it.");
+    expect(html.match(/Not delivered/g)).toHaveLength(1);
   });
 
   it("an ordinary message has no line; a steered one has one caption on the bubble's edge", () => {

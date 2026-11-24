@@ -130,6 +130,7 @@ interface RunningTurn {
   pending_user_input_questions: Map<string, readonly UserInputQuestion[]>;
 }
 interface HeldMessage {
+  requested_mode: PromptDeliveryMode;
   held_prompt_id: string;
   content: MessageContent;
   sender_label: string;
@@ -323,7 +324,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
         options,
       );
     if (mode === 'queue')
-      return this._hold_prompt(state, content, sender_label, 'requested', options);
+      return this._hold_prompt(state, content, sender_label, 'requested', mode, options);
     if (mode === 'steer') {
       let queue_reason: PromptQueueReason;
       if (content.some((piece) => !(piece instanceof MessageText))) queue_reason = 'attachment';
@@ -334,7 +335,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
         if (fate instanceof PromptDeliveryInjected) return fate;
         queue_reason = 'steer_refused';
       }
-      return this._hold_prompt(state, content, sender_label, queue_reason, options);
+      return this._hold_prompt(state, content, sender_label, queue_reason, mode, options);
     }
     this._end_running_turn(state, 'interrupted');
     const fate = this._start_turn(state, content, sender_label, mode, options);
@@ -346,10 +347,12 @@ export class InMemoryConversationSystem implements ConversationSystem {
     content: MessageContent,
     sender_label: string,
     queue_reason: PromptQueueReason,
+    requested_mode: PromptDeliveryMode,
     options: DeliveryOptions,
   ): PromptDeliveryQueued {
     state.held_prompts_created += 1;
     state.held_prompts.push({
+      requested_mode,
       held_prompt_id: `held-${state.held_prompts_created}`,
       content,
       sender_label,
@@ -415,6 +418,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
       (held) =>
         new HeldPrompt({
           held_prompt_id: held.held_prompt_id,
+          requested_mode: held.requested_mode,
           content: held.content,
           sender_label: held.sender_label,
           sender_message_id: held.sender_message_id,

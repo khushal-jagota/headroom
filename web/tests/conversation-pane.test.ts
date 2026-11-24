@@ -111,20 +111,21 @@ describe("the header", () => {
 });
 
 describe("queued messages in the pane", () => {
-  it("are drawn at the end of the thread, after everything said, and the thread reads from its top", () => {
+  it("use the held box before the composer", () => {
     const { body } = render(PaneWithQueryClient, {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const content = body.indexOf("data-conversation-content");
-    const stack = body.indexOf("data-conversation-held-row");
+    const stack = body.indexOf("data-conversation-held-stack");
     expect(content).toBeGreaterThan(-1);
     expect(stack).toBeGreaterThan(content);
+    expect(stack).toBeLessThan(body.indexOf("data-conversation-held-row"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
     // One anchoring rule for every state: a short thread reads from the top.
     expect(body).not.toContain("data-anchor-end");
   });
 
-  it("keep queued messages in the thread below an agent-started turn and its Working line", () => {
+  it("places the held box below an agent-started turn and its Working line", () => {
     const turn: ConversationViewItem = {
       kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
       settled: false, stopped: false, started_at_unix_milliseconds: 100_000, ending: null,
@@ -157,7 +158,7 @@ describe("queued messages in the pane", () => {
     expect(body).toContain("Working");
     expect(body.indexOf('data-conversation-row="agent_turn_started"')).toBeLessThan(edge);
     expect(edge).toBeGreaterThan(-1);
-    expect(body.indexOf("data-conversation-held-row")).toBeGreaterThan(body.indexOf("data-conversation-content"));
+    expect(body.indexOf("data-conversation-held-stack")).toBeGreaterThan(edge);
     expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 

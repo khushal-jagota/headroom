@@ -1,10 +1,17 @@
 <script lang="ts">
+  import { setContext } from 'svelte';
   import Button from './Button.svelte';
+  import UserMessage from './conversation/UserMessage.svelte';
+  import HeldPromptStack from './conversation/composer/HeldPromptStack.svelte';
+  import { heldPromptRows } from '../lib/conversation/heldPrompts';
+  import { heldPromptIsInLens } from '../lib/conversation/lens';
+  import { belongsInHeldQueue, TRANSCRIPT_SEND_ACTIONS, transcriptOutgoing,
+    type TranscriptSendActions } from '../lib/conversation/transcriptOutgoing';
   import MessagePieces from './conversation/MessagePieces.svelte';
   import TranscriptStatusRow from './conversation/TranscriptStatusRow.svelte';
   import { attachmentByteLabel } from './conversation/composer/attachments';
   import type { PendingAttachment } from '../lib/conversation/videoUploads/contracts';
-  import type { TranscriptStatus } from '../lib/conversation/transcript';
+  import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
 
   let { composer, onEdit, busy = false }: {
@@ -13,14 +20,42 @@
     busy?: boolean;
   } = $props();
 
+  const view = $derived(composer.queueView);
+  const held = $derived(transcriptOutgoing([], [], heldPromptRows(
+    (view?.held_prompts ?? []).filter(prompt => heldPromptIsInLens(prompt, 'focus', 'owner')), []
+  ), 'owner', new Set()));
+  const heldIds = $derived(new Set(held.map(message => message.messageId)));
+  const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)));
+  const queue = $derived(held.filter(belongsInHeldQueue));
+  const pendingQueue = $derived(attempts.filter(queueAttempt));
+
+  function queueAttempt(attempt: ReviewOutgoingReply): boolean {
+    return attempt.message.mode === 'queue' && (attempt.status === 'queued'
+      || attempt.message.queueWhilePending === true && (
+        attempt.status === 'preparing' || attempt.status === 'uploading' || attempt.status === 'waiting'
+        || attempt.status === 'sending' || attempt.status === 'checking'));
+  }
+
+  setContext<TranscriptSendActions>(TRANSCRIPT_SEND_ACTIONS, {
+    running: () => view?.is_running === true,
+    canSteer: () => Boolean(view?.supports_steer && !view.pending_permission_ask && !view.pending_user_input),
+    canEditHeld: () => !busy && !composer.intakeBusy && !composer.submitting,
+    discard: row => row.heldPromptId ? composer.discardHeld(row.heldPromptId) : undefined,
+    promote: (row, mode) => row.heldPromptId ? composer.promoteHeld(row.heldPromptId, mode) : undefined,
+    editHeld: async (row, words) => {
+      if (row.heldPromptId && await composer.discardHeld(row.heldPromptId, words)) onEdit();
+    }
+  });
+
   function statusFor(attempt: ReviewOutgoingReply): TranscriptStatus {
     const title = attempt.note ?? (attempt.status === 'checking' ? 'Checking the send…'
       : attempt.status === 'uploading' ? 'Uploading…'
       : attempt.status === 'waiting' ? 'Waiting to send…'
       : 'Sending…');
+    const failed = attempt.status === 'failed' || attempt.status === 'upload-failed';
     return {
-      title, detail: null,
-      tone: attempt.status === 'failed' || attempt.status === 'upload-failed' ? 'error'
+      title: failed ? messageNotDelivered(attempt.note ?? "") : title, detail: null,
+      tone: failed ? 'error'
         : attempt.status === 'connection-failed' || attempt.status === 'uncertain' ? 'warning' : 'neutral'
     };
   }
@@ -39,7 +74,7 @@
   }
 </script>
 
-{#each composer.attempts as attempt (attempt.message.messageId)}
+{#snippet outgoingReply(attempt: ReviewOutgoingReply)}
   {@const status = statusFor(attempt)}
   {@const editAllowed = attempt.status === 'failed' || attempt.status === 'upload-failed'}
   {@const retryAllowed = composer.canRetry(attempt)}
@@ -65,9 +100,29 @@
     <TranscriptStatusRow {status} align="end" role={status.tone === 'error' ? 'alert' : 'status'}
       actions={editAllowed || retryAllowed ? actions : undefined} />
   </article>
+{/snippet}
+
+<div data-review-outgoing-replies>
+{#each attempts.filter(attempt => !queueAttempt(attempt)) as attempt (attempt.message.messageId)}
+  {@render outgoingReply(attempt)}
 {/each}
+{#each held.filter(message => !belongsInHeldQueue(message)) as message (message.messageId)}
+  <UserMessage local={message} conversationId={view?.conversation_id ?? ''} ownSenderLabel="owner"/>
+{/each}
+{#if queue.length || pendingQueue.length}
+  <HeldPromptStack>
+    {#each queue as message (message.messageId)}
+      <UserMessage local={message} conversationId={view?.conversation_id ?? ''} ownSenderLabel="owner"/>
+    {/each}
+    {#each pendingQueue as attempt (attempt.message.messageId)}
+      {@render outgoingReply(attempt)}
+    {/each}
+  </HeldPromptStack>
+{/if}
+</div>
 
 <style>
+  [data-review-outgoing-replies] { display: contents; }
   .review-outgoing-reply {
     --cv-bubble: var(--surface-raised);
     --cv-ink: var(--text-default);

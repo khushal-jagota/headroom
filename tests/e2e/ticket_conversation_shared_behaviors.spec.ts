@@ -118,8 +118,10 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
   expect(held.map((row: JsonObject) => row.text)).toEqual(['queued message 1', 'queued message 2']);
   const [discardId, promoteId] = held.map((row: JsonObject) => row.held_prompt_id);
   const context = await newContext();
-  const page = await openTicketConversation(server, ticketId, context, '[data-conversation-content] [data-conversation-held-row]');
-  await expect(page.locator('[data-conversation-held-row]')).toHaveCount(2);
+  const page = await openTicketConversation(server, ticketId, context, '[data-conversation-held-stack] [data-conversation-held-row]');
+  const queue = page.locator('[data-conversation-held-stack]');
+  await expect(queue.locator('[data-conversation-held-row]')).toHaveCount(2);
+  await captureSuccess(page, 'ticket-busy-queue.png');
   const discardedResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/held-prompts/${discardId}`) && response.request().method() === 'DELETE',
@@ -127,6 +129,7 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
   // A queued row's actions sit in its "more" menu, which opens first.
   const discardControl = page.locator(`[data-conversation-held-discard="${discardId}"]`);
   await page.locator('[data-conversation-held-row]', { has: discardControl }).locator('[data-conversation-held-more]').click();
+  await captureSuccess(page, 'ticket-busy-queue-actions.png');
   await discardControl.click();
   const discarded = await discardedResponse;
   expect(await discarded.json()).toEqual({ discarded: true });
@@ -158,6 +161,55 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
         event.payload.mode === 'send_now',
     ),
   ).toBe(true);
+
+  const sendPath = `**/api/tickets/${ticketId}/conversation/send`;
+  const field = page.locator('[data-conversation-input]');
+  const send = page.locator('[data-conversation-send]');
+  const transcript = page.locator('[data-conversation-content]');
+  for (const [mode, words, fate] of [
+    ['steer', 'Add this to the running turn.', 'injected'],
+    ['send_now', 'Start this in a new turn now.', 'started'],
+    ['queue', 'Send this to the idle agent.', 'started'],
+  ] as const) {
+    await field.fill(words);
+    if (mode === 'queue') {
+      await post(server, `/api/test/signals/${conversationId}/finish`);
+      await expect.poll(async () => (await getJson(server, path)).is_running).toBe(false);
+      await expect(page.locator('[data-conversation-send-mode-trigger]')).toHaveCount(0);
+    } else {
+      await page.locator('[data-conversation-send-mode-trigger]').click();
+      await page.locator(`[data-conversation-send-mode-choice="${mode}"]`).click();
+    }
+    const release = Promise.withResolvers<void>();
+    await page.route(sendPath, async route => {
+      await release.promise;
+      await route.continue();
+    }, { times: 1 });
+    const response = page.waitForResponse(result => result.url().endsWith(`/tickets/${ticketId}/conversation/send`));
+    try {
+      await send.click();
+      const pending = transcript.locator('[data-conversation-outgoing]').filter({ hasText: words });
+      await expect(pending).toBeVisible();
+      await expect(queue).toHaveCount(0);
+      await expect(field).toHaveValue('');
+      await captureSuccess(page, `ticket-${mode === 'queue' ? 'idle-send' : mode}.png`);
+    } finally {
+      release.resolve();
+    }
+    expect((await (await response).json()).fate).toBe(fate);
+  }
+
+  const failed = 'This message receives a confirmed refusal.';
+  await page.route(sendPath, route => route.fulfill({
+    json: { conversation_id: conversationId, fate: 'refused', refusal_reason: 'write_to_backend_failed' },
+  }), { times: 1 });
+  await field.fill(failed);
+  await send.click();
+  const failure = transcript.locator('[data-conversation-outgoing]').filter({ hasText: failed });
+  await expect(failure.locator('[data-conversation-status-next]')).toHaveText('Not delivered. The agent did not receive it.');
+  await expect(failure.getByRole('button', { name: 'Try Again' })).toBeVisible();
+  await expect(failure.getByRole('button', { name: 'Edit' })).toBeVisible();
+  await captureSuccess(page, 'ticket-failed-send.png');
 });
 
 test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire', async ({

@@ -714,7 +714,7 @@
       pickedReasoningEffort: picked.reasoningEffort,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
-    }), ...(sendContext ? {
+    }), queueWhilePending: sendContext?.queueWhilePending ?? (mode === "queue" && running), ...(sendContext ? {
       messageId: sendContext.messageId,
       sentAtUnixMilliseconds: sendContext.sentAtUnixMilliseconds ?? Date.now(),
       attachmentNames: sendContext.attachmentNames
@@ -1158,7 +1158,7 @@
   workspaceFolder={view?.workspace_path_policy === "executor_default"
     ? "Panels workspace (Mac)" : view?.workspace_folder ?? null}
   {reader}
-  {acknowledgedMessageIds}
+  acknowledgedMessageIds={committedMessageIds}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   draftKey={persistenceKey}

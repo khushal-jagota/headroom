@@ -200,6 +200,7 @@ async function state_json(
     is_running,
     held_prompts: held_prompts.map((held) => ({
       held_prompt_id: held.held_prompt_id,
+      requested_mode: held.requested_mode,
       ...message_content_json_entries(held.content),
       sender_label: held.sender_label,
       sender_message_id: held.sender_message_id,

@@ -65,7 +65,7 @@
     const settled = acceptedThrough !== undefined && acceptedThrough >= through
       ? acceptedThrough
       : events.length === 0 ? ownerReadThrough : null;
-    if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && !composer.hasUnsettled) resolve(settled);
+    if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && !composer.hasUnsettled && !composer.hasHeldReply) resolve(settled);
   });
 
   async function load(): Promise<void> {

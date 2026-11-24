@@ -73,7 +73,7 @@ describe("sending again a message that was not delivered", () => {
     expect(html).toContain('data-conversation-resend-refused="e7"');
     expect(html).toContain(">Try Again</button>");
     // The bubble says the cause; its actions say the rest.
-    expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The backend did not start/);
+    expect(html).toMatch(/Not delivered\. The agent did not start\./);
     expect(html).not.toContain("Try again, or choose another model in the composer first.");
   });
 

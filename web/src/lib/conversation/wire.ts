@@ -185,6 +185,7 @@ export type ComposerCatalogEntry = {
 };
 
 export type HeldPrompt = StoredMessageContent & {
+  requested_mode?: PromptDeliveryMode;
   held_prompt_id: string;
   sender_message_id?: string | null;
   sender_label: string;

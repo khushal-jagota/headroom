@@ -3,7 +3,9 @@
  *  sentence. */
 
 import {
+  messageNotDelivered,
   promptLabelFor,
+  refusalSentence,
   turnFailureSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
@@ -62,7 +64,7 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
       // the only place that could ever say so.
       return {
         who: senderOf(row.senderLabel, ownSenderLabel),
-        text: oneLine(`not delivered · ${row.sentence}`)
+        text: oneLine(messageNotDelivered(refusalSentence(row.reason)))
       };
     case "prompt_uncertain":
       return {

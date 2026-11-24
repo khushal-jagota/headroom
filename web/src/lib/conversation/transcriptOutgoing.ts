@@ -17,8 +17,8 @@ export type TranscriptSendActions = {
   promote(row: HeldPromptRow, mode: "send_now" | "steer"): Promise<unknown> | void;
   editHeld(row: HeldPromptRow, words: string): Promise<unknown> | void;
   canEditHeld(): boolean;
-  editUpload(id: string): Promise<unknown> | void;
-  retryUpload(id: string): Promise<unknown> | void;
+  editUpload?(id: string): Promise<unknown> | void;
+  retryUpload?(id: string): Promise<unknown> | void;
 };
 
 export function editableHeldWords(row: HeldPromptRow): string | null {
@@ -60,6 +60,7 @@ export function transcriptOutgoing(
       content: [...entry.attempt.content],
       senderLabel: ownerLabel,
       mode: entry.mode,
+      queueWhilePending: entry.context.queueWhilePending,
       sentAtUnixMilliseconds: entry.sentAtUnixMilliseconds ?? existing?.sentAtUnixMilliseconds ?? 0,
       restored: entry.restored || entry.sentAtUnixMilliseconds === undefined || existing?.restored,
       knownFate: failed ? "not_sent" : "nothing_yet",
@@ -81,7 +82,7 @@ export function transcriptOutgoing(
       messageId,
       content: existing?.content ?? [],
       senderLabel: row.senderLabel,
-      mode: "queue",
+      mode: row.mode ?? existing?.mode ?? "queue",
       sentAtUnixMilliseconds: row.sentAtUnixMilliseconds,
       restored: existing?.restored ?? !existing,
       knownFate: row.state === "unknown" ? "agent_unconfirmed" : "waiting_for_the_agent",
@@ -89,4 +90,15 @@ export function transcriptOutgoing(
     });
   }
   return [...messages.values()].sort((left, right) => left.sentAtUnixMilliseconds - right.sentAtUnixMilliseconds);
+}
+
+/** A server-held queue row or an initial Queue send behind a running turn. */
+export function belongsInHeldQueue(message: OutgoingMessage): boolean {
+  if (message.mode !== "queue" || message.accepted) return false;
+  if (message.knownFate === "waiting_for_the_agent") return true;
+  return message.queueWhilePending === true && message.knownFate === "nothing_yet";
+}
+
+export function heldQueuePosition(message: OutgoingMessage): number {
+  return message.presentation?.kind === "held" ? message.presentation.position : Number.MAX_SAFE_INTEGER;
 }
