@@ -134,10 +134,12 @@ def main():
     FEED.mkdir(parents=True)
     for part in ["server", "machine"]:
         (ROOT / "build" / part).mkdir(parents=True)
-    manual = os.environ.get("REPLAY_FROM") or os.environ.get("REPLAY_TO")
-    if manual:
-        if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-            raise ValueError("Only an explicit manual rehearsal can reuse another starting release")
+    manual = bool(os.environ.get("REPLAY_TO"))
+    if (manual or os.environ.get("REPLAY_FROM")) and os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+        raise ValueError("Only an explicit manual rehearsal can reuse another build")
+    if os.environ.get("REPLAY_FROM"):
+        if not manual:
+            raise ValueError("A manual starting build requires a candidate run")
         baseline = ROOT / "baseline"
         baseline.mkdir()
         prior_ids, prior = run_artifacts(os.environ["REPLAY_FROM"])
@@ -155,24 +157,29 @@ def main():
         metadata = "mac-home-build.json" if MAC else "linux-publication-build.json"
         (baseline / metadata).rename(ROOT / "build/server" / metadata)
         (baseline / MACHINE_RECEIPT).rename(ROOT / "build/machine" / MACHINE_RECEIPT)
-        ids, candidate_run = run_artifacts(os.environ["REPLAY_TO"])
     else:
         old_sha = public_predecessor()
+    if manual:
+        ids, candidate_run = run_artifacts(os.environ["REPLAY_TO"])
+    else:
         ids = [os.environ[name] for name in ["HOME_ARTIFACT_ID", "HOME_BUILD_ARTIFACT_ID", "MACHINE_ARTIFACT_ID"]]
     manifest, home_digest, machine, boot = actions_build(ids, FEED)
     sha = manifest["app_sha"]
     if manual:
         verify_run_commit(candidate_run, sha)
-        # The policy and browser harness below must come from the candidate tree.
-        if github(f"git/commits/{sha}")["tree"]["sha"] != github(f"git/commits/{os.environ['GITHUB_SHA']}")["tree"]["sha"]:
-            raise ValueError("Dispatch this replay from the exact candidate tree")
+        # The harness can diagnose an earlier build without rebuilding or borrowing policy from a new checkout.
+        policy_root = ROOT / "candidate-policy"
+        policy_root.mkdir()
+        source_archive = ROOT / "candidate-source.tar.gz"
+        github(f"tarball/{sha}", source_archive)
+        subprocess.run(["tar", "-xzf", source_archive, "--strip-components=1", "-C", policy_root], check=True)
+        source_archive.unlink()
     elif sha != os.environ["GITHUB_SHA"]:
         raise ValueError("Candidate build differs from workflow commit")
     if sha == old_sha:
         raise ValueError("Distinct installed revisions are required")
     script = github(f"contents/scripts/panels_install.py?ref={old_sha}")
     (ROOT / "predecessor-install.py").write_bytes(base64.b64decode(script["content"]))
-    server_asset = SERVER_ASSET
     machine_asset = "mac.zip" if MAC else "linux-executor.zip"
     app = {"manifest": manifest, "archive_sha256": home_digest, "artifact_id": 2,
            "artifact_source": "github-release"}
@@ -185,7 +192,7 @@ def main():
         "import {CLIENT_COMPATIBILITY} from './server/client_versions/policy.ts';"
         "import {SUPPORTED_UPDATE_SCHEMA_FLOOR} from './server/environments/updates/configuration.ts';"
         "console.log(JSON.stringify({compatibility:CLIENT_COMPATIBILITY,schema_floor:SUPPORTED_UPDATE_SCHEMA_FLOOR}));"
-    ]))
+    ], cwd=policy_root if manual else None))
     target = {**app, **policy, "publication_run_id": int(source["run_id"]), "expires_at": None,
               "source_run": source,
               "parts": {"server": {"app_sha": sha, "artifact_digest": manifest["artifact_digest"]},

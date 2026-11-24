@@ -7,7 +7,7 @@ It serves immutable ZIP files (or JSON) selected before the process starts.
 import argparse
 import functools
 import http.server
-import json
+import subprocess
 import shutil
 import ssl
 from pathlib import Path
@@ -64,6 +64,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path)
     args = parser.parse_args()
+    # -config works with the runner's OpenSSL or LibreSSL without relying on -addext.
+    config = args.directory / "openssl.cnf"
+    config.write_text("[req]\nprompt=no\ndistinguished_name=subject\nx509_extensions=extensions\n"
+                      "[subject]\nCN=api.github.com\n[extensions]\nsubjectAltName=DNS:api.github.com\n")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-config", str(config), "-keyout", str(args.directory / "key.pem"),
+                    "-out", str(args.directory / "cert.pem")], check=True, stderr=subprocess.DEVNULL)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(args.directory / "cert.pem", args.directory / "key.pem")
     handler = functools.partial(Feed, directory=args.directory, tls=tls)

@@ -118,7 +118,13 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       await wait_for(
         async () => {
           const attempt = JSON.parse(await readFile(journal, 'utf8'));
-          return attempt.to_sha === candidate && Boolean(attempt.steps?.rollback_service_stopped);
+          if (attempt.to_sha !== candidate || !attempt.steps?.rollback_service_stopped)
+            return false;
+          assert.ok(
+            attempt.steps.app_swapped,
+            'The failing transaction must have selected the candidate',
+          );
+          return true;
         },
         'waiting for the installer to stop the failed candidate',
         20,
@@ -133,11 +139,28 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const preserved = { ...before, model: 'TEST' };
     await verify_smoke_history(url, preserved);
-    await turn();
+    const recovered = await turn();
+    const rolledBack = await read_status();
+    await writeFile(
+      join(o.base, 'evidence/rollback.json'),
+      JSON.stringify(
+        {
+          runtime: rolledBack.app_sha,
+          attempt_id: rolledBack.attempt.attempt_id,
+          refused_candidate: rolledBack.attempt.to_sha,
+          detail: rolledBack.attempt.detail,
+          enrolled_machine: o.machine_id,
+          completed_conversation: recovered.conversation_id,
+          preserved_attachment: before.stored_file_id,
+        },
+        null,
+        2,
+      ),
+    );
     const expectedBuild = JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8'))
       .parts.machines[process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x86_64'].build_id;
     assert.match(expectedBuild, /^[a-f0-9]{64}$/);
-    const rolledBackAttempt = (await read_status()).attempt.attempt_id;
+    const rolledBackAttempt = rolledBack.attempt.attempt_id;
     await page.goto(url);
     await page
       .getByRole('button', { name: /retry|try again/i })
@@ -173,6 +196,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           predecessor: o.predecessor,
           candidate,
           machine_id: o.machine_id,
+          reported_build: expectedBuild,
           conversations: [before.conversation_id, after.conversation_id],
           rollback_sha: o.predecessor,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),

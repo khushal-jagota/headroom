@@ -22,8 +22,13 @@ def main():
         raise ValueError("The main commit must have entered through a merged PR")
     head = pull["head"]["sha"]
     runs = read_api(repo, f"actions/workflows/publish-typescript-release.yml/runs?event=pull_request&head_sha={head}&per_page=100")
-    run = next((r for r in runs["workflow_runs"] if r["path"] == ref and any(
-        pr["number"] == pull["number"] for pr in r["pull_requests"])), None)
+    # GitHub removes the run's pull_requests entry after merge. The immutable
+    # receipt below binds that closed PR's number, head and merge tree.
+    run = next((r for r in runs["workflow_runs"] if r["path"] == ref
+                and r["head_branch"] == pull["head"]["ref"]
+                and r["head_repository"]["full_name"] == pull["head"]["repo"]["full_name"]
+                and (not r["pull_requests"] or any(
+                    pr["number"] == pull["number"] for pr in r["pull_requests"]))), None)
     if not run or run["conclusion"] != "success":
         raise ValueError("The latest main PR qualification did not succeed")
     attempt = run["run_attempt"]

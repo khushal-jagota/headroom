@@ -6,6 +6,11 @@ on:
     inputs:
       replay_from: {description: "Earlier native release build run ID (optional)", type: string}
       replay_to: {description: "Candidate native release build run ID (optional)", type: string}
+      replay_system:
+        description: "Native system for a manual replay"
+        type: choice
+        options: [both, linux, darwin]
+        default: both
   pull_request:
     paths:
       - "server/installation/**"
@@ -27,7 +32,8 @@ jobs:
     permissions: {contents: read, actions: read}
     strategy:
       fail-fast: false
-      matrix: {system: [linux, darwin]}
+      matrix:
+        system: ${{ fromJSON(inputs.replay_system == 'linux' && '["linux"]' || inputs.replay_system == 'darwin' && '["darwin"]' || '["linux","darwin"]') }}
     uses: ./.github/workflows/installed-release-upgrade.yml
     with:
       system: ${{ matrix.system }}

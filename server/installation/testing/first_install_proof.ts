@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
@@ -256,6 +257,12 @@ try {
   await run('cli-with-incompatible-host-node', [panels, '--help'], incompatible_environment);
   await absent(host_node_used);
   report.incompatible_host_node = 'CLI succeeds without invoking the incompatible host Node';
+  // A shipped predecessor negotiates the protocol compiled into its own package.
+  const installedProtocol = qualifying
+    ? (await import(pathToFileURL(join(root, 'app/server/execution_configuration.ts')).href))
+        .PROTOCOL_VERSION
+    : undefined;
+  if (qualifying) assert.ok(Number.isSafeInteger(installedProtocol) && installedProtocol > 0);
   const health = JSON.parse(
     await run('first-machine-health', [panels, 'executor', 'health'], {
       ...environment,
@@ -263,7 +270,7 @@ try {
     }),
   );
   assert.ok(
-    accepted_lease(health, revision, started_ms),
+    accepted_lease(health, revision, started_ms, installedProtocol),
     'The first machine needs an accepted lease from this installation',
   );
   report.first_machine = health;
@@ -313,7 +320,7 @@ try {
     }),
   );
   assert.ok(
-    accepted_lease(second, revision, started_ms),
+    accepted_lease(second, revision, started_ms, installedProtocol),
     'The second machine needs an accepted credentialed lease',
   );
   report.second_machine = second;

@@ -11,10 +11,6 @@ class LocalFeedTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "releases.json").write_text("[]")
-            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                            "-subj", "/CN=api.github.com", "-addext", "subjectAltName=DNS:api.github.com",
-                            "-keyout", root / "key.pem", "-out", root / "cert.pem"], check=True,
-                           stderr=subprocess.DEVNULL)
             proc = subprocess.Popen(["python3", Path(__file__).with_name("qualification_feed.py"), root],
                                     stdout=subprocess.PIPE, text=True)
             try:
