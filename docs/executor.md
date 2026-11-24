@@ -25,7 +25,7 @@ Each extra machine has its own credential, presence, command mailbox, and curren
                                             Tickets and conversation record
 ```
 
-The server has no native launch fallback. It passes execution paths as values, and only the named machine checks those paths. Machine code owns provider logins, skill links, process supervision, workspace preparation, and removal.
+The server has no native launch fallback. It passes execution paths as values, and only the named machine checks those paths. Machine code owns provider logins, skill links, process supervision, workspace preparation, and removal. Every Worker receives instructions to load Panels skills through its skill tool, on every backend and machine.
 
 Each machine saves the server address, its durable identity, and the highest move number that it accepts. The first contact checks the server. Normal requests use the saved address and identity without a separate check. After a failed request, the next request checks the server again. The server refuses a different identity or move number before work. The machine refuses work from a different identity or an older move number. A normal answer can supply another HTTPS address, which the machine checks before use. The saved address survives service and runtime restarts on Linux and Apple Silicon.
 
@@ -177,4 +177,4 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._
