@@ -28,13 +28,14 @@ it('keeps literal paths and production variables without forwarding test-runner 
     };
     const command = ['/external/node', join(root, 'copy/main.ts'), join(root, 'request.json')];
     const argv = installer_transient_command('attempt-1', command, environment);
-    assert.deepEqual(argv.slice(0, 7), [
+    assert.deepEqual(argv.slice(0, 8), [
       'systemd-run',
       '--user',
       '--collect',
       '--quiet',
       '--unit=panels-update-attempt-1',
       '--expand-environment=no',
+      '--property=Restart=on-abnormal',
       '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
     ]);
     assert(argv.includes('--setenv=HOME=' + environment.HOME));

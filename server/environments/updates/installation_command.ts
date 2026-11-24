@@ -1,5 +1,5 @@
 /** Literal manager arguments and the explicitly selected installer environment. */
-import { installer_attempt_id } from '../release/installer_bundle.ts';
+import { installer_attempt_id } from './installer/configuration.ts';
 import { assert_installer_path } from './installer/configuration.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import { installer_unit_environment } from '../../core/config.ts';
@@ -28,6 +28,7 @@ export function installer_transient_command(
     '--quiet',
     '--unit=panels-update-' + installer_attempt_id(attempt_id),
     '--expand-environment=no',
+    '--property=Restart=on-abnormal',
     '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
     ...Object.keys(selected)
       .sort()

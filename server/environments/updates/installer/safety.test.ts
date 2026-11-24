@@ -158,7 +158,7 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
   }
 });
 
-it('releases the barrier before healthy records on success and rollback', async () => {
+it('stores the install decision before opening writes', async () => {
   // Final-row parity cannot prove the release point. The installer releases after the
   // health result, before its healthy record and terminal state on both paths.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
@@ -194,7 +194,7 @@ it('releases the barrier before healthy records on success and rollback', async 
         detail,
       ) {
         if (step === 'healthy' || step === 'rollback_healthy') healthy_recorded = true;
-        assert.equal(existsSync(barrier.path), !healthy_recorded, 'Python health-release order');
+        if (step === 'healthy') assert(existsSync(barrier.path), 'new writes before commit');
         original.call(this, step, state, detail);
         if (state === 'done' || state === 'failed') writes.push(state);
       });

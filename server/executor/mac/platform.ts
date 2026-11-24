@@ -745,7 +745,7 @@ export function mac_backend_path(home: string): string {
   ].join(':');
 }
 type PlistValue = string | number | boolean | PlistValue[] | { [key: string]: PlistValue };
-function plist(value: Record<string, PlistValue>): string {
+export function plist(value: Record<string, PlistValue>): string {
   const escape = (text: string) =>
     text
       .replaceAll('&', '&amp;')

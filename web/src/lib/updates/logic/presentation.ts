@@ -3,7 +3,7 @@ import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../co
 
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
-  | "available" | "updating" | "complete"
+  | "check_unavailable" | "available" | "updating" | "refresh_needed"
   | "failed" | "mac_failed" | "mac_unreachable" | "unreachable" | "machines";
 export type UpdateFailureState = "failed" | "mac_failed" | "mac_unreachable";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
@@ -41,13 +41,10 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   if (starting || status?.state === "updating") return { state: "updating", dimmed: false };
   // Panels rolled back, so its failure is the news.
   if (status?.state === "failed") return { state: "failed", dimmed: false };
-  // Panels moved on. A page left behind cannot write, so it refreshes first and then
-  // shows a Mac failure, which the server keeps.
-  if (pageIsBehind) return { state: "complete", dimmed: false };
   if (!status) return { state: null, dimmed: false };
   if (status.state === "up_to_date") {
     const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
-    return { state: hasTarget ? "machines" : null, dimmed: false };
+    return { state: hasTarget ? "machines" : pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
 }
@@ -62,8 +59,10 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
         action: allows("update") && status?.available ? { label: "Update", does: "offer" } : undefined };
     case "updating":
       return { word: "Updating…", tone: "changing", track: true };
-    case "complete":
-      return { word: "Update complete", tone: "done", action: { label: "Refresh", does: "refresh" } };
+    case "check_unavailable":
+      return { word: "Couldn’t check for updates", tone: "wrong", detail: status?.detail ?? undefined };
+    case "refresh_needed":
+      return { word: "Refresh to load this version", tone: "settled", action: { label: "Refresh", does: "refresh" } };
     case "failed":
       return { word: "Update didn't install", tone: "wrong", info: state,
         action: allows("retry") && attempt ? { label: "Try again", does: "retry" } : undefined };
@@ -74,7 +73,7 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
       const rows = status?.machines ?? [];
       const failed = rows.some(row => row.state === "failed" || row.state === "unavailable");
       const updating = rows.some(row => row.state === "updating");
-      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : "Update complete",
+      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : "Up to date",
         tone: failed ? "wrong" : updating ? "changing" : "done" };
     }
     case "unreachable":

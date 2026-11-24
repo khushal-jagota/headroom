@@ -92,7 +92,7 @@ test('a newer offer retains machine failure and recomputes interruption at the p
     service.start();
     vi.mocked(service.ready_release).mockReturnValueOnce(null);
     expect(service.status()).toMatchObject({
-      state: 'up_to_date',
+      state: 'check_unavailable',
       activity: 'busy',
       allowed_actions: [],
     });

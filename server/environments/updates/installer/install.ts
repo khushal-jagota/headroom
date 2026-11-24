@@ -12,6 +12,7 @@ import { is_object } from '../codec.ts';
 import { release_installer_barrier, with_installer_lifetime } from '../../update_barrier.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { error_detail } from './commands.ts';
+import { pin_existing, release_path, select_release, selected_release } from './selection.ts';
 import { InstallationRecord } from './record.ts';
 import type { InstallerEffects, InstallerIO, InstallerRequest } from './contracts.ts';
 
@@ -100,9 +101,7 @@ async function roll_back(
   signal.throwIfAborted();
   const from_sha = field(attempt, 'from_sha'),
     to_sha = field(attempt, 'to_sha');
-  const app = join(request.current_root, 'app'),
-    staged = join(request.current_root, STAGED_APP_PREFIX + to_sha),
-    previous = join(request.current_root, PREVIOUS_APP_PREFIX + from_sha);
+  const staged = join(request.current_root, STAGED_APP_PREFIX + to_sha);
   const backup = attempt.backup,
     restore_data = new_app_moved && typeof backup === 'string';
   try {
@@ -134,8 +133,10 @@ async function roll_back(
       signal.throwIfAborted();
       record.record('rollback_database_restored');
     }
-    if (new_app_moved) move(app, staged, signal);
-    if (previous_moved) move(previous, app, signal);
+    if (new_app_moved) {
+      select_release(request.current_root, from_sha);
+      move(release_path(request.current_root, to_sha), staged, signal);
+    }
     record.record('rollback_app_restored');
     signal.throwIfAborted();
     await effects.service('start');
@@ -149,7 +150,7 @@ async function roll_back(
   } catch (error) {
     signal.throwIfAborted();
     record.record(
-      'failed',
+      'rollback_failed',
       'failed',
       `${reason}. Panels could not go back to the previous version: ${problem(error)}.`,
     );
@@ -212,8 +213,15 @@ async function install_locked(
   const to_sha = field(attempt, 'to_sha'),
     from_sha = field(attempt, 'from_sha');
   const app = join(request.current_root, 'app'),
-    staged = join(request.current_root, STAGED_APP_PREFIX + to_sha),
-    previous = join(request.current_root, PREVIOUS_APP_PREFIX + from_sha);
+    staged = join(request.current_root, STAGED_APP_PREFIX + to_sha);
+  if (is_object(attempt.steps) && Object.hasOwn(attempt.steps, 'installer_started')) {
+    const active = selected_release(request.current_root);
+    const candidate_selected = active === release_path(request.current_root, to_sha);
+    if (!candidate_selected && installed_sha(app) !== from_sha)
+      throw new InstallFailed('Unable to identify the installed release after an interrupted update');
+    return roll_back(request, effects, record, attempt, 'The installer restarted before it committed the update',
+      true, candidate_selected, signal, lifetime_lock_fd);
+  }
   if (!directory(staged)) {
     record.record(
       'failed',
@@ -237,8 +245,7 @@ async function install_locked(
     record.record('failed', 'failed', `Mac identity refused: ${problem(error)}`);
     return 1;
   }
-  assert_installer_path(previous);
-  if (existsSync(previous)) rmtree(previous);
+
   let previous_moved = false,
     new_app_moved = false;
   try {
@@ -260,9 +267,13 @@ async function install_locked(
       if (typeof attempt.backup !== 'string')
         throw new InstallFailed('The database snapshot was not recorded');
     }
-    move(app, previous, signal);
+    pin_existing(request.current_root, from_sha);
     previous_moved = true;
-    move(staged, app, signal);
+    const target = release_path(request.current_root, to_sha);
+    if (existsSync(target)) rmtree(target);
+    move(staged, target, signal);
+    record.record('selecting');
+    select_release(request.current_root, to_sha);
     new_app_moved = true;
     record.record('app_swapped');
     signal.throwIfAborted();
@@ -272,7 +283,7 @@ async function install_locked(
     signal.throwIfAborted();
     record.record('service_started');
     signal.throwIfAborted();
-    const healthy = await effects.healthy(to_sha);
+    const healthy = await effects.healthy(to_sha, request.attempt_id);
     signal.throwIfAborted();
     if (!healthy) throw new InstallFailed('The new version did not pass its health check');
   } catch (error) {
@@ -293,8 +304,8 @@ async function install_locked(
       lifetime_lock_fd,
     );
   }
+  record.record('healthy', 'done');
   release_installer_barrier(request.data_directory, request.attempt_id);
-  record.record('healthy');
   let completion_detail: string | null = null;
   try {
     completion_detail = (await effects.finish_success?.()) ?? null;
@@ -302,11 +313,13 @@ async function install_locked(
     completion_detail = `The release passed health, but its auxiliary jobs did not restart: ${problem(error)}`;
   }
   if (completion_detail) record.record('auxiliary_restart_failed', undefined, completion_detail);
-  record.record('done', 'done', completion_detail ?? undefined);
+  if (completion_detail) record.record('done', 'done', completion_detail);
   assert_installer_path(request.current_root);
   for (const folder of readdirSync(request.current_root)) {
     const path = join(request.current_root, folder);
-    if (folder.startsWith(PREVIOUS_APP_PREFIX) && path !== previous) rmtree(path, true);
+    if ((folder.startsWith(PREVIOUS_APP_PREFIX) || /^\.release-[0-9a-f]{40}$/.test(folder))
+      && path !== release_path(request.current_root, from_sha)
+      && path !== selected_release(request.current_root)) rmtree(path, true);
   }
   rmtree(join(request.current_root, 'app-previous'), true);
   return 0;

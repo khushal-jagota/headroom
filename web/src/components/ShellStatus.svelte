@@ -6,7 +6,7 @@
   import { refreshScreen } from "../lib/resourceVersions/refresh";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import { requestReleaseReload } from "../lib/releaseMonitor";
+  import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import { retryChangeStream } from "../lib/changeStream";
   import UpdateActions from "./UpdateActions.svelte";
   import type { UpdateStatus } from "../lib/updates/contracts";
@@ -69,11 +69,13 @@
   let textOut = $state(false);
   let actions = $state<UpdateActions | null>(null);
   // The card follows the displayed word, so its text changes with the crossfade.
-  const card = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
+  const resolvedCard = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
+  const card = $derived($releaseState.updateAvailable && connectionState === "connected" && resolvedCard && presentation !== "updating"
+    ? { ...resolvedCard, action: { label: "Refresh", does: "refresh" as const } } : resolvedCard);
   function activate(): void {
     if (!card?.action) return;
     switch (card.action.does) {
-      case "offer": actions?.openDialog("offer"); break;
+      case "offer": void actions?.perform({ action: "install" }, "offer"); break;
       case "refresh": requestReleaseReload(); break;
       case "reconnect": retryChangeStream(); break;
       case "retry": void actions?.perform({ action: "retry" }, "failed"); break;
@@ -251,7 +253,7 @@
             {#if presentation === "available"}
               {#each deviceUpdateWarnings(status) as warning (warning)}<span class="status-detail">{warning}</span>{/each}
             {/if}
-            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" ? retryMachine : undefined} />
+            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" && !$releaseState.updateAvailable ? retryMachine : undefined} />
             {#if machineError}<span role="alert">{machineError}</span>{/if}
           {/if}
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}

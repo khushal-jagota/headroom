@@ -151,6 +151,27 @@ export async function smoke_before_restart(
   await review_gate(base, ticket_id);
   step('03 proposal opens owner review notification and attention');
 
+  const { conversation_id, stored_file_id, events } = await smoke_file_turn(base, options);
+  const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
+  assert.ok(typeof project.id === 'string');
+  const goal = await api('/api/goals', {
+    title: 'Production smoke goal',
+    project_id: project.id,
+    kind: 'binary',
+    primary_checklist_block_id: null,
+  });
+  assert.ok(typeof goal.id === 'string');
+  const goal_id = goal.id;
+  step('07 create goal', { goal_id });
+  return { ticket_id, conversation_id, goal_id, stored_file_id, events, model: options.model };
+}
+export async function smoke_file_turn(
+  base: string,
+  options: Pick<SmokeOptions, 'model' | 'reply' | 'workspace' | 'step'>,
+  machine_id?: string,
+) {
+  const api = client(base);
+  const step = options.step ?? log;
   const conversation_id = 'smoke-' + randomUUID();
   const conversation = `/api/conversation/conversations/${conversation_id}`;
   const started = await api('/api/conversation/conversations', {
@@ -158,6 +179,7 @@ export async function smoke_before_restart(
     backend_key: DEFAULT_BACKEND_INSTANCE_ID,
     model: options.model,
     workspace_folder: options.workspace,
+    ...(machine_id ? { machine_id } : {}),
   });
   assert.equal(started.model, options.model);
   step('04 manual conversation through production adapter', { conversation_id });
@@ -251,19 +273,9 @@ export async function smoke_before_restart(
   const stored_file_id = file.stored_file_id;
   await download(base, conversation_id, stored_file_id);
   step('06 uploaded file bytes round trip', { stored_file_id });
-  const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
-  assert.ok(typeof project.id === 'string');
-  const goal = await api('/api/goals', {
-    title: 'Production smoke goal',
-    project_id: project.id,
-    kind: 'binary',
-    primary_checklist_block_id: null,
-  });
-  assert.ok(typeof goal.id === 'string');
-  const goal_id = goal.id;
-  step('07 create goal', { goal_id });
-  return { ticket_id, conversation_id, goal_id, stored_file_id, events, model: options.model };
+  return { conversation_id, stored_file_id, events };
 }
+
 export async function smoke_after_restart(
   base: string,
   state: SmokeState,

@@ -5,7 +5,7 @@ export type { MachineUpdateState, UpdateInterruption };
 import type { ClientCompatibility, ClientIdentity } from "../../../../server/client_versions/contracts";
 
 export type UpdateActivity = "idle" | "busy" | "unknown";
-export type UpdateState = "up_to_date" | "available" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
+export type UpdateState = "check_unavailable" | "up_to_date" | "available" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
 export type UpdateAction = "update" | "retry" | "retry_mac";
 export type { UpdateAttemptState } from "../../../../server/environments/updates/view_contracts";
 

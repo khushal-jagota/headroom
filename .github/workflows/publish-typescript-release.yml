@@ -4,16 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [staging, main, feature/server-and-machine-code]
-    paths:
-      - 'server/**'
-      - 'agent_backends/**'
-      - '.github/workflows/publish-typescript-release.yml'
+    branches: [staging, main, feature/server-and-machine-code, feature/update-rework]
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/staging' }}
 
 defaults:
   run:
@@ -21,7 +21,6 @@ defaults:
 
 jobs:
   linux:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -261,7 +260,6 @@ jobs:
           retention-days: 30
 
       - name: Build and prove the sealed Darwin home archive
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
           umask 077
@@ -296,7 +294,6 @@ jobs:
             --public-cli-entrypoint server/cli/main.ts
           MAC_HOME
       - name: Upload the checked Darwin home archive
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: mac_home
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -306,7 +303,6 @@ jobs:
           retention-days: 30
           compression-level: 0
       - name: Upload Darwin home build, admission, and boot evidence
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: mac_home_build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -392,12 +388,102 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  upgrade:
+    name: Installed release upgrade (${{ matrix.system }})
+    needs: [linux, mac, linux-executor]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {system: linux, runner: ubuntu-24.04}
+          - {system: darwin, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Prepare a clean account, previous release and immutable candidate packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOME_ARTIFACT_ID: ${{ matrix.system == 'linux' && needs.linux.outputs.artifact_id || needs.mac.outputs.mac_home_artifact_id }}
+          HOME_BUILD_ARTIFACT_ID: ${{ matrix.system == 'linux' && needs.linux.outputs.build_artifact_id || needs.mac.outputs.mac_home_build_artifact_id }}
+          MACHINE_ARTIFACT_ID: ${{ matrix.system == 'linux' && needs.linux-executor.outputs.artifact_id || needs.mac.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export FIRST_INSTALL_ROOT="$RUNNER_TEMP/qualification"
+          echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y libicu-dev pkg-config build-essential
+            sudo loginctl enable-linger "$(id -un)"
+            sudo systemctl start "user@$(id -u).service"
+            echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+          else
+            test "$(uname -m)" = arm64
+            brew install icu4c pkgconf
+          fi
+          scripts/dev npm --prefix server ci
+          node server/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+          python3 server/environments/release/testing/qualification_feed_test.py
+          python3 server/environments/release/testing/prepare_qualification.py
+      - name: Run the previous install, original join, owner update, and file-backed agent turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFY_PREVIOUS_RELEASE: '1'
+        run: |
+          set -euo pipefail
+          umask 077
+          feed="$FIRST_INSTALL_ROOT/feed"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=api.github.com' \
+            -addext 'subjectAltName=DNS:api.github.com' -keyout "$feed/key.pem" -out "$feed/cert.pem"
+          python3 server/environments/release/testing/qualification_feed.py "$feed" > "$feed/port" &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
+          node server/installation/testing/first_install_proof.ts
+      - name: Retain the predecessor, exact digests and observed update
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: installed-upgrade-${{ matrix.system }}
+          path: ${{ runner.temp }}/qualification/evidence/
+          if-no-files-found: error
+
+  server-suite:
+    uses: ./.github/workflows/typescript-backend-server.yml
+
+  web-suite:
+    uses: ./.github/workflows/development-tools.yml
+
+  mac-machine-suite:
+    uses: ./.github/workflows/typescript-mac-executor.yml
+
+  release-gate:
+    name: Release qualification
+    needs: [linux, mac, linux-executor, machine-compatibility, upgrade, server-suite, web-suite, mac-machine-suite]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every candidate build, compatibility and installed upgrade
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
+
   receipt:
     permissions:
       contents: write
       actions: read
-    needs: [linux, mac, linux-executor, machine-compatibility]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success' && needs.machine-compatibility.result == 'success'
+    needs: [linux, mac, linux-executor, machine-compatibility, release-gate]
+    if: needs.release-gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success' && needs.machine-compatibility.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

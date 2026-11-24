@@ -1,4 +1,6 @@
+import { require_snapshot_space } from './installer/snapshot_space.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
+import { selected_release } from './installer/selection.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, statSync } from 'node:fs';
@@ -12,7 +14,7 @@ import { build_worker_runtime_definitions } from '../../worker_types/configurati
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
 import { FileUpdateAttemptStore, UpdateConflict, utc_now } from './attempts.ts';
-import { add_seconds, instant, resolve, settle } from './logic/experience.ts';
+import { add_seconds, instant, resolve } from './logic/experience.ts';
 import {
   ATTEMPT_OBSERVER_SECONDS,
   MAC_UPDATE_REPORT_SECONDS,
@@ -80,7 +82,7 @@ export async function installed_update_root(
     resolved_path(app_root),
   ]);
   const current_root = dirname(dirname(canonical_database));
-  return canonical_app === join(current_root, 'app') ? current_root : null;
+  return canonical_app === selected_release(current_root) ? current_root : null;
 }
 export function validate_release(release: PublishedUpdate): void {
   if (release.manifest.runtime_contract === null)
@@ -132,6 +134,7 @@ export class UpdateService {
   private readonly record_now: () => string;
   private ready: PublishedUpdate | null = null;
   private last_checked = 0;
+  private checked = false;
   private last_state: string | null = null;
   private running = false;
   private incarnation = 0;
@@ -167,7 +170,9 @@ export class UpdateService {
       barrier === undefined ||
       barrier.generation !== generation ||
       (current?.attempt_id ?? '') !== attempt_id ||
-      this.owns_preparation(attempt_id)
+      this.owns_preparation(attempt_id) ||
+      (current?.state === 'installing' && current.steps.installer_started !== undefined) ||
+      current?.steps.rollback_failed !== undefined
     )
       return null;
     if (current !== null && !states('done', 'failed').has(current.state)) {
@@ -231,6 +236,14 @@ export class UpdateService {
     const incarnation = this.incarnation;
     const flight = Promise.resolve()
       .then(() => this.prefetch_release(incarnation))
+      .catch((error: unknown) => {
+        if (this.active(incarnation)) {
+          this.checked = false;
+          this.ready = null;
+          this.options.changes.emit();
+        }
+        throw error;
+      })
       .finally(() => {
         if (this.prefetching === flight) this.prefetching = null;
         this.work.delete(flight);
@@ -246,12 +259,13 @@ export class UpdateService {
     const provider = this.options.provider;
     if (!this.active(incarnation) || provider === null) return;
     const release = await provider.available();
-    if (
-      !this.active(incarnation) ||
-      release === null ||
-      release.manifest.app_sha === this.current_app_sha
-    )
+    if (!this.active(incarnation)) return;
+    if (release === null || release.manifest.app_sha === this.current_app_sha) {
+      this.ready = null;
+      this.checked = true;
+      this.options.changes.emit();
       return;
+    }
     validate_release(release);
     if (JSON.stringify(release) === JSON.stringify(this.ready)) return;
     const staged = await this.options.staging.stage(provider, release, this.options.current_root);
@@ -259,33 +273,19 @@ export class UpdateService {
     // Admission only. The install decides on the backup when it starts.
     await this.options.installer.node_schema_steps_pending(this.options.database, staged);
     if (!this.active(incarnation)) return;
-    await this.options.mac.prepare(release);
-    if (!this.active(incarnation)) return;
+    this.checked = true;
     this.ready = release;
     this.options.changes.emit();
-  }
-  private settled_attempt(): UpdateAttempt | null {
-    const attempt = this.attempts.read();
-    if (attempt === null) return null;
-    if (this.options.update_barrier?.frozen) return attempt;
-    const ended = settle(attempt, this.current_app_sha, timestamp(this.now()));
-    if (ended === null) return attempt;
-    this.options.runtime.assert_database_owned();
     try {
-      return this.attempts.change(attempt.attempt_id, states('installing'), (current) => ({
-        ...current,
-        state: ended.state,
-        detail: ended.detail,
-        steps: { ...current.steps, settled: this.record_now() },
-      }));
+      await this.options.mac.prepare(release);
     } catch (error) {
-      if (!(error instanceof UpdateConflict)) throw error;
-      return this.attempts.read();
+      if (this.active(incarnation))
+        console.warn('Machine archive preparation did not complete', error);
     }
   }
   status(): UpdateStatus {
     this.refresh_available();
-    const attempt = this.running ? this.settled_attempt() : this.attempts.read();
+    const attempt = this.attempts.read();
     const system = this.options.runtime.conversation();
     const activity = system?.workspace_activity() ?? 'unknown';
     const available = this.ready_release();
@@ -316,7 +316,7 @@ export class UpdateService {
       machines,
       available_machines,
       interruption,
-      state,
+      state: state === 'up_to_date' && !this.checked ? 'check_unavailable' : state,
       allowed_actions,
       activity,
       available,
@@ -352,6 +352,9 @@ export class UpdateService {
   /** A press always starts the update. Running work is never asked. */
   install(app_sha: string): UpdateAttempt {
     this.require_running();
+    const pending = this.attempts.read();
+    if (pending?.to_sha === app_sha && states('preparing', 'installing').has(pending.state))
+      return pending;
     const release = this.ready_release();
     if (release === null || release.manifest.app_sha !== app_sha)
       throw new UpdateConflict('This update is no longer ready. Refresh and try again.');
@@ -457,6 +460,8 @@ export class UpdateService {
       this.options.changes.emit();
     }
     const attempt = status.attempt;
+    if (attempt?.state === 'preparing' && this.advancing === null &&
+        !this.options.runtime.conversation()?.has_pending_update_sends()) this.launch();
     return attempt !== null && states('preparing', 'installing').has(attempt.state);
   }
   private launch(): void {
@@ -514,6 +519,9 @@ export class UpdateService {
       // Pending steps need a snapshot. A Mac home takes one on every trial.
       // The installer takes it after it stops the service, when no writer remains.
       const snapshot_required = steps_pending || this.options.installer.requires_snapshot === true;
+      if (snapshot_required) await require_snapshot_space(this.options.database, this.options.backup_directory);
+      if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+      if (this.options.runtime.conversation()?.has_pending_update_sends()) return;
       const command = this.options.installer.prepare({
         current_root: this.options.current_root,
         database: this.options.database,

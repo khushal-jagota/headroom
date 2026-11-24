@@ -146,6 +146,7 @@ export async function healthy(
   environment: NodeJS.ProcessEnv = process.env,
   require_ready = false,
   identity?: string,
+  prepared_attempt_id?: string,
 ): Promise<boolean> {
   const deadline = performance.now() / 1000 + timeout_seconds;
   // Failed polls are expected while the server restarts, so only the last failure is logged at the deadline.
@@ -172,6 +173,7 @@ export async function healthy(
       result?.status === 200 &&
       is_object(result.body) &&
       result.body.app_sha === sha &&
+      (prepared_attempt_id === undefined || result.body.prepared_attempt_id === prepared_attempt_id) &&
       (!require_ready || result.body.ready === true)
     )
       return true;

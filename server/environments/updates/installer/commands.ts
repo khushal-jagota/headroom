@@ -1,3 +1,5 @@
+import { InstallationRecord } from './record.ts';
+import { release_path } from './selection.ts';
 import type { ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -194,17 +196,13 @@ export function create_installer_effects(
           execution.environment,
         ),
       );
-      if (
-        realpathSync(request.node_executable) !==
-        realpathSync(
-          join(
-            request.data_directory,
-            'update-installer-' + request.attempt_id,
-            'runtime/node/bin/node',
-          ),
-        )
-      )
-        throw new AppValidationError('Installer Node differs from the Mac installation identity');
+      const attempt = new InstallationRecord(request).read();
+      const pinned = release_path(request.current_root, String(attempt.from_sha));
+      // The startup bridge may still use the predecessor's detached installer copy.
+      const previous_copy = join(request.data_directory, 'update-installer-' + request.attempt_id, 'runtime');
+      if (![pinned, previous_copy].some(root =>
+        realpathSync(request.node_executable) === join(root, 'node/bin/node')))
+        throw new AppValidationError('Installer Node differs from the retained installation');
       return service;
     }));
   let effects:
@@ -338,7 +336,7 @@ export function create_installer_effects(
         { check: true, output: 'inherit', lifetime_lock_fd },
       );
     },
-    healthy(sha) {
+    healthy(sha, prepared_attempt_id) {
       assert_installer_health_url(request.health_url, execution.environment);
       return healthy(
         request.health_url,
@@ -346,6 +344,9 @@ export function create_installer_effects(
         request.health_timeout_seconds,
         execution.signal,
         execution.environment,
+        false,
+        undefined,
+        prepared_attempt_id,
       );
     },
   };

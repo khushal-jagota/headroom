@@ -22,6 +22,7 @@ import { strip_unicode_space } from '../core/whitespace.ts';
 import { UpdateConflict } from '../environments/updates/attempts.ts';
 import {
   authenticate_executor,
+  verify_enrolled_executor,
   close_original_handover,
   issue_original_credential,
 } from '../machines/executor_credentials.ts';
@@ -61,7 +62,11 @@ const SINGLETON = new Set([
   PROTOCOL,
   CREDENTIAL,
 ]);
+import { ORIGINAL_MAC_MACHINE_ID, validate_identity } from '../execution_identity.ts';
+import type { HomeUpdateTrial } from '../environments/updates/home_trial.ts';
+
 export interface ExecutorHttpServices {
+  readonly trial?: HomeUpdateTrial | null;
   readonly config: Config;
   readonly database: Database;
   readonly registry: VpsExecutorRegistry | null;
@@ -311,6 +316,17 @@ function update_failure(error: unknown): never {
 /** No ordinary actor route can bypass the dedicated ingress admission below. */
 export function create_executor_routes(services: ExecutorHttpServices): FastifyPluginAsync {
   return async (app) => {
+    app.addHook('onRequest', async (request, reply) => {
+      if (
+        services.trial?.active &&
+        (request.routeOptions.url !== '/api/executor/lease' ||
+          !is_executor_link_connection(request.raw.socket))
+      ) {
+        return reply
+          .code(503)
+          .send({ detail: 'The home update has not admitted machine work yet.' });
+      }
+    });
     app.removeAllContentTypeParsers();
     app.addContentTypeParser('*', (_request, payload, done) => done(null, payload));
     const authenticate = (request: FastifyRequest) =>
@@ -449,6 +465,35 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.post(
       '/api/executor/lease',
       work(async (request, reply) => {
+        const trial = services.trial;
+        if (trial?.active) {
+          const claimed = executor_ingress_claim(request.raw, null);
+          const machine =
+            claimed === services.config.executor_id ? ORIGINAL_MAC_MACHINE_ID : claimed;
+          const credential = header_map(request.raw).get(CREDENTIAL)?.[0];
+          if (!credential) throw new PlannerError('agent_forbidden', 'Machine credential required');
+          services.database.read((sql) => verify_enrolled_executor(sql, machine, credential));
+          const lease = decode(
+            await body(request, MAX_ENVELOPE_BYTES),
+            'LeaseRequest',
+            MAX_ENVELOPE_BYTES,
+          );
+          validate_identity(lease.identity);
+          const incarnation = lease.identity.executor_incarnation;
+          trial.observed(machine, incarnation);
+          reply.raw.once('finish', () => trial.replied(machine, incarnation));
+          return typed_reply(
+            reply,
+            {
+              error: { code: 'retry_later', message: 'Home update in progress' },
+              refusal: null,
+              update: null,
+            },
+            'LeaseRefused',
+            MAX_ENVELOPE_BYTES,
+            409,
+          );
+        }
         const endpoint = await endpoint_for(request);
         endpoint.record_contact();
         const response = await endpoint.lease(

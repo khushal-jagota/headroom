@@ -13,7 +13,6 @@ export const MAC_HOME_REQUIRED_FILES = [
   'server/core/database/python_baseline/application_schema.json',
   'server/core/database/python_baseline/migration_graph.json',
   'server/installation/database_main.ts',
-  'web/src/lib/conversation/view/contracts.ts',
   'server/worker_types/shipped_worker_types.json',
 ] as const;
 export const MAC_HOME_PUBLICATION_METADATA = 'mac-home-build.json';

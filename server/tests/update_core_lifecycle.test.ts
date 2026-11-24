@@ -739,3 +739,31 @@ test('startup puts back the previous app before admission refuses a database an 
   ).rejects.toThrow(/interrupted update was undone/);
   expect(root).not.toBe('');
 });
+
+test('an accepted queued send drains before the installer stops the home', async () => {
+  const launched = deferred<void>();
+  const owned = await owned_server({
+    launch: async () => {
+      launched.resolve();
+      throw new Error('stop after observing the launch');
+    },
+  });
+  try {
+    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    const first = await (await owned.send('first queued-update turn')).json();
+    expect(first.fate).toBe('started');
+    const second = await (await owned.send('second queued-update turn')).json();
+    expect(second.fate).toBe('queued');
+    expect(owned.context.core!.has_pending_update_sends()).toBe(true);
+    expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
+      200,
+    );
+    expect((await owned.status()).attempt.state).toBe('preparing');
+    await owned.registry.child(first.conversation_id).finish();
+    await reached(launched.promise, 'installer launch after queued send delivery');
+    expect(await owned.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);
+    expect(owned.context.core!.runtime_turn(first.conversation_id)?.token.turn_number).toBe(2);
+  } finally {
+    await owned.close();
+  }
+});

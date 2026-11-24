@@ -16,6 +16,8 @@ import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { accepted_lease } from '../../environments/linux_executor/logic/lease.ts';
 import { executor_link_socket_path } from '../../core/http/executor_link.ts';
 import { mac_installation_paths } from '../../executor/mac/platform.ts';
+import { qualify_installed_upgrade } from '../../environments/release/testing/installed_upgrade.ts';
+import { write_default_backend_peer } from '../../tools/smoke/codex_peer.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'This proof requires a disposable hosted runner');
@@ -29,7 +31,10 @@ assert.ok(base && base.startsWith(process.env.RUNNER_TEMP!));
 const evidence = join(base, 'evidence');
 await mkdir(evidence, { recursive: true });
 const source = process.env.GITHUB_WORKSPACE!;
-const revision = process.env.GITHUB_SHA!;
+const qualifying = process.env.QUALIFY_PREVIOUS_RELEASE === '1';
+const revision = qualifying
+  ? (await readFile(join(base, 'predecessor.sha'), 'utf8')).trim()
+  : process.env.GITHUB_SHA!;
 const root = join(base, 'installed');
 const service = 'com.panels.first-install-proof';
 const home = homedir();
@@ -106,8 +111,8 @@ const primitives =
     : new LinuxWorkerProcesses();
 const execution: ReleaseExecution = {
   child_processes: owner,
-  signal: AbortSignal.timeout(12 * 60_000),
-  deadline: performance.now() / 1000 + 12 * 60,
+  signal: AbortSignal.timeout((qualifying ? 35 : 12) * 60_000),
+  deadline: performance.now() / 1000 + (qualifying ? 35 : 12) * 60,
 };
 const phases: Record<string, number> = {};
 const report: Record<string, unknown> = {
@@ -197,12 +202,17 @@ try {
     ? [linux_join_root]
     : [mac.install, mac.app, mac.state, mac.plist])
     await absent(path);
+  if (qualifying) {
+    const bin = join(home, '.local/bin');
+    await mkdir(bin, { recursive: true });
+    await write_default_backend_peer(base, source, bin);
+  }
   install_attempted = true;
   await run(
     'first-install',
     [
       'python3',
-      join(source, 'scripts/panels_install.py'),
+      qualifying ? join(base, 'predecessor-install.py') : join(source, 'scripts/panels_install.py'),
       'home',
       '--root',
       root,
@@ -346,6 +356,15 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
+  if (qualifying)
+    await qualify_installed_upgrade({
+      base,
+      port,
+      service,
+      machine_id: named[0].machine_id,
+      joined_state,
+      predecessor: revision,
+    });
   if (system === 'darwin') {
     // The requested screenshot uses the real installed package on this existing
     // native host. It adds no preview server, browser host, or permanent test case.

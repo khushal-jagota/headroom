@@ -26,9 +26,30 @@ import { atomic_record, read_record } from '../runtime/records.ts';
 import { handoff_record } from '../runtime/handoff.ts';
 import { HttpSessions, read_bounded } from '../transport/sessions.ts';
 import { CONNECTORS, executor_request_failure } from '../transport/http.ts';
-import { http_error } from '../transport/errors.ts';
+import { ExecutorHttpError, HttpTimeout, http_error } from '../transport/errors.ts';
 import type { MacHttpOptions } from '../transport/contracts.ts';
 import { failure_detail } from '../failure_detail.ts';
+
+/** Only transient transport errors earn another attempt with the same verified offer. */
+function retryable_download(error: unknown): boolean {
+  if (error instanceof HttpTimeout) return true;
+  if (error instanceof ExecutorHttpError)
+    return [408, 429, 500, 502, 503, 504].includes(error.status);
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    [
+      'EAI_AGAIN',
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'ENETUNREACH',
+      'EHOSTUNREACH',
+      'EPIPE',
+      'ERR_STREAM_PREMATURE_CLOSE',
+    ].includes(String(error.code))
+  );
+}
 
 export interface MacUpdateRuntimeSettings {
   child: boolean;
@@ -238,7 +259,8 @@ export class MacUpdateController {
         },
         this.options.authentication_headers(),
         async (response) => {
-          if (response.statusCode !== 200) throw new Error('Mac runtime archive is unavailable.');
+          if (response.statusCode !== 200)
+            throw new ExecutorHttpError(response.statusCode ?? 0, 'archive_unavailable');
           if (response.headers['content-encoding'])
             throw new Error('Mac runtime archive uses transport encoding.');
           const handle: TransferHandle = await files.open_transfer(path, 'write');
@@ -349,7 +371,9 @@ export class MacUpdateController {
     const target = check.target;
     if (target === null) return;
     const failure = await read_record(this.options.files, join(this.root, 'failure.json'));
-    if (failure?.request_id === target.request_id) {
+    const retry = failure?.request_id === target.request_id && failure.phase === 'retry';
+    if (retry && Number(failure.next_attempt_at) > Date.now()) return;
+    if (failure?.request_id === target.request_id && !retry) {
       await this.report(
         session,
         target,
@@ -410,6 +434,27 @@ export class MacUpdateController {
       const detail = Array.from(`Mac runtime installation failed: ${String(error)}`)
         .slice(0, settings.MAX_MAC_UPDATE_DETAIL_CHARACTERS)
         .join('');
+      if (retryable_download(error)) {
+        const delay = Math.min(
+          settings.MACHINE_DOWNLOAD_RETRY_MAX_SECONDS,
+          retry
+            ? 2 * Number(failure.delay_seconds)
+            : settings.MACHINE_DOWNLOAD_RETRY_INITIAL_SECONDS,
+        );
+        await atomic_record(this.options.files, join(this.root, 'failure.json'), {
+          request_id: target.request_id,
+          phase: 'retry',
+          delay_seconds: delay,
+          next_attempt_at: Date.now() + delay * 1000,
+        });
+        await this.report(
+          session,
+          target,
+          'waiting',
+          'The download was interrupted. Panels will retry.',
+        );
+        return;
+      }
       await atomic_record(this.options.files, join(this.root, 'failure.json'), {
         request_id: target.request_id,
         phase: 'failed',

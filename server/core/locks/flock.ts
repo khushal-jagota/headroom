@@ -14,3 +14,12 @@ export function flock(descriptor: number, operation: keyof typeof flags): number
     if (errno !== constants.errno.EINTR) return errno;
   }
 }
+
+/** Atomic exchange for the one-time conversion of a nonempty installed directory to a link. */
+export function exchange_names(left: string, right: string): void {
+  // Darwin RENAME_SWAP and Linux RENAME_EXCHANGE both have value 2.
+  const result = process.platform === 'darwin'
+    ? libc.func('int renamex_np(const char *, const char *, unsigned int)')(left, right, 2)
+    : libc.func('int renameat2(int, const char *, int, const char *, unsigned int)')(-100, left, -100, right, 2);
+  if (result !== 0) throw new Error(`Unable to atomically convert the installed home (errno ${koffi.errno()})`);
+}

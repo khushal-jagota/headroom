@@ -38,7 +38,7 @@ export interface InstallerEffects {
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   /** After the swap and before start: the new app brings the stopped database to its head. */
   schema_steps(lifetime_lock_fd: number, backup_taken: boolean): Promise<void>;
-  healthy(sha: string): Promise<boolean>;
+  healthy(sha: string, prepared_attempt_id?: string): Promise<boolean>;
 }
 export interface InstallerIO {
   stderr(text: string): void;

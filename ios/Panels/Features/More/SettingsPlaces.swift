@@ -32,7 +32,7 @@ struct SettingsPlaces: View {
     /// The one place that tells of a server update: a short line while one is offered or running.
     private var updatesRow: some View {
         let status = store.updateStatus
-        let detail = status.map(\.title).flatMap { ["Up to date", "Update complete"].contains($0) ? nil : $0 }
+        let detail = status.map(\.title).flatMap { $0 == "Up to date" ? nil : $0 }
         return NavigationLink(value: AppRoute.updates) {
             HStack(spacing: PanelsTheme.Space.md) {
                 Label("Updates", systemImage: "arrow.triangle.2.circlepath")

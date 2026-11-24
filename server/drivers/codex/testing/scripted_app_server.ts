@@ -232,6 +232,11 @@ function coreMessage(message: Record<string, unknown>): boolean {
     const content = (params.input as { type: string; text?: string }[])
       .map((piece) => piece.text ?? '')
       .join('\n');
+    if (content.includes('Production smoke prompt.')) {
+      const path = /Attached file "smoke\.txt" .*? is available at (.+)\.$/m.exec(content)?.[1];
+      if (!path || readFileSync(path, 'utf8') !== 'Private production smoke attachment.\n')
+        throw new Error('The provider did not receive the smoke attachment bytes.');
+    }
     const scenario = /\[CASE:([^\]]+)\]/.exec(content)?.[1] ?? 'native';
     if (scenario === 'exit-before-reply') {
       process.stderr.write('codex_login::auth: invalid_grant before admission\n', () =>

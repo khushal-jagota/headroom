@@ -113,12 +113,13 @@ struct PanelsUpdateStatus: Decodable, Sendable {
         case "available": return "Update available"
         case "updating": return "Updating…"
         case "failed": return "Update didn't install"
+        case "check_unavailable": return "Couldn’t check for updates"
         case "mac_failed", "mac_unreachable": return "Machine update needs attention"
         default:
             if needsAttention { return "Machine update needs attention" }
             if machines.contains(where: { $0.state == "updating" }) { return "Updating machines…" }
             if machines.contains(where: { $0.state == "waiting" }) { return "Machine updates" }
-            return machines.contains { $0.attemptId != nil } ? "Update complete" : "Up to date"
+            return "Up to date"
         }
     }
     func expectedRestart(now: Date, starting: Bool = false) -> Bool {

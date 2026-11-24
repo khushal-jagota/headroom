@@ -41,9 +41,14 @@ describe("the update card resolver", () => {
   });
 
   it("offers Refresh once the server is no longer updating and the running version moved", () => {
-    // A page left behind cannot write. It refreshes first, then shows a Mac failure the server keeps.
-    for (const state of ["up_to_date", "available", "mac_failed", "mac_unreachable"] as const) {
-      expect(updatePresentation({ ...base, status: at(state), pageIsBehind: true }).state).toBe("complete");
+    expect(updatePresentation({ ...base, status: at("up_to_date"), pageIsBehind: true }).state).toBe("refresh_needed");
+    for (const state of ["available", "mac_failed", "mac_unreachable", "check_unavailable"] as const) {
+      expect(updatePresentation({ ...base, status: at(state), pageIsBehind: true }).state).toBe(state);
+    }
+    const failedMachine = at("up_to_date", { machines: [machine("Mac 1", "failed")] });
+    for (const pageIsBehind of [false, true]) {
+      expect(updatePresentation({ ...base, status: failedMachine, pageIsBehind }).state).toBe("machines");
+      expect(updateCard("machines", failedMachine).word).toBe("Machine update needs attention");
     }
     // Panels rolled back, so its failure is the news.
     expect(updatePresentation({ ...base, status: at("failed"), pageIsBehind: true }).state).toBe("failed");
@@ -69,7 +74,7 @@ describe("the update card", () => {
     const cards = {
       available: updateCard("available", status),
       updating: updateCard("updating", at("updating")),
-      complete: updateCard("complete", status),
+      refresh_needed: updateCard("refresh_needed", status),
       failed: updateCard("failed", failed),
       mac_failed: updateCard("mac_failed", at("mac_failed")),
       mac_unreachable: updateCard("mac_unreachable", at("mac_unreachable")),
@@ -79,7 +84,7 @@ describe("the update card", () => {
       [state, [card.word, card.action?.label ?? null, card.action?.does ?? null, card.info ?? null, Boolean(card.track)]]))).toEqual({
       available: ["Update available", "Update", "offer", null, false],
       updating: ["Updating…", null, null, null, true],
-      complete: ["Update complete", "Refresh", "refresh", null, false],
+      refresh_needed: ["Refresh to load this version", "Refresh", "refresh", null, false],
       failed: ["Update didn't install", "Try again", "retry", "failed", false],
       mac_failed: ["Machine update needs attention", null, null, null, false],
       mac_unreachable: ["Machine update needs attention", null, null, null, false],
@@ -141,7 +146,7 @@ describe("the update card", () => {
     const pressed = { ...offered, state: "updating" as const, attempt: { ...attempt, interruption: status.interruption } };
     expect(cardInterruption(pressed)).toBe(status.interruption);
     expect(cardInterruption({ ...pressed, attempt })).toBeNull();
-    expect(cardInterruption({ ...offered, attempt }, "complete")).toBeNull();
+    expect(cardInterruption({ ...offered, attempt }, "refresh_needed")).toBeNull();
     expect(interruptionText(null)).toBeNull();
   });
 });

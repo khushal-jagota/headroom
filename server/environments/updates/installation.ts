@@ -3,7 +3,11 @@ import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { InstallerOperations } from './contracts.ts';
 import { create_migration_status } from './migration_status.ts';
 import { run_release_command } from '../release/process.ts';
-import { copy_installer_runtime } from '../release/installer_bundle.ts';
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { installer_attempt_id, INSTALLER_ENTRY } from './installer/configuration.ts';
+import { replace_existing_json } from './attempts.ts';
+import { pin_existing, selected_release } from './installer/selection.ts';
 import {
   assert_installer_health_url,
   assert_installer_path,
@@ -40,14 +44,16 @@ export function create_installer_operations(inputs: {
       ])
         assert_installer_path(path, environment);
       assert_installer_health_url(options.health_url, environment);
-      const command = copy_installer_runtime(
-        inputs.application_root,
-        {
-          ...options,
-          node_executable: inputs.darwin_home?.identity.installer_node ?? inputs.node_executable,
-        },
-        inputs.signal,
-      );
+      if (realpathSync(inputs.application_root) !== selected_release(options.current_root))
+        throw new AppValidationError('The running home differs from the installation to update');
+      const manifest = JSON.parse(readFileSync(join(inputs.application_root, 'manifest.json'), 'utf8'));
+      const runtime = pin_existing(options.current_root, manifest.app_sha);
+      const directory = join(options.data_directory, 'update-installer-' + installer_attempt_id(options.attempt_id));
+      mkdirSync(directory, { mode: 0o700 });
+      const request = join(directory, 'request.json');
+      const node = join(runtime, 'node/bin/node');
+      replace_existing_json(request, { ...options, node_executable: node });
+      const command = [node, join(runtime, INSTALLER_ENTRY), request];
       prepared.set(options.attempt_id, Object.freeze([...command]));
       return [...command];
     },
@@ -59,7 +65,7 @@ export function create_installer_operations(inputs: {
         expected.length !== command.length ||
         expected.some((part, index) => part !== command[index])
       )
-        throw new AppValidationError('installer launch requires its existing prepared copy');
+        throw new AppValidationError('installer launch requires its prepared retained release');
       if (installer_test_mode(environment))
         throw new AppValidationError('Installer service launch is unavailable in tests');
       prepared.delete(attempt_id);

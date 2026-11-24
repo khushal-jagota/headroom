@@ -9,8 +9,6 @@ import type {
   UpdateExperienceOptions,
 } from '../contracts.ts';
 
-export const UNFINISHED_DETAIL =
-  'The update did not finish in time, so Panels stayed on the previous version.';
 export const MAC_FAILED_DETAIL =
   'Panels updated, but the Mac did not. It went back to its previous version.';
 export const MAC_UNREACHABLE_DETAIL =
@@ -46,21 +44,6 @@ export function add_seconds(value: ParsedIsoDatetime, seconds: number): ParsedIs
     aware: true,
     epochMicroseconds,
   };
-}
-export function settle(
-  attempt: UpdateAttempt,
-  app_sha: string | null,
-  now: string,
-): UpdateAttempt | null {
-  if (
-    attempt.state !== 'installing' ||
-    attempt.deadline_at === null ||
-    instant(now).epochMicroseconds <= instant(attempt.deadline_at).epochMicroseconds
-  )
-    return null;
-  return attempt.to_sha === app_sha
-    ? { ...attempt, state: 'done', detail: null }
-    : { ...attempt, state: 'failed', detail: UNFINISHED_DETAIL };
 }
 export function resolve(
   attempt: UpdateAttempt | null,

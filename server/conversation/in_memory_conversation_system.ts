@@ -194,6 +194,12 @@ export class InMemoryConversationSystem implements ConversationSystem {
     this.backend_registry = backend_registry;
   }
 
+  has_pending_update_sends(): boolean {
+    return (
+      this.workspace_admission.active ||
+      [...this._conversations.values()].some((state) => state.held_prompts.length > 0)
+    );
+  }
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     if (this.workspace_admission.closed) return 'unknown';
     if (

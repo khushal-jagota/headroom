@@ -6,7 +6,7 @@ An offered release can include `available.compatibility`, with the same shape as
 
 `client_versions` contains the last retained identity from each device. The card compares those declarations with the offered release's compatibility limits before Update. The ordinary update-status read reconciles new declarations.
 
-`GET /api/updates` retains the server's `state`, `allowed_actions`, `available`, and `attempt`. The server state no longer depends on the original Mac. The legacy `mac_details` field remains for existing clients.
+`GET /api/updates` retains the server's `state`, `allowed_actions`, `available`, and `attempt`. The installer persists the home outcome. Reading status cannot complete the attempt. Before a successful release check, the status can be `check_unavailable`. A fresh machine report is separate evidence of the running machine version. The legacy `mac_details` field remains for existing clients.
 
 - `machines` describes each registered executor machine against the current attempt, including failed targets that remain eligible for retry.
 - `available_machines` describes each machine against the pending offer. Its request and attempt IDs are null because the offer has no machine request yet. It is empty without an offer. A new offer does not remove a retry from `machines`.
@@ -32,3 +32,5 @@ The machine state values are `current` (no required build change), `available` (
 `POST /api/updates/attempts/:attempt_id/machines/:machine_id/retry` takes no body. It returns `{attempt, machine}`, with the latest public server attempt and the selected machine's fresh state and request ID. The machine's `attempt_id` identifies its retained target even when the latest server attempt differs. It retains every other machine's request and report. A stale attempt or an ineligible machine returns 409. The old `retry-mac` route delegates only to the original Mac. The server retry route still retries the server attempt.
 
 Contracts live in `contracts.ts`. Executor channel contracts live in `../../executor/wire.schema.json`.
+
+At cutover, accepted sends drain before writes close. The new home waits for compatible, credentialed traffic over its local executor socket while ordinary work stays frozen. The machine retries its lease during the trial. Only the installer can keep the candidate and admit work.

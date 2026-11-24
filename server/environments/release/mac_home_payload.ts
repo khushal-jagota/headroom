@@ -5,6 +5,7 @@ import { MAC_STATIC_FILES } from '../../executor/mac/packaging/configuration.ts'
 import { is_record } from '../../core/records.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import type { MacHomePayloadOptions } from './mac_home_contracts.ts';
+import { HOME_WEB_SOURCE_FILES } from './configuration.ts';
 import { require_generated_schema_frontier } from './migrations.ts';
 import { assert_release_execution } from './process.ts';
 
@@ -74,9 +75,7 @@ export async function compose_mac_home_payload(
     await copy(join(providers, name), join(app, 'agent_backends', name));
   await copy(web, join(app, 'web/dist'));
   await copy(join(exported, 'assets'), join(app, 'assets'));
-  // The server re-exports these generated protocol values at runtime.
-  const view_contract = 'web/src/lib/conversation/view/contracts.ts';
-  await copy(join(exported, view_contract), join(app, view_contract));
+  for (const name of HOME_WEB_SOURCE_FILES) await copy(join(exported, name), join(app, name));
   // The server tree above already carries the static files under server/.
   for (const name of MAC_STATIC_FILES)
     if (!name.startsWith('server/')) await copy(join(exported, name), join(app, name));

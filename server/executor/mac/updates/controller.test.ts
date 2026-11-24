@@ -60,6 +60,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
   const authentication_trace: [string, string][] = [];
   const closes: string[] = [];
   const close_errors: Error[] = [];
+  const download_errors: Error[] = [];
   let close_status = 200;
   let close_hold: Promise<void> | undefined;
   let download_hold: Promise<void> | undefined;
@@ -93,6 +94,8 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
         body = Buffer.from('{"confirmed":true}');
       } else {
         download_paths.push(input.path);
+        const error = download_errors.shift();
+        if (error) throw error;
         if (download_hold)
           await Promise.race([
             download_hold,
@@ -174,6 +177,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
     exit_requested,
     downloads: () => download_paths.length,
     download_paths,
+    download_errors,
     authentication_trace,
     closes,
     close_errors,
@@ -253,6 +257,35 @@ test('prefetch supplies an offered activation and records handoff before exit', 
   await f.controller.stop({ deadline: performance.now() / 1000 + 10 });
   await actual;
   expect(f.on_failure).not.toHaveBeenCalled();
+});
+test('a returning machine retries an interrupted archive with the same request', async () => {
+  const f = fixture();
+  const check = f.check({ ...f.target, activate: true });
+  f.download_errors.push(Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }));
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    const now = Date.now();
+    clock.mockReturnValue(now);
+    await f.controller.apply(check);
+    expect(f.phases).toEqual(['downloading', 'waiting']);
+    await f.controller.apply(check);
+    expect(f.downloads()).toBe(1);
+    clock.mockReturnValue(now + 5000);
+    await f.controller.apply(check);
+    expect(f.downloads()).toBe(2);
+    expect(existsSync(join(f.root, 'updates', 'pending.json'))).toBe(true);
+  } finally {
+    clock.mockRestore();
+  }
+});
+test('a corrupt archive stays refused across repeated offers', async () => {
+  const f = fixture();
+  const check = f.check({ ...f.target, archive_sha256: '0'.repeat(64), activate: true });
+  await f.controller.apply(check);
+  await f.controller.apply(check);
+  expect(f.downloads()).toBe(1);
+  expect(f.phases).toEqual(['downloading', 'failed', 'failed']);
+  expect(existsSync(join(f.root, 'updates', 'pending.json'))).toBe(false);
 });
 test('trial admission waits for supervisor selection, and an inactive target stops nothing', async () => {
   const f = fixture(true, true);
