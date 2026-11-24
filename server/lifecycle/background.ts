@@ -1,3 +1,4 @@
+import { work_move_runtime } from '../work_moves/operations.ts';
 /** Production loop factories remain explicit until the production core composes them. */
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
@@ -156,6 +157,10 @@ export function compose_background_services(
       settled: () => late_cleanup ?? service?.settled() ?? Promise.resolve(),
     });
   };
+  own(() => {
+    const runtime = work_move_runtime(context.database);
+    return { start() {}, close: (stop) => runtime.close(stop), settled: () => runtime.settled() };
+  });
   const dispatch = dispatcher_admitted(context.config, options.dispatcher_owned);
   const notifications =
     !context.config.test_mode &&

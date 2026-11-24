@@ -68,7 +68,12 @@ export function admit(path: string, options: WorkspaceOptions): string {
   const absolute = resolve(path);
   return options.admit_path?.(absolute) ?? absolute;
 }
-export async function git(path: string, args: readonly string[], options: WorkspaceOptions = {}) {
+export async function git(
+  path: string,
+  args: readonly string[],
+  options: WorkspaceOptions = {},
+  input?: string,
+) {
   const timeout = AbortSignal.timeout(
     (args[0] === 'worktree' && args[1] === 'add') || args[0] === 'clone' || args[0] === 'fetch'
       ? 30 * 60 * 1000
@@ -81,11 +86,16 @@ export async function git(path: string, args: readonly string[], options: Worksp
     GIT_TERMINAL_PROMPT: '0',
   };
   // Shared child owner strips inherited Git overrides. Explicit flags survive that filter.
-  return shared_git(path, ['-c', 'core.askPass=', ...args], {
-    ...options,
-    signal,
-    git_execution: options.git_execution ? { ...options.git_execution, environment } : undefined,
-  });
+  return shared_git(
+    path,
+    ['-c', 'core.askPass=', ...args],
+    {
+      ...options,
+      signal,
+      git_execution: options.git_execution ? { ...options.git_execution, environment } : undefined,
+    },
+    input,
+  );
 }
 export function read_workspace_identity(ticket_root: string): WorkspaceIdentity {
   if (stat_sync(ticket_root)?.isSymbolicLink() || stat_sync(dirname(ticket_root))?.isSymbolicLink())

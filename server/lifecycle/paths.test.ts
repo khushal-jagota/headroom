@@ -9,6 +9,8 @@ import { darwin_control_socket_path } from './logic/paths.ts';
 test('Darwin private runtime refuses foreign ownership, symlinks and public permissions without repairs', () => {
   const root = mkdtempSync(join(tmpdir(), 'panels-paths-'));
   const path = join(root, 'runtime');
+  // The public-directory refusal needs an explicit mask, independent of the runner.
+  const inherited_mask = process.umask(0o022);
   try {
     expect(require_private_runtime_directory(path)).toBe(path);
     expect(lstatSync(path).mode & 0o777).toBe(0o700);
@@ -25,6 +27,7 @@ test('Darwin private runtime refuses foreign ownership, symlinks and public perm
     expect(() => require_private_runtime_directory(path)).toThrow('private and owned');
     expect(lstatSync(foreign).mode & 0o777).toBe(0o755);
   } finally {
+    process.umask(inherited_mask);
     vi.restoreAllMocks();
     rmSync(root, { recursive: true, force: true });
   }

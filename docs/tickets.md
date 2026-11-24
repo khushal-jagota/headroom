@@ -58,7 +58,7 @@ Moving a Ticket to another Manager can make the old holder illegal. Then the hol
 
 ## How status is read
 
-A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: awaiting approval, errored, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation. Consequences uses these same activity and status facts. It has no separate waiting group.
+A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: awaiting approval, errored, agent owned (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Ticket reads show the name and recap first, then status, live Worker state, stage, and any gate or unanswered question. The API value `agent_owned` and the human label “Agent owned” mean that a step is out. Native and desktop clients must update before this server release. Updated clients also accept the former value `agent` during rollout and in historical decision receipts. The conversation supplies the live state, so a step can remain out while its Worker is idle. Consequences uses these same activity and status facts. It has no separate waiting group.
 
 The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
 
@@ -82,6 +82,8 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 The machine destination defaults to the home at creation. The owner can move a Ticket to another registered machine. The source must prove that repository work is clean and pushed, and that the old agent stopped. A fresh conversation starts from the same Ticket record and the published work branch. The stage, proposal, ceiling, assignment and backlog state stay. Private agent memory does not transfer. Settings → Machines edits its name, icon, and color. These display edits never move work. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
 
+The browser accepts a move before it completes. Panels stores its progress, so the owner can leave and return. The move shows each phase, elapsed time, and any refusal or startup failure with a next step. A server interruption ends the progress with an explicit failure rather than replaying a partial move. The command line keeps its final-result response.
+
 The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
 
 ## Where it shows up
@@ -101,4 +103,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `server/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.ts`, `proposal_routing.ts`, `resolution.ts`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._

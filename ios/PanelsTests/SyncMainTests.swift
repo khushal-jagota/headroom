@@ -19,7 +19,7 @@ final class SyncMainTests: XCTestCase {
     }
 
     func testDependencyBlockedAgentGoesInBlockedOnPage() throws {
-        let json = #"{"id":"t1","title":"Blocked","locale":"macos","worker_type":null,"stage":"implementation","ticket_status":"agent","is_backlogged":false,"blocked":true,"recap_preview":"","awaiting_reply":false,"awaiting_answer":false,"awaiting_approval":false,"awaiting_agent_approval":false,"assigned":false,"agent_state":"working"}"#
+        let json = #"{"id":"t1","title":"Blocked","locale":"macos","worker_type":null,"stage":"implementation","ticket_status":"agent_owned","is_backlogged":false,"blocked":true,"recap_preview":"","awaiting_reply":false,"awaiting_answer":false,"awaiting_approval":false,"awaiting_agent_approval":false,"assigned":false,"agent_state":"working"}"#
         let ticket = try APIClient.decoder().decode(TicketSummary.self, from: Data(json.utf8))
         XCTAssertEqual(ticket.locale, "macos")
         XCTAssertNil(ticket.workerType)

@@ -1,6 +1,6 @@
 import type { ExecutorHealth } from "./ticketMachines";
 import { ORIGINAL_MAC_MACHINE_ID } from "./machines/contracts";
-import { MACHINE_HEALTH_POLL_MS, SERVER_MOVE_POLL_MS } from "./machines/config";
+import { MACHINE_HEALTH_POLL_MS, SERVER_MOVE_POLL_MS, WORK_MOVE_POLL_MS } from "./machines/config";
 import { serverMoveActive } from "./machines/logic/serverMove";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
@@ -53,6 +53,11 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 
 export const queries = {
   workMoves: () => jsonQuery<import("../../../server/work_moves/contracts").WorkMoveStatus>(["work-moves"], "/api/work-moves"),
+  workMoveOperations: () => ({
+    ...jsonQuery<import("../../../server/work_moves/contracts").WorkMoveOperationsResponse>(["work-move-operations"], "/api/work-moves/operations"),
+    refetchInterval: (state: {state: {data?: {body: import("../../../server/work_moves/contracts").WorkMoveOperationsResponse}}}) =>
+      state.state.data?.body.operations.some(operation => operation.finished_at_ms === null) ? WORK_MOVE_POLL_MS : false
+  }),
   machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
   // The latest move of the server. The change signal can be held during the pause, so an
   // active run also polls; a settled one follows the change stream alone.

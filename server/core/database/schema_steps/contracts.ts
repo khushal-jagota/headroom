@@ -12,6 +12,7 @@ import { answer_receipt_index_step } from './ts_0010_answer_receipt_index.ts';
 import { remove_tickets_blocks_step } from './ts_0011_remove_tickets_blocks.ts';
 import { empty_attachments_step } from './ts_0012_empty_attachments.ts';
 import { owner_send_receipts_step } from './ts_0013_owner_send_receipts.ts';
+import { work_move_operations_step } from './ts_0014_work_move_operations.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -48,6 +49,7 @@ export const SCHEMA_STEPS: readonly SchemaStep[] = [
   remove_tickets_blocks_step,
   empty_attachments_step,
   owner_send_receipts_step,
+  work_move_operations_step,
 ];
 
 /** The steps a database at `current` still needs to reach `head`. */

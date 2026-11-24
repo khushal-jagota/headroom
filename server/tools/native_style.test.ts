@@ -1,5 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { native_style_findings } from './native_style.ts';
+import { native_style_findings, server_diff } from './native_style.ts';
 
 test('added imports and helper definitions fail while shared owners and service timers pass', () => {
   const fake_name = 'ValueError';
@@ -45,4 +49,29 @@ test('added imports and helper definitions fail while shared owners and service 
   expect(native_style_findings(diff).map(({ path, line }) => [path, line])).toEqual(
     Array.from({ length: 17 }, (_, index) => index + 4).map((line) => ['server/example.ts', line]),
   );
+});
+
+test('reads a server diff larger than the 1 MiB child-process default', () => {
+  const root = mkdtempSync(join(tmpdir(), 'native-style-diff-'));
+  try {
+    const git = (...args: string[]) =>
+      execFileSync(
+        'git',
+        ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...args],
+        {
+          cwd: root,
+        },
+      );
+    git('init', '--quiet');
+    mkdirSync(join(root, 'server'));
+    writeFileSync(join(root, 'server/large.ts'), '');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'base');
+    writeFileSync(join(root, 'server/large.ts'), 'export const line = 0;\n'.repeat(80_000));
+    const diff = server_diff('HEAD', root);
+    expect(Buffer.byteLength(diff)).toBeGreaterThan(1024 * 1024);
+    expect(native_style_findings(diff)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -8,6 +8,7 @@ publish:
     owner: khushal-jagota
     repo: headroom
 mac:
+  icon: resources/icon.icns
   # Each desktop release carries this ZIP and its matching latest-mac.yml.
   artifactName: Panels-mac-${arch}.${ext}
   category: public.app-category.productivity

@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { it } from 'vitest';
+import { afterEach, beforeEach, it } from 'vitest';
 import ts from 'typescript';
 import { inside } from '../../files/logic/paths.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
@@ -57,6 +57,15 @@ import {
   INSTALLER_KOFFI_OPTIONAL_ROOT,
   INSTALLER_PACKAGE_ROOTS,
 } from './installer_bundle_configuration.ts';
+
+// File-mode fixtures and assertions choose their own mask, independent of the runner.
+let inherited_mask: number;
+beforeEach(() => {
+  inherited_mask = process.umask(0o022);
+});
+afterEach(() => {
+  process.umask(inherited_mask);
+});
 
 const CHECKOUT = fileURLToPath(new URL('../../../', import.meta.url));
 /**
@@ -570,6 +579,7 @@ it('copies Node and its selected closure independently and refuses changed sourc
       'server/skills/seeds/panels/SKILL.md',
       'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
+      'web/src/lib/conversation/attachmentPolicy.ts',
       'assets/tokens.css',
       'assets/app.css',
       'assets/fonts/InterVariable.woff2',

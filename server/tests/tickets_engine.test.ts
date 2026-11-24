@@ -205,7 +205,7 @@ test('a_ticket_created_with_a_live_blocker_never_starts_until_it_clears', () => 
   expect(claim(db, t.id)).toBeNull();
   advance(db, blocker);
   expect(read(db, t.id).ticket_status).toBe('empty');
-  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent');
+  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent_owned');
 });
 test('every_creation_blocker_holds_until_the_last_one_is_done', () => {
   const db = fixture(),
@@ -236,7 +236,7 @@ test('every_creation_blocker_holds_until_the_last_one_is_done', () => {
     expect(claim(db, t.id)).toBeNull();
   }
   advance(db, blockers[1]!);
-  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent');
+  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent_owned');
 });
 test('a_parked_brief_outranks_a_creation_blocker_until_it_is_settled', () => {
   const db = fixture(),
@@ -305,7 +305,7 @@ test('a_claim_release_does_not_fire_once_the_ticket_has_moved_on', () => {
       }),
     ),
   ).toBe(false);
-  expect(read(db, t.id).ticket_status).toBe('agent');
+  expect(read(db, t.id).ticket_status).toBe('agent_owned');
 });
 test('auto_approval_old_data_and_multi_field_edit', () => {
   const db = fixture();

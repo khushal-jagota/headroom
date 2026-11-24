@@ -12,6 +12,7 @@ import { INSPECTION_SECONDS, START_SECONDS } from './config.ts';
 import { validate_pending_shape } from './logic/ownership.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import * as records from './records.ts';
+import { with_worker_file_mask } from './file_mask.ts';
 
 export async function prepare_launch(
   path: string,
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
   const environment = copy_environment(process.env);
   delete environment.TMUX;
   delete environment.STY;
-  execve(executable, [executable, ...args], environment);
+  with_worker_file_mask(() => execve(executable, [executable, ...args], environment));
 }
 if (
   process.argv[1] &&

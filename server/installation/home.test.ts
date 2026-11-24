@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, vi } from 'vitest';
+import { afterEach, beforeEach, test, vi } from 'vitest';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
@@ -33,6 +33,15 @@ import { create_linux_home_service } from './linux.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
+
+// File-mode fixtures and assertions choose their own mask, independent of the runner.
+let inherited_mask: number;
+beforeEach(() => {
+  inherited_mask = process.umask(0o022);
+});
+afterEach(() => {
+  process.umask(inherited_mask);
+});
 
 test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
   const f = await fixture(),

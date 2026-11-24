@@ -129,6 +129,9 @@
     "ts_0013_owner_send_receipts": [
       "ts_0012_empty_attachments"
     ],
+    "ts_0014_work_move_operations": [
+      "ts_0013_owner_send_receipts"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],
