@@ -13,6 +13,7 @@ import type { MacNativeChildrenContract, MacRunningChild } from './contracts.ts'
 import type { MacRunnerContract, MacRunnerOptions } from './lifecycle_contracts.ts';
 import type { MacSourceWorkContract } from './retirement_contracts.ts';
 import { RetainedWorkspaceReporter } from '../../../ticket_workspaces/reporting.ts';
+import { child_ticket_id } from './logic/child_owner.ts';
 
 export function same_workspace(
   left: WorkspaceIdentity | null,
@@ -73,7 +74,8 @@ export class MacWorkspaceCleanup {
       .retained_children()
       .filter(
         (child) =>
-          child.ticket_id === state.ticket_id && same_workspace(child.workspace, workspace),
+          child_ticket_id(child.owner) === state.ticket_id &&
+          same_workspace(child.workspace, workspace),
       );
     if (children.some((child) => this.busy(child))) return false;
     const grant = replay
@@ -106,12 +108,17 @@ export class MacWorkspaceCleanup {
       {
         git_execution: workspace_git,
         mirror_root: join(paths.root, 'cache', 'git-mirrors'),
+        // The server's own Ticket folder can be shared with the server, which writes its own report.
+        report_path: join(paths.root, 'ticket-workspaces-cleanup.json'),
         extra_roots: [join(workspace_home, 'panels-session-evidence')],
         active_ticket_ids: new Set(
           native_children
             .retained_children()
             .filter((child) => this.busy(child))
-            .map((child) => child.ticket_id),
+            .flatMap((child) => {
+              const ticket_id = child_ticket_id(child.owner);
+              return ticket_id === null ? [] : [ticket_id];
+            }),
         ),
         retirement_is_committed: (state, workspace) =>
           workspace_lock.run(() => this.authorize(state, workspace, true)),

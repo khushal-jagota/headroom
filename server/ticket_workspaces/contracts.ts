@@ -27,6 +27,8 @@ export type WorkspaceRetirementOperation = (
 ) => MaybePromise<RetirementTarget>;
 export interface ProjectRepository {
   readonly repository_url: string | null;
+  readonly published_branch?: string | null;
+  readonly published_revision?: string | null;
   readonly default_branch?: string | null;
 }
 export interface WorkspaceOptions {
@@ -42,6 +44,8 @@ export interface WorkspaceOptions {
   prune_ticket_scratch?: (ticket_id: string, names: readonly string[]) => MaybePromise<boolean>;
 }
 export interface WorkspaceCleanupOptions extends WorkspaceOptions {
+  /** Where the pass writes its report. Defaults to beside the Ticket folder. */
+  report_path?: string;
   measure_size?: boolean;
   extra_roots?: readonly string[];
   active_ticket_ids?: ReadonlySet<string>;
@@ -68,6 +72,7 @@ export interface RetirementOptions extends WorkspaceOptions {
   identity?: WorkspaceIdentity;
 }
 export interface WorkspaceMarker extends WorkspaceIdentity {
+  recovered_published_revision?: string;
   checkout_kind?: 'clone';
   temporary?: string;
   ticket_id: string;

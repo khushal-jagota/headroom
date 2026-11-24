@@ -390,7 +390,17 @@ visible during refresh, with each source’s last-read time; failed provider rea
 keep the previous allowance and show the error. Refresh gives haptic feedback.
 Opening the screen only reads stored values. Cost estimates are not bills.
 The Panels server row at the top of Settings displays deployment status without
-opening a page; VPS has its own navigation row.
+opening a page. Beside it, the Updates row opens the shared update card. Only that row
+tells of an update: a short line while one is offered or running. The Sidebar's gear,
+Review and the rest of the app stay quiet. The card shows machine rows and device
+warnings. It shows the server’s interruption sentence while an update is offered or running,
+and beside a failed server update's Try again, which stops the agents again. Update opens the confirmation in the shared
+sheet, which waits on the install and shows a refusal inside it. Server and machine
+failures offer their own Try again action. A machine retry retains that machine’s target,
+even when a later server attempt differs. Actions run once and never enter the message
+outbox. After a refused or uncertain action, the app reads status again before another
+press. An expected server restart retains update progress until the server’s deadline.
+VPS has its own navigation row.
 
 VPS reads machine measurements, CPU history, services and paged processes. Its
 15-second foreground poll preserves the loaded process window. CPU history offers
@@ -813,8 +823,8 @@ Sends, approval, send-back, queue changes, stopping and read acknowledgments kee
 the same Ticket and conversation identities on either machine. Permission and input
 requests still direct the reader to the web to answer. The transcript distinguishes
 an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
-Tickets or selecting/moving their machine has no native flow yet. Machine installation,
-updates and executor administration remain on the web. Existing scheduled-task detail
+Tickets or selecting/moving their machine has no native flow yet. Machine installation and executor administration remain on the web.
+The shared update card behind Settings' Updates row offers server updates and targeted machine retries. Existing scheduled-task detail
 shows the schedule's machine when one is saved.
 
 Usage reads the current date-range summary and refreshes pricing through the rates
@@ -894,6 +904,22 @@ motion, a fixed page, edge Back at two table offsets, and Back from an artifact
 Review opens directly. It never sends a message and stays outside the permanent
 screen suite. This native touch and navigation boundary requires the real app
 host; Foundation tests cannot prove gesture priority or Back.
+
+The one-off update review uses the same loopback fixture and `PanelsReview` scheme.
+Run it with the assigned device, separate bundle, lane lock, and worktree output directory:
+
+```sh
+PANELS_UPDATES_SMOKE=1 \
+PANELS_OFFLINE_TEST=UpdateFlowTests/testUpdateCardAndTargetedRetry \
+PANELS_OFFLINE_DEVICE=<booted simulator UDID> PANELS_OFFLINE_BUNDLE=<task bundle ID> \
+PANELS_OFFLINE_LANE=<lane lock name> PANELS_OFFLINE_OUTPUT=<worktree output directory> \
+ios/scripts/test-offline-simulator.py --review
+```
+
+`PANELS_UPDATES_SMOKE=1` serves the update fixture and also starts the connection
+control that the expected-restart part needs. No other setting is necessary. The review
+captures Settings' Updates row and the Updates screen with an offer and with none. Its
+update writes go only to the loopback fixture.
 
 ## Decision notes
 

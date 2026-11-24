@@ -6,7 +6,9 @@
   import { retryChangeStream } from "../lib/changeStream";
   import UpdateActions from "./UpdateActions.svelte";
   import type { UpdateStatus } from "../lib/updates/contracts";
-  import { updateCard, type UpdateCardState } from "../lib/updates/logic/presentation";
+  import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, type UpdateCardState } from "../lib/updates/logic/presentation";
+  import MachineRows from "../lib/updates/MachineRows.svelte";
+  import { performUpdateAction } from "../lib/updates/api";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
   let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation, now }: {
@@ -36,6 +38,17 @@
       case "reconnect": retryChangeStream(); break;
       case "retry": void actions?.perform({ action: "retry" }, "failed"); break;
       case "retry_mac": if (card.info) void actions?.perform({ action: "retry_mac" }, card.info); break;
+    }
+  }
+  const impact = $derived(status ? cardInterruption(status, presentation ?? undefined) : null);
+  let machineError = $state<string | null>(null);
+  async function retryMachine(machine_id: string): Promise<void> {
+    if (!status) return;
+    machineError = null;
+    try {
+      await performUpdateAction(status, { action: "retry_machine", machine_id });
+    } catch (cause) {
+      machineError = cause instanceof Error ? cause.message : "The machine update failed.";
     }
   }
   let open = $state(false);
@@ -187,6 +200,17 @@
                 data-update-info={card.info} onclick={() => card?.info && actions?.openDialog(card.info)}>i</button>
             {/if}
           </span>
+          {#if status && presentation !== "unreachable"}
+            {#if interruptionText(impact)}
+              <span class="status-detail">{interruptionText(impact)}</span>
+              {#if impact?.stops_agents && impact.agents.length}<span class="agent-names">{impact.agents.join(", ")}</span>{/if}
+            {/if}
+            {#if presentation === "available"}
+              {#each deviceUpdateWarnings(status) as warning (warning)}<span class="status-detail">{warning}</span>{/each}
+            {/if}
+            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" ? retryMachine : undefined} />
+            {#if machineError}<span role="alert">{machineError}</span>{/if}
+          {/if}
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}
           {#if card.detail}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
         {/if}
@@ -228,6 +252,7 @@
   .status-track i { display: block; width: 40%; height: 100%; border-radius: var(--radius-pill); background: var(--accent-bright); animation: track 1.6s var(--glide-ease) infinite; }
   @keyframes track { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
   .status-detail { flex-basis: 100%; }
+  .agent-names { overflow-wrap: anywhere; }
   .status-base { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .navigation-health { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
   .navigation-health .status-mark { align-self: start; margin-top: .4em; }

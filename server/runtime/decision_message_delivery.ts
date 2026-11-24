@@ -7,7 +7,6 @@ import {
   type ConversationSystem,
 } from '../conversation/contracts.ts';
 import { now_ms } from '../executor/clock.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
 import * as tickets from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
@@ -42,8 +41,7 @@ export async function deliver_ticket_decision_messages(
       (sql) =>
         !ticket.is_backlogged &&
         locale.can_execute_machine(ticket.machine_id, sql) &&
-        (ticket.machine_id === HOME_MACHINE_ID ||
-          locale.mac_is_present(sql, now_ms(), ticket.machine_id)) &&
+        locale.mac_is_present(sql, now_ms(), ticket.machine_id) &&
         (ticket.employee_launch_model === null ||
           (backend !== undefined && model_is_enabled(sql, backend, ticket.employee_launch_model))),
     );

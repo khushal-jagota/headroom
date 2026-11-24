@@ -69,7 +69,7 @@ cd headroom
 
 npm ci --prefix server
 npm ci --prefix web
-npm install --prefix agent_backends --no-save --no-package-lock
+npm ci --prefix agent_backends
 npm --prefix web run build
 
 mkdir -p data/logs

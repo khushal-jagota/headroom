@@ -61,7 +61,11 @@ export function publication_id(value: unknown, name: string): string {
   if (/^[1-9][0-9]*$/.exec(text)?.[0] !== text) throw new Error(`Invalid publication ${name}`);
   return text;
 }
-export async function source_run(requested_sha: string): Promise<PublicationSourceRun> {
+export async function source_run(
+  requested_sha: string,
+  source_root: string,
+  execution: ReleaseExecution,
+): Promise<PublicationSourceRun> {
   const env = process.env,
     get = (name: string) => publication_text(env[name], name);
   if (env.GITHUB_ACTIONS !== 'true')
@@ -84,11 +88,35 @@ export async function source_run(requested_sha: string): Promise<PublicationSour
     (typeof payload.ref === 'string' && payload.ref !== ref)
   )
     throw new Error('Publication GitHub event does not match its ref or SHA');
-  if (
-    event === 'pull_request' &&
-    (!is_object(payload.pull_request) || payload.pull_request.merge_commit_sha !== sha)
-  )
-    throw new Error('Publication pull request does not match the selected merge SHA');
+  if (event === 'pull_request') {
+    const pull = payload.pull_request;
+    if (
+      !Number.isSafeInteger(payload.number) ||
+      (payload.number as number) <= 0 ||
+      ref !== `refs/pull/${payload.number}/merge` ||
+      !is_object(pull) ||
+      !is_object(pull.base) ||
+      !is_object(pull.head)
+    )
+      throw new Error('Publication pull request does not match the selected merge ref');
+    const base = validate_app_sha(publication_text(pull.base.sha, 'pull request base SHA')),
+      head = validate_app_sha(publication_text(pull.head.sha, 'pull request head SHA'));
+    // The opened event can precede GitHub's merge creation. Read the selected commit's
+    // raw header: shallow Actions checkouts need not contain the parent objects.
+    const commit = await publication_git(source_root, ['cat-file', 'commit', sha], execution);
+    const parents = commit
+      .split('\n\n', 1)[0]!
+      .split('\n')
+      .filter((line) => line.startsWith('parent '))
+      .map((line) => line.slice(7));
+    if (
+      (await publication_git(source_root, ['rev-parse', 'HEAD'], execution)).trim() !== sha ||
+      parents.length !== 2 ||
+      parents[0] !== base ||
+      parents[1] !== head
+    )
+      throw new Error('Publication pull request does not match the selected merge parents');
+  }
   const prefix = repository + '/',
     separator = workflow_ref.lastIndexOf('@'),
     workflow_path = workflow_ref.slice(prefix.length, separator);

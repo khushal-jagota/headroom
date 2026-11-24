@@ -1,3 +1,4 @@
+import { copy_environment } from '../../../core/environment.ts';
 /** One bounded usage probe with a JSON rate-limit result. */
 import { homedir } from 'node:os';
 import { stringify_numeric_json } from '../../../core/http/numeric_json.ts';
@@ -19,6 +20,7 @@ import {
 type UsageClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface UsageSourceOptions {
   child_processes: OwnedChildProcesses;
+  environment?: Readonly<NodeJS.ProcessEnv>;
   client_factory?: (options: ConstructorParameters<typeof CodexAppServerClient>[0]) => UsageClient;
 }
 export async function read_codex_rate_limits(
@@ -54,7 +56,9 @@ export async function read_codex_rate_limits(
     cancel.signal.throwIfAborted();
     await client.start({
       argv: [executable, 'app-server'],
-      environment: child_environment(),
+      environment: child_environment({
+        overrides: Object.entries(copy_environment(dependencies.environment ?? {})),
+      }),
       working_directory: homedir(),
     });
     cancel.signal.throwIfAborted();

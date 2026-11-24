@@ -79,7 +79,6 @@ test('a repeated first message reaches each owner once and the repeat is answere
           environment: new RecordingBackendProbeEnvironment(),
         }),
       createConversationCore(context) {
-        registry.bind_runtime(context.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: context.record.store,
           execution_refusal: (id) =>

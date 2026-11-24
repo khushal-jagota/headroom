@@ -16,7 +16,7 @@ try {
     if (process.argv.length !== 3) throw new Error('Expected one publication receipt request file');
     const request = await publication_json_file(process.argv[2]!);
     const required =
-      'artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'.split(
+      'machine_compatibility_linux_zip,machine_compatibility_linux_artifact_id,machine_compatibility_darwin_zip,machine_compatibility_darwin_artifact_id,artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'.split(
         ',',
       );
     const linux_executor_fields = [
@@ -37,7 +37,11 @@ try {
         !linux_executor_fields.every((key) => key in request))
     )
       throw new Error('Invalid publication receipt request');
-    const provenance = await source_run(publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'));
+    const provenance = await source_run(
+      publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'),
+      publication_text(request.source_root, 'source_root'),
+      execution,
+    );
     require_publication_run(provenance);
     if (process.env.GITHUB_WORKFLOW_SHA !== provenance.source_sha)
       throw new Error('Publication workflow source differs from the selected SHA');
@@ -45,6 +49,22 @@ try {
     await write_publication_receipt(
       {
         source_root: publication_text(request.source_root, 'source_root'),
+        machine_compatibility_linux_zip: publication_text(
+          request.machine_compatibility_linux_zip,
+          'Linux machine compatibility ZIP',
+        ),
+        machine_compatibility_linux_artifact_id: publication_id(
+          request.machine_compatibility_linux_artifact_id,
+          'Linux machine compatibility artifact ID',
+        ),
+        machine_compatibility_darwin_zip: publication_text(
+          request.machine_compatibility_darwin_zip,
+          'Darwin machine compatibility ZIP',
+        ),
+        machine_compatibility_darwin_artifact_id: publication_id(
+          request.machine_compatibility_darwin_artifact_id,
+          'Darwin machine compatibility artifact ID',
+        ),
         linux_artifact_zip: publication_text(request.linux_artifact_zip, 'linux_artifact_zip'),
         linux_build_artifact_zip: publication_text(
           request.linux_build_artifact_zip,

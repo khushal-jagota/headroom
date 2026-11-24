@@ -35,13 +35,18 @@ export const CHIEF_SKILL_NAME = 'panels-chief-of-staff';
 const fail = (message: string, detail: Record<string, unknown> = {}): never => {
   throw new PlannerError('validation', message, detail);
 };
-export function resolve_launch_defaults(sql: ReadSql, raw: unknown): ManagedWorkerLaunchDefaults {
+/** The model is checked on `machine_id`: the Chief's machine for the Chief, else the home. */
+export function resolve_launch_defaults(
+  sql: ReadSql,
+  raw: unknown,
+  machine_id = 'vps',
+): ManagedWorkerLaunchDefaults {
   const defaults = validate_launch_defaults(raw);
   require_usable_model(
     sql,
     require_conversation_backend_key(defaults.employee_backend),
     defaults.employee_launch_model,
-    'vps',
+    machine_id,
   );
   return defaults;
 }

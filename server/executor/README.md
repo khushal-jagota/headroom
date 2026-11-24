@@ -6,7 +6,7 @@ Production loads credentialed destinations before retained adoption. Enrollment 
 
 Each endpoint accepts one `machine_id`, with the original Mac as the default. Its mailbox, presence, run custody, inbox, catalog relay, and upload staging share that destination. Each owner scopes presence, commands, cursors, retained recovery, replacement stalls, receipts, and catalog rows to that machine. Command sequences remain global. Public command-ID and child-authority reads check machine ownership. Trusted exact-child transaction participants retain their existing caller authority. The registry tags aggregate stalls with their machine. Its `is_present(machine_id)` reads existing owners and never allocates one.
 
-Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. Publication still targets the canonical Ticket files only after authority checks.
+Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. At boot, the server moves abandoned uploads to a unique directory beneath `executor-upload-archive/` beside the database. This happens once after it takes runtime ownership and before it creates transfer services. The same-disk rename preserves the bytes without a copy. Earlier archives remain until a person removes them by hand. No active transfer exists at that point. Publication still targets the canonical Ticket files only after authority checks.
 
 Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals keep their existing payload fields.
 
@@ -17,6 +17,8 @@ Before record initialization, startup loads the registry and asks it for `open_r
 Registry `configure` binds every endpoint to the same core, start-admission gate, and update barrier. A destination added later receives the same bindings and starts before `ensure` returns it. Endpoint `start` loads durable presence/mailbox state and resumes replacement drains, late-steer watches, and never-ran prompt delivery. A fresh child registered before a VPS crash receives its owed prompt on the original turn. Interruption closure and exact claim restoration follow the committed prompt. Ticket catalog reads select `catalog_for(ticket.machine_id)` while Home uses local snapshots.
 
 Durable items enter through `MacInbox`. Ordered receipts, replay, assignment authority, canonical writes, answer application, and file publication share the existing write door. A refused domain effect can roll back its savepoint while the outer refusal receipt commits. Runtime predictions are restored before the global publication finalizer, so rolled-back events do not escape through the live tail or Signal.
+
+A graceful server restart retains each admitted relayed write through its final receipt. After a forced kill, generic writes without a committed final receipt remain unconfirmed and are never executed again.
 
 Agent messages require an explicit recipient through `message.send`. Executor transport refuses the retired `ticket.request_help` mutation.
 
@@ -69,13 +71,13 @@ Catalog cancellation withdraws its waiting command and completes that cleanup be
 
 The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
 
-The launch path preserves ready-marker promotion, failed-trial rollback, and handoff custody. Startup reconciles Worker cleanup before work begins. Leases carry the cached cleanup evidence under protocol 26.
+The launch path preserves ready-marker promotion, failed-trial rollback, and handoff custody. Startup reconciles Worker cleanup before work begins. Leases carry the cached cleanup evidence under protocol 27.
 
 ## Shared wire
 
-Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema describes wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
+Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema describes wire protocol 27, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
-Both runtime identities advertise protocol 26 through `execution_configuration.ts`. The home admits a lease, a credential request, and a request header that state protocol 25, 26, or 27, the versions of the adjacent releases. Admission by number does not change validation: each body must still pass this release's schema, which ignores fields it does not know. A protocol change must therefore keep the previous version's messages valid. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
+Both runtime identities advertise protocol 27 through `execution_configuration.ts`. The home admits a lease, a credential request, and a request header that state protocol 26, 27, or 28, the versions of the adjacent releases. Admission by number does not change validation: each body must still pass this release's schema, which ignores fields it does not know. A protocol change must therefore keep the previous version's messages valid. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
 
 Regenerate or check the types in an isolated development environment:
 

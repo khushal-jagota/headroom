@@ -2,6 +2,7 @@
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import WorkMoveDialog from "../components/machines/WorkMoveDialog.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
 
   import { onDestroy, tick, untrack } from "svelte";
@@ -373,7 +374,7 @@
           <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
                shown, so the decision below is the page's one call to action. -->
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
+            {#snippet leading()}{#if !section.record.value.terminal}<WorkMoveDialog owner={{kind:"ticket",id:stableId}} label={masthead.title} currentMachineId={masthead.machine_id} />{/if}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">

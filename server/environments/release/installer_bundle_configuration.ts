@@ -58,6 +58,7 @@ export const INSTALLER_SOURCE_FILES = [
   'server/environments/release/logic/manifest.ts',
   'server/environments/release/native/configuration.ts',
   'server/environments/backup/evidence.ts',
+  'server/environments/server_state/checksums.ts',
   'server/environments/paths.ts',
   'server/conversation/shutdown.ts',
   'server/lifecycle/contracts.ts',
@@ -66,8 +67,10 @@ export const INSTALLER_SOURCE_FILES = [
   'server/drivers/built_in_manifests.ts',
   'server/drivers/built_in.ts',
   'server/drivers/core/driver.ts',
+  'server/drivers/core/capabilities.ts',
   'server/drivers/core/identity.ts',
   'server/drivers/core/paths.ts',
+  'server/drivers/core/selection.ts',
   ...DRIVER_STATIC_FILES,
   'server/package.json',
 ] as const;

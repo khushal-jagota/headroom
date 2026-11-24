@@ -36,25 +36,25 @@ So hold the things being judged, and use placeholders for what is out of scope, 
 ## Copy is not the deliverable
 
 The artifact is there to be experienced, not read. Writing in it is a failure, not a service. The
-user has said this plainly: he does not want to read your designs, he wants to experience them.
+user has said this plainly: they do not want to read your designs, they want to experience them.
 
-Write only what he needs in order to know what he is looking at, and at most one line for a
-decision you need from him. Then stop. As a working target, aim for a tenth of the words you
+Write only what they need in order to know what they are looking at, and at most one line for a
+decision you need from them. Then stop. As a working target, aim for a tenth of the words you
 would naturally write, and treat any paragraph in the artifact as a fault to be removed.
 
 Cutting is not moving. Most of what comes out of the artifact should be deleted, not relocated
 into the proposal, because the proposal is read by the same person and is also too long today.
 Rationale, what you considered, how you arrived at it, what you measured, how an option differs,
-what you are unsure about — he is not going to read any of it in either place, and writing it
+what you are unsure about — they are not going to read any of it in either place, and writing it
 somewhere else is the same failure with a different filename.
 
 Three homes, and most things have none of them:
 
-- **The artifact** — what he needs in order to know what he is looking at. Nothing else.
-- **The proposal** — a few lines. What this is, what you need him to decide, and anything that
-  would actually change that decision. If it would not change his answer, leave it out.
-- **The handoff at Consequences** — the detail an implementer needs, written after he has
-  decided, for a reader who is not him.
+- **The artifact** — what they need in order to know what they are looking at. Nothing else.
+- **The proposal** — a few lines. What this is, what you need them to decide, and anything that
+  would actually change that decision. If it would not change their answer, leave it out.
+- **The handoff at Consequences** — the detail an implementer needs, written after they have
+  decided, for a reader who is not them.
 
 A reviewer who has to read the artifact to understand the design is being asked to do the
 design's job for it. A reviewer who has to read a page of proposal to decide between two
@@ -74,13 +74,13 @@ Know every way your proposal differs from today, and never let one arrive unanno
 difference the user finds that nobody declared is a defect, not a detail.
 
 The list itself does not go in the artifact, and it does not go in the proposal either. Both are
-read by the person who has told us he does not want to read. It is written at Consequences, in
+read by the person who has told us they do not want to read. It is written at Consequences, in
 the handoff, for the implementer who needs it. The obligation is to know and to declare; the
 place to declare it is the handoff.
 
-Two exceptions keep the obligation honest. A difference big enough that he would object to
-discovering it is a decision, and a decision gets its one line in the proposal before he
-approves. And if he asks what changed, you answer in full, immediately, however long that is.
+Two exceptions keep the obligation honest. A difference big enough that they would object to
+discovering it is a decision, and a decision gets its one line in the proposal before they
+approve. And if they ask what changed, you answer in full, immediately, however long that is.
 
 Whatever you do draw of today has to be the real product. The artifact is the specification the
 coding Worker executes, so an inaccurate today is built as though somebody chose it.

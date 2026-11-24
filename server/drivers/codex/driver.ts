@@ -1,3 +1,4 @@
+import { turn_scoped_selection_transition } from '../core/selection.ts';
 /** The Codex driver. Its runtime loads only when an instance is created. */
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';
 import type { AgentDriver } from '../core/driver.ts';
@@ -11,6 +12,11 @@ export const codex_driver: AgentDriver<null> = {
   client: codex_client,
   manifest: codex_manifest,
   home_instructions_file: 'AGENTS.md',
+  capabilities: {
+    sessions: { supportsModelSwitchInSession: true },
+    turns: { supportsActiveSteering: true },
+  },
+  plan_selection_transition: turn_scoped_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: codex_models,
   launch_model_refusal: codex_launch_model_refusal,

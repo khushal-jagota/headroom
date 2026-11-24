@@ -1,4 +1,5 @@
 /** Bind real environment adapters to one server invocation. Default activation stays separate. */
+import { dirname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { update_repository_configuration } from '../core/config.ts';
 import { is_os_error } from '../core/system_errors.ts';
@@ -11,6 +12,7 @@ import { create_mac_update_composition } from './updates/mac/composition.ts';
 import { assert_installer_path, installer_test_mode } from './updates/installer/configuration.ts';
 import { collect_vps_status } from './vps_status/collect.ts';
 import { MAC_HOME } from './release/contracts.ts';
+import { GitHubReleaseServerPackages } from '../server_move/packages/github_releases.ts';
 
 /** Python selects the unified cgroup's service leaf and excludes the user manager. */
 export function own_service_unit(cgroup: string): string | null {
@@ -76,7 +78,7 @@ export const create_production_environment_operations: ProductionEnvironmentFact
         : null
       : await read_own_service_unit(environment, context.config.test_mode);
   signal.throwIfAborted();
-  const repository = update_repository_configuration(environment);
+  const repository = update_repository_configuration(environment, dirname(context.config.db_path));
 
   return {
     app_root: application_root,
@@ -90,6 +92,10 @@ export const create_production_environment_operations: ProductionEnvironmentFact
             repository.token_file,
             process.platform === 'darwin' ? { target: MAC_HOME } : {},
           ),
+    server_packages: () =>
+      repository === null
+        ? null
+        : new GitHubReleaseServerPackages(repository.repository, repository.token_file),
     staging: create_release_staging(
       context.child_processes,
       signal,

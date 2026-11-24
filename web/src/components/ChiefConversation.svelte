@@ -10,6 +10,7 @@
    * It stays separate from the Agents layout because this component owns the canonical
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
+  import WorkMoveDialog from "./machines/WorkMoveDialog.svelte";
   import { onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
 
@@ -108,6 +109,7 @@
   {#if goals.error}<ErrorLine error={goals.error}/>{/if}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} recapTarget={{ kind: "chief", id: "chief" }}>
+    {#snippet actions()}<WorkMoveDialog owner={{kind:"chief"}} label="the Chief" currentMachineId={startValues.data?.machine_id} />{/snippet}
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
   {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}

@@ -1,3 +1,4 @@
+import { inspect_work_move } from './filesystem/work_move.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
   mkdtempSync,
@@ -686,3 +687,57 @@ test.skipIf(process.platform !== 'darwin')(
     }
   },
 );
+
+// Gap: cleanup tests do not prove moved work can recover a published branch or return to a stale checkout.
+test('a move refuses unpublished work and recovers its branch on a new and a previous machine', async () => {
+  const remote = join(root, 'origin.git'),
+    project = join(root, 'project');
+  mkdirSync(remote);
+  mkdirSync(project);
+  await command(remote, ['init', '--bare']);
+  await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  await command(project, ['init', '-b', 'main']);
+  await command(project, ['config', 'user.email', 'proof@example.test']);
+  await command(project, ['config', 'user.name', 'Move proof']);
+  writeFileSync(join(project, 'work.txt'), 'base');
+  await command(project, ['add', '.']);
+  await command(project, ['commit', '-m', 'base']);
+  await command(project, ['remote', 'add', 'origin', remote]);
+  await command(project, ['push', 'origin', 'main']);
+  const repository = { repository_url: remote, default_branch: 'main' };
+  const source = folder();
+  const checkout = await prepare_workspace(source, ticket, repository, options);
+  await command(checkout, ['config', 'user.email', 'proof@example.test']);
+  await command(checkout, ['config', 'user.name', 'Move proof']);
+  writeFileSync(join(checkout, 'work.txt'), 'work');
+  await expect(inspect_work_move(source, true, options)).rejects.toThrow('uncommitted work');
+  await command(checkout, ['add', '.']);
+  await command(checkout, ['commit', '-m', 'work']);
+  await expect(inspect_work_move(source, true, options)).rejects.toThrow('unpushed work');
+  await command(checkout, ['push', 'origin', 'HEAD']);
+  const proof = await inspect_work_move(source, true, options);
+  const target = join(root, 'other-machine', ticket);
+  const moved = await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
+  expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(proof.published_revision);
+  expect(readFileSync(join(moved, 'work.txt'), 'utf8')).toBe('work');
+  writeFileSync(join(moved, 'work.txt'), 'normal in-progress work');
+  await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
+  expect(readFileSync(join(moved, 'work.txt'), 'utf8')).toBe('normal in-progress work');
+  await command(moved, ['restore', 'work.txt']);
+  await command(moved, ['config', 'user.email', 'proof@example.test']);
+  await command(moved, ['config', 'user.name', 'Move proof']);
+  writeFileSync(join(moved, 'work.txt'), 'return');
+  await command(moved, ['add', '.']);
+  await command(moved, ['commit', '-m', 'return']);
+  await command(moved, ['push', 'origin', 'HEAD']);
+  const returning = await inspect_work_move(target, true, options);
+  writeFileSync(join(checkout, 'work.txt'), 'unpublished local work');
+  await expect(
+    prepare_workspace(source, ticket, { ...repository, ...returning }, options),
+  ).rejects.toThrow('uncommitted');
+  expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('unpublished local work');
+  await command(checkout, ['restore', 'work.txt']);
+  await prepare_workspace(source, ticket, { ...repository, ...returning }, options);
+  expect(await command(checkout, ['rev-parse', 'HEAD'])).toBe(returning.published_revision);
+  expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('return');
+});

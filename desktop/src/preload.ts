@@ -12,6 +12,8 @@ function call<Method extends keyof PanelsBridge>(
 }
 
 const bridge: PanelsBridge = {
+  localServerAddress: () => call('localServerAddress'),
+  returnToServer: () => call('returnToServer'),
   storedServerAddress: () => call('storedServerAddress'),
   useServerAddress: (address) => call('useServerAddress', address),
 };

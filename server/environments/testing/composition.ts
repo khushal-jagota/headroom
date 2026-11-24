@@ -30,6 +30,8 @@ export function create_test_environment_operations(
       // Late setup still returns an inert test runtime after its invocation stops.
       service: mac_context.signal.aborted
         ? {
+            machine_states: () => [],
+            retry_machine: unavailable,
             for_machine: unavailable,
             settled: () => Promise.resolve(),
             prepare: async () => unavailable(),
@@ -43,6 +45,8 @@ export function create_test_environment_operations(
           }
         : create_mac_update_composition(mac_context, null).service,
       operations: {
+        machine_states: () => [],
+        retry_machine: unavailable,
         prepare: async () => unavailable(),
         phase: () => null,
         reported_at: () => null,

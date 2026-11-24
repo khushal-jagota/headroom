@@ -2,6 +2,9 @@
 export interface MacRuntimePublication {
   readonly schema_version: 1;
   readonly application_revision: string;
+  readonly build_id: string;
+  readonly launcher_sha256: string;
+  readonly repeat_build_id?: string;
   readonly platform: 'darwin';
   readonly architecture: 'arm64';
   readonly publication_run_id: string;

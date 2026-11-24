@@ -1,4 +1,5 @@
 /** The private smoke fixture gives its Worker a real canonical conversation credential. */
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../../core/database/contracts.ts';
@@ -27,7 +28,7 @@ export function smoke_worker_token(
         workspace_folder: options.workspace,
         access: 'full',
       }),
-      { created_at: now },
+      { created_at: now, machine_id: HOME_MACHINE_ID },
     );
     const ticket = write_ticket_conversation_start(tx, ticket_id, {
       conversation_id,

@@ -5,7 +5,7 @@ name: Desktop app
 # publishes it as a GitHub Release. A manual run makes two private proof builds.
 on:
   pull_request:
-    branches: [staging]
+    branches: [staging, feature/server-and-machine-code]
     paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   push:
     branches: [staging, main]

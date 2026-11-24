@@ -5,8 +5,9 @@
  * the native side answers each call. A later change adds its call here.
  *
  * Artifact HTML runs at the app's own origin and can reach this object through `parent`.
- * Do not add a call that acts until artifacts are isolated. The address calls below
- * answer only the address page, at `panels://setup`, so an artifact gets nothing from them.
+ * Calls that act must answer only the separate setup origin, never the app origin.
+ * An artifact can call parent.panels as the top app frame. Only the address read is
+ * available there. Server changes answer `panels://setup` alone.
  */
 
 export type ServerAddressResult =
@@ -14,7 +15,11 @@ export type ServerAddressResult =
   | { ok: false; problem: string };
 
 export interface PanelsBridge {
-  /** The server address the app holds, or null before the first one. Address page only. */
+  /** Setup only: the default local address. Does not connect. */
+  localServerAddress(): Promise<string>;
+  /** Setup only: cancel a change and return to the current server. */
+  returnToServer(): Promise<void>;
+  /** The server address the app holds, or null before the first one. Read-only in the app and setup. */
   storedServerAddress(): Promise<string | null>;
   /** Check that a Panels server answers at the address, store it, and open the screens. Address page only. */
   useServerAddress(address: string): Promise<ServerAddressResult>;

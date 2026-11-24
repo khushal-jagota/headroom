@@ -1,5 +1,9 @@
+import Fastify from 'fastify';
+import { install_request_lifetime } from './http/lifetime.ts';
+import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
+import { install_server_link } from '../server_link/http.ts';
+import { startup_move_hold } from '../server_move/hold.ts';
 import { dirname, join } from 'node:path';
-import { publish_worker_skills } from '../worker_settings/startup.ts';
 import { begin_startup_phase } from './startup_diagnostics.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
@@ -15,7 +19,6 @@ import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/int
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
@@ -35,6 +38,11 @@ import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configur
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 import { HttpRequestScope } from './http/lifetime.ts';
+import {
+  executor_link_socket_path,
+  open_executor_link,
+  type ExecutorLinkListener,
+} from './http/executor_link.ts';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type {
   OwnedChildProcesses,
@@ -119,6 +127,7 @@ export class ServerServices {
   publication: SignalPublicationCoordinator | undefined;
   environmentsStarting: Promise<void> | undefined;
   video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
+  executor_link: ExecutorLinkListener | undefined;
   video_cleanup_work: Promise<unknown> | undefined;
   recovery: Promise<void> | undefined;
   readonly update_barrier: UpdateBarrier;
@@ -135,6 +144,7 @@ export class ServerServices {
     this.options = options;
     this.lifetime = lifetime;
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
+    // Historical direct children only. Remove after every home starts this release once.
     this.worker_supervision = create_worker_supervision_runtime({
       one_shot_children: lifetime.one_shot_children,
       // An unopened database throws here, and supervision then prunes nothing.
@@ -193,6 +203,7 @@ export class ServerServices {
       onChange: () => changes.emit(),
     });
     this.database = database;
+    initialize_server_location(database);
     const publication = new SignalPublicationCoordinator({
       database,
       require_runtime_ownership: this.requireOwnership,
@@ -226,7 +237,6 @@ export class ServerServices {
       child_processes,
       executor,
       update_barrier: this.update_barrier,
-      worker_supervision: this.worker_supervision,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
     await areas.prepareRecord(
@@ -336,6 +346,8 @@ export class ServerServices {
       if (!environments?.mac_updates)
         throw new Error('Configured executor requires the invocation Mac update service.');
       executor.bind_updates(environments.mac_updates);
+      if (environments.server_move_notice)
+        executor.bind_server_move(environments.server_move_notice);
     }
     return environments;
   }
@@ -403,6 +415,7 @@ export class ServerServices {
       request_lifetime,
       database,
       changes,
+      previews: areas.previews,
       areas: [
         ...areas.areas,
         { prefix: '/api', routes: createCredentialRequestRoutes(credentials ?? null) },
@@ -450,6 +463,7 @@ export class ServerServices {
       updateBarrier: this.update_barrier,
       waitingScreensRoot: environments?.waiting_screens_root,
       executor,
+      executorRoutes: environments?.executor_routes,
     });
     application_ready();
     this.app.own(app);
@@ -459,8 +473,8 @@ export class ServerServices {
       executor.configure(core, app, this.update_barrier);
     }
     core?.start_admission.configure_destinations(
-      (destination) =>
-        destination === HOME_MACHINE_ID || executor?.is_present(destination) === true,
+      // Scripted test hosts have no executor. Normal production always needs a present machine.
+      (destination) => executor?.is_present(destination) ?? config.test_mode,
     );
     const routes_ready = begin_startup_phase('HTTP routes');
     await app.ready();
@@ -528,6 +542,20 @@ export class ServerServices {
   }
 
   async setup(): Promise<string> {
+    const location = read_persisted_server_location(this.config.db_path);
+    if (location?.state === 'moved') {
+      const app = Fastify({ logger: false, exposeHeadRoutes: false });
+      this.app.own(app);
+      install_request_lifetime(app, this.lifetime.request_lifetime);
+      install_server_link(app, () => location);
+      return this.listen(app);
+    }
+    // A server inside a move starts with its barrier closed, and only the move reopens it.
+    const move_hold = startup_move_hold(dirname(this.config.db_path));
+    if (move_hold !== null) {
+      this.update_barrier.move_hold = move_hold;
+      this.update_barrier.close();
+    }
     const record_ready = begin_startup_phase('record');
     const { context, integrity_issues } = await this.create_record();
     record_ready();
@@ -560,9 +588,6 @@ export class ServerServices {
       if (normal_starting) return normal_starting;
       normal_starting = Promise.resolve().then(async () => {
         if (this.lifetime.isClosing()) return;
-        const skills_ready = begin_startup_phase('skills');
-        await publish_worker_skills(this.config);
-        skills_ready();
         const executor_ready = begin_startup_phase('executor');
         await this.executor.value?.start();
         executor_ready();
@@ -628,16 +653,25 @@ export class ServerServices {
         });
     }, 250);
     this.normal_work_timer.unref();
+    return this.listen(app);
+  }
+
+  private async listen(app: FastifyInstance): Promise<string> {
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     const listening = begin_startup_phase('HTTP listener');
+    let address: string;
     if (inherited !== undefined) {
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
-      const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
-      listening();
-      return address;
-    }
-    const address = await app.listen({ host: '127.0.0.1', port: this.config.port });
+      address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
+    } else address = await app.listen({ host: '127.0.0.1', port: this.config.port });
+    const link = await open_executor_link(
+      app.server,
+      executor_link_socket_path(this.config.db_path),
+    );
+    this.executor_link = link ?? undefined;
+    // The 'HTTP listener' stop closes a published link; a stop that already ran needs this one.
+    if (this.lifetime.isClosing()) link?.close();
     listening();
     return address;
   }

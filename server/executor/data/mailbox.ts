@@ -263,6 +263,50 @@ export function insert_model_list_request(
     machine_id,
   );
 }
+export function insert_backend_request(
+  tx: TransactionSql,
+  request: WireValue<'BackendRequest'>,
+  now: number,
+  machine_id: string,
+): WireValue<'MailboxCommand'> {
+  const incarnation = current_incarnation(tx, machine_id);
+  if (incarnation === null) throw new ExecutorValidationError('No machine process is known.');
+  return insert(
+    tx,
+    {
+      command_sequence: 0,
+      command_id: randomUUID(),
+      created_at_vps_ms: now,
+      child_command: null,
+      model_list_request: null,
+      backend_request: request,
+    },
+    incarnation,
+    machine_id,
+  );
+}
+export function insert_work_move_request(
+  tx: TransactionSql,
+  request: WireValue<'WorkMoveSourceRequest'>,
+  now: number,
+  machine_id: string,
+): WireValue<'MailboxCommand'> {
+  const incarnation = current_incarnation(tx, machine_id);
+  if (incarnation === null) throw new ExecutorValidationError('No machine process is known.');
+  return insert(
+    tx,
+    {
+      command_sequence: 0,
+      command_id: randomUUID(),
+      created_at_vps_ms: now,
+      child_command: null,
+      model_list_request: null,
+      work_move_request: request,
+    },
+    incarnation,
+    machine_id,
+  );
+}
 /** Raw rows only. Protocol parsing and serialization run after the SQL scope ends. */
 interface FetchRow {
   sequence: string;
@@ -904,10 +948,23 @@ function result_refusal(
   if (row.state === 'withdrawn' || row.state === 'expired') return `command_${row.state}`;
   const child = row.command.child_command;
   // An executor that could not read its model list answers with an empty result.
-  if (child == null) return value.child_outcome != null ? 'malformed_result' : null;
+  if (row.command.work_move_request != null)
+    return value.child_outcome != null || value.model_list != null || value.backend_result != null
+      ? 'malformed_result'
+      : null;
+  if (child == null)
+    return value.work_move_result != null ||
+      value.child_outcome != null ||
+      (row.command.backend_request != null
+        ? value.model_list != null
+        : value.backend_result != null)
+      ? 'malformed_result'
+      : null;
   const outcome = value.child_outcome;
   return outcome == null ||
+    value.work_move_result != null ||
     value.model_list != null ||
+    value.backend_result != null ||
     outcome.command_id !== value.command_id ||
     !equivalent(outcome.child, child.child)
     ? 'malformed_result'

@@ -2,7 +2,7 @@
  * Reuse the synthetic native options; no provider, command journal, or listener starts.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -20,6 +20,7 @@ import { native_fixture_options } from '../testing/runner_fixture.ts';
 import { MacNativeChildren } from './start_stop.ts';
 import { localize_start } from './localization.ts';
 import type { StartRun } from '../../wire.generated.ts';
+import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 
 vi.mock('node:timers/promises', async (original) => ({
   ...(await original<typeof import('node:timers/promises')>()),
@@ -393,6 +394,98 @@ test('managed remote launch clones workspace_repository and refuses absent proje
   } finally {
     children.seal();
     await children.settled();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: every earlier start carries a Ticket identity. A Chief or Manager start must find its own
+// home, on the server's folders or the machine's, without any Ticket step or Worker setting.
+// Reuse the synthetic native options without a provider, listener, or Git child.
+test('the Chief and a Manager start in their own homes, with no Ticket step or Worker identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mac-supervisor-launch-'));
+  try {
+    const reference = {
+      executor_incarnation: 'inc',
+      child_id: 'child',
+      conversation_id: 'conversation',
+    };
+    const start = (identity: [string, string][]): StartRun => ({
+      canonical_skill_snapshot: { required_skill_names: [], sources: [] },
+      resolved_start: {
+        conversation_id: reference.conversation_id,
+        backend_key: 'claude',
+        model: 'test',
+        reasoning_effort: null,
+        access: 'full',
+        // The server's own path, which another machine does not have.
+        workspace_folder: '/server/data/files/chief',
+        workspace_path_policy: 'home_relative',
+        role_materials: { role_text: 'role', identity_environment_variables: identity },
+      },
+      workspace_home_relative: 'server/data/files/chief',
+    });
+    const localize = (paths: ExecutorPaths, input: StartRun) => {
+      const options = native_fixture_options({
+        paths,
+        workspace_home: root,
+        native_skill_home: () => ({ path: root, skills_directory: 'skills' }),
+        snapshot_directory: root,
+        factory: () => () => {
+          throw new Error('No native process belongs to localization');
+        },
+        on_failure: (error) => {
+          throw error;
+        },
+      });
+      return localize_start(input, reference, 'capability', root, {
+        ...options,
+        event_sink: () => ({ async report() {} }),
+      }).then((localized) => ({ localized }));
+    };
+    const manager = start([
+      ['PLAN_ACTOR', 'manager'],
+      ['PLAN_MANAGER_ID', 'm_one'],
+    ]);
+
+    // Another machine keeps its own folders and writes the Manager's home files itself.
+    const own = new ExecutorPaths(join(root, 'machine'));
+    const { localized: remote } = await localize(own, manager);
+    const home = join(root, 'machine', 'managers', 'm_one');
+    expect(remote.workspace_folder).toBe(home);
+    expect((await stat(join(home, 'artifacts'))).isDirectory()).toBe(true);
+    expect((await stat(join(home, 'logs'))).isDirectory()).toBe(true);
+    expect(existsSync(join(home, 'CLAUDE.md'))).toBe(true);
+    expect(remote.role_materials!.role_text).toBe(
+      `role\nThe repositories on this machine are under ${root}.`,
+    );
+    const environment = new Map(remote.role_materials!.identity_environment_variables);
+    expect(environment.has('PLAN_TICKET_FILES_DIR')).toBe(false);
+    expect(environment.get('PLAN_MANAGER_ID')).toBe('m_one');
+    // Worker priority, scratch and per-Ticket process records follow this identity.
+    expect(worker_ticket_id(remote)).toBeNull();
+
+    // Machine code also prepares the Manager home on the local link.
+    const served = join(root, 'data', 'files');
+    const shared = new ExecutorPaths(join(root, 'shared'), {
+      tickets: join(served, 'tickets'),
+      chief: join(served, 'chief'),
+      managers: join(served, 'sprint-items'),
+    });
+    const served_home = join(served, 'sprint-items', 'm_one');
+    mkdirSync(served_home, { recursive: true });
+    writeFileSync(join(served_home, 'CLAUDE.md'), 'written by the server');
+    const { localized: local } = await localize(shared, manager);
+    expect(local.workspace_folder).toBe(served_home);
+    expect((await stat(join(served_home, 'artifacts'))).isDirectory()).toBe(true);
+    expect(existsSync(join(served_home, 'logs'))).toBe(true);
+    expect(await readFile(join(served_home, 'CLAUDE.md'), 'utf8')).toContain(
+      'You are one Manager.',
+    );
+    const { localized: chief } = await localize(shared, start([['PLAN_ACTOR', 'chief']]));
+    expect(chief.workspace_folder).toBe(join(served, 'chief'));
+    expect(existsSync(join(served, 'chief', 'artifacts'))).toBe(false);
+    expect(existsSync(join(served, 'tickets'))).toBe(false);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

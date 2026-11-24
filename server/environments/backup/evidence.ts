@@ -1,11 +1,12 @@
 /** Read-only proof shared by status, cleanup, and future backup publication. */
 import { is_record as object } from '../../core/records.ts';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { lstat, stat, readFile, readdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { expand_path, resolved_path } from '../paths.ts';
 export { expand_path, resolved_path } from '../paths.ts';
+import { sha256_file, relative_manifest, manifests_equal } from '../server_state/checksums.ts';
+export { sha256_file, relative_manifest } from '../server_state/checksums.ts';
 export const RETENTION_COUNT = 3;
 export const SNAPSHOT_FORMAT = 'panels-backup-v2';
 export function missing(error: unknown): boolean {
@@ -47,26 +48,6 @@ export async function is_file(path: string): Promise<boolean> {
     throw error;
   }
 }
-export async function sha256_file(path: string): Promise<string> {
-  const digest = createHash('sha256');
-  for await (const chunk of createReadStream(path, { highWaterMark: 1024 * 1024 }))
-    digest.update(chunk);
-  return digest.digest('hex');
-}
-export async function relative_manifest(root: string): Promise<Record<string, string>> {
-  const manifest: Record<string, string> = {};
-  async function walk(directory: string, prefix = ''): Promise<void> {
-    for (const name of await readdir(directory)) {
-      const path = join(directory, name);
-      if (await is_symlink(path)) continue;
-      const relative = prefix + name;
-      if (await is_directory(path)) await walk(path, relative + '/');
-      else if (await is_file(path)) manifest[relative] = await sha256_file(path);
-    }
-  }
-  await walk(root);
-  return manifest;
-}
 export async function managed_files_valid(directory: string, recorded: unknown): Promise<boolean> {
   if (
     !object(recorded) ||
@@ -104,12 +85,7 @@ export async function managed_files_valid(directory: string, recorded: unknown):
     if ((await is_symlink(root)) || !(await is_directory(root))) return false;
     const actual = await relative_manifest(root);
     const expected = manifest[name];
-    if (
-      !object(expected) ||
-      JSON.stringify(Object.keys(actual).sort()) !== JSON.stringify(Object.keys(expected).sort()) ||
-      Object.entries(actual).some(([path, digest]) => expected[path] !== digest)
-    )
-      return false;
+    if (!manifests_equal(actual, expected)) return false;
   }
   return true;
 }

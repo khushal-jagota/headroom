@@ -2,10 +2,12 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { check_head_review } from '../../ios_compatibility/check.ts';
 import { is_record } from '../../core/records.ts';
+import { CLIENT_COMPATIBILITY } from '../../client_versions/policy.ts';
 import { sha256_file } from '../backup/evidence.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
 import { with_zip_member } from '../updates/zip.ts';
@@ -32,7 +34,7 @@ import {
 } from './configuration.ts';
 import { extract_app_archive, inspect_mac_archive, remove_owned_tree } from './archive.ts';
 import { MacArchiveInspectionUnsettled } from './contracts.ts';
-import { validate_app_manifest } from './identity.ts';
+import { digest_app_source, validate_app_manifest } from './identity.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import { manifest_identity } from './logic/manifest.ts';
 import { migration_frontier, read_migration_graph } from './migrations.ts';
@@ -46,6 +48,7 @@ import {
 import type { PublicationSourceRun } from './publication_contracts.ts';
 import { mac_home_receipt_options, validate_mac_home_receipt } from './mac_home_receipt.ts';
 import { validate_mac_publication } from './mac_publication.ts';
+import { validate_machine_compatibility } from './machine_compatibility.ts';
 import type { MacHomeReceipt, MacHomeReceiptOptions } from './mac_home_receipt.ts';
 
 export type PublicationReceipt = Omit<PublishedUpdate, 'proof_artifact_id' | 'mac'> & {
@@ -54,6 +57,10 @@ export type PublicationReceipt = Omit<PublishedUpdate, 'proof_artifact_id' | 'ma
 };
 export interface PublicationReceiptOptions extends Partial<MacHomeReceiptOptions> {
   readonly source_root: string;
+  readonly machine_compatibility_linux_zip: string;
+  readonly machine_compatibility_linux_artifact_id: string;
+  readonly machine_compatibility_darwin_zip: string;
+  readonly machine_compatibility_darwin_artifact_id: string;
   readonly linux_artifact_zip: string;
   readonly linux_build_artifact_zip: string;
   readonly mac_artifact_zip: string;
@@ -110,6 +117,9 @@ export async function validate_linux_executor_publication(
     !/^[0-9a-f]{40}$/.test(requested) ||
     requested.length !== 40 ||
     value.schema_version !== 1 ||
+    typeof value.build_id !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(value.build_id) ||
+    value.repeat_build_id !== value.build_id ||
     value.application_revision !== requested ||
     value.platform !== 'linux' ||
     value.architecture !== 'x86_64' ||
@@ -137,6 +147,8 @@ export async function validate_linux_executor_publication(
     throw error;
   }
   if (
+    !is_record(inspected.manifest) ||
+    inspected.manifest.build_id !== value.build_id ||
     inspected.native_linux?.app_sha !== requested ||
     !inspected.native_linux.panels ||
     !inspected.entrypoint
@@ -187,6 +199,8 @@ export async function write_publication_receipt(
     options.linux_artifact_zip,
     options.linux_build_artifact_zip,
     options.mac_artifact_zip,
+    options.machine_compatibility_linux_zip,
+    options.machine_compatibility_darwin_zip,
     options.output_directory,
     ...(has_linux_executor ? [options.linux_executor_artifact_zip!] : []),
   ])
@@ -194,6 +208,8 @@ export async function write_publication_receipt(
       throw new Error('Publication paths must be absolute');
   const source = await realpath(options.source_root),
     output = options.output_directory;
+  if (source !== (await realpath(fileURLToPath(new URL('../../../', import.meta.url)))))
+    throw new Error('Publication compatibility policy must come from the published source');
   let owned = false;
   try {
     fence();
@@ -209,6 +225,16 @@ export async function write_publication_receipt(
         name: 'panels-publication-build',
       },
       { path: options.mac_artifact_zip, id: options.mac_artifact_id, name: 'panels-mac-runtime' },
+      {
+        path: options.machine_compatibility_linux_zip,
+        id: options.machine_compatibility_linux_artifact_id,
+        name: 'panels-machine-compatibility-linux',
+      },
+      {
+        path: options.machine_compatibility_darwin_zip,
+        id: options.machine_compatibility_darwin_artifact_id,
+        name: 'panels-machine-compatibility-darwin',
+      },
       ...(mac_home_options
         ? [
             {
@@ -408,16 +434,70 @@ export async function write_publication_receipt(
         member,
       );
     }
+    if (!published_linux_executor)
+      throw new Error('Machine compatibility requires both platform archives');
+    const machine_build_ids: Record<string, string> = {};
+    for (const [platform, zip, archive_digest, build_path] of [
+      [
+        'darwin',
+        options.machine_compatibility_darwin_zip,
+        published_mac.archive_sha256,
+        join(mac_root, 'mac-runtime-publication.json'),
+      ],
+      [
+        'linux',
+        options.machine_compatibility_linux_zip,
+        published_linux_executor.archive_sha256,
+        join(work, 'linux-executor/linux-executor-publication.json'),
+      ],
+    ] as const) {
+      const path = join(work, `machine-compatibility-${platform}.json`);
+      await member(zip, `machine-compatibility-${platform}.json`, path);
+      machine_build_ids[platform] = await validate_machine_compatibility(
+        await publication_json_file(path),
+        source_run,
+        platform,
+        archive_digest,
+        await json_file(build_path),
+      );
+      replace_existing_json(
+        join(output, `machine-compatibility-${platform}.json`),
+        await json_file(path),
+      );
+    }
     const ios_review = await check_head_review(source, source_run.source_sha, execution);
     for (const artifact of artifacts)
       if ((await sha256_file(artifact.path)) !== artifact.sha256)
         throw new Error('Bound artifact ZIP changed during receipt validation');
+    const parts = {
+      server: {
+        app_sha: actual_manifest.app_sha,
+        artifact_digest: actual_manifest.artifact_digest,
+      },
+      screens: { sha256: await digest_app_source(join(sealed, 'web/dist')) },
+      machines: {
+        'darwin-arm64': {
+          archive_sha256: published_mac.archive_sha256,
+          build_id: machine_build_ids.darwin!,
+        },
+        ...(published_linux_executor
+          ? {
+              'linux-x86_64': {
+                archive_sha256: published_linux_executor.archive_sha256,
+                build_id: machine_build_ids.linux!,
+              },
+            }
+          : {}),
+      },
+    };
     await remove_owned_tree(work);
     fence();
     const receipt: PublicationReceipt = {
       publication_run_id: integer(Number(source_run.run_id)),
       artifact_id,
       manifest: actual_manifest,
+      parts,
+      compatibility: CLIENT_COMPATIBILITY,
       archive_sha256,
       mac: published_mac,
       ...(mac_home ? { mac_home } : {}),

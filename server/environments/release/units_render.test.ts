@@ -6,7 +6,7 @@ test('renders the managed policy and watchdog without private stop inputs in the
   const root = '/nonexistent/panels-unit-proof';
   const options = {
     current_root: root + '/current',
-    node_executable: process.execPath,
+    node_executable: '/discarded/bootstrap/node',
     config_path: root + '/config.json',
     environment: { RUNTIME_DIRECTORY: '/private-stop-root' },
   };
@@ -36,7 +36,10 @@ test('renders the managed policy and watchdog without private stop inputs in the
   expect(managed.service.split('\n').find((line) => line.startsWith('ExecStop='))).toContain(
     'stop_main.ts',
   );
-  for (const rendered of [managed, watchdog])
+  for (const rendered of [managed, watchdog]) {
+    // A permanent unit must survive removal of the bootstrap or installer attempt.
+    expect(rendered.service).toContain(root + '/current/app/node/bin/node');
+    expect(rendered.service).not.toContain('/discarded/bootstrap/node');
     expect(
       rendered.environment_file.contents +
         rendered.service
@@ -44,4 +47,5 @@ test('renders the managed policy and watchdog without private stop inputs in the
           .filter((line) => line.startsWith('Environment='))
           .join('\n'),
     ).not.toMatch(/RUNTIME_DIRECTORY|capability/i);
+  }
 });

@@ -2,10 +2,12 @@
 import { isIP } from 'node:net';
 import fs from 'node:fs';
 import { ExecutorValidationError } from '../protocol_errors.ts';
+import { local_server_address } from '../../server_link/logic.ts';
 import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
+import { safe_component } from './file_metadata.ts';
 import { STOP_SECONDS } from '../../worker_supervision/config.ts';
 import {
   default_executor_root,
@@ -24,13 +26,15 @@ export const MAX_TOOL_DETAIL_CHARACTERS = 64 * 1024;
 export const FILE_MODIFIED_WINDOW_NS = 2_000_000_000;
 export const FILE_CHUNK_BYTES = 256 * 1024;
 export const TRANSFER_CHUNK_BYTES = 64 * 1024;
-export const CLI_RESULT_TIMEOUT_SECONDS = 30;
+// Five minutes offline, then two minutes for discovery, retry backoff, and the answer.
+export const CLI_RESULT_TIMEOUT_SECONDS = 420;
+export const CLI_READ_RETRY_SECONDS = 1;
 export const CLI_TRANSPORT_RESERVE_SECONDS = 5;
 export const REQUEST_TIMEOUT_SECONDS = 30;
 export const HTTP_CONNECT_TIMEOUT_SECONDS = 10;
 export const HTTP_CLOSE_TIMEOUT_SECONDS = 5;
 export const MAX_OUTBOX_SENDERS = 4;
-export const OUTBOX_ITEM_DELIVERY_SECONDS = 300;
+export const OUTBOX_ITEM_DELIVERY_SECONDS = CLI_RESULT_TIMEOUT_SECONDS;
 export const OUTBOX_RETRY_INITIAL_SECONDS = 1;
 export const OUTBOX_RETRY_MAX_SECONDS = 60;
 export const CONNECTION_FAILURE_LOG_INTERVAL_SECONDS = 60;
@@ -106,11 +110,20 @@ export const MAX_MAC_UPDATE_DETAIL_CHARACTERS = 500;
 export const MAC_RUNTIME_ARCHIVE_NAME = 'panels-mac-runtime.tar.gz';
 export const MAC_RUNTIME_MANIFEST_NAME = 'mac-runtime.json';
 
+/** The server's own folders, when machine code works in them over the local link. */
+export interface ServerFolders {
+  readonly tickets: string;
+  readonly chief: string;
+  readonly managers: string;
+}
 /** Persistent paths only. Construction opens neither a journal nor an outbox. */
 export class ExecutorPaths {
   readonly root: string;
-  constructor(root: string) {
+  /** Set only for the server's own machine code, on the local link with the home identity. */
+  readonly server_folders: ServerFolders | null;
+  constructor(root: string, server_folders: ServerFolders | null = null) {
     this.root = root;
+    this.server_folders = server_folders;
   }
   get workspace(): string {
     return join(this.root, 'workspace');
@@ -119,7 +132,17 @@ export class ExecutorPaths {
     return join(this.root, 'spool');
   }
   get artifacts(): string {
-    return join(this.root, 'artifacts', 'tickets');
+    return this.server_folders?.tickets ?? join(this.root, 'artifacts', 'tickets');
+  }
+  get chief_home(): string {
+    return this.server_folders?.chief ?? join(this.root, 'chief');
+  }
+  /** The folder that holds one home folder per Manager. */
+  get managers(): string {
+    return this.server_folders?.managers ?? join(this.root, 'managers');
+  }
+  manager_home(manager_id: string): string {
+    return join(this.managers, safe_component(manager_id));
   }
   get message_files_anchor(): string {
     return join(this.root, 'artifacts', 'message-files.db');
@@ -173,8 +196,10 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
   return new ExecutorPaths(resolved);
 }
 
-/** Preserve urlsplit's origin validation without WHATWG URL normalization. */
+/** An HTTPS origin, with urlsplit's validation and no WHATWG normalization, or a link path. */
 export function validate_server_url(value: string): string {
+  const local = local_server_address(value);
+  if (local !== null) return local;
   if (/[\u0000-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u.test(value))
     refuse_configuration('executor server URL contains whitespace or control characters');
   const parsed =
@@ -228,7 +253,7 @@ export function validate_server_url(value: string): string {
     parsed[5] ||
     (port_text && Number(port_text) < 1)
   )
-    refuse_configuration('executor server URL must be an HTTPS origin');
+    refuse_configuration('executor server URL must be an HTTPS origin or an absolute socket path');
   return value.replace(/\/+$/u, '');
 }
 export function validate_executor_launch(

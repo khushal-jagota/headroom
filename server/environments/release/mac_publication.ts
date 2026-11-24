@@ -35,6 +35,11 @@ export async function validate_mac_publication(
   if (
     !is_record(value) ||
     value.schema_version !== 1 ||
+    typeof value.build_id !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(value.build_id) ||
+    value.repeat_build_id !== value.build_id ||
+    typeof value.launcher_sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(value.launcher_sha256) ||
     !/^[0-9a-f]{40}$/.test(source.source_sha) ||
     value.application_revision !== source.source_sha ||
     value.platform !== 'darwin' ||
@@ -82,6 +87,7 @@ export async function validate_mac_publication(
   if (
     !isDeepStrictEqual(inspected.manifest, {
       schema_version: 1,
+      build_id: value.build_id,
       application_revision: source.source_sha,
       platform: 'darwin',
       architecture: 'arm64',

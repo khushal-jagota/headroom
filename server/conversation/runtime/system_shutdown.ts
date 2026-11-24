@@ -117,14 +117,6 @@ function begin_shutdown(
     options,
     async (state, child) => {
       if (child.stop_outside_lock) return;
-      const generation = host.local_child_generations.get(child);
-      if (generation !== undefined)
-        await host.options.store.record_child_custody(
-          state.record.conversation_id,
-          generation,
-          null,
-          { retired: true },
-        );
       state.local_child_retirement_proven = true;
     },
   ).then(() => {

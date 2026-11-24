@@ -1,10 +1,24 @@
 /** Persisted and in-process update contracts. */
+import type {
+  UpdateMode,
+  UpdateAttemptState,
+  MachineUpdateState,
+  UpdateInterruption,
+  UpdateAttemptView,
+} from './view_contracts.ts';
+export type {
+  UpdateMode,
+  UpdateAttemptState,
+  MachineUpdateState,
+  UpdateInterruption,
+  UpdateAttemptView,
+} from './view_contracts.ts';
 import type { ConversationSystem } from '../../conversation/contracts.ts';
+import type { ExecutorIdentity } from '../../execution_identity.ts';
 import type { Database } from '../../core/database/contracts.ts';
+import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
-export type UpdateMode = 'now' | 'idle';
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
-export type UpdateAttemptState = 'waiting' | 'preparing' | 'installing' | 'done' | 'failed';
 export type UpdateExperienceState =
   'up_to_date' | 'available' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
 export type UpdateAction = 'update' | 'retry' | 'retry_mac';
@@ -50,20 +64,31 @@ export interface AppManifest {
   artifact_digest: string;
   runtime_contract: RuntimeContract | null;
 }
+export type ArtifactSource = 'github-release';
+export interface ReleaseParts {
+  server: { app_sha: string; artifact_digest: string };
+  screens: { sha256: string };
+  machines: Record<string, { archive_sha256: string; build_id: string | null }>;
+}
 export interface PublishedMacUpdate {
+  artifact_source?: ArtifactSource;
   artifact_id: number;
   archive_sha256: string;
   archive_size: number;
 }
 export type PublishedLinuxExecutorUpdate = PublishedMacUpdate;
 export interface PublishedUpdate {
+  artifact_source?: ArtifactSource;
+  parts?: ReleaseParts;
+  /** The offered release's limits, never the running server's limits. */
+  compatibility?: ClientCompatibility;
   publication_run_id: number;
   artifact_id: number;
   proof_artifact_id: number;
   manifest: AppManifest;
   archive_sha256: string;
   schema_floor: string;
-  expires_at: string;
+  expires_at: string | null;
   mac: PublishedMacUpdate | null;
   linux_executor?: PublishedLinuxExecutorUpdate | null;
 }
@@ -86,7 +111,17 @@ export interface UpdateAttempt {
   mac_attempt_id: string | null;
   extra: Record<string, unknown>;
 }
+export interface MachineUpdateMachine {
+  machine_id: string;
+  name: string;
+  platform: string;
+  present: boolean;
+  identity: ExecutorIdentity | null;
+}
 export interface UpdateStatus {
+  machines: readonly MachineUpdateState[];
+  available_machines: readonly MachineUpdateState[];
+  interruption: UpdateInterruption;
   state: UpdateExperienceState;
   allowed_actions: readonly UpdateAction[];
   activity: UpdateActivity;
@@ -120,7 +155,12 @@ export interface UpdateExperienceOptions {
 }
 export interface UpdateProvider {
   available(): Promise<PublishedUpdate | null>;
-  download_artifact(artifact_id: number, destination: string, signal?: AbortSignal): Promise<void>;
+  download_artifact(
+    artifact_id: number,
+    destination: string,
+    signal?: AbortSignal,
+    source?: ArtifactSource,
+  ): Promise<void>;
 }
 /** Required adapters; callers cannot silently replace an unavailable operation. */
 export interface ReleaseStaging {
@@ -143,6 +183,8 @@ export interface InstallerOperations {
   launch(attempt_id: string, command: readonly string[]): Promise<void>;
 }
 export interface MacUpdateOperations {
+  machine_states(release?: PublishedUpdate | null): MachineUpdateState[];
+  retry_machine(machine_id: string, attempt_id: string): void;
   prepare(release: PublishedUpdate): Promise<void>;
   phase(attempt_id: string): string | null;
   reported_at(attempt_id: string): number | null;

@@ -53,7 +53,7 @@ import {
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { PromptDeliveryStarted } from '../conversation/contracts.ts';
 import { WorkerStepReadinessLoop } from '../runtime/worker_step_readiness_loop.ts';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import * as wakeData from '../manager_wakes/data.ts';
@@ -64,7 +64,6 @@ import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts
 import * as recovery from '../conversation/deploy_interruptions/coordinator.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
-import * as scratch from '../environments/ticket_scratch/runtime.ts';
 import { create_test_environment_runtime } from '../environments/testing/composition.ts';
 import { HttpRequestScope } from '../core/http/lifetime.ts';
 
@@ -773,15 +772,12 @@ test('startServer reconciles before core construction and a route collision star
   expect(loadConfig(configPath, { PLAN_CONFIG_PATH: '/missing-ignored.yaml' }).tick_seconds).toBe(
     23,
   );
+  const uploads = join(dirname(path), 'executor-uploads');
+  mkdirSync(uploads);
+  writeFileSync(join(uploads, '.incoming-abandoned'), 'partial');
   const trace: string[] = [];
   const reconcile = vi.spyOn(notificationData, 'reconcile_attention').mockImplementation(() => {
     trace.push('reconcile');
-  });
-  const scratch_start = vi.fn();
-  vi.spyOn(scratch, 'create_ticket_scratch_runtime').mockReturnValue({
-    start: scratch_start,
-    close() {},
-    settled: async () => {},
   });
   const producers = [
     vi.spyOn(PreviewService.prototype, 'start'),
@@ -790,7 +786,6 @@ test('startServer reconciles before core construction and a route collision star
     vi.spyOn(recovery, 'run_automatic_recovery'),
     vi.spyOn(MetricsRuntime.prototype, 'start'),
     vi.spyOn(UpdateService.prototype, 'start'),
-    scratch_start,
     vi.spyOn(SqliteProcessConversationSystem.prototype, 'start_idle_child_janitor'),
   ];
   const background = vi.fn<BackgroundServiceFactory>(() => ({
@@ -805,17 +800,22 @@ test('startServer reconciles before core construction and a route collision star
       startServer({
         createConversationCore(context) {
           expect(trace).toEqual(['reconcile']);
+          expect(existsSync(uploads)).toBe(false);
+          const archive = join(dirname(path), 'executor-upload-archive');
+          const [run] = readdirSync(archive);
+          expect(readFileSync(join(archive, run, '.incoming-abandoned'), 'utf8')).toBe('partial');
+          expect(() => acquireRuntimeOwnership(path)).toThrow();
           trace.push('core');
           const noProvider = () => {
             throw new Error('this startup proof never starts a provider');
           };
           return new SqliteProcessConversationSystem({
             store: context.record.store,
-            delivery_model_refusal: (backend, model, ticket_id) =>
+            delivery_model_refusal: (backend, model, conversation_id) =>
               new BackendStateStore(context.database).delivery_model_refusal(
                 backend,
                 model,
-                ticket_id,
+                conversation_id,
               ),
             execution_refusal: (id) =>
               context.database.read((sql) =>
@@ -882,11 +882,11 @@ test('startServer closes both services after a background start failure while re
           return new SqliteProcessConversationSystem({
             store: context.record.store,
             message_files: new ConversationMessageFiles(path),
-            delivery_model_refusal: (backend, model, ticket_id) =>
+            delivery_model_refusal: (backend, model, conversation_id) =>
               new BackendStateStore(context.database).delivery_model_refusal(
                 backend,
                 model,
-                ticket_id,
+                conversation_id,
               ),
             execution_refusal: (id) =>
               context.database.read((sql) =>

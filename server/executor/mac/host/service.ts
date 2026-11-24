@@ -36,15 +36,20 @@ import { open_command_journal } from '../storage/journal.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import { MacRunner } from '../runner/index.ts';
 import { MacMailbox } from '../mailbox/index.ts';
+import { MachineServerLink } from '../../../server_link/machine.ts';
 import { MacHttpClient } from '../transport/http.ts';
 import { MacFileTransport } from '../transport/files.ts';
 import { MacPresence, MacLeaseLoop } from '../transport/presence.ts';
 import { MacLiveSender } from '../transport/live.ts';
 import { MacOutboxSender } from '../transport/outbox.ts';
-import { MacTicketFileSync } from '../transport/ticket_files.ts';
+import { MacArtifactSync } from '../transport/artifact_sync.ts';
 import { MacInputs } from '../inputs.ts';
 import { AgentGateway } from '../ipc/gateway.ts';
 import { GatewayOutbox } from '../ipc/outbox.ts';
+import { MachinePreviews } from '../../../previews/machine.ts';
+import { work_folders_are_served } from '../server_folders.ts';
+import { production_server_move } from '../server_move/production.ts';
+import type { MacServerMove } from '../server_move/runner.ts';
 import type { MacCatalog } from '../catalog/index.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type {
@@ -82,11 +87,14 @@ export class MacService {
   readonly gateway: AgentGateway;
   readonly gateway_outbox: GatewayOutbox;
   readonly catalog: MacCatalog;
+  readonly previews: MachinePreviews;
   readonly live: MacLiveSender;
   readonly lease: MacLeaseLoop;
   readonly sender: MacOutboxSender;
-  readonly file_sync: MacTicketFileSync;
+  readonly ticket_file_sync: MacArtifactSync;
+  readonly manager_file_sync: MacArtifactSync;
   readonly updates: MacHostUpdates;
+  readonly server_move: MacServerMove;
   private readonly controller = new AbortController();
   private starting: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
@@ -125,23 +133,28 @@ export class MacService {
     this.presence = new MacPresence(identity, Date.now, process.pid, () => ({
       ...outbox.delivery_status(),
     }));
+    const http_options = {
+      ...configuration.http,
+      server_link: new MachineServerLink(configuration.paths.root, configuration.panels_server_url),
+    };
     this.client =
       bindings.client?.(
         configuration.panels_server_url,
         configuration.executor_id,
         identity,
-        configuration.http ?? {},
+        http_options,
       ) ??
       new MacHttpClient(
         configuration.panels_server_url,
         configuration.executor_id,
         identity,
-        configuration.http,
+        http_options,
       );
+    this.previews = new MachinePreviews(this.client);
     this.transfer = new MacFileTransport(this.client, this.files);
     this.live = new MacLiveSender(this.client);
     const adapters = bindings.adapters(this);
-    this.catalog = bindings.catalog(adapters, this, on_failure);
+    this.catalog = bindings.catalog(adapters, this, on_failure, this.client);
     this.runner = new MacRunner({
       incarnation: identity.executor_incarnation,
       journal,
@@ -186,6 +199,7 @@ export class MacService {
     });
     this.gateway_outbox = new GatewayOutbox(outbox);
     this.gateway = new AgentGateway({
+      previews: this.previews,
       runner: this.runner,
       outbox: this.gateway_outbox,
       presence: this.presence,
@@ -220,23 +234,39 @@ export class MacService {
       warn: console.warn,
       on_failure: (error) => on_failure(error instanceof Error ? error : new Error(String(error))),
     });
-    this.file_sync = new MacTicketFileSync({
-      store: outbox,
-      files: this.files,
-      transfer: this.transfer,
-      tickets_root: configuration.paths.artifacts,
-      now_ns: () => BigInt(Date.now()) * 1_000_000n,
-      warn: console.warn,
-    });
+    const artifact_sync = (scope: 'ticket' | 'manager', owners_root: string) =>
+      new MacArtifactSync({
+        scope,
+        store: outbox,
+        files: this.files,
+        transfer: this.transfer,
+        owners_root,
+        now_ns: () => BigInt(Date.now()) * 1_000_000n,
+        warn: console.warn,
+      });
+    this.ticket_file_sync = artifact_sync('ticket', configuration.paths.artifacts);
+    this.manager_file_sync = artifact_sync('manager', configuration.paths.managers);
     this.updates = bindings.updates(context);
+    this.server_move = production_server_move({
+      root: configuration.paths.root,
+      machine_id: configuration.executor_id,
+      panels_server_url: configuration.panels_server_url,
+      http: configuration.http,
+      client: this.client,
+      files: this.files,
+      child_processes: this.child_processes,
+    });
     this.lease = new MacLeaseLoop({
       client: this.client,
       workspace_root: configuration.paths.artifacts,
+      workspace_root_is_shared: () => this.work_folders_are_served(),
       presence: this.presence,
       outbox,
       journal,
       runner: this.runner,
       updates: this.updates,
+      server_move: this.server_move,
+      after_lease: () => this.follow_file_sync(),
       driver_kinds: adapters.drivers.map((driver) => driver.driver_kind),
       replaced: () => this.request_exit(1),
       on_failure: (error) => on_failure(error instanceof Error ? error : new Error(String(error))),
@@ -256,7 +286,9 @@ export class MacService {
     let identity = parse_identity(
       configuration.identity ?? {
         protocol_version: PROTOCOL_VERSION,
+        supports_work_moves: true,
         application_revision: configuration.revision,
+        ...(configuration.build_id === undefined ? {} : { build_id: configuration.build_id }),
         spool_format_version: SPOOL_FORMAT_VERSION,
         executor_incarnation: randomUUID(),
         connection_generation: 0,
@@ -332,6 +364,19 @@ export class MacService {
       throw error;
     }
   }
+  /** True while the current address is the local link of the folders this machine works in. */
+  private work_folders_are_served(): boolean {
+    return work_folders_are_served(this.configuration.paths.server_folders, this.client.server_url);
+  }
+  /**
+   * Served folders need no file sync. Once the address leaves that local link, as after the
+   * server moved to another machine, the Ticket and Manager files start to travel.
+   */
+  private follow_file_sync(): void {
+    if (this.work_folders_are_served()) return;
+    this.ticket_file_sync.start();
+    this.manager_file_sync.start();
+  }
   private failed(error: unknown): void {
     this.failures.add(error);
     this.request_exit(1);
@@ -385,7 +430,8 @@ export class MacService {
         this.controller.signal.throwIfAborted();
         this.updates.start();
         this.sender.start();
-        this.file_sync.start();
+        this.follow_file_sync();
+        this.server_move.start();
         this.lease.start();
       });
     })();
@@ -438,11 +484,14 @@ export class MacService {
       this.controller.abort();
       for (const owner of [
         this.gateway,
+        this.previews,
         this.mailbox,
         this.lease,
         this.updates,
+        this.server_move,
         this.sender,
-        this.file_sync,
+        this.ticket_file_sync,
+        this.manager_file_sync,
         this.live,
         this.catalog,
         this.runner,
