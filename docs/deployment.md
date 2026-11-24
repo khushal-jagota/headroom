@@ -26,6 +26,8 @@ The TypeScript Linux builder rebuilds browser assets from source, then removes b
 - **The installer.** The independent service runs the installer and Node from the pinned previous release. Its request and journal live outside the release.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
 
+Pull requests qualify the Mac launcher with ad-hoc signatures on the hosted Mac. The test installs the public predecessor and re-signs its installed launcher copy. It checks the executable code and bundle identifier before it exercises the update. The main release uses the original Developer ID signatures on both packages and checks that their team identifiers match before publication.
+
 ## What a release needs from the host
 
 A release brings its own Node packages, so installation never runs a package installer.
