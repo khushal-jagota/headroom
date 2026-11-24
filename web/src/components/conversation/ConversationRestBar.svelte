@@ -23,8 +23,7 @@
   data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <!-- The shared system line, its mark hanging outside the column as in the transcript, so
-         the words start at the column's edge with the preview and the composer pill. -->
+    <!-- The shared system line: the words start at the column's edge with the preview and the composer pill, the mark after them. -->
     <SystemLine mark={live ? "spinner" : "dot"} data-conversation-rest-line="">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</SystemLine>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open</span>
