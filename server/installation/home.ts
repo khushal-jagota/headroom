@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { lstat, mkdtemp, readdir, realpath } from 'node:fs/promises';
+import { lstat, mkdtemp, realpath } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
@@ -35,17 +35,24 @@ import {
   symlink_relative,
   unlink_relative,
 } from '../executor/mac/platform.ts';
-import { account_skill_homes, account_skill_provisioning_conflict } from '../skills/account.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import { home_install_request, validate_home_host } from './logic/home.ts';
 import {
   HOME_CLEANUP_TIMEOUT_SECONDS,
+  HOME_COMMAND,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+  HOME_UPDATE_TOKEN_FILE,
 } from './configuration.ts';
-import type { HomeInstallDependencies, HomeInstallRequest, HomeServicePlan } from './contracts.ts';
+import type {
+  HomeInstallDependencies,
+  HomeInstallRequest,
+  HomeInstallSubmission,
+  HomeServicePlan,
+} from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 
-interface DirectoryProof {
+export interface DirectoryProof {
   readonly path: string;
   readonly fd: number;
   readonly info: Stats;
@@ -58,16 +65,17 @@ interface EntryProof {
   readonly content: Buffer | string;
   readonly kind: 'file' | 'link';
 }
-const same_inode = (left: Stats, right: Stats) => left.dev === right.dev && left.ino === right.ino;
+export const same_inode = (left: Stats, right: Stats) =>
+  left.dev === right.dev && left.ino === right.ino;
 function absent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 }
-function current_directory(proof: DirectoryProof): void {
+export function current_directory(proof: DirectoryProof): void {
   const actual = lstatSync(proof.path);
   if (!actual.isDirectory() || !same_inode(actual, proof.info))
     throw new Error(`Installation directory changed: ${proof.path}`);
 }
-async function existing_ancestor(path: string): Promise<string> {
+export async function existing_ancestor(path: string): Promise<string> {
   try {
     const info = await lstat(path);
     if (!info.isDirectory() && !info.isSymbolicLink())
@@ -78,7 +86,11 @@ async function existing_ancestor(path: string): Promise<string> {
     return existing_ancestor(dirname(path));
   }
 }
-async function canonical_new_root(path: string, home: string): Promise<string> {
+/** The canonical spelling of a root that may not exist yet. An existing root is not followed. */
+export async function canonical_root(
+  path: string,
+  home: string,
+): Promise<{ readonly path: string; readonly exists: boolean }> {
   path = resolve(expand_path(path, home));
   try {
     await lstat(path);
@@ -96,9 +108,25 @@ async function canonical_new_root(path: string, home: string): Promise<string> {
         original = dirname(original);
       }
     }
-    return join(ancestor, relative(original, path));
+    return { path: join(ancestor, relative(original, path)), exists: false };
   }
-  throw new Error(`The installation root already exists: ${path}`);
+  return { path: join(await realpath(dirname(path)), basename(path)), exists: true };
+}
+export async function canonical_new_root(path: string, home: string): Promise<string> {
+  const root = await canonical_root(path, home);
+  if (root.exists)
+    throw new Error(`The installation root already exists: ${resolve(expand_path(path, home))}`);
+  return root.path;
+}
+/** Like a service file, an existing command belongs to someone else and is never replaced. */
+async function require_absent_command(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (absent(error)) return;
+    throw error;
+  }
+  throw new Error(`The panels command already exists: ${path}. It will not be replaced.`);
 }
 /** A private bind is only a refusal check; activation still owns its later bind. */
 export async function check_home_port(port: number): Promise<void> {
@@ -120,7 +148,9 @@ export async function check_home_port(port: number): Promise<void> {
   }
 }
 /** Directory-relative mutation never traverses a replacement installation tree. */
-class InstallationFiles {
+export class InstallationFiles {
+  /** A cleanup that outlives its observer keeps the descriptors until it settles. */
+  retained = false;
   readonly directories = new Map<string, DirectoryProof>();
   readonly created_directories: DirectoryProof[] = [];
   readonly entries = new Map<string, EntryProof>();
@@ -329,11 +359,13 @@ class InstallationFiles {
     for (const proof of [...this.directories.values()].reverse()) close_native_descriptor(proof.fd);
   }
 }
+/** `restore` gives back what this attempt borrowed, before the root tree is removed. */
 async function cleanup(
   service: HomeServicePlan | undefined,
   files: InstallationFiles,
   root: DirectoryProof | undefined,
   temporary: DirectoryProof | undefined,
+  restore?: (execution: ReleaseExecution) => void,
 ): Promise<void> {
   const child_processes = new ChildProcesses(),
     signal = AbortSignal.timeout(HOME_CLEANUP_TIMEOUT_SECONDS * 1000);
@@ -361,6 +393,7 @@ async function cleanup(
       await files.remove_entries(execution);
       if (files.entries.size) await service?.finish_cleanup?.(execution);
       assert_release_execution(execution);
+      restore?.(execution);
       if (root) files.remove_tree(root, execution);
       if (temporary) files.remove_tree(temporary, execution);
       files.remove_empty_parents(root?.path ?? '', execution);
@@ -380,95 +413,171 @@ async function cleanup(
       signal.reason,
     );
 }
+/** What one installation attempt made, for its cleanup after a failure. */
+export interface InstallationAttempt {
+  readonly files: InstallationFiles;
+  readonly root_path: string;
+  service?: HomeServicePlan;
+  root?: DirectoryProof;
+  temporary?: DirectoryProof;
+  restore?: (execution: ReleaseExecution) => void;
+}
+/** Remove only this attempt's effects, then throw the original failure. */
+export async function abandon_installation(
+  error: unknown,
+  attempt: InstallationAttempt,
+): Promise<never> {
+  const { files, root_path, service, root, temporary, restore } = attempt;
+  if (error instanceof RuntimeProbeUnsettled) {
+    files.retained = true;
+    const settled = error.settled.finally(() => files.close());
+    void settled.catch(() => {});
+    throw new HomeCleanupUnsettled(
+      `Runtime admission cleanup remains uncertain. Retained ${temporary?.path ?? root_path}`,
+      settled,
+      error,
+    );
+  }
+  try {
+    await cleanup(service, files, root, temporary, restore);
+  } catch (failure) {
+    if (failure instanceof HomeCleanupUnsettled) {
+      files.retained = true;
+      const settled = failure.settled.finally(() => files.close());
+      void settled.catch(() => {});
+      throw new HomeCleanupUnsettled(
+        `Home setup cleanup remains uncertain. Retained ${root_path}${temporary ? ` and ${temporary.path}` : ''}`,
+        settled,
+        new AggregateError([error, failure]),
+      );
+    }
+    throw new AggregateError(
+      [error, failure],
+      `Home setup failed: ${String(error)}. Cleanup failed: ${String(failure)}. Retained ${root_path}${temporary ? ` and ${temporary.path}` : ''}`,
+    );
+  }
+  throw error;
+}
+/** A private folder beside the new root receives the release before admission. */
+export async function admission_directory(
+  files: InstallationFiles,
+  root_path: string,
+): Promise<DirectoryProof> {
+  const ancestor = files.directory(await existing_ancestor(dirname(root_path)));
+  const temporary_path = await mkdtemp(join(ancestor.path, '.panels-home-admission-'));
+  return { ...files.directory(temporary_path), parent: ancestor };
+}
+/** Extract and admit the sealed release into `<temporary>/app`. */
+export async function admit_release(
+  request: HomeInstallRequest,
+  temporary: DirectoryProof,
+  deps: Pick<HomeInstallDependencies, 'execution' | 'extract' | 'admit'>,
+): Promise<void> {
+  const app = join(temporary.path, 'app');
+  const manifest = await deps.extract(
+    request.archive,
+    app,
+    request.archive_sha256,
+    request.revision,
+    deps.execution,
+  );
+  if (manifest.runtime_contract?.version !== 2)
+    throw new Error('First home installation requires a sealed Node version-2 release');
+  await deps.admit(app, manifest, deps.execution);
+  assert_release_execution(deps.execution);
+}
+/** The server's settings file. Paths are relative to the data folder. */
+export function home_settings(root_path: string, extra: Readonly<Record<string, string>> = {}) {
+  return (
+    JSON.stringify({
+      server_root: '.',
+      db_path: 'planner.db',
+      logs_dir: '../logs',
+      backup_dir: 'backups',
+      dispatcher_lock_path: 'dispatcher.lock',
+      workspace_root: join(root_path, 'workspaces'),
+      ...extra,
+    }) + '\n'
+  );
+}
+export async function write_service_files(
+  service: HomeServicePlan,
+  files: InstallationFiles,
+  deps: Pick<HomeInstallDependencies, 'execution' | 'command'>,
+): Promise<void> {
+  for (const file of service.files) {
+    assert_release_execution(deps.execution);
+    await files.file(file.path, file.content, file.mode);
+    if (file.format === 'plist-json') {
+      await files.assert_owned(file.path);
+      const converted = await deps.command(
+        ['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', file.path],
+        deps.execution,
+        HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+      );
+      await files.replace_file(file.path, converted.stdout);
+    }
+  }
+  for (const link of service.links) await files.link(link.path, link.target);
+}
+/** A wrapper, not a link: the app's own bin/panels finds its app from its own path. */
+export function home_command_wrapper(root_path: string): string {
+  // It names the app folder, so it follows each update that swaps that folder.
+  return `#!/bin/sh\nexec ${shell_quote(join(root_path, 'app/bin/panels'))} "$@"\n`;
+}
 export async function install_home(
-  input: HomeInstallRequest,
+  input: HomeInstallSubmission,
   deps: HomeInstallDependencies,
 ): Promise<string> {
-  let request = home_install_request(input);
+  const { update_token, ...validated } = home_install_request(input);
+  let request: HomeInstallRequest = validated;
   validate_home_host(request, deps);
+  const command_link = join(deps.account_home, HOME_COMMAND);
   assert_release_execution(deps.execution);
   const root_path = await canonical_new_root(request.root, deps.account_home);
   assert_installer_path(root_path, deps.environment);
   assert_installer_path(request.archive, deps.environment);
   request = { ...request, root: root_path };
-  const files = new InstallationFiles(deps.execution);
-  let descriptors_retained = false;
-  let root: DirectoryProof | undefined,
-    temporary: DirectoryProof | undefined,
-    service: HomeServicePlan | undefined;
+  const attempt: InstallationAttempt = { files: new InstallationFiles(deps.execution), root_path };
+  const { files } = attempt;
   try {
-    service = await deps.service(request, deps);
+    const service = (attempt.service = await deps.service(request, deps));
     await service.preflight(deps.execution);
+    await require_absent_command(command_link);
     await check_home_port(request.port);
     assert_release_execution(deps.execution);
-    const ancestor = files.directory(await existing_ancestor(dirname(root_path)));
-    const temporary_path = await mkdtemp(join(ancestor.path, '.panels-home-admission-'));
-    const temp = files.directory(temporary_path);
-    temporary = { ...temp, parent: ancestor };
-    const app = join(temporary.path, 'app');
-    const manifest = await deps.extract(
-      request.archive,
-      app,
-      request.archive_sha256,
-      request.revision,
-      deps.execution,
-    );
-    if (manifest.runtime_contract?.version !== 2)
-      throw new Error('First home installation requires a sealed Node version-2 release');
-    await deps.admit(app, manifest, deps.execution);
-    assert_release_execution(deps.execution);
-    if (!request.isolated_providers) {
-      const source = join(app, 'server/skills/seeds');
-      const names = (await readdir(source, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name);
-      const warning = account_skill_provisioning_conflict(
-        join(root_path, 'data'),
-        account_skill_homes(deps.environment),
-        names,
-      );
-      if (warning) deps.warning(warning);
-    }
-    root = await files.create_root(root_path);
+    const temporary = (attempt.temporary = await admission_directory(files, root_path));
+    await admit_release(request, temporary, deps);
+    const root = (attempt.root = await files.create_root(root_path));
     current_directory(root);
     current_directory(temporary);
     assert_release_execution(deps.execution);
     rename_relative(temporary.fd, 'app', root.fd, 'app');
-    for (const name of ['data', 'logs', 'workspaces'])
+    for (const name of ['data', 'logs', 'workspaces', 'machine', 'machine/data'])
       await files.ensure_directory(join(root_path, name));
+    await files.ensure_directory(join(root_path, 'data/secrets'));
     if (request.isolated_providers)
       for (const { manifest } of BUILT_IN_MANIFESTS)
         if (manifest.home)
           await files.ensure_directory(
-            join(root_path, 'providers', manifest.home.isolated_directory_name),
+            join(root_path, 'machine/providers', manifest.home.isolated_directory_name),
           );
-    await files.file(
-      join(root_path, 'data/config.yaml'),
-      JSON.stringify({
-        workspace_root: join(root_path, 'workspaces'),
-        provision_account_skills: !request.isolated_providers,
-      }) + '\n',
-      0o600,
-    );
-    for (const file of service.files) {
-      assert_release_execution(deps.execution);
-      await files.file(file.path, file.content, file.mode);
-      if (file.format === 'plist-json') {
-        await files.assert_owned(file.path);
-        const converted = await deps.command(
-          ['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', file.path],
-          deps.execution,
-          HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
-        );
-        await files.replace_file(file.path, converted.stdout);
-      }
-    }
-    for (const link of service.links) await files.link(link.path, link.target);
+    await files.file(join(root_path, 'data/config.yaml'), home_settings(root_path), 0o600);
+    // The private secrets folder is created 0700 with the file.
+    await files.file(join(root_path, HOME_UPDATE_TOKEN_FILE), update_token + '\n', 0o600);
+    await write_service_files(service, files, deps);
+    await files.file(command_link, home_command_wrapper(root_path), 0o755);
     current_directory(root);
     const data = files.directory(join(root_path, 'data'));
     await deps.initialize_database(
       join(root_path, 'app'),
       join(root_path, 'data/planner.db'),
+      deps.execution,
+      join(root_path, 'machine/data'),
+    );
+    await deps.prepare_machine(
+      join(root_path, 'app'),
+      join(root_path, 'machine/runtime'),
       deps.execution,
     );
     current_directory(root);
@@ -478,41 +587,16 @@ export async function install_home(
     if (!(await deps.healthy(request.port, request.revision, deps.execution.signal)))
       throw new Error(`The home did not report ready release ${request.revision}`);
     assert_release_execution(deps.execution);
+    const machine_started_ms = Date.now();
+    await service.start_machine(deps.execution);
+    await deps.machine_healthy(request, deps.execution, machine_started_ms);
     await service.start_auxiliaries(deps.execution);
     files.remove_tree(temporary, deps.execution);
-    temporary = undefined;
+    attempt.temporary = undefined;
     return `http://127.0.0.1:${request.port}`;
   } catch (error) {
-    if (error instanceof RuntimeProbeUnsettled) {
-      descriptors_retained = true;
-      const settled = error.settled.finally(() => files.close());
-      void settled.catch(() => {});
-      throw new HomeCleanupUnsettled(
-        `Runtime admission cleanup remains uncertain. Retained ${temporary?.path ?? root_path}`,
-        settled,
-        error,
-      );
-    }
-    try {
-      await cleanup(service, files, root, temporary);
-    } catch (failure) {
-      if (failure instanceof HomeCleanupUnsettled) {
-        descriptors_retained = true;
-        const settled = failure.settled.finally(() => files.close());
-        void settled.catch(() => {});
-        throw new HomeCleanupUnsettled(
-          `Home setup cleanup remains uncertain. Retained ${root_path}${temporary ? ` and ${temporary.path}` : ''}`,
-          settled,
-          new AggregateError([error, failure]),
-        );
-      }
-      throw new AggregateError(
-        [error, failure],
-        `Home setup failed: ${String(error)}. Cleanup failed: ${String(failure)}. Retained ${root_path}${temporary ? ` and ${temporary.path}` : ''}`,
-      );
-    }
-    throw error;
+    return await abandon_installation(error, attempt);
   } finally {
-    if (!descriptors_retained) files.close();
+    if (!files.retained) files.close();
   }
 }

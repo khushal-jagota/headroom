@@ -62,7 +62,7 @@ export function handleAppScheme(): void {
       if (presentation.serverUpdate) return packedFile(url.pathname, serverUpdateFile);
       return packedFile(url.pathname, screensFile, presentation.root, presentation.appSha);
     }
-    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile);
+    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, screensFile);
     return notFound();
   });
   refuseWritesFromOtherSites();
@@ -99,10 +99,6 @@ function serverUpdateFile(pathname: string): string | null {
   if (pathname === '/' || pathname === '/index.html') return 'server_update_page/index.html';
   if (pathname === '/server-update.js') return 'server_update_page/server-update.js';
   return null;
-}
-
-function addressPageFile(pathname: string): string | null {
-  return `address_page/${pathname === '/' ? 'index.html' : pathname.slice(1)}`;
 }
 
 /** Serve one file of the packed bundle. A path that climbs, even encoded, is refused. */

@@ -78,6 +78,8 @@ function service_for(machine_id: string): MacUpdateServiceContract {
   const kept = services.get(machine_id);
   if (kept?.platform === platform) return kept.service;
   const service: MacUpdateServiceContract = {
+    machine_states: () => [],
+    retry_machine: unexpected,
     for_machine: service_for,
     prepare: unexpected,
     settled: () => Promise.resolve(),

@@ -1,24 +1,24 @@
 /** The JSON projection of `GET /api/updates` (self-update contract, section 10). */
 import type { MacStatus } from "../ticketMachines";
+import type { MachineUpdateState, UpdateInterruption, UpdateAttemptView } from "../../../../server/environments/updates/view_contracts";
+export type { MachineUpdateState, UpdateInterruption };
+import type { ClientCompatibility, ClientIdentity } from "../../../../server/client_versions/contracts";
 
 export type UpdateActivity = "idle" | "busy" | "unknown";
 export type UpdateState = "up_to_date" | "available" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
 export type UpdateAction = "update" | "retry" | "retry_mac";
-export type UpdateAttemptState = "preparing" | "installing" | "done" | "failed";
+export type { UpdateAttemptState } from "../../../../server/environments/updates/view_contracts";
 
 /** The ready release. The page reads only the SHA it installs. */
-export type AvailableUpdate = { app_sha: string };
+export type AvailableUpdate = { app_sha: string; compatibility?: ClientCompatibility };
 
-export type UpdateAttempt = {
-  attempt_id: string;
-  from_sha: string;
-  to_sha: string;
-  state: UpdateAttemptState;
-  detail: string | null;
-  deadline_at: string | null;
-};
+export type UpdateAttempt = UpdateAttemptView;
 
 export type UpdateStatus = {
+  client_versions: readonly ClientIdentity[];
+  machines: readonly MachineUpdateState[];
+  available_machines: readonly MachineUpdateState[];
+  interruption: UpdateInterruption;
   state: UpdateState;
   allowed_actions: UpdateAction[];
   activity: UpdateActivity;

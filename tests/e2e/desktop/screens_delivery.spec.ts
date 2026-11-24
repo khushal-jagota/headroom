@@ -70,6 +70,9 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
   try {
     desktop = await launchDesktopApp({ localServerAddress: `http://127.0.0.1:${port}` });
     const page = desktop.window;
+    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await page.fill('#address', `http://127.0.0.1:${port}`);
+    await page.click('#connect');
     await expect(page.locator('h1')).toHaveText('Screen A', { timeout: 30_000 });
     await expect(page.locator('#script')).toHaveText('Script A');
     await expect.poll(() => downloads.some((entry) => entry.digest === copies.B.digest), { timeout: 30_000 }).toBe(true);
@@ -78,6 +81,10 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
       expect(JSON.parse(entry.identity ?? '{}')).toMatchObject({ kind: 'desktop', bridge_version: 1 });
       expect(entry.origin).toBeUndefined();
     }
+
+    // The real screens route in the hash. A swap must still load a new document there.
+    await page.evaluate(() => { location.hash = '#/review'; });
+    await expect.poll(() => page.evaluate(() => location.href)).toBe('panels://app/#/review');
 
     current = 'B';
     waiting = null;

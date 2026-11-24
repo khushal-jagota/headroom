@@ -1,5 +1,13 @@
-/** A provider that keeps its skills in another, nested folder of its home gets them there. */
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+/** Existing publisher host proves the transition from old server links to machine-owned links. */
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
@@ -19,6 +27,12 @@ test('publication links into the home skills folder the driver names', async () 
   roots.push(root);
   const home = join(root, 'provider');
   mkdirSync(join(home, 'agent', 'skills'), { recursive: true });
+  const server = join(root, 'server-data');
+  for (const name of ['panels', 'panels-worker']) {
+    mkdirSync(join(server, 'skills', name), { recursive: true });
+    writeFileSync(join(server, 'skills', name, 'SKILL.md'), 'old server copy');
+    symlinkSync(join(server, 'skills', name), join(home, 'agent', 'skills', name));
+  }
   const publisher = new MacSkillsPublisher((error) => {
     throw error;
   });
@@ -28,10 +42,19 @@ test('publication links into the home skills folder the driver names', async () 
         required_skill_names: ['panels', 'panels-worker'],
         sources: [skill('panels'), skill('panels-worker')],
       },
-      { root: join(root, 'state'), native_home: home, native_skills_directory: 'agent/skills' },
+      {
+        root: join(root, 'state'),
+        native_home: home,
+        native_skills_directory: 'agent/skills',
+        owner_kind: 'ticket',
+        legacy_server_skill_parent: server,
+      },
     );
   } finally {
     await publisher.stop({ deadline: performance.now() / 1000 + 5 });
   }
+  expect(readlinkSync(join(home, 'agent', 'skills', 'panels'))).toContain(
+    join(root, 'state', 'skills'),
+  );
   expect(readdirSync(join(home, 'agent', 'skills')).sort()).toEqual(['panels', 'panels-worker']);
 });

@@ -2,7 +2,6 @@
 import { homedir } from 'node:os';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
-import { turn_scoped_selection_transition } from '../../core/selection.ts';
 import { home_path } from '../../core/paths.ts';
 import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
 import { create_durable_codex_login_rejection } from './login_rejection.ts';
@@ -35,11 +34,8 @@ export async function create_codex_instance(
   const base = {
     instance_id: input.instance_id,
     driver_kind: codex_driver.driver_kind,
-    capabilities: {
-      sessions: { supportsModelSwitchInSession: true },
-      turns: { supportsActiveSteering: true },
-    },
-    plan_selection_transition: turn_scoped_selection_transition,
+    capabilities: codex_driver.capabilities,
+    plan_selection_transition: codex_driver.plan_selection_transition,
     supervises_local_launches: true,
     child_factory: create_codex_backend_child_factory(codex_launch(host), {
       child_processes: host.child_processes,

@@ -6,7 +6,6 @@ import { configured_worker_type_registry } from '../worker_types/configuration.t
 import { stage_definition, stage_ownership_mode, gating_field } from '../tickets/logic/machine.ts';
 import { known_conversation_backend_key } from '../conversation/contracts.ts';
 import { now_ms } from '../executor/clock.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import * as locale_configuration from '../tickets/locale_configuration.ts';
 export function worker_step_blocker(
   sql: ReadSql,
@@ -19,10 +18,7 @@ export function worker_step_blocker(
   if (!locale_configuration.can_execute_machine(ticket.machine_id, sql)) {
     return locale_configuration.machine_unavailable_reason(ticket.machine_id, sql);
   }
-  if (
-    ticket.machine_id !== HOME_MACHINE_ID &&
-    !locale_configuration.mac_is_present(sql, now_ms(), ticket.machine_id)
-  ) {
+  if (!locale_configuration.mac_is_present(sql, now_ms(), ticket.machine_id)) {
     return locale_configuration.machine_unavailable_reason(ticket.machine_id, sql);
   }
   if (stage_definition(options.worker_type_definition, ticket.stage).is_terminal) {

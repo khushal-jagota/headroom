@@ -2,15 +2,16 @@
 # the matching PLAN_* environment variable. Test-mode keys (PLAN_TEST_MODE,
 # PLAN_FAKE_NOW) are environment-only and deliberately absent from this file.
 
-db_path: data/planning.db          # SQLite database location (§13)
-workspace_root: null              # optional existing absolute default workspace (PLAN_WORKSPACE_ROOT)
-ticket_scratch_root: null         # optional: where Ticket worktrees and scratch live (PLAN_TICKET_SCRATCH_ROOT)
-ticket_scratch_database: null     # with the root: the one database whose done and deleted Tickets' scratch is removed (PLAN_TICKET_SCRATCH_DATABASE)
+server_root: data                 # relative to this settings file
+db_path: planning.db          # SQLite database location (§13)
+workspace_root: null              # optional absolute workspace on the execution machine (PLAN_WORKSPACE_ROOT)
+ticket_scratch_root: null         # legacy value; machine code owns Ticket folders (PLAN_TICKET_SCRATCH_ROOT)
+ticket_scratch_database: null     # legacy value; the server performs no Ticket folder cleanup (PLAN_TICKET_SCRATCH_DATABASE)
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 tick_seconds: 60                   # background schedule/readiness poll interval
 dispatch_enabled: true             # single-owner schedule and readiness loop startup switch
-dispatcher_lock_path: data/dispatcher.lock   # advisory lock: one readiness poller per machine (§7.1)
-logs_dir: data/logs                # existing log inventory and cleanup; startup does not create it
-backup_dir: data/backups           # verified database snapshots
+dispatcher_lock_path: dispatcher.lock   # advisory lock: one readiness poller per machine (§7.1)
+logs_dir: logs                # existing log inventory and cleanup; startup does not create it
+backup_dir: backups           # verified database snapshots
 voice_transcription_base_url: https://api.groq.com/openai/v1   # OpenAI-compatible speech-to-text provider
 voice_transcription_model: whisper-large-v3-turbo              # transcription model at that provider

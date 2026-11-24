@@ -1197,6 +1197,9 @@ test('a Ticket whose machine is not connected gets a sentence, not a bare 400', 
               backend_state: null,
               backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
               sign_in: () => null,
+              // Every server runs its work through machine code, as production composes it.
+              // This machine has no executor here.
+              machine_backends: () => null,
               machine_catalog: () => null,
               drivers: BUILT_IN_MANIFESTS,
               driver_of: () => null,

@@ -15,7 +15,14 @@ function execute(action: CatalogAction): unknown {
     const bytes = Buffer.from(
       JSON.stringify(
         encode_value(
-          { command_id: action.command_id, child_outcome: null, model_list },
+          {
+            command_id: action.command_id,
+            child_outcome: null,
+            model_list,
+            ...(action.backend_result === undefined
+              ? {}
+              : { backend_result: action.backend_result }),
+          },
           'CommandResult',
         ),
       ),

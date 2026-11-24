@@ -1,8 +1,5 @@
 /** VPS backend adapter. The Mac retains native process ownership; calls create mailbox rows. */
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { relative } from 'node:path';
-import { path_is_within } from '../core/path_containment.ts';
 import * as backend from '../conversation/backends/contracts.ts';
 import type {
   BackendChild,
@@ -19,7 +16,6 @@ import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { UserInputAnswer } from '../conversation/events.ts';
 import type { MessageContent } from '../conversation/message_content.ts';
 import { recorded_failure_detail } from '../conversation/logic/backend_events.ts';
-import { resolve_path_sync } from '../core/path_resolution.ts';
 import { pure_posix_path } from '../core/python_path.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
@@ -193,11 +189,7 @@ export class MacRemoteChild implements BackendChild {
       );
     }
     let workspace_home_relative: string | null = null;
-    if (start.workspace_path_policy === WorkspacePathPolicy.home_relative) {
-      const home = resolve_path_sync(homedir()),
-        workspace = resolve_path_sync(start.workspace_folder);
-      if (path_is_within(home, workspace)) workspace_home_relative = relative(home, workspace);
-    } else if (start.workspace_path_policy === WorkspacePathPolicy.executor_default) {
+    if (start.workspace_path_policy === WorkspacePathPolicy.executor_default) {
       const path = pure_posix_path(start.workspace_folder);
       if (!path.startsWith('/'))
         throw new ExecutorValidationError(`${inspect(path)} is not in the subpath of '/'`);

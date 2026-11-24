@@ -134,18 +134,17 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
           environment: new RecordingBackendProbeEnvironment(),
         }),
       createConversationCore(context) {
-        registry.bind_runtime(context.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: context.record.store,
           execution_refusal: (id) =>
             context.database.read((sql) =>
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
             ),
-          delivery_model_refusal: (backend, model, ticket_id) =>
+          delivery_model_refusal: (backend, model, conversation_id) =>
             new BackendStateStore(context.database).delivery_model_refusal(
               backend,
               model,
-              ticket_id,
+              conversation_id,
             ),
           backend_registry: registry.registry,
           message_files: new ConversationMessageFiles(context.config.db_path),

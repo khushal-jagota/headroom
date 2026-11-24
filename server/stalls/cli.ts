@@ -5,7 +5,6 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
-import { load_apns_config } from '../notifications/config.ts';
 import { message_chief } from './alarms.ts';
 import { run_watchdog, watchdog_summary } from './watchdog.ts';
 
@@ -47,7 +46,7 @@ export async function watchdog_handler(
   const { StandardsWebPushAdapter } = await import('../notifications/web_push.ts');
   const { TokenAPNsAdapter, canonical_server_origin } = await import('../notifications/apns.ts');
   const origin = canonical_server_origin(config.trusted_ingress_canonical_origin);
-  const apns_config = load_apns_config(env);
+  const apns_config = config.apns;
   const apns = apns_config && origin ? new TokenAPNsAdapter(apns_config) : null;
   try {
     const run = await run_watchdog(db_path, state_dir, {

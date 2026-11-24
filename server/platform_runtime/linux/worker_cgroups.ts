@@ -1,7 +1,16 @@
 /** cgroup v2 custody remains independent of mutable process sessions. */
 import { constants } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { lstat, mkdir, readFile, realpath, rmdir, stat, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import type { CgroupIdentity, WorkerCgroupPrimitives } from '../../worker_supervision/contracts.ts';
@@ -88,6 +97,26 @@ export class WorkerCgroups implements WorkerCgroupPrimitives {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     return path;
+  }
+  /** Read-only member inventory uses the same hierarchy and inode validation as cleanup. */
+  async members(identity: CgroupIdentity): Promise<readonly number[]> {
+    const path = await this.#path(identity);
+    const result: number[] = [];
+    const visit = async (directory: string): Promise<void> => {
+      const contents = await readFile(join(directory, 'cgroup.procs'), 'utf8');
+      for (const pid of contents.trim().split(/\s+/).filter(Boolean)) {
+        if (!/^\d+$/.test(pid) || !Number.isSafeInteger(Number(pid)))
+          throw new Error('Worker cgroup process identity is unreadable');
+        result.push(Number(pid));
+      }
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) throw new Error('Worker cgroup member directory is a link');
+        if (entry.isDirectory()) await visit(join(directory, entry.name));
+      }
+    };
+    await visit(path);
+    await this.#path(identity);
+    return result;
   }
   async join(identity: CgroupIdentity): Promise<void> {
     await writeFile(join(await this.#path(identity), 'cgroup.procs'), String(process.pid), {

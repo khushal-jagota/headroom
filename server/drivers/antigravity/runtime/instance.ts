@@ -3,14 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
-import { acp_selection_transition } from '../../core/selection.ts';
 import { home_path } from '../../core/paths.ts';
 import { expand_path } from '../../../environments/paths.ts';
 import {
   backend_io_is_test,
   executable_override,
 } from '../../../conversation/snapshot/environment.ts';
-import { ACP_CHILD_CAPABILITIES } from '../../acp/flavor.ts';
 import { create_acp_child_factory } from '../../acp/child.ts';
 import { antigravity_driver } from '../driver.ts';
 import { antigravity_manifest } from '../manifest.ts';
@@ -43,8 +41,8 @@ export async function create_antigravity_instance(
   const base = {
     instance_id: input.instance_id,
     driver_kind: antigravity_driver.driver_kind,
-    capabilities: ACP_CHILD_CAPABILITIES,
-    plan_selection_transition: acp_selection_transition,
+    capabilities: antigravity_driver.capabilities,
+    plan_selection_transition: antigravity_driver.plan_selection_transition,
     supervises_local_launches: true,
     child_factory: create_acp_child_factory(
       create_antigravity_flavor(

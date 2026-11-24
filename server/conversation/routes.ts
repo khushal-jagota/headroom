@@ -1,4 +1,5 @@
 /** Product conversation HTTP surface, sharing the record and process runtime. */
+import { read_machine } from '../machines/data.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { homedir } from 'node:os';
@@ -76,6 +77,8 @@ function start_request(raw: unknown): ConversationStartRequest {
   }
   let workspace_folder = fields.text('workspace_folder', true, false);
   const access = fields.choice('access', ['full'], true, false);
+  // The machine that runs this conversation, fixed at its start. Default: the server's own.
+  const machine_id = fields.text('machine_id', true, false);
   fields.finish();
   if (identity.length > 0)
     throw new HttpError(422, 'generic conversation starts cannot assign an agent identity');
@@ -93,6 +96,7 @@ function start_request(raw: unknown): ConversationStartRequest {
         : new ConversationRoleMaterials({ role_text, identity_environment_variables: identity }),
     workspace_folder,
     access: access as ConversationAccess | null,
+    ...(machine_id === null ? {} : { machine_id }),
   });
   try {
     resolve_conversation_start_request(request);
@@ -304,6 +308,7 @@ export function createConversationRoutes(
   return async (app, services) => {
     app.post('/conversations', async (request, reply) => {
       const start = start_request(request.body);
+      runtime.record.database.read((sql) => read_machine(sql, start.machine_id));
       try {
         await runtime.core.start_conversation(start);
       } catch (error) {

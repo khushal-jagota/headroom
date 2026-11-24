@@ -1,8 +1,12 @@
-import { ORIGINAL_MAC_MACHINE_ID, valid_uuid } from '../../../execution_identity.ts';
+import {
+  ORIGINAL_MAC_MACHINE_ID,
+  same_machine_build,
+  valid_uuid,
+} from '../../../execution_identity.ts';
 import { counter } from '../../../executor/logic/counters.ts';
 import { same_identity } from '../../../executor/vps_presence_store.ts';
 /** Pinned Mac bytes and reports survive publication expiry and later VPS failures. */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fsyncSync, openSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -16,7 +20,7 @@ import {
 } from '../../release/contracts.ts';
 import { atomic_write_json, missing, UpdateConflict } from '../attempts.ts';
 import { attempt_to_dict, is_object, parse_attempt } from '../codec.ts';
-import type { PublishedUpdate, UpdateAttempt } from '../contracts.ts';
+import type { PublishedUpdate, UpdateAttempt, MachineUpdateState } from '../contracts.ts';
 import { UPDATE_AVAILABILITY_REFRESH_SECONDS } from '../configuration.ts';
 import { with_zip_member } from '../zip.ts';
 import type {
@@ -151,6 +155,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private readonly context: MacUpdateCompositionContext;
   private readonly machines = new Map<string, MacUpdateService>();
   private linux_archive_owner: MacUpdateService | undefined;
+  private archive_owner: MacUpdateService | undefined;
   readonly attempts: MacUpdateCompositionContext['attempts'];
   readonly provider: MacUpdateCompositionContext['provider'];
   readonly current_app_sha: string | null;
@@ -180,6 +185,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
     this.applied_path = join(this.root, 'applied.json');
     this.signal.throwIfAborted();
     this.retain_applied(this.attempt());
+    if (this.platform === 'linux' && this.archive_root === this.root) {
+      const selected = this.selected_attempt();
+      if (selected !== null && file(this.archive_path(selected.release)))
+        this.schedule_linux_preparation(selected.release);
+    }
   }
   for_machine(machine_id: string): MacUpdateServiceContract {
     if (machine_id === this.machine_id) return this;
@@ -197,6 +207,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         linux_registered: () => false,
       });
       kept.linux_archive_owner = linux;
+      kept.archive_owner = linux ?? this;
       this.machines.set(machine_id, kept);
     }
     return kept;
@@ -214,11 +225,143 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   private attempt(): UpdateAttempt | null {
     const attempt = this.attempts.read();
-    return attempt === null ||
-      this.machine_id === ORIGINAL_MAC_MACHINE_ID ||
-      attempt.mac_attempt_id === null
-      ? attempt
-      : { ...attempt, mac_attempt_id: `${attempt.mac_attempt_id}.${this.machine_id}` };
+    if (attempt === null || attempt.mac_attempt_id === null) return attempt;
+    return this.with_machine_request(attempt);
+  }
+  private with_machine_request(attempt: UpdateAttempt, retained = false): UpdateAttempt {
+    let retry: unknown;
+    try {
+      retry = json(join(this.root, 'retry.json'));
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+    const request_id =
+      is_object(retry) &&
+      retry.attempt_id === attempt.attempt_id &&
+      typeof retry.request_id === 'string'
+        ? retry.request_id
+        : retained || this.machine_id === ORIGINAL_MAC_MACHINE_ID
+          ? attempt.mac_attempt_id
+          : `${attempt.mac_attempt_id}-${this.machine_id}`;
+    return { ...attempt, mac_attempt_id: request_id };
+  }
+  private unchanged(release: PublishedUpdate): boolean {
+    const machine = this.context.machines?.().find((item) => item.machine_id === this.machine_id);
+    const build = this.build_identity(release).build_id;
+    // Older retained publications have no content identity to compare.
+    return build === undefined
+      ? machine?.identity?.application_revision === release.manifest.app_sha
+      : machine?.identity?.build_id === build;
+  }
+  private preparation_error(release: PublishedUpdate): string | null {
+    if (this.artifact(release) === null) return null;
+    this.archive_path(release);
+    try {
+      const value = json(
+        join(this.root, 'preparation', this.artifact(release)!.archive_sha256 + '.json'),
+      );
+      return is_object(value) &&
+        value.archive_sha256 === this.artifact(release)?.archive_sha256 &&
+        typeof value.detail === 'string'
+        ? value.detail
+        : null;
+    } catch (error) {
+      if (missing(error)) return null;
+      throw error;
+    }
+  }
+  private save_preparation(release: PublishedUpdate, detail: string | null): void {
+    if (this.artifact(release) === null) return;
+    this.archive_path(release);
+    atomic_write_json(
+      join(this.root, 'preparation', this.artifact(release)!.archive_sha256 + '.json'),
+      {
+        archive_sha256: this.artifact(release)?.archive_sha256 ?? null,
+        detail,
+      },
+    );
+    this.emit();
+  }
+  retry_machine(machine_id: string, attempt_id: string): void {
+    const inventory = this.context.machines?.();
+    if (inventory && !inventory.some((machine) => machine.machine_id === machine_id))
+      throw new UpdateConflict('This machine is no longer registered.');
+    const service = this.for_machine(machine_id) as MacUpdateService;
+    const attempt = service.selected_attempt();
+    if (attempt === null || attempt.attempt_id !== attempt_id || attempt.state !== 'done')
+      throw new UpdateConflict('The machine update changed or is not ready to retry.');
+    if (service.unchanged(attempt.release))
+      throw new UpdateConflict('This machine already has the target build.');
+    const status = service.status();
+    if (!status || !['failed', 'reverted', 'waiting', 'unavailable'].includes(status.phase))
+      throw new UpdateConflict('This machine does not need a retry.');
+    atomic_write_json(join(service.root, 'retry.json'), {
+      attempt_id,
+      request_id: randomUUID().replaceAll('-', ''),
+    });
+    service.save_preparation(attempt.release, null);
+    const owner = service.archive_owner ?? service;
+    void owner.queue_preparation(async () => {
+      try {
+        await owner.prepare_once(attempt.release);
+        service.signal.throwIfAborted();
+        if (service.platform === 'linux' && attempt.release.linux_executor)
+          service.linux_owner().ready_archives.add(attempt.release.linux_executor.archive_sha256);
+      } catch (error) {
+        if (service.signal.aborted) return;
+        service.save_preparation(
+          attempt.release,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+  }
+  machine_states(release: PublishedUpdate | null = null): MachineUpdateState[] {
+    return (this.context.machines?.() ?? []).map((machine) => {
+      const service = this.for_machine(machine.machine_id) as MacUpdateService;
+      const attempt = service.selected_attempt();
+      const active = service.attempt();
+      const selected =
+        release ??
+        attempt?.release ??
+        (active !== null && target_states.has(active.state) ? active.release : null);
+      const status = service.status();
+      const changed = selected !== null && !service.unchanged(selected);
+      const preparation_error = selected === null ? null : service.preparation_error(selected);
+      let state: MachineUpdateState['state'] = 'current';
+      if (selected !== null && service.artifact(selected) === null) state = 'unavailable';
+      else if (changed && preparation_error !== null) state = 'failed';
+      else if (changed) {
+        if (release !== null) state = 'available';
+        else if (status?.phase === 'failed' || status?.phase === 'reverted') state = 'failed';
+        else if (!machine.present) state = 'waiting';
+        else if (status?.phase === 'unavailable') state = 'unavailable';
+        else state = 'updating';
+      }
+      return {
+        machine_id: machine.machine_id,
+        name: machine.name,
+        platform: machine.platform,
+        present: machine.present,
+        build_id: machine.identity?.build_id ?? null,
+        target_build_id:
+          selected === null ? null : (service.build_identity(selected).build_id ?? null),
+        changed,
+        state,
+        attempt_id: release !== null ? null : (attempt?.attempt_id ?? active?.attempt_id ?? null),
+        request_id: release !== null ? null : (status?.request_id ?? null),
+        detail:
+          state === 'current'
+            ? null
+            : (preparation_error ?? (release === null ? (status?.detail ?? null) : null)),
+        can_retry:
+          release === null &&
+          attempt?.state === 'done' &&
+          selected !== null &&
+          service.artifact(selected) !== null &&
+          ['failed', 'waiting', 'unavailable'].includes(state),
+      };
+    });
   }
   private artifact(release: PublishedUpdate) {
     return this.platform === 'linux' ? (release.linux_executor ?? null) : release.mac;
@@ -304,8 +447,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       attempt.state === 'done' &&
       attempt.mac_attempt_id !== null &&
       this.artifact(attempt.release) !== null &&
-      attempt.to_sha === this.current_app_sha &&
-      file(this.archive_path(attempt.release))
+      attempt.to_sha === this.current_app_sha
     ) {
       const retained = this.read_applied();
       if (
@@ -336,17 +478,46 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   prepare(release: PublishedUpdate): Promise<void> {
     this.signal.throwIfAborted();
+    const machines = this.context.machines?.();
+    if (machines !== undefined) {
+      const changed = machines.filter(
+        (machine) => !(this.for_machine(machine.machine_id) as MacUpdateService).unchanged(release),
+      );
+      const platforms = new Set(changed.map((machine) => machine.platform));
+      return Promise.all(
+        [...platforms].map((platform) => {
+          const owner = platform === 'linux' ? this.linux_owner() : this;
+          return owner.queue_preparation(async () => {
+            let detail: string | null = null;
+            try {
+              await owner.prepare_once(release);
+              owner.signal.throwIfAborted();
+              if (platform === 'linux' && release.linux_executor)
+                owner.ready_archives.add(release.linux_executor.archive_sha256);
+            } catch (error) {
+              if (owner.signal.aborted) throw error;
+              detail = error instanceof Error ? error.message : String(error);
+            }
+            for (const machine of changed.filter((machine) => machine.platform === platform))
+              (this.for_machine(machine.machine_id) as MacUpdateService).save_preparation(
+                release,
+                detail,
+              );
+          });
+        }),
+      ).then(() => {});
+    }
+
     const owner = this.platform === 'linux' ? this.linux_owner() : this;
     return owner.queue_preparation(async () => {
       this.signal.throwIfAborted();
       await owner.prepare_once(release);
-      if (owner.platform === 'darwin' && !owner.signal.aborted) {
-        try {
-          if (owner.context.linux_registered?.()) owner.schedule_linux_preparation(release);
-        } catch (error) {
-          console.warn('Linux executor archive preparation could not start', error);
-        }
-      }
+      if (
+        owner.platform === 'darwin' &&
+        !owner.signal.aborted &&
+        owner.context.linux_registered?.()
+      )
+        owner.schedule_linux_preparation(release);
     });
   }
   private schedule_linux_preparation(release: PublishedUpdate | null): void {
@@ -433,7 +604,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
       try {
         this.signal.throwIfAborted();
         const downloaded = join(temporary, 'artifact.zip');
-        await this.provider.download_artifact(mac.artifact_id, downloaded, this.signal);
+        await this.provider.download_artifact(
+          mac.artifact_id,
+          downloaded,
+          this.signal,
+          mac.artifact_source,
+        );
         this.signal.throwIfAborted();
         try {
           if (
@@ -528,22 +704,24 @@ export class MacUpdateService implements MacUpdateServiceContract {
     )
       return attempt;
     const retained = this.read_applied();
-    return retained !== null && retained.to_sha === this.current_app_sha ? retained : null;
+    return retained !== null && retained.to_sha === this.current_app_sha
+      ? this.with_machine_request(retained, true)
+      : null;
+  }
+  private build_identity(release: PublishedUpdate): { build_id?: string } {
+    const key = this.platform === 'linux' ? 'linux-x86_64' : 'darwin-arm64';
+    const build_id = release.parts?.machines[key]?.build_id;
+    return build_id == null ? {} : { build_id };
   }
   private target(): MacUpdateTarget | null {
     const attempt = this.selected_attempt();
     if (attempt === null) return null;
     const mac = this.artifact(attempt.release)!,
       request_id = attempt.mac_attempt_id!;
-    if (this.platform === 'linux' && !this.linux_owner().ready_archives.has(mac.archive_sha256))
-      return null;
-    if (!file(this.archive_path(attempt.release))) {
-      if (this.platform === 'linux') return null;
-      throw new UpdateConflict('The Mac runtime archive for this update is unavailable.');
-    }
     return {
       request_id,
       application_revision: attempt.to_sha,
+      ...this.build_identity(attempt.release),
       mode: attempt.confirm_activity ? attempt.mode : 'idle',
       activate: attempt.state === 'done' && attempt.to_sha === this.current_app_sha,
       archive_sha256: mac.archive_sha256,
@@ -553,7 +731,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   private prefetch_release(): PublishedUpdate | null {
     const release = this.ready_release();
-    if (release === null || this.artifact(release) === null) return null;
+    if (release === null || this.artifact(release) === null || this.unchanged(release)) return null;
     if (
       this.platform === 'linux' &&
       !this.linux_owner().ready_archives.has(this.artifact(release)!.archive_sha256)
@@ -567,17 +745,39 @@ export class MacUpdateService implements MacUpdateServiceContract {
     }
   }
   check(): MacUpdateCheck {
-    if (this.platform === 'linux')
-      this.schedule_linux_preparation(this.selected_attempt()?.release ?? this.ready_release());
-    const release = this.prefetch_release(),
-      mac = release === null ? null : this.artifact(release);
+    const selected = this.selected_attempt();
+    const release = selected?.release ?? this.ready_release();
+    if (
+      this.platform === 'linux' &&
+      release !== null &&
+      !this.unchanged(release) &&
+      this.preparation_error(release) === null
+    )
+      this.schedule_linux_preparation(release);
+    const prefetched = this.prefetch_release();
+    const mac = prefetched === null ? null : this.artifact(prefetched);
+    let target = this.target();
+    if (target !== null && selected !== null) {
+      const phase = this.saved_status(target.request_id)?.phase;
+      const needs_acknowledgment = phase === 'downloading' || phase === 'ready_to_restart';
+      if (
+        this.unchanged(selected.release)
+          ? !needs_acknowledgment
+          : this.preparation_error(selected.release) !== null ||
+            !file(this.archive_path(selected.release)) ||
+            (this.platform === 'linux' &&
+              !this.linux_owner().ready_archives.has(target.archive_sha256))
+      )
+        target = null;
+    }
     return {
       schema_version: MAC_UPDATE_SCHEMA_VERSION,
-      target: this.target(),
+      target,
       prefetch:
-        release && mac
+        prefetched && mac
           ? {
-              application_revision: release.manifest.app_sha,
+              application_revision: prefetched.manifest.app_sha,
+              ...this.build_identity(prefetched),
               archive_sha256: mac.archive_sha256,
               archive_size: counter(mac.archive_size),
               archive_path: `/api/executor/update/prefetch/${mac.archive_sha256}`,
@@ -671,7 +871,9 @@ export class MacUpdateService implements MacUpdateServiceContract {
       report.phase === 'current' &&
       (!target.activate ||
         identity === null ||
-        identity.application_revision !== target.application_revision ||
+        (target.build_id !== undefined
+          ? identity.build_id !== target.build_id
+          : !same_machine_build(identity, target)) ||
         !same_identity(leased, identity))
     )
       throw new UpdateConflict('The target Mac runtime is not the present, leased one.');

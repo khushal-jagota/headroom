@@ -17,6 +17,7 @@ import { VpsExecutorRegistry } from '../../registry.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { issue_original_credential } from '../../../machines/executor_credentials.ts';
+import { seed_original_mac_rows } from '../../../machines/testing/original_mac.ts';
 import { compose_production_backends } from '../../../lifecycle/production_bindings.ts';
 import {
   for_every_built_in_backend,
@@ -50,7 +51,14 @@ async function wait_until<T>(
   }
 }
 
-export async function start_native_server() {
+export async function start_native_server(
+  reopen_credential?: string,
+  options: {
+    expected_protocol?: number;
+    create_environments?: typeof create_test_environment_runtime;
+    platform?: 'linux' | 'darwin';
+  } = {},
+) {
   const path = process.env.PLAN_DB_PATH;
   assert.ok(path, 'A private home database path is required');
   assert.equal(process.env.PLAN_TEST_MODE, '1');
@@ -61,10 +69,13 @@ export async function start_native_server() {
       'utf8',
     ),
   ) as ApplicationSchemaSeed;
-  const initial = createDatabaseFromSeed(path, seed, (tx) =>
-    bootstrap_application(tx, Math.floor(Date.now() / 1000)),
-  );
-  initial.close();
+  if (reopen_credential === undefined) {
+    const initial = createDatabaseFromSeed(path, seed, (tx) => {
+      bootstrap_application(tx, Math.floor(Date.now() / 1000));
+      seed_original_mac_rows(tx);
+    });
+    initial.close();
+  }
   let context!: ConversationCompositionContext;
   let core!: SqliteProcessConversationSystem;
   let registry!: VpsExecutorRegistry;
@@ -90,11 +101,9 @@ export async function start_native_server() {
         current,
         {
           registry: registry_of_factories(for_every_built_in_backend(() => local)),
-          host: unread_driver_host,
         },
         {
           drivers: [],
-          driver_host: () => unread_driver_host,
           http: () =>
             create_backend_runtime({
               database: current.database,
@@ -109,11 +118,19 @@ export async function start_native_server() {
       return core;
     },
     createBackendServices: () => bound.http,
-    createEnvironments: create_test_environment_runtime,
+    createEnvironments: options.create_environments ?? create_test_environment_runtime,
   });
   const endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
   assert.ok(endpoint);
-  const credential = issue_original_credential(context.database, randomUUID()).credential;
+  const credential =
+    reopen_credential ?? issue_original_credential(context.database, randomUUID()).credential;
+  if (options.platform)
+    context.database.write((tx) => {
+      tx.run('UPDATE machine_executor_credentials SET platform=? WHERE machine_id=?', [
+        options.platform!,
+        ORIGINAL_MAC_MACHINE_ID,
+      ]);
+    });
   return {
     address: server.address,
     context,
@@ -153,8 +170,10 @@ export async function start_native_server() {
         ),
       );
       assert.ok(identity);
-      assert.equal(JSON.parse(identity.identity_json).protocol_version, 26);
-      assert.equal(PROTOCOL_VERSION, 26);
+      assert.equal(
+        JSON.parse(identity.identity_json).protocol_version,
+        options.expected_protocol ?? PROTOCOL_VERSION,
+      );
       return endpoint.health_payload();
     },
     async create_turn(

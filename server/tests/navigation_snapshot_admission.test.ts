@@ -43,7 +43,7 @@ async function setup(asking = false) {
     tx.run(`INSERT INTO conversations
       (conversation_id,backend_key,model,workspace_folder,access,created_at)
       VALUES('actual','codex','fixture','/synthetic','full',0)`);
-    tx.run("INSERT INTO agents VALUES('chief_of_staff','actual')");
+    tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','actual')");
   });
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
   producer.bind_runtime(() =>

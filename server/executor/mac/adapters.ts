@@ -10,7 +10,7 @@ import { default_instance_id_for_driver } from '../../drivers/core/identity.ts';
 import type { BackendInstanceId, DriverKind } from '../../drivers/core/identity.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
-import type { AccountSkillHome } from '../../skills/account.ts';
+import type { AccountSkillHome } from './skills/legacy_server_links.ts';
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 import { expand_executor_path } from './platform.ts';
 
@@ -99,7 +99,9 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     executor: driver.executor,
     host: {
       environment,
-      panels_server_url: options.panels_server_url,
+      get panels_server_url() {
+        return options.panels_server_url;
+      },
       child_processes: options.child_processes,
       one_shot_children: options.one_shot_children,
       worker_supervision: options.worker_supervision,

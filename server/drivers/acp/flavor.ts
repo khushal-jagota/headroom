@@ -2,15 +2,7 @@
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import type { BackendCapabilities } from '../core/capabilities.ts';
 
-/**
- * What every child of the shared ACP base can do. It sets the model and reasoning effort through
- * session config options in a running session, and it has no steer: a steer is refused with
- * `backend_cannot_steer` and the message waits for the next prompt.
- */
-export const ACP_CHILD_CAPABILITIES: BackendCapabilities = {
-  sessions: { supportsModelSwitchInSession: true },
-  turns: { supportsActiveSteering: false },
-};
+export { ACP_CHILD_CAPABILITIES } from '../core/capabilities.ts';
 /** The agent's command and its own environment values. The base adds the shared rest. */
 export interface AcpLaunch {
   readonly argv: readonly string[];

@@ -3,12 +3,18 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Readable } from 'node:stream';
+import type { PreparedPreviewRoutes } from '../previews/routes.ts';
+import type { PreviewMachine } from '../previews/remote.ts';
+import { PreviewError } from '../previews/contracts.ts';
+import { read_server_location } from '../server_link/data.ts';
+import { SERVER_ID_HEADER, MOVE_NUMBER_HEADER } from '../server_link/contracts.ts';
 import type { Config } from '../core/config.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { sendFile } from '../core/http/static.ts';
 import { trusted_ingress_login } from '../core/http/middleware.ts';
+import { is_executor_link_connection } from '../core/http/executor_link.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { integer_text, decimal_digit } from '../core/python_integer.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
@@ -59,6 +65,7 @@ export interface ExecutorHttpServices {
   readonly config: Config;
   readonly database: Database;
   readonly registry: VpsExecutorRegistry | null;
+  readonly previews?: PreparedPreviewRoutes;
 }
 function header_map(request: IncomingMessage): Map<string, string[]> {
   const headers = new Map<string, string[]>();
@@ -68,10 +75,19 @@ function header_map(request: IncomingMessage): Map<string, string[]> {
   }
   return headers;
 }
-/** Credentials bind this claim to a destination after trusted ingress admission. */
+/**
+ * Credentials bind this claim to a destination after trusted ingress admission. Trusted
+ * ingress is the Tailscale login, or the local executor link in its place.
+ */
 export function executor_ingress_claim(raw: IncomingMessage, trusted_login: string | null): string {
-  if (!trusted_login) throw new ExecutorValidationError('trusted executor ingress is required');
   const headers = header_map(raw);
+  if (is_executor_link_connection(raw.socket)) {
+    if (headers.has('tailscale-user-login'))
+      throw new ExecutorValidationError(
+        'the local executor link does not accept a Tailscale login',
+      );
+  } else if (!trusted_login)
+    throw new ExecutorValidationError('trusted executor ingress is required');
   for (const [name, values] of headers)
     if (SINGLETON.has(name) && values.length !== 1)
       throw new ExecutorValidationError('duplicate executor security header is not allowed');
@@ -96,7 +112,7 @@ export function require_executor_ingress(
 function authenticated_machine(
   raw: IncomingMessage,
   trusted_login: string | null,
-  services: ExecutorHttpServices,
+  services: Pick<ExecutorHttpServices, 'config' | 'database'>,
 ): string {
   let claimed_id: string;
   try {
@@ -116,6 +132,22 @@ function authenticated_machine(
       { authenticated_platform: headers.get(PLATFORM)?.[0] ?? null },
     ),
   );
+}
+/** The update routes' admission: the machine credential, without a work incarnation. */
+export function authenticate_machine_request(
+  request: FastifyRequest,
+  services: Pick<ExecutorHttpServices, 'config' | 'database'>,
+): string {
+  try {
+    return authenticated_machine(
+      request.raw,
+      (request as FastifyRequest & { trustedLogin?: string }).trustedLogin ?? null,
+      services,
+    );
+  } catch (error) {
+    if (!(error instanceof PlannerError)) throw error;
+    throw new HttpError(403, error.message);
+  }
 }
 class BodyTooLarge extends PlannerError {
   constructor() {
@@ -250,6 +282,8 @@ async function input_response(reply: FastifyReply, file: InputFile): Promise<voi
   reply.hijack();
   const response = reply.raw;
   try {
+    for (const [name, value] of Object.entries(reply.getHeaders()))
+      if (value !== undefined) response.setHeader(name, value);
     response.writeHead(200, {
       'content-type': 'application/octet-stream',
       'content-length': String(file.byte_count),
@@ -327,6 +361,48 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           throw error;
         }
       };
+    app.get<{ Params: { secret_id: string } }>(
+      '/api/executor/backend-secrets/:secret_id',
+      work(async (request, reply) => {
+        const { endpoint } = await current_for(request);
+        const { secret_id } = request.params as { secret_id: string };
+        return reply.header('Cache-Control', 'no-store').send({
+          return_url: endpoint.backend_controls.take_secret(secret_id),
+        });
+      }),
+    );
+    if (services.previews)
+      app.post(
+        '/api/executor/previews',
+        work(async (request, reply) => {
+          const { endpoint, identity } = await current_for(request);
+          const command = decode(
+            await body(request, MAX_ENVELOPE_BYTES),
+            'JsonObject',
+            MAX_ENVELOPE_BYTES,
+          );
+          const child = decode_bounded(
+            Buffer.from(JSON.stringify(command.child)),
+            'ChildReference',
+          );
+          const ticket_id = endpoint.preview_ticket(identity, child);
+          const machine: PreviewMachine = {
+            machine_id: endpoint.machine_id,
+            incarnation: identity.executor_incarnation,
+            protocol: String(identity.protocol_version),
+            require_current: () => endpoint.check_preview_current(identity),
+          };
+          try {
+            return reply.send(
+              services.previews!.remote.command(ticket_id, machine, command.operation),
+            );
+          } catch (error) {
+            if (error instanceof PreviewError)
+              throw new HttpError(error.status_code, error.message);
+            throw error;
+          }
+        }),
+      );
     app.post(
       '/api/executor/credential',
       work(async (request, reply) => {
@@ -650,6 +726,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       return reply.send({ confirmed: report.phase === 'current' });
     });
     install_old_websocket_refusal(app, services);
+    if (services.previews) install_preview_websocket(app, services);
   };
 }
 function close_before_accept(socket: Duplex, refusal: { code: 1008; reason?: string }): void {
@@ -664,7 +741,8 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         config = services.config;
       let trusted_login: string | null = null;
       try {
-        trusted_login = trusted_ingress_login(config, headers, 'websocket');
+        if (!is_executor_link_connection(request.socket))
+          trusted_login = trusted_ingress_login(config, headers, 'websocket');
       } catch (error) {
         if (!(error instanceof PlannerError)) throw error;
         return close_before_accept(socket, { code: 1008, reason: error.message });
@@ -691,6 +769,55 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         socket.destroy();
       },
     );
+  };
+  app.server.on('upgrade', upgrade);
+  app.addHook('onClose', async () => {
+    app.server.off('upgrade', upgrade);
+  });
+}
+
+function install_preview_websocket(app: FastifyInstance, services: ExecutorHttpServices): void {
+  const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    const match = /^\/api\/executor\/previews\/([0-9a-f]{32})\/connect$/.exec(
+      (request.url ?? '').split('?')[0]!,
+    );
+    if (!match) return;
+    const operation = async () => {
+      const headers = header_map(request);
+      const trusted = is_executor_link_connection(request.socket)
+        ? null
+        : trusted_ingress_login(services.config, headers, 'websocket');
+      const machine_id = authenticated_machine(request, trusted, services);
+      const location = services.database.read((sql) => read_server_location(sql)!);
+      if (
+        location.state !== 'active' ||
+        request.headers[SERVER_ID_HEADER] !== location.server_id ||
+        request.headers[MOVE_NUMBER_HEADER] !== String(location.move_number)
+      )
+        throw new Error('Preview channel server authority is not current');
+      if (!services.registry) throw new Error('Executor registry unavailable');
+      const endpoint = await services.registry.ensure(machine_id);
+      const identity = endpoint.require_current({
+        incarnation_header: (request.headers[INCARNATION] as string) ?? null,
+        protocol_header: (request.headers[PROTOCOL] as string) ?? null,
+      });
+      services.previews!.remote.upgrade(
+        {
+          machine_id,
+          incarnation: identity.executor_incarnation,
+          protocol: String(identity.protocol_version),
+          require_current: () => endpoint.check_preview_current(identity),
+        },
+        match[1]!,
+        request,
+        socket,
+        head,
+      );
+    };
+    void (app.request_lifetime ? app.request_lifetime.run(operation) : operation()).catch(() => {
+      if (!socket.destroyed)
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    });
   };
   app.server.on('upgrade', upgrade);
   app.addHook('onClose', async () => {

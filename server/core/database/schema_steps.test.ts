@@ -263,19 +263,23 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0007_remove_tickets_blocks',
+      to_revision: 'ts_0011_remove_tickets_blocks',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
         'ts_0003_ticket_worker_setups',
         'ts_0004_drop_ideas',
         'ts_0005_client_versions',
-        'ts_0006_answer_receipt_index',
-        'ts_0007_remove_tickets_blocks',
+        'ts_0006_server_link',
+        'ts_0007_machine_backend_state',
+        'ts_0008_conversation_machine',
+        'ts_0009_work_moves',
+        'ts_0010_answer_receipt_index',
+        'ts_0011_remove_tickets_blocks',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0007_remove_tickets_blocks'],
+      revision: ['ts_0011_remove_tickets_blocks'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
@@ -387,7 +391,7 @@ it('removes nested Tickets blocks without changing other document data or exact 
   const expected =
     '{"blocks":[{"type":"section","id":"s","blocks":[{"type":"text","id":"t","text":"keep"}],"views":[{"id":"v","label":"V","blocks":[]}]}],"number":9007199254740993}';
   try {
-    db.prepare("UPDATE alembic_version SET version_num = 'ts_0006_answer_receipt_index'").run();
+    db.prepare("UPDATE alembic_version SET version_num = 'ts_0010_answer_receipt_index'").run();
     db.prepare(
       "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('project','Project',0,0)",
     ).run();

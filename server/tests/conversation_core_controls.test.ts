@@ -69,6 +69,56 @@ test('cleanup recheck refuses absent evidence and delegates only matching histor
     );
   save(lease);
   expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(true);
+  // Machine code registers its workspace, and every conversation has a custody row. Such a
+  // conversation holds no local process, so the recheck must not inspect it as one.
+  f.database.write((tx) => {
+    tx.run(
+      "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) VALUES('machine-run','codex','/','full',0)",
+    );
+    tx.run(
+      "INSERT INTO conversation_child_custody(conversation_id,generation,state) VALUES('machine-run','never-started','retired')",
+    );
+    tx.run(
+      "INSERT INTO ticket_workspace_conversations VALUES('machine-run',?,'machine-folder','workspace')",
+      [ticket.id],
+    );
+    tx.run(
+      "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES(?,'machine-child','machine-run','ticket',?,0)",
+      [lease.identity.executor_incarnation, ticket.id],
+    );
+  });
+  // Its turn runs on the machine. Inspected as a local process, it would block the recheck
+  // or have its idle Worker stopped.
+  const machine_run = f.core.conversation_state('machine-run')!;
+  machine_run.running_turn = {} as typeof machine_run.running_turn;
+  expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(true);
+  machine_run.running_turn = null;
+  // A conversation that the server ran before the switch and machine code resumed keeps its
+  // old record. The recheck must prove that record retired.
+  f.database.write((tx) => {
+    tx.run(
+      "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) VALUES('resumed-run','codex','/','full',0)",
+    );
+    tx.run(
+      "INSERT INTO conversation_child_custody(conversation_id,generation,state) VALUES('resumed-run','supervised-before-switch','started')",
+    );
+    tx.run(
+      "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES(?,'resumed-child','resumed-run','ticket',?,0)",
+      [lease.identity.executor_incarnation, ticket.id],
+    );
+    tx.run('UPDATE tickets SET conversation_id=? WHERE id=?', ['resumed-run', ticket.id]);
+  });
+  expect(await f.core.recheck_worker_cleanup(ticket.id)).toMatchObject({
+    complete: false,
+    reason: 'The server started a Worker here before the switch, and its end is not proven',
+  });
+  f.database.write((tx) => {
+    tx.run(
+      "UPDATE conversation_child_custody SET state='retired' WHERE conversation_id='resumed-run'",
+    );
+    tx.run('UPDATE tickets SET conversation_id=NULL WHERE id=?', [ticket.id]);
+  });
+  expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(true);
   const { cleanup_uncertainties: _evidence, ...missing } = lease;
   save(missing);
   expect(await f.core.recheck_worker_cleanup(ticket.id)).toMatchObject({

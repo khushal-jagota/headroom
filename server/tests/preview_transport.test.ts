@@ -2,6 +2,8 @@
  * Real Node parsers are required for early upgrade frames and cumulative headers.
  * The existing Linux browser case proves process ownership; these cases replace
  * only that service seam and reuse one small downstream host without a browser.
+ * The existing listener pair now crosses the machine relay: this protects HTTP parser
+ * and WebSocket behavior across the new stream boundary without another connected case.
  */
 import http from 'node:http';
 import net from 'node:net';
@@ -10,10 +12,16 @@ import type { AddressInfo } from 'node:net';
 import { expect, test, vi } from 'vitest';
 import { Deferred } from '../core/deferred.ts';
 import WebSocket, { WebSocketServer } from 'ws';
+import { PreviewRelay } from '../previews/relay.ts';
 import { PreviewTransport } from '../previews/transport.ts';
 import type { PreviewService } from '../previews/service.ts';
 import type { PreviewRecord } from '../previews/contracts.ts';
-import { HEADER_BYTES, REQUEST_BODY_BYTES, WEBSOCKET_MESSAGE_BYTES } from '../previews/config.ts';
+import {
+  HEADER_BYTES,
+  REQUEST_BODY_BYTES,
+  WEBSOCKET_MESSAGE_BYTES,
+  HTTP_IDLE_SECONDS,
+} from '../previews/config.ts';
 
 async function listen(server: net.Server): Promise<number> {
   server.listen(0, '127.0.0.1');
@@ -46,6 +54,8 @@ async function host(upstream_port: number) {
     created_at: 0,
     state: 'active',
     ended_reason: null,
+    machine_id: 'synthetic-machine',
+    target_port: upstream_port,
     process: {
       boot_id: 'synthetic-boot',
       pid: 1,
@@ -55,11 +65,25 @@ async function host(upstream_port: number) {
       worktree: '/synthetic/worktree',
     },
   };
+  let relay: PreviewRelay | undefined;
+  let machine: PreviewRelay | undefined;
   const service = {
+    remote: {
+      connect: async () => {
+        await service.before_connection(record);
+        const stream = await relay!.connect();
+        await service.after_connection(record, 0);
+        return stream;
+      },
+    },
     check: async () => record,
     before_connection: async () => {},
     after_connection: async () => {},
-  } as unknown as PreviewService;
+  } as unknown as PreviewService & {
+    // Test gates model the machine relay's asynchronous admission, not server process checks.
+    before_connection(record: PreviewRecord): Promise<void>;
+    after_connection(record: PreviewRecord, port: number): Promise<void>;
+  };
   const transport = new PreviewTransport(service);
   const pending = new Set<Promise<void>>();
   const run = (task: Promise<void>) => {
@@ -69,11 +93,36 @@ async function host(upstream_port: number) {
   const server = http.createServer((request, response) =>
     run(transport.http(request, response, record.ticket_id, record.generation)),
   );
-  server.on('upgrade', (request, socket, head) =>
-    run(transport.websocket(request, socket, head, record.ticket_id, record.generation)),
-  );
+  const relay_server = new WebSocketServer({
+    noServer: true,
+    maxPayload: 65540,
+    perMessageDeflate: false,
+  });
+  relay_server.on('connection', (socket) => {
+    relay = new PreviewRelay(socket);
+  });
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url === '/relay')
+      relay_server.handleUpgrade(request, socket, head, (ws) =>
+        relay_server.emit('connection', ws),
+      );
+    else run(transport.websocket(request, socket, head, record.ticket_id, record.generation));
+  });
   const stop_server = track_sockets(server);
   const port = await listen(server);
+  const channel = new WebSocket(`ws://127.0.0.1:${port}/relay`, {
+    perMessageDeflate: false,
+    maxPayload: 65540,
+  });
+  await once(channel, 'open');
+  machine = new PreviewRelay(channel, async (stream) => {
+    const socket = net.connect({ host: '127.0.0.1', port: upstream_port });
+    socket.on('error', () => stream.destroy());
+    socket.once('close', () => stream.destroy());
+    stream.once('close', () => socket.destroy());
+    await once(socket, 'connect');
+    socket.pipe(stream).pipe(socket);
+  });
   return {
     port,
     service,
@@ -81,6 +130,9 @@ async function host(upstream_port: number) {
     path: `/dev/tickets/${record.ticket_id}/${record.generation}/`,
     close: async () => {
       transport.close();
+      machine?.close();
+      relay?.close();
+      relay_server.close();
       await stop_server();
       await Promise.all(pending);
     },
@@ -119,9 +171,13 @@ function read_http(
 test('preserves upgrade frames and enforces raw header and transfer limits on one listener pair', async () => {
   const started = performance.now();
   let connections = 0;
+  const idle_started = new Deferred<void>();
   const upstream = http.createServer((request) => {
     const path = request.url!;
-    if (path.includes('/aggregate')) {
+    if (path.endsWith('/idle')) {
+      request.socket.write('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n');
+      idle_started.resolve();
+    } else if (path.includes('/aggregate')) {
       const padding = path.endsWith('/aggregate-whitespace')
         ? ' '.repeat(20_000) + 'a'
         : 'a'.repeat(20_000);
@@ -199,6 +255,31 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
       browser.send(Buffer.alloc(WEBSOCKET_MESSAGE_BYTES + 1));
     });
     expect(browser.readyState).toBe(WebSocket.CLOSED);
+    // The remote stream must retain the existing socket inactivity limit.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const headers_received = new Deferred<void>();
+      const original_check = downstream.service.check.bind(downstream.service);
+      let checks = 0;
+      const checked = vi.spyOn(downstream.service, 'check').mockImplementation(async (...args) => {
+        const record = await original_check(...args);
+        if (++checks === 2) headers_received.resolve();
+        return record;
+      });
+      const idle_request = read_http(downstream.port, downstream.path + 'idle').then(
+        (value) => ({ value, failed: false }),
+        () => ({ failed: true }),
+      );
+      await idle_started.promise;
+      await headers_received.promise;
+      checked.mockRestore();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(HTTP_IDLE_SECONDS * 1000 + 1);
+      expect((await idle_request).failed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
     // Distinct gap: generic HTTP draining does not cross preview's asynchronous
     // process verification. Reuse this same listener pair and actual relay.
     const verification_started = performance.now();
@@ -243,7 +324,7 @@ test('preserves upgrade frames and enforces raw header and transfer limits on on
         total_ms: performance.now() - started,
         listeners: 2,
         websocket_connections: 1,
-        http_requests: 7,
+        http_requests: 8,
         grace_verification_ms: grace_ms,
       }),
     );

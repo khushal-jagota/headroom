@@ -10,7 +10,8 @@ export function expiry_reason(
   const age = now_ms - command.created_at_vps_ms;
   if (command.model_list_request != null)
     return age >= MODEL_LIST_LIMIT_SECONDS * 1000 ? 'model_list_limit_passed' : null;
-  const child = command.child_command!;
+  const child = command.child_command;
+  if (child == null) return null;
   const status = (kind: string, identity: string) =>
     facts.find((fact) => fact.kind === kind && fact.identity === identity)?.status;
   if (child.operation === 'steer') {

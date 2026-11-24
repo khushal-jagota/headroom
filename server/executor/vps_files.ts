@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
-import { PRIVATE_TICKET_NAMES } from '../files/logic/paths.ts';
+import { PRIVATE_TICKET_NAMES, filesRoot } from '../files/logic/paths.ts';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import type { ConversationMessageFiles } from '../conversation/message_files.ts';
 import { MessageFileMissing } from '../conversation/record/message_files.ts';
@@ -79,6 +79,7 @@ export class FileStaging {
   readonly machine_id: string;
   readonly staging: string;
   private readonly tickets: string;
+  private readonly managers: string;
 
   constructor(db_path: string, machine_id = ORIGINAL_MAC_MACHINE_ID) {
     this.machine_id = machine_id;
@@ -88,7 +89,12 @@ export class FileStaging {
         ? join(root, 'executor-uploads')
         : join(root, 'executor-uploads', safe_component(machine_id));
     this.tickets = join(root, 'files', 'tickets');
+    this.managers = filesRoot(resolve_path_sync(db_path), 'manager');
   }
+  /**
+   * The served path of one file. A Ticket's path starts at its folder, outside the private
+   * worktree. A Manager's path starts inside its `artifacts/` folder.
+   */
   async file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
     safe_component(manifest.owner_id);
     if (
@@ -97,8 +103,13 @@ export class FileStaging {
       /[^0-9a-f]/.test(manifest.sha256)
     )
       throw new ExecutorValidationError('invalid file length or digest');
+    if (manifest.scope === 'manager')
+      return contained_path(
+        this.managers,
+        `${manifest.owner_id}/artifacts/${manifest.relative_path}`,
+      );
     if (manifest.scope !== 'ticket')
-      throw new ExecutorValidationError('Mac uploads must belong to a Ticket');
+      throw new ExecutorValidationError('Machine uploads must belong to a Ticket or a Manager');
     if (PRIVATE_TICKET_NAMES.has(manifest.relative_path.split('/')[0]!))
       throw new ExecutorValidationError('Ticket worktree is private');
     return contained_path(this.tickets, `${manifest.owner_id}/${manifest.relative_path}`);
@@ -270,15 +281,19 @@ export class VpsFiles {
       install: (source, signal) => this.inbox.store_upload(upload, source, { signal }),
     });
   }
-  private async ticket_file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
+  /** File sync sends only a Ticket's or a Manager's `artifacts/` folder. */
+  private async synced_file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
     const parts = manifest.relative_path.split('/');
-    if (parts[0] !== 'artifacts' || parts.length < 2)
+    if (manifest.scope === 'ticket' && (parts[0] !== 'artifacts' || parts.length < 2))
       throw new ExecutorValidationError('Only files in the artifacts folder transfer');
+    if (manifest.scope !== 'ticket' && manifest.scope !== 'manager')
+      throw new ExecutorValidationError('Only Ticket and Manager files transfer');
     return this.inbox.ticket_file_target(manifest);
   }
   /**
-   * File sync: one file version goes straight into the Ticket's served folder. It belongs to no
-   * conversation item. `authorize` proves that the Ticket belongs to the sending machine.
+   * File sync: one file version goes straight into its Ticket's or Manager's served folder. It
+   * belongs to no conversation item. `authorize` proves that the owner runs on the sending
+   * machine.
    */
   async save_ticket_file(
     sha256: string,
@@ -292,14 +307,14 @@ export class VpsFiles {
       hash_stream: false,
       authorize: async () => {
         authorize();
-        await this.ticket_file_target(manifest);
+        await this.synced_file_target(manifest);
       },
       install: async (source, signal) => {
         const [digest, count] = await this.hasher.digest(held_path(source));
         if (digest !== manifest.sha256 || count !== manifest.byte_count)
           throw new PlannerError('validation', 'upload is short or corrupt');
         check(signal);
-        const target = await this.ticket_file_target(manifest);
+        const target = await this.synced_file_target(manifest);
         try {
           const parent = await directory_descriptor(dirname(target), { create: true });
           try {
@@ -329,7 +344,7 @@ export class VpsFiles {
         authorize();
         let target: string;
         try {
-          target = await this.ticket_file_target(manifest);
+          target = await this.synced_file_target(manifest);
         } catch (error) {
           if (error instanceof ExecutorValidationError)
             throw new PlannerError('validation', error.message);
@@ -351,7 +366,10 @@ export class VpsFiles {
           await parent.close();
         }
         // A deleted folder must not stay behind as an empty one. `artifacts` itself stays.
-        const artifacts = target.slice(0, -manifest.relative_path.length) + 'artifacts';
+        const artifacts =
+          manifest.scope === 'manager'
+            ? target.slice(0, -manifest.relative_path.length - 1)
+            : target.slice(0, -manifest.relative_path.length) + 'artifacts';
         for (let folder = dirname(target); folder !== artifacts; folder = dirname(folder)) {
           const above = await directory_descriptor(dirname(folder));
           try {

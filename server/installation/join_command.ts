@@ -1,5 +1,6 @@
 /** One install command for Settings and the CLI; the credential stays outside the shell. */
 import { shell_quote } from '../conversation/worker_unit/logic.ts';
+import { RELEASE_REPOSITORY } from '../environments/release/source.ts';
 
 export function require_released_revision(revision: unknown): string {
   if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/.test(revision))
@@ -18,7 +19,7 @@ export function join_command(
     throw new Error('The home returned an invalid machine credential');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(machine_id))
     throw new Error('The home returned an invalid machine identity');
-  const route = `repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref=${revision}`;
+  const route = `repos/${RELEASE_REPOSITORY}/contents/scripts/panels_install.py?ref=${revision}`;
   const arguments_ = [
     'join',
     '--home',

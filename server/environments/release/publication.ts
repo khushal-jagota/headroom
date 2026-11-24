@@ -1,3 +1,4 @@
+import { LINUX_HOME } from './contracts.ts';
 /** Build, seal, and admit the actual Linux archive without publishing a receipt. */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
@@ -76,6 +77,7 @@ export async function build_linux_publication(
           requested_sha: requested,
           candidate_app: candidate,
           install_dependencies: true,
+          target: LINUX_HOME,
         },
         dependencies,
         execution,

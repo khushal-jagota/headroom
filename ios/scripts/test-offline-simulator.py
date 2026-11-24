@@ -23,6 +23,7 @@ DESIGN_REVIEW = os.environ.get("PANELS_DESIGN_REVIEW") == "1"
 ARTIFACT_LINKS_PROOF = os.environ.get("PANELS_ARTIFACT_LINKS_PROOF") == "1"
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
 REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
+UPDATES_SMOKE = os.environ.get("PANELS_UPDATES_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -413,6 +414,62 @@ def main() -> int:
         asks={},
         ask_answers=[],
     )
+    if UPDATES_SMOKE:
+        state.update(slow=False, update_phase="offer", update_retry_count=0, update_reads=0)
+
+    def update_status() -> dict[str, Any]:
+        # One-off native review data only. These are the existing update API fields.
+        phase = state.get("update_phase", "offer")
+        offer = phase in ("offer", "refused")
+        updating = phase in ("updating", "restart")
+        failed = phase == "failed"
+        snapshot = dict(stops_agents=True, agents=["Release reviewer"], machine_ids=["machine-active"])
+        def machine(identity: str, name: str, row_state: str, present: bool = True,
+                    attempt: str | None = None, retry: bool = False) -> dict[str, Any]:
+            return dict(machine_id=identity, name=name, platform="darwin-arm64", present=present,
+                        build_id="old-build", target_build_id="new-build", changed=row_state != "current",
+                        state=row_state, attempt_id=attempt, request_id="request-" + identity if attempt else None,
+                        detail="The machine kept its previous version." if row_state == "failed" else None,
+                        can_retry=retry)
+        retried = state["update_retry_count"] > 1
+        machines = [
+            machine("machine-active", "Office", "updating" if updating else "current", attempt="server-attempt" if updating else None),
+            machine("machine-away", "Travel", "waiting", present=False, attempt="previous-attempt"),
+            machine("machine-failed", "Studio", "updating" if retried else "failed", attempt="previous-attempt", retry=not retried),
+            machine("machine-current", "Home", "current"),
+            machine("machine-unavailable", "Workshop", "unavailable"),
+        ]
+        if phase == "complete":
+            # Nothing offered and every machine current: the review's "no offer" screenshot.
+            for row in machines:
+                row.update(present=True, changed=False, state="current", attempt_id=None,
+                           request_id=None, detail=None, can_retry=False)
+        available = copy.deepcopy(machines)
+        for row in available:
+            row.update(attempt_id=None, request_id=None, can_retry=False)
+            if row["machine_id"] == "machine-active": row["state"] = "available"
+        attempt = dict(attempt_id="server-attempt", from_sha="running-release", to_sha="offered-release",
+                       mode="now", state="installing" if updating else "failed" if failed else "done",
+                       detail="The server kept its previous version." if failed else None,
+                       deadline_at=state.get("update_deadline", "2099-01-01T00:00:00Z") if updating else None,
+                       interruption=snapshot)
+        return dict(
+            state="available" if offer else "updating" if updating else "failed" if failed else "up_to_date",
+            allowed_actions=["update"] if offer else ["retry"] if failed else [],
+            activity="busy", available=dict(app_sha="offered-release", compatibility=dict(
+                ios=dict(minimum_build=10), desktop_shell=dict(minimum_bridge_version=3),
+                machine=dict(minimum_protocol_version=3, maximum_protocol_version=5), outbox_format=2
+            )) if offer else None,
+            attempt=attempt, app_sha="running-release", detail=attempt["detail"],
+            deadline_at=attempt["deadline_at"], mac_details=None,
+            machines=machines, available_machines=available if offer else [],
+            # Progress must use the retained press snapshot, not a later candidate.
+            interruption=snapshot if offer else dict(stops_agents=False, agents=[], machine_ids=[]),
+            client_versions=[dict(kind="ios", device_id="review-phone", version="0.1", build=9),
+                dict(kind="desktop", device_id="review-desktop", version="1", bridge_version=2),
+                dict(kind="machine", device_id="machine-unavailable", version="1", protocol_version=2, outbox_format=1)]
+        )
+
     if REVIEW_QUEUE:
         state["asks"] = {
             "ask-question": dict(
@@ -1145,6 +1202,23 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if UPDATES_SMOKE and name.startswith("updates/"):
+                    phase = name.removeprefix("updates/")
+                    if phase not in ("offer", "updating", "restart", "failed", "refused", "complete"):
+                        self.respond({"error": "Unknown update fixture phase"}, 400)
+                        return
+                    with lock:
+                        state["update_phase"] = phase
+                        if phase == "restart":
+                            state["update_deadline"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 15))
+                        else:
+                            state.pop("update_deadline", None)
+                    self.respond({"phase": phase})
+                    return
+                if UPDATES_SMOKE and name == "update-state":
+                    self.respond(dict(phase=state["update_phase"], reads=state["update_reads"],
+                                      retry_count=state["update_retry_count"], writes=state["writes"]))
+                    return
                 if DESIGN_REVIEW and name == "workspace-fixture":
                     with lock:
                         select_workspace_fixture()
@@ -1745,6 +1819,15 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/skills":
+                # Settings' Config section reads the managed skills, as the server's
+                # read_skills_home returns them.
+                value = {
+                    "skills": [
+                        {"name": "panels-manager", "description": "Supervise one Manager.", "markdown_body": ""},
+                        {"name": "panels-worker", "description": "Working a Panels ticket.", "markdown_body": ""},
+                    ]
+                }
             elif path == "/api/managers/review-manager/workspace-content":
                 manager = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
                 value = {"goal": manager["goal"], "recap": manager["recap"]}
@@ -1756,6 +1839,10 @@ def main() -> int:
                 value["manager"]["conversation_id"] = "stub"
             elif path == "/api/chief/conversation":
                 value = {"conversation_id": state["chief_conversation"]}
+            elif UPDATES_SMOKE and path == "/api/updates":
+                with lock:
+                    state["update_reads"] += 1
+                    value = update_status()
             elif path == "/api/deployment-status":
                 value = {"state": "idle"}
             elif path.endswith("/manifest"):
@@ -1906,7 +1993,28 @@ def main() -> int:
                         state["dropped"].append({"kind": kind, "id": attempt})
                         self.drop_connection()
                         return
-                if GOALS_SMOKE and path == "/api/measures/words/manual-writes":
+                if UPDATES_SMOKE and path.startswith("/api/updates/"):
+                    state["writes"].append(dict(path=path, body=body,
+                        app_sha=self.headers.get("X-Panels-App-SHA"),
+                        native_build=self.headers.get("X-Panels-iOS-Build"),
+                        client_identity=self.headers.get("X-Panels-Client")))
+                    (output / "operations.json").write_text(json.dumps(state["writes"]))
+                    if path == "/api/updates/attempts/previous-attempt/machines/machine-failed/retry":
+                        state["update_retry_count"] += 1
+                        if state["update_retry_count"] == 1:
+                            self.respond(dict(error=dict(message="This machine update changed. Read the status and try again.")), 409)
+                            return
+                        value = dict(attempt=update_status()["attempt"], machine=update_status()["machines"][2])
+                    elif path in ("/api/updates/install", "/api/updates/attempts/server-attempt/retry"):
+                        if state["update_phase"] == "refused":
+                            self.respond(dict(error=dict(message="This update changed. Read the status and try again.")), 409)
+                            return
+                        state["update_phase"] = "updating"
+                        value = dict(attempt=update_status()["attempt"])
+                    else:
+                        self.respond(dict(error=dict(message="Unexpected update target")), 409)
+                        return
+                elif GOALS_SMOKE and path == "/api/measures/words/manual-writes":
                     identity = body["request_id"]
                     if identity in manual_receipts:
                         self.respond(manual_receipts[identity])
@@ -2091,7 +2199,9 @@ def main() -> int:
     env["TEST_RUNNER_PANELS_REVIEW_SPLIT"] = os.environ.get("PANELS_REVIEW_SPLIT", "0")
     env["TEST_RUNNER_PANELS_REVIEW_QUEUE"] = "1" if REVIEW_QUEUE else "0"
     control = None
-    if REACHABILITY_SMOKE:
+    # The update review drops the listener during an expected restart, as the reachability
+    # review does, so PANELS_UPDATES_SMOKE=1 starts the same connection control.
+    if REACHABILITY_SMOKE or UPDATES_SMOKE:
         port = server.server_port
 
         class ConnectionControl(http.server.BaseHTTPRequestHandler):

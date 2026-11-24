@@ -1,4 +1,7 @@
-/** Exact durable custody remains readable after the live child handle disappears. */
+import { legacy_direct_identity_matches } from './logic/legacy_agent_identity.ts';
+/** One-release retirement of historical direct children. Starts no agent.
+ * Delete after every home runs one start of this release.
+ */
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -174,6 +177,8 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
         // Historical Mac custody has no process handle. An operator must stop a survivor.
         if (!current.host.startsWith('linux:')) return false;
         const process = this.#process(identity);
+        const observed = (await primitives.snapshot(deadline)).get(identity.pid);
+        if (!legacy_direct_identity_matches({ ...identity, host }, current, observed)) return false;
         await primitives.signal(process, 15, deadline);
         const term_deadline = Math.min(
           deadline,

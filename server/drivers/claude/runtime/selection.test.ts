@@ -1,7 +1,7 @@
 /** Claude's selection rule, the only proof of it now that the adapter no longer throws. */
 import { expect, it } from 'vitest';
 import type { BackendSelection } from '../../core/selection.ts';
-import { claude_selection_transition } from './selection.ts';
+import { claude_selection_transition } from '../models.ts';
 
 const session_capabilities = {
   sessions: { supportsModelSwitchInSession: false },

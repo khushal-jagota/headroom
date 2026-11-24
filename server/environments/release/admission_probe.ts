@@ -1,4 +1,4 @@
-/** Trusted probe source. Candidate package and worker code runs with the host user's rights. */
+/** Trusted probe source. Candidate package and worker code runs with the build user’s rights. */
 import { GLIBC_LIBRARIES } from '../updates/logic/runtime_contract.ts';
 import { SYSTEM_LIBRARY_DIRECTORIES } from './native/configuration.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
@@ -47,7 +47,8 @@ const date = new Intl.DateTimeFormat('en-US', {
   year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC',
 }).format(new Date(0));
 assert.equal(date, '01/01/1970');
-const host_node = realpathSync(process.execPath);
+const bundled_node = realpathSync(process.execPath);
+assert(path_is_within(root, bundled_node), 'Node executable must be inside candidate');
 const loaded = () => {
   const names = system === 'darwin' ? process.report.getReport().sharedObjects
     : readFileSync('/proc/self/maps', 'utf8').split('\n')
@@ -57,10 +58,8 @@ const loaded = () => {
   assert(Array.isArray(names) && names.every(path => typeof path === 'string' && path.startsWith('/')));
   // The dyld cache can supply system images without an individual on-disk file.
   return [...new Set(names.map(path => system_library(resolve(path)) ? resolve(path) : realpathSync(path))
-    .filter(path => path !== host_node))].sort();
+    .filter(path => path !== bundled_node))].sort();
 };
-// All trusted host-only operations precede this baseline. No candidate module ran yet.
-const baseline = new Set(loaded());
 const worker = realpathSync(join(root, 'server/conversation/usage/usageWorker.ts'));
 assert(path_is_within(root, worker) && statSync(worker).isFile(), 'usage worker must be a candidate regular file');
 const require = createRequire(join(root, 'server/package.json'));
@@ -118,8 +117,8 @@ const loaded_libraries = loaded();
 for (const path of loaded_libraries) {
   // Native addons are candidate payloads, never glibc or a permitted host baseline addon.
   if (path.endsWith('.node')) assert(path_is_within(root, path), 'addon loaded outside candidate: ' + path);
-  else assert(baseline.has(path) || path_is_within(root, path) || system_library(path) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
-    'new library loaded outside candidate: ' + path);
+  else assert(path_is_within(root, path) || system_library(path) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
+    'library loaded outside candidate: ' + path);
 }
 assert(loaded_libraries.some((path) => path.endsWith('.node') && path_is_within(root, path)),
   'native addon loads are absent from the library map');

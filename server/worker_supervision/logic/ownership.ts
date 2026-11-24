@@ -106,3 +106,24 @@ export function discover(
     (a, b) => a.pid - b.pid || (a.birth < b.birth ? -1 : a.birth > b.birth ? 1 : 0),
   );
 }
+
+/** Retirement scope includes orphaned members of an exact isolated session. */
+export function retirement_process_scope(
+  record: WorkerProcessRecord,
+  observation: ProcessObservation,
+  owns_sessions: boolean,
+): WorkerProcess[] {
+  const found = discover(record, observation);
+  const known = new Set(found.map((process) => `${process.pid}:${process.birth}`));
+  const root = record.root;
+  if (root != null && record.isolated && root.session === root.pid) {
+    const leader = observation.stable.get(root.pid);
+    if ((!leader || leader.birth === root.birth) && owns_sessions)
+      for (const process of observation.sessions.get(root.session) ?? [])
+        if (!process.zombie && !known.has(`${process.pid}:${process.birth}`)) {
+          found.push(process);
+          known.add(`${process.pid}:${process.birth}`);
+        }
+  }
+  return found;
+}

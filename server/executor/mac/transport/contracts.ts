@@ -1,6 +1,7 @@
 /** HTTP custody ports. Wire values remain with the generated shared contract. */
 import type { ConnectionOptions } from 'node:tls';
 import type { IncomingMessage } from 'node:http';
+import type { ServerLinkAdmission } from '../../../server_link/contracts.ts';
 import type { MacHttpConnectorSettings } from '../configuration.ts';
 
 export type MacLoop = 'lease' | 'poll' | 'outcomes' | 'items' | 'downloads' | 'reads' | 'live';
@@ -17,6 +18,7 @@ export interface HttpRequest {
   readonly signal?: AbortSignal;
 }
 export interface MacHttpOptions {
+  readonly server_link?: ServerLinkAdmission;
   readonly tls?: Pick<ConnectionOptions, 'ca' | 'cert' | 'key' | 'servername'>;
 }
 export type ReplyReader<T> = (response: IncomingMessage) => Promise<T>;

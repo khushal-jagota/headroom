@@ -42,7 +42,7 @@ export function authenticate_executor(
     'SELECT credential_sha256,legacy_closed_at_ms,platform FROM machine_executor_credentials WHERE machine_id=?',
     [machine_id],
   );
-  if (!row || machine_id === HOME_MACHINE_ID) throw forbidden();
+  if (!row) throw forbidden();
   if (credential !== null) {
     if (!matches(row.credential_sha256, credential)) throw forbidden();
     const platform = options.authenticated_platform ?? null;
@@ -183,11 +183,22 @@ export function register_machine(
   return issue(tx, machine_id, null);
 }
 
+/** The server's own machine takes the home identity, so its Tickets keep their rows. */
+export function issue_home_machine_credential(
+  tx: TransactionSql,
+  platform: unknown,
+): MachineCredentialGrant {
+  require_platform(platform);
+  tx.run(
+    'INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
+    [HOME_MACHINE_ID, platform],
+  );
+  return issue(tx, HOME_MACHINE_ID, null);
+}
+
 export function replace_credential(tx: TransactionSql, machine_id: string): MachineCredentialGrant {
-  if (
-    machine_id === HOME_MACHINE_ID ||
-    !tx.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [machine_id])
-  )
+  if (machine_id === HOME_MACHINE_ID) return issue_home_machine_credential(tx, process.platform);
+  if (!tx.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [machine_id]))
     throw new PlannerError('validation', 'Machine has no executor credential');
   return issue(tx, machine_id, null);
 }

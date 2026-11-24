@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 /** Gap: a transient domain refusal must roll back without sealing an executor receipt.
  * Reuse the Ticket database and real inbox savepoint; file publication is outside this case.
  */
@@ -28,7 +29,7 @@ test('send-back commits once with its receipt and a retry-later leaves no effect
   const identity: ExecutorIdentity = {
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
     application_revision: 'test',
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     connection_generation: 0,
   };
@@ -125,7 +126,7 @@ test('a duplicate reads its committed receipt while new work still waits for the
   const identity: ExecutorIdentity = {
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
     application_revision: 'test',
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     connection_generation: 0,
   };

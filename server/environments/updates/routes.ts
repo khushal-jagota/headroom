@@ -3,17 +3,19 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { requireOwner } from '../../core/authority/identity.ts';
 import { HttpError } from '../../core/http/errors.ts';
+import { list_client_versions } from '../../client_versions/data.ts';
 import { UpdateConflict } from './attempts.ts';
 import { is_object } from './codec.ts';
-import type { UpdateAttempt } from './contracts.ts';
+import type { UpdateAttempt, UpdateAttemptView, UpdateInterruption } from './contracts.ts';
 import type { UpdateService } from './service.ts';
 
 export interface UpdateMacReads {
   health_payload(): Record<string, unknown> | null;
   status(): Promise<unknown | null>;
 }
-export function attempt_body(attempt: UpdateAttempt): Record<string, unknown> {
+export function attempt_body(attempt: UpdateAttempt): UpdateAttemptView {
   return {
+    interruption: (attempt.extra.interruption as UpdateInterruption | undefined) ?? null,
     attempt_id: attempt.attempt_id,
     from_sha: attempt.from_sha,
     to_sha: attempt.to_sha,
@@ -67,6 +69,7 @@ export function create_update_routes(
       const mac_details = health === null ? null : { ...health, update: await mac.status() };
       return {
         ...result,
+        client_versions: services.database.read(list_client_versions),
         allowed_actions: [...result.allowed_actions],
         available:
           result.available === null
@@ -100,6 +103,22 @@ export function create_update_routes(
       async (request) => {
         requireOwner(services.identity(request));
         return act(() => service.retry(request.params.attempt_id));
+      },
+    );
+    app.post<{ Params: { attempt_id: string; machine_id: string } }>(
+      '/updates/attempts/:attempt_id/machines/:machine_id/retry',
+      async (request) => {
+        requireOwner(services.identity(request));
+        try {
+          const result = service.retry_machine(
+            request.params.machine_id,
+            request.params.attempt_id,
+          );
+          return { attempt: attempt_body(result.attempt), machine: result.machine };
+        } catch (error) {
+          if (error instanceof UpdateConflict) throw new HttpError(409, error.message);
+          throw error;
+        }
       },
     );
     app.post<{ Params: { attempt_id: string } }>(

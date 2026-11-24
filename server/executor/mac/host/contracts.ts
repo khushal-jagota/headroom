@@ -57,6 +57,7 @@ export interface MacHostBindings {
     adapters: MacAdapterHost,
     invocation: MacInvocation,
     on_failure: (error: Error) => void,
+    client: MacHttpClient,
   ): MacCatalog;
   updates(context: MacHostContext): MacHostUpdates;
   client?(
@@ -69,6 +70,7 @@ export interface MacHostBindings {
 export interface MacHostOptions {
   readonly paths: ExecutorPaths;
   readonly revision: string;
+  readonly build_id?: string;
   readonly executor_id: string;
   readonly panels_server_url: string;
   readonly identity?: ExecutorIdentity;
