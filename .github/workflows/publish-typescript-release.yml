@@ -477,9 +477,30 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
+      - name: Bind the successful qualification to the tested merge tree
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
+          jq -n --arg tree "$tree" --argjson pr "$PR" --arg head "$HEAD" \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            '{tree:$tree, pr:$pr, head:$head, run:$run, attempt:$attempt}' > "$RUNNER_TEMP/qualified.json"
+      - name: Preserve the successful PR receipt
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: qualified-merge-tree-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualified.json
+          if-no-files-found: error
+          retention-days: 30
 
   receipt:
     permissions:
+      pull-requests: read
       contents: write
       actions: read
     needs: [linux, mac, linux-executor, machine-compatibility, release-gate]
@@ -495,6 +516,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - name: Require the tested main PR tree before permanent publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 server/environments/release/testing/check_promotion.py
       - name: Expose the selected host runtimes in the fixed command PATH
         run: |
           set -euo pipefail

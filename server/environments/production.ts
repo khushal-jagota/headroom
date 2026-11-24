@@ -80,19 +80,42 @@ export const create_production_environment_operations: ProductionEnvironmentFact
   signal.throwIfAborted();
   const repository = update_repository_configuration(environment, dirname(context.config.db_path));
 
-  if (service_unit && context.config.app_sha && !context.config.test_mode && !installer_test_mode(environment)) {
+  if (
+    service_unit &&
+    context.config.app_sha &&
+    !context.config.test_mode &&
+    !installer_test_mode(environment)
+  ) {
     const { installed_update_root } = await import('./updates/service.ts');
-    const root = await installed_update_root(context.config.app_sha, application_root, context.config.db_path, service_unit);
+    const root = await installed_update_root(
+      context.config.app_sha,
+      application_root,
+      context.config.db_path,
+      service_unit,
+    );
     if (root) {
       const { FileUpdateAttemptStore, attempt_path } = await import('./updates/attempts.ts');
       const data = join(root, 'data');
       const store = new FileUpdateAttemptStore(attempt_path(data), () => {});
       const attempt = store.read() ?? store.import_legacy_request(data, context.config.app_sha);
-      if (attempt && (attempt.state === 'installing' || attempt.state === 'done') && attempt.to_sha === context.config.app_sha) {
+      if (
+        attempt &&
+        (attempt.state === 'installing' || attempt.state === 'done') &&
+        attempt.to_sha === context.config.app_sha
+      ) {
         const { ensure_upgrade_machine } = await import('../installation/upgrade_machine.ts');
         const { production_home_dependencies } = await import('../installation/production.ts');
-        await ensure_upgrade_machine(root, service_unit, context.config.port, attempt.to_sha, context.database,
-          await production_home_dependencies({child_processes:context.child_processes, signal, deadline:null}, environment));
+        await ensure_upgrade_machine(
+          root,
+          service_unit,
+          context.config.port,
+          attempt.to_sha,
+          context.database,
+          await production_home_dependencies(
+            { child_processes: context.child_processes, signal, deadline: null },
+            environment,
+          ),
+        );
       }
     }
   }

@@ -20,7 +20,13 @@ import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
 export type UpdateExperienceState =
-  'up_to_date' | 'check_unavailable' | 'available' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
+  | 'up_to_date'
+  | 'check_unavailable'
+  | 'available'
+  | 'updating'
+  | 'failed'
+  | 'mac_failed'
+  | 'mac_unreachable';
 export type UpdateAction = 'update' | 'retry' | 'retry_mac';
 
 export interface RuntimePlatform {

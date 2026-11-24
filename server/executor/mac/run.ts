@@ -38,9 +38,11 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
   }
   const runtime = mac_runtime_settings(invocation.environment);
   if (runtime.child) {
-    if (process.platform === 'darwin' && runtime.ready_path !== null) {
-      const { admit_launcher } = await import('./runtime/launcher_trial.ts');
-      await admit_launcher(paths.root, applicationRootFromEnvironment(invocation.environment));
+    if (process.platform === 'darwin') {
+      const { admit_launcher, enter_signed_runtime } = await import('./runtime/launcher_trial.ts');
+      if (runtime.ready_path !== null)
+        await admit_launcher(paths.root, applicationRootFromEnvironment(invocation.environment));
+      enter_signed_runtime(paths.root, invocation.environment);
     }
     let build_id: string | undefined;
     try {

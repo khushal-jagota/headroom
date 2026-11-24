@@ -11,7 +11,7 @@ import {
   SEED_STATEMENT_QUERY,
 } from '../../core/database/index.ts';
 import { require_schema_revision } from '../../core/database/admission.ts';
-import { BASELINE_SEED, probe_step } from '../../core/database/schema_steps/testing/steps.ts';
+import { BASELINE_SEED } from '../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { UpdateBarrier } from '../update_barrier.ts';
 import { recover_interrupted_install } from './interrupted_install.ts';
@@ -79,7 +79,7 @@ async function killed_install(point: string) {
         database,
         app_root: join(root, 'app'),
         app_sha,
-          }),
+      }),
   };
 }
 const installed_sha = (root: string): unknown =>
@@ -144,9 +144,7 @@ it('a kill before the swap changes nothing, during or after the snapshot too', a
   // The previous app stays in place on its untouched database, and recovery leaves it.
   for (const point of ['before_swap', 'snapshot_unrecorded', 'snapshot_recorded']) {
     const killed = await killed_install(point);
-    const digest = () =>
-      createHash('sha256').update(readFileSync(killed.database)).digest('hex') +
-      readFileSync(join(killed.root, 'data/update-attempt.json'), 'utf8');
+    const digest = () => createHash('sha256').update(readFileSync(killed.database)).digest('hex');
     try {
       assert.equal(record(killed.root).steps.app_swapped, undefined);
       assert.equal(
@@ -158,6 +156,8 @@ it('a kill before the swap changes nothing, during or after the snapshot too', a
       assert.equal(installed_sha(killed.root), FROM);
       assert(existsSync(join(killed.root, '.app-next-' + TO)));
       assert.equal(digest(), before);
+      assert.equal(record(killed.root).state, 'failed');
+      assert(!existsSync(join(killed.root, 'data/update-barrier.json')));
       require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
     } finally {
       rmSync(killed.root, { recursive: true, force: true });

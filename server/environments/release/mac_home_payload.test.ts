@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, lstatSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  lstatSync,
+  existsSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +19,13 @@ import { migration_frontier, read_migration_graph } from './migrations.ts';
 
 it('composes the Mac home from the selected files and schema frontier', async () => {
   const root = mkdtempSync(join(tmpdir(), 'panels-mac-payload-'));
-  const owner = new ChildProcesses(), controller = new AbortController();
-  const execution = {child_processes:owner, signal:controller.signal, deadline:performance.now()/1000+10};
+  const owner = new ChildProcesses(),
+    controller = new AbortController();
+  const execution = {
+    child_processes: owner,
+    signal: controller.signal,
+    deadline: performance.now() / 1000 + 10,
+  };
   try {
     const checkout = fileURLToPath(new URL('../../../', import.meta.url));
     const payload = join(root, 'payload'),
@@ -94,6 +107,6 @@ it('composes the Mac home from the selected files and schema frontier', async ()
     owner.seal();
     controller.abort();
     await owner.settled();
-    rmSync(root, {recursive:true,force:true});
+    rmSync(root, { recursive: true, force: true });
   }
 }, 15000);

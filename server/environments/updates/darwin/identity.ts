@@ -73,6 +73,7 @@ export function read_home_identity(root: string, service: string, uid: number): 
   const selected = value.installer_node;
   if (typeof selected !== 'string') throw new Error('Mac installation Node is invalid');
   const installer_node = home_node(root, selected);
-  if (installer_node !== selected && selected !== join(root, 'app/node/bin/node')) throw new Error('Mac installation Node must be canonical');
+  if (installer_node !== selected && selected !== join(root, 'app/node/bin/node'))
+    throw new Error('Mac installation Node must be canonical');
   return { version: 2, uid, root, label, domain, home_plist, backup_plist, installer_node };
 }

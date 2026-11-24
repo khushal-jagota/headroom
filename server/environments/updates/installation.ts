@@ -46,9 +46,14 @@ export function create_installer_operations(inputs: {
       assert_installer_health_url(options.health_url, environment);
       if (realpathSync(inputs.application_root) !== selected_release(options.current_root))
         throw new AppValidationError('The running home differs from the installation to update');
-      const manifest = JSON.parse(readFileSync(join(inputs.application_root, 'manifest.json'), 'utf8'));
+      const manifest = JSON.parse(
+        readFileSync(join(inputs.application_root, 'manifest.json'), 'utf8'),
+      );
       const runtime = pin_existing(options.current_root, manifest.app_sha);
-      const directory = join(options.data_directory, 'update-installer-' + installer_attempt_id(options.attempt_id));
+      const directory = join(
+        options.data_directory,
+        'update-installer-' + installer_attempt_id(options.attempt_id),
+      );
       mkdirSync(directory, { mode: 0o700 });
       const request = join(directory, 'request.json');
       const node = join(runtime, 'node/bin/node');

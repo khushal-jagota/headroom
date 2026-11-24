@@ -75,19 +75,35 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       response.end();
     });
     try {
-      await page.getByRole('button', { name: 'Update', exact: true }).first().click();
+      const started = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/updates/install',
+      );
+      await page
+        .locator('[data-shell-status]')
+        .getByRole('button', { name: 'Update', exact: true })
+        .click();
+      const confirm = page.getByRole('dialog').getByRole('button', { name: 'Update', exact: true });
+      if (await confirm.isVisible()) await confirm.click();
+      const accepted = await started;
+      assert.equal(accepted.ok(), true, await accepted.text());
+      assert.equal((await accepted.json()).attempt.to_sha, candidate);
       await wait_for(
         () =>
           new Promise<boolean>((done, reject) => {
+            const listening = () => {
+              fault.off('error', busy);
+              done(true);
+            };
             const busy = (error: NodeJS.ErrnoException) => {
+              fault.off('listening', listening);
               if (error.code === 'EADDRINUSE') done(false);
               else reject(error);
             };
             fault.once('error', busy);
-            fault.listen(o.port, '127.0.0.1', () => {
-              fault.removeListener('error', busy);
-              done(true);
-            });
+            fault.once('listening', listening);
+            fault.listen(o.port, '127.0.0.1');
           }),
         'injecting failure on candidate bind',
       );
@@ -105,6 +121,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     }, 'waiting for previous version after rollback');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     await turn();
+    const rolledBackAttempt = (await read_status()).attempt.attempt_id;
     await page.goto(url);
     await page
       .getByRole('button', { name: /retry|try again/i })
@@ -112,6 +129,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       .click();
     await wait_for(async () => {
       const status = await read_status();
+      if (status?.attempt?.attempt_id === rolledBackAttempt) return false;
       if (status?.attempt?.state === 'failed') throw new Error(status.attempt.detail);
       return (
         status?.app_sha === candidate &&

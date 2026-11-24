@@ -18,9 +18,14 @@ function matches(verifier: string | null, credential: string): boolean {
   return stored.length === supplied.length && timingSafeEqual(stored, supplied);
 }
 /** Trial authentication cannot enroll a machine or change its saved platform. */
-export function verify_enrolled_executor(sql: ReadSql, machine_id: string, credential: string): void {
+export function verify_enrolled_executor(
+  sql: ReadSql,
+  machine_id: string,
+  credential: string,
+): void {
   const row = sql.get<{ credential_sha256: string | null }>(
-    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?', [machine_id],
+    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
+    [machine_id],
   );
   if (!row || !matches(row.credential_sha256, credential)) throw forbidden();
 }
@@ -204,17 +209,25 @@ export function issue_home_machine_credential(
 }
 
 /** Recovering the first enrollment never rotates a previously issued machine secret. */
-export function enroll_missing_home_machine(tx: TransactionSql, platform: string, credential: string): void {
+export function enroll_missing_home_machine(
+  tx: TransactionSql,
+  platform: string,
+  credential: string,
+): void {
   require_platform(platform);
   if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid home machine credential');
-  const existing = tx.get<{credential_sha256: string | null}>(
-    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?', [HOME_MACHINE_ID]);
+  const existing = tx.get<{ credential_sha256: string | null }>(
+    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
+    [HOME_MACHINE_ID],
+  );
   if (existing?.credential_sha256) {
     verify_enrolled_executor(tx, HOME_MACHINE_ID, credential);
     return;
   }
-  tx.run('INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
-    [HOME_MACHINE_ID, platform]);
+  tx.run(
+    'INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
+    [HOME_MACHINE_ID, platform],
+  );
   issue(tx, HOME_MACHINE_ID, null, credential);
 }
 

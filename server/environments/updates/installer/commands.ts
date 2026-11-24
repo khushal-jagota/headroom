@@ -199,9 +199,16 @@ export function create_installer_effects(
       const attempt = new InstallationRecord(request).read();
       const pinned = release_path(request.current_root, String(attempt.from_sha));
       // The startup bridge may still use the predecessor's detached installer copy.
-      const previous_copy = join(request.data_directory, 'update-installer-' + request.attempt_id, 'runtime');
-      if (![pinned, previous_copy].some(root =>
-        realpathSync(request.node_executable) === join(root, 'node/bin/node')))
+      const previous_copy = join(
+        request.data_directory,
+        'update-installer-' + request.attempt_id,
+        'runtime',
+      );
+      if (
+        ![pinned, previous_copy].some(
+          (root) => realpathSync(request.node_executable) === join(root, 'node/bin/node'),
+        )
+      )
         throw new AppValidationError('Installer Node differs from the retained installation');
       return service;
     }));

@@ -1,4 +1,4 @@
-/** Fixed external installer entry. Copy independence is a later packaging gate. */
+/** Fixed external installer entry. Runs from the retained release. */
 import { readFileSync, writeSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -103,7 +103,10 @@ async function main(): Promise<0 | 1 | 2> {
       detail = `The update stopped unexpectedly (${original.name}: ${original.message}).`;
     if (request) {
       try {
-        new InstallationRecord(request).record('failed', 'failed', detail);
+        const record = new InstallationRecord(request);
+        const current = record.read();
+        if (current.attempt_id === request.attempt_id && current.state === 'installing')
+          record.record('rollback_failed', 'failed', detail);
       } catch (failure) {
         stderr(`Could not record the failed update: ${error_detail(failure).message}\n`);
       }

@@ -159,8 +159,7 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
 });
 
 it('stores the install decision before opening writes', async () => {
-  // Final-row parity cannot prove the release point. The installer releases after the
-  // health result, before its healthy record and terminal state on both paths.
+  // Observe the on-disk barrier at the instant the installer records its decision.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
   const original = InstallationRecord.prototype.record;
   try {
@@ -194,7 +193,8 @@ it('stores the install decision before opening writes', async () => {
         detail,
       ) {
         if (step === 'healthy' || step === 'rollback_healthy') healthy_recorded = true;
-        if (step === 'healthy') assert(existsSync(barrier.path), 'new writes before commit');
+        if (state === 'done' || state === 'failed')
+          assert(existsSync(barrier.path), 'new writes before commit');
         original.call(this, step, state, detail);
         if (state === 'done' || state === 'failed') writes.push(state);
       });

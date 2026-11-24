@@ -12,6 +12,7 @@ import { digest_machine_build } from '../../../environments/release/machine_iden
 import { run_release_command } from '../../../environments/release/process.ts';
 import { atomic_write_json } from '../../../environments/updates/attempts.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { copy_environment } from '../../../core/environment.ts';
 import { WORKER_LAUNCHER_MODE } from '../../../platform_runtime/darwin/launchd/configuration.ts';
 import { MAC_RUNTIME_READY_TIMEOUT_SECONDS } from '../configuration.ts';
 import { MAC_RUNTIME_LAUNCHER_APP, mac_installation_paths, plist } from '../platform.ts';
@@ -90,6 +91,31 @@ async function probe(app: string) {
   ]);
   if (result.stdout.trim() !== 'panels-worker-ready')
     throw new Error('The installed Mac app did not start a Worker.');
+}
+
+/** Preserve the supervisor's tracked PID across the handoff: exec the installed
+ * requester in its signed Worker mode, which starts this exact Node and forwards
+ * signals. The older launchd job can remain loaded while the new runtime and all
+ * its work start under the new signed application. */
+export function enter_signed_runtime(root: string, environment: Readonly<NodeJS.ProcessEnv>): void {
+  const installed = mac_installation_paths(userInfo().homedir);
+  if (root !== installed.state || environment.PANELS_MACHINE_REQUESTER_PID === String(process.ppid))
+    return;
+  if (!process.execve)
+    throw new Error('The bundled Node cannot start the signed machine requester.');
+  const env = copy_environment(environment);
+  env.PANELS_MACHINE_REQUESTER_PID = String(process.pid);
+  process.execve(
+    installed.app_executable,
+    [
+      installed.app_executable,
+      WORKER_LAUNCHER_MODE,
+      process.execPath,
+      ...process.execArgv,
+      ...process.argv.slice(1),
+    ],
+    env,
+  );
 }
 
 /** Called by the candidate, before it opens the machine connection. */

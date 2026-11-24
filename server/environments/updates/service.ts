@@ -460,8 +460,12 @@ export class UpdateService {
       this.options.changes.emit();
     }
     const attempt = status.attempt;
-    if (attempt?.state === 'preparing' && this.advancing === null &&
-        !this.options.runtime.conversation()?.has_pending_update_sends()) this.launch();
+    if (
+      attempt?.state === 'preparing' &&
+      this.advancing === null &&
+      !this.options.runtime.conversation()?.has_pending_update_sends()
+    )
+      this.launch();
     return attempt !== null && states('preparing', 'installing').has(attempt.state);
   }
   private launch(): void {
@@ -519,7 +523,8 @@ export class UpdateService {
       // Pending steps need a snapshot. A Mac home takes one on every trial.
       // The installer takes it after it stops the service, when no writer remains.
       const snapshot_required = steps_pending || this.options.installer.requires_snapshot === true;
-      if (snapshot_required) await require_snapshot_space(this.options.database, this.options.backup_directory);
+      if (snapshot_required)
+        await require_snapshot_space(this.options.database, this.options.backup_directory);
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
       if (this.options.runtime.conversation()?.has_pending_update_sends()) return;
       const command = this.options.installer.prepare({

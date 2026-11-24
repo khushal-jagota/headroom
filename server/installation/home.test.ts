@@ -507,6 +507,10 @@ test('shared health requires exact ready identity for homes while retaining the 
     assert.equal(await healthy(url, sha, 0, signal, {}, true, 'unattributed'), true);
     assert.equal(actors.at(-1), 'unattributed');
     assert(actors.slice(0, -1).every((actor) => actor === undefined));
+    body = { app_sha: sha, ready: true, prepared_attempt_id: 'previous' };
+    assert.equal(await healthy(url, sha, 0, signal, {}, false, undefined, 'current'), false);
+    body = { app_sha: sha, ready: true, prepared_attempt_id: 'current' };
+    assert.equal(await healthy(url, sha, 0, signal, {}, false, undefined, 'current'), true);
   } finally {
     await new Promise<void>((done, fail) =>
       server.close((error) => (error ? fail(error) : done())),
@@ -516,3 +520,26 @@ test('shared health requires exact ready identity for homes while retaining the 
     );
   }
 });
+
+test('a slowly streaming health response cannot extend the trial deadline', async () => {
+  const server = http_server((_request, response) => {
+    const tick = setInterval(() => response.write(' '), 10);
+    response.once('close', () => clearInterval(tick));
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    assert.equal(
+      await healthy(
+        `http://127.0.0.1:${address.port}/api/health`,
+        'a'.repeat(40),
+        0.15,
+        new AbortController().signal,
+      ),
+      false,
+    );
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+}, 3000);
