@@ -1,3 +1,4 @@
+import { fixture } from '../../../tests/ticket_fixture.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { expect, test, vi } from 'vitest';
@@ -123,7 +124,7 @@ test('runtime shutdown joins the production catalog owner before reporting envir
   let operation: Promise<unknown> | undefined;
   let stopping: Promise<void> | undefined;
   try {
-    const database = {} as Database;
+    const database = fixture();
     const providers = production_providers(children, database);
     const runtime = create_backend_runtime({
       database,
