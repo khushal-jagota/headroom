@@ -182,23 +182,33 @@ export type TranscriptRow =
 
 const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
-  model_resolution_failed: "the selected model could not be resolved",
+  model_resolution_failed: "the selected model is unavailable",
   backend_rejected_prompt: "the provider rejected this prompt",
-  backend_did_not_start: "the backend did not start",
-  session_did_not_load: "the backend's session would not load",
-  write_to_backend_failed: "the write to the backend did not succeed",
+  backend_did_not_start: "the agent did not start",
+  session_did_not_load: "the agent could not open the conversation",
+  write_to_backend_failed: "the agent did not receive it",
   no_running_turn_to_steer_into: "there was no running turn to steer into",
-  backend_cannot_steer: "this backend cannot take text into a running turn",
+  backend_cannot_steer: "this agent cannot take a message during a turn",
   running_turn_changed_before_steer: "the running turn changed before delivery",
   running_turn_cannot_accept_steer: "the running turn cannot accept steering",
   message_cannot_be_steered: "this message content cannot be steered",
-  backend_rejected_steer: "the backend rejected steering for this turn",
+  backend_rejected_steer: "the agent did not accept the message during this turn",
   command_cannot_join_running_turn: "a command cannot join a turn that is already running",
   remote_steer_not_delivered: "the machine did not take this steer in time"
 };
 
+/** Legacy browser drafts can still hold a full failure label and the older reason. */
+export function messageNotDelivered(reason: string): string {
+  const plain = reason.trim().replace(/^(?:not delivered\b[\s·:.]*)+/i, "").trim()
+    .replace(/^the write to the backend did not succeed[.!]?$/i, "The agent did not receive it")
+    .replace(/^the backend did not start[.!]?$/i, "The agent did not start");
+  if (!plain) return "Not delivered. The agent did not receive it.";
+  const sentence = plain.charAt(0).toUpperCase() + plain.slice(1);
+  return `Not delivered. ${sentence}${/[.!?]$/.test(sentence) ? "" : "."}`;
+}
+
 export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: string | null): string {
-  return detail?.trim() || REFUSAL_SENTENCES[reason] || "the delivery was impossible";
+  return detail?.trim() || REFUSAL_SENTENCES[reason] || "the agent could not receive the message";
 }
 
 /** What a message that was taken back before anything received it says about itself. The
@@ -300,7 +310,7 @@ export function turnEndingStatus(
  *  names, without its lead-in and its full stop. */
 export function statusReason(status: Pick<TranscriptStatus, "title" | "brief">): string {
   const said = (status.brief ?? status.title)
-    .replace(/^Not delivered:\s*/, "")
+    .replace(/^Not delivered[.:]\s*/, "")
     .replace(/^The turn stopped because\s*/, "")
     .replace(/^of\s+/, "")
     .trim()
@@ -371,10 +381,10 @@ export function promptOutcomeStatus(
       ? { tone: "warning", title: "The agent did not confirm receipt.", detail: null }
       : { tone: "neutral", title: "Discarded without being delivered", detail: null };
   }
-  const plain = REFUSAL_SENTENCES[row.reason] ?? "the delivery was impossible";
+  const plain = REFUSAL_SENTENCES[row.reason] ?? "the agent could not receive the message";
   return {
     tone: "error",
-    title: `Not delivered: ${plain}.`,
+    title: messageNotDelivered(plain),
     detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null,
     next: (resendable ? RESEND_NEXT_STEPS[row.reason] : undefined) ?? REFUSAL_NEXT_STEPS[row.reason] ?? null,
     // Where the next step names another model, the callout offers it as a control.

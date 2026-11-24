@@ -11,7 +11,7 @@
   import TranscriptStatusRow from './conversation/TranscriptStatusRow.svelte';
   import { attachmentByteLabel } from './conversation/composer/attachments';
   import type { PendingAttachment } from '../lib/conversation/videoUploads/contracts';
-  import type { TranscriptStatus } from '../lib/conversation/transcript';
+  import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
 
   let { composer, onEdit, busy = false }: {
@@ -52,9 +52,10 @@
       : attempt.status === 'uploading' ? 'Uploading…'
       : attempt.status === 'waiting' ? 'Waiting to send…'
       : 'Sending…');
+    const failed = attempt.status === 'failed' || attempt.status === 'upload-failed';
     return {
-      title, detail: null,
-      tone: attempt.status === 'failed' || attempt.status === 'upload-failed' ? 'error'
+      title: failed ? messageNotDelivered(attempt.note ?? "") : title, detail: null,
+      tone: failed ? 'error'
         : attempt.status === 'connection-failed' || attempt.status === 'uncertain' ? 'warning' : 'neutral'
     };
   }

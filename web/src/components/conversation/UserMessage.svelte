@@ -7,7 +7,7 @@
   import DetailsChevron from './DetailsChevron.svelte';
   import QueuedMessageActions from './composer/QueuedMessageActions.svelte';
   import { displayedOutgoingContent, editableHeldWords, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from '../../lib/conversation/transcriptOutgoing';
-  import { promptLabelFor, promptOutcomeStatus, statusReason, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
+  import { promptLabelFor, promptOutcomeStatus, messageNotDelivered, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
   import { openComposerModelPicker } from '../../lib/conversation/modelPicker';
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
@@ -145,7 +145,7 @@
 {#snippet undeliveredFooter()}
   {#if undelivered}
     <div class="c2-undelivered" role="alert" data-conversation-message-status="error">
-      <p class="c2-undelivered-reason" data-conversation-status-next>Not delivered<span aria-hidden="true">{" · "}</span>{statusReason(undelivered)}</p>
+      <p class="c2-undelivered-reason" data-conversation-status-next>{messageNotDelivered(undelivered.brief ?? undelivered.title)}</p>
       {#if (offersResend && !resent) || localFailed || offersEdit || undelivered.action === 'choose-model' || undelivered.detail}
         <div class="c2-undelivered-actions">
           {#if offersResend && !resent && !edited}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Try again." : "Send this message again"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
@@ -237,8 +237,7 @@
     overflow: hidden;
   }
 
-  /* Not delivered: inside the bubble, under the words, a 1px rule 10 below them, "Not delivered ·
-     <reason>" 10 under the rule in the failure red, then one row of text actions. */
+  /* Keep the failure sentence and its actions beneath the message. */
   .c2-undelivered {
     margin-block-start: 10px;
     padding-block-start: 10px;

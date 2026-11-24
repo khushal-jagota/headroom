@@ -206,7 +206,7 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
   await field.fill(failed);
   await send.click();
   const failure = transcript.locator('[data-conversation-outgoing]').filter({ hasText: failed });
-  await expect(failure).toContainText('Not delivered');
+  await expect(failure.locator('[data-conversation-status-next]')).toHaveText('Not delivered. The agent did not receive it.');
   await expect(failure.getByRole('button', { name: 'Try Again' })).toBeVisible();
   await expect(failure.getByRole('button', { name: 'Edit' })).toBeVisible();
   await captureSuccess(page, 'ticket-failed-send.png');
