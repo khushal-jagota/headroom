@@ -19,6 +19,7 @@ interface Options {
   machine_id: string;
   joined_state: string;
   predecessor: string;
+  verify_rollback?(): Promise<void>;
 }
 
 async function wait_for(read: () => Promise<boolean>, description: string, poll_ms = 500) {
@@ -144,6 +145,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       const status = await read_status();
       return status?.attempt?.state === 'failed' && status.app_sha === o.predecessor;
     }, 'waiting for previous version after rollback');
+    await o.verify_rollback?.();
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const preserved = { ...before, model: 'TEST' };
     await verify_smoke_history(url, preserved);

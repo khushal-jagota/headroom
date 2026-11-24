@@ -17,6 +17,7 @@ import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { accepted_lease } from '../../environments/linux_executor/logic/lease.ts';
 import { executor_link_socket_path } from '../../core/http/executor_link.ts';
 import { mac_installation_paths } from '../../executor/mac/platform.ts';
+import { installed_mac_launcher } from '../../environments/release/testing/installed_mac_launcher.ts';
 import { qualify_installed_upgrade } from '../../environments/release/testing/installed_upgrade.ts';
 import { write_default_backend_peer } from '../../tools/smoke/codex_peer.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
@@ -124,7 +125,10 @@ const report: Record<string, unknown> = {
   boundary:
     'Real sealed candidate archives, the Python bootstrap, native service managers, first machine local socket, and second machine credential enrollment on the same clean runner account.',
   exclusions:
-    'No provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
+    'No provider login, physical sleep or macOS permission consent. The installed qualification uses a local release feed.',
+  ...(system === 'darwin'
+    ? { launcher_signature: qualifying ? process.env.MAC_LAUNCHER_QUALIFICATION : 'ad-hoc' }
+    : {}),
   phases_seconds: phases,
 };
 const run = async (
@@ -365,6 +369,7 @@ try {
   report.service_pids = pids;
   if (qualifying) {
     await Promise.all([rm(archive), rm(machine_archive)]);
+    const launcher = system === 'darwin' ? await installed_mac_launcher(base, mac) : undefined;
     await qualify_installed_upgrade({
       base,
       port,
@@ -372,7 +377,9 @@ try {
       machine_id: named[0].machine_id,
       joined_state,
       predecessor: revision,
+      verify_rollback: launcher?.verify_rollback,
     });
+    await launcher?.verify_current();
   }
   if (system === 'darwin') {
     // The requested screenshot uses the real installed package on this existing
