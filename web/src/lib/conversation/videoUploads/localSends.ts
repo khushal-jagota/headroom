@@ -6,11 +6,15 @@ export type PendingComposerSend = {
   context: ComposerSendContext;
   attempt: ComposerSendAttempt;
   mode: PromptDeliveryMode;
+  sentAtUnixMilliseconds?: number;
+  restored?: boolean;
   phase: "waiting" | "dispatching" | "failed" | "interrupted";
   error?: string;
   needsReconciliation?: boolean;
+  needsReattachment?: boolean;
 };
 const PREFIX = "panels:composer-local-sends:";
+const REATTACH_NOTE = "Some attachments could not be saved. Select them again before sending.";
 
 export function pendingSendContent(entry: PendingComposerSend): SentMessagePiece[] {
   const pieces: SentMessagePiece[] = entry.attempt.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload");
@@ -69,7 +73,8 @@ export function rememberLocalSends(key: string, entries: readonly PendingCompose
     // video references, with an explicit attachment recovery state, rather than lose text.
     try {
       const compact = entries.map(entry => ({...entry, phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
-        error: "Some attachments could not be saved. Select them again before sending.",
+        needsReattachment: entry.needsReattachment || entry.attempt.content.some(piece => piece.piece === "image" || piece.piece === "file"),
+        error: REATTACH_NOTE,
         attempt: {...entry.attempt, content: entry.attempt.content.filter(piece => piece.piece === "text" || piece.piece === "video_upload" || piece.piece === "attachment_upload"),
           draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingImages: [], pendingFiles: [],
             attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind === "video")}}}));
@@ -84,12 +89,17 @@ export function recallLocalSends(key: string): PendingComposerSend[] {
     return entries.filter((entry): entry is PendingComposerSend => Boolean(entry && typeof entry === "object"
       && typeof entry.context?.messageId === "string" && entry.attempt?.draftBeforeSend
       && typeof entry.attempt.draftBeforeSend.text === "string" && Array.isArray(entry.attempt.content)))
-      .map(entry => ({...entry, attempt: {...entry.attempt, draftBeforeSend: {...entry.attempt.draftBeforeSend,
-        pendingVideos: (entry.attempt.draftBeforeSend.pendingVideos ?? []).map(video => ({...video,
-          phase: video.phase === "ready" ? "ready" : "interrupted", file: undefined,
-          error: video.phase === "ready" ? undefined : "Select the file again, then press Send."}))}}, phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
-        needsReconciliation: entry.phase === "dispatching" || entry.needsReconciliation,
-        error: "Return this message to the composer, select an interrupted file again, then press Send."}));
+      .map(entry => {
+        const needsReattachment = entry.needsReattachment || entry.error === REATTACH_NOTE;
+        return {...entry, attempt: {...entry.attempt, draftBeforeSend: {...entry.attempt.draftBeforeSend,
+          pendingVideos: (entry.attempt.draftBeforeSend.pendingVideos ?? []).map(video => ({...video,
+            phase: video.phase === "ready" ? "ready" : "interrupted", file: undefined,
+            error: video.phase === "ready" ? undefined : "Select the file again, then press Send."}))}},
+          phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
+          needsReconciliation: entry.phase === "dispatching" || entry.needsReconciliation,
+          needsReattachment,
+          error: needsReattachment ? REATTACH_NOTE : "This message was kept in the browser. Try again or edit it before sending."};
+      });
   } catch { return []; }
 }
 export function rememberDraftVideo(key: string, videos: readonly import("./contracts").PendingVideo[]): void {

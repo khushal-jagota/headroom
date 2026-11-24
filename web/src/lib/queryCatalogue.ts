@@ -6,7 +6,8 @@ import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import { USAGE_SCAN_LIMIT_MS } from "./requestLimit/config";
-import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
+import type { ConversationStartValues } from "./conversation/wire";
+import { backendQuery } from "./conversation/backendQuery";
 import { readUsageLimits, usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
 import type { DriversResponse } from "./drivers/contracts";
@@ -71,14 +72,9 @@ export const queries = {
     queryKey: ["drivers"], queryFn: readDrivers, staleTime: Infinity, retry: false,
     meta: { followsChangeStream: false }
   }),
-  backends: (refresh = false) => queryOptions<BackendSnapshot[]>({
-    queryKey: ["backends"], queryFn: () => readBackends(refresh), staleTime: Infinity, retry: false
-  }),
-  ticketBackends: (ticketId: string, context: readonly unknown[] = [], refresh = false) => queryOptions<BackendSnapshot[]>({
-    queryKey: ["ticket", ticketId, "backends", ...context],
-    queryFn: () => readScopedBackends({ticket_id: ticketId}, refresh),
-    staleTime: Infinity, retry: false
-  }),
+  backends: (refresh = false) => backendQuery(["backends"], undefined, refresh),
+  ticketBackends: (ticketId: string, context: readonly unknown[] = [], refresh = false) =>
+    backendQuery(["ticket", ticketId, "backends", ...context], ticketId, refresh),
   executorHealth: (machineId = ORIGINAL_MAC_MACHINE_ID) => ({
     ...jsonQuery<ExecutorHealth>(["executor-health", machineId],
       `/api/executor/health?machine_id=${encodeURIComponent(machineId)}`),

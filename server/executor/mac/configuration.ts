@@ -85,9 +85,7 @@ export const EXECUTOR_CHILD_ID_ENV = 'PLAN_EXECUTOR_CHILD_ID';
 export const EXECUTOR_CAPABILITY_ENV = 'PLAN_EXECUTOR_CAPABILITY';
 export const NATIVE_SKILLS_DIR_ENV = 'PLAN_NATIVE_SKILLS_DIR';
 export const NATIVE_WORKER_CONTEXT =
-  'For native execution, if PLAN_NATIVE_SKILLS_DIR exists, start with ' +
-  'PLAN_NATIVE_SKILLS_DIR/panels/SKILL.md and read subsequent skill layers from ' +
-  'that same root. If PLAN_TICKET_FILES_DIR exists, it supersedes all VPS-local ' +
+  'If PLAN_TICKET_FILES_DIR exists, it supersedes all VPS-local ' +
   'Ticket artifact write paths in the skills. Write Ticket artifacts beneath ' +
   'PLAN_TICKET_FILES_DIR. Keep served /files/tickets/<ticket-id>/<relative-path> ' +
   'links in Ticket fields.';

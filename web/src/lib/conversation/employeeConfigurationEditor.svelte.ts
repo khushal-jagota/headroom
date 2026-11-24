@@ -4,7 +4,7 @@ import { queries } from "../queryCatalogue";
 import { queryClient } from "../queryClient";
 import type { EmployeeConfigurationSnapshot } from "../types";
 import { resolveModelPicker } from "./modelPicker";
-import { type BackendSnapshot, type ConversationBackendKey } from "./wire";
+import { type ConversationBackendKey } from "./wire";
 
 /** Instance-local selection and persistence shared by Ticket setup and launch defaults. */
 export function createEmployeeConfigurationEditor(
@@ -74,7 +74,6 @@ export function createEmployeeConfigurationEditor(
   return {
     get selected() { return selected; },
     get backends() { return backends; },
-    set backends(value: readonly BackendSnapshot[]) { if (!disposed) queryClient.setQueryData(read().queryKey, [...value]); },
     get snapshot() { return snapshot; },
     get picker() { return picker; },
     get loading() { return catalogue.isFetching; },

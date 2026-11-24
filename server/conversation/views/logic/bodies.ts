@@ -74,6 +74,7 @@ export function in_focus(payload: ConversationEventPayload, owner_label = 'owner
       return payload.ending !== 'completed';
     // A command reply answers a command the person typed, so it stays with the prompt
     // that asked for it. effects.ts and the browser's lens read this same rule.
+    case 'agent_turn_started':
     case 'command_reply':
     case 'credential_request':
     case 'permission_asked':
@@ -109,6 +110,21 @@ export function row_body(
   switch (source.kind) {
     case 'credential_request':
       return settlement?.kind === 'credential_request' ? settlement.request : source.request;
+    case 'agent_turn_started':
+      return { kind: source.kind, reason: source.reason };
+    case 'background_task_started':
+      return {
+        kind: source.kind,
+        task_id: source.task_id,
+        task_description: source.task_description,
+      };
+    case 'background_task_ended':
+      return {
+        kind: source.kind,
+        task_id: source.task_id,
+        task_description: source.task_description,
+        task_status: source.task_status,
+      };
     case 'prompt':
       return {
         kind: 'prompt',

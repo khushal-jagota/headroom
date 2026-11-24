@@ -53,3 +53,16 @@ test('protocol increase never permits update-channel or lease-offer restrictions
   expect(() => check_machine_wire(before, candidate, 1)).toThrow('channel root');
   expect(() => check_machine_wire(before, before, 2)).toThrow('version 1');
 });
+
+// A new event stays behind peer capability negotiation. Widening its enum keeps every old message valid.
+test('a gated event enum can widen at the same protocol but cannot lose old values', () => {
+  const before = schema(),
+    candidate = schema();
+  Object.assign(before.$defs, { Method: { type: 'string', enum: ['prompt', 'turn_ended'] } });
+  Object.assign(candidate.$defs, {
+    Method: { type: 'string', enum: ['prompt', 'turn_ended', 'agent_turn_started'] },
+  });
+  expect(() => check_machine_wire(before, candidate, 1)).not.toThrow();
+  Object.assign(candidate.$defs, { Method: { type: 'string', enum: ['agent_turn_started'] } });
+  expect(() => check_machine_wire(before, candidate, 1)).toThrow('protocol increase');
+});

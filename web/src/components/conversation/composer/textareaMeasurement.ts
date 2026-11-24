@@ -32,7 +32,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
 
   return {
     input,
-    measure(style: CSSStyleDeclaration) {
+    measure(style: CSSStyleDeclaration, text: string = input.value) {
       mirror.className = input.className;
       mirror.wrap = input.wrap;
       for (const property of measurementProperties) {
@@ -40,7 +40,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
       }
       // A native textarea counts trailing newlines itself. No sentinel character
       // changes wrapping at the right edge of a full line.
-      mirror.value = input.value;
+      mirror.value = text;
       mirror.style.height = "0px";
       mirror.style.overflowY = "hidden";
       const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
@@ -53,7 +53,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
       });
       mirror.value = "";
       const baseline = calculate().height;
-      mirror.value = input.value;
+      mirror.value = text;
       let size = calculate();
       if (size.overflowY === "auto") {
         // A capped textarea can acquire a scrollbar and wrap more narrowly. Read

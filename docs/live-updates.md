@@ -37,6 +37,8 @@ These rules hold for all three channels.
 
 Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab reads nothing, and its return runs one revision check. A dropped connection shows Reconnecting on the shell status, and the reconnect runs the check. Drafts and outgoing messages live outside the cache, so a re-read never overwrites what the person types. A sent message that got no answer says so on its bubble and offers to send the same words again.
 
+Model pickers follow revisions of their saved source facts for the selected machine. A revision check calls no machine. A picker body and its revision come from the same saved state, so its own read cannot cause repeated refreshes. [Usage](usage.md) describes discovery and explicit Refresh.
+
 The server looks for navigation index changes on a short timer, so the rail can follow a write by a moment. The conversation tail does not wait for the change signal.
 
 A few writers commit quietly on purpose: skill history, and conversation rows that only an open pane reads, which that pane already receives through its tail.
@@ -71,4 +73,4 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 - `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._

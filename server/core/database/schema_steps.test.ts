@@ -263,7 +263,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0013_work_move_operations',
+      to_revision: 'ts_0014_work_move_operations',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -277,11 +277,12 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0010_answer_receipt_index',
         'ts_0011_remove_tickets_blocks',
         'ts_0012_empty_attachments',
-        'ts_0013_work_move_operations',
+        'ts_0013_owner_send_receipts',
+        'ts_0014_work_move_operations',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0013_work_move_operations'],
+      revision: ['ts_0014_work_move_operations'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
@@ -389,7 +390,10 @@ it('step 1 refuses before writing on any baseline difference but the recorded li
 // which a fresh seed cannot prove. Reuse the existing full-chain SQLite fixture.
 it('the empty-attachment step preserves every upload field and only relaxes the byte minimum', () => {
   const path = baseline_database();
-  const old_steps = SCHEMA_STEPS.slice(0, -1);
+  const old_steps = SCHEMA_STEPS.slice(
+    0,
+    SCHEMA_STEPS.findIndex((step) => step.revision === 'ts_0012_empty_attachments'),
+  );
   applySchemaSteps(path, old_steps, {
     head_revision: old_steps.at(-1)!.revision,
     expected_statements: null,
@@ -447,10 +451,9 @@ it('the empty-attachment step preserves every upload field and only relaxes the 
 
 it('removes nested Tickets blocks without changing other document data or exact integers', () => {
   const path = baseline_database();
-  const old_steps = SCHEMA_STEPS.filter(
-    (step) =>
-      SCHEMA_STEPS.indexOf(step) <
-      SCHEMA_STEPS.findIndex((candidate) => candidate.revision === 'ts_0011_remove_tickets_blocks'),
+  const old_steps = SCHEMA_STEPS.slice(
+    0,
+    SCHEMA_STEPS.findIndex((step) => step.revision === 'ts_0011_remove_tickets_blocks'),
   );
   applySchemaSteps(path, old_steps, {
     head_revision: old_steps.at(-1)!.revision,

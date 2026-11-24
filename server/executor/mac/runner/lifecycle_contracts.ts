@@ -43,6 +43,11 @@ export interface MacEventsDependencies {
   readonly state: MacChildStateContract;
   readonly sources: MacSourceWorkContract;
   readonly publication: MacOutputPublication;
+  readonly supports_agent_turns?: () => boolean;
+  readonly confirm_agent_turn?: (
+    submission_id: string,
+    signal: AbortSignal,
+  ) => Promise<import('../../wire.generated.ts').AcceptanceReceipt | null>;
   readonly live: MacLiveEvents | null;
 }
 export interface MacRunnerEventsContract {
@@ -85,6 +90,8 @@ export interface MacRunnerOptions {
   readonly cleanup: CleanupReconciliationDependencies;
   readonly journal: MacCommandDependencies['journal'];
   readonly outbox: OutboxStore;
+  readonly supports_agent_turns?: MacEventsDependencies['supports_agent_turns'];
+  readonly confirm_agent_turn?: MacEventsDependencies['confirm_agent_turn'];
   readonly inputs: MacCommandDependencies['inputs'];
   readonly live: MacLiveEvents | null;
   readonly now_ms: MacCommandDependencies['now_ms'];

@@ -219,6 +219,22 @@ export function conversation_event_payload_from_canonical_json(
 ): E.ConversationEventPayload {
   const stored = object(JSON.parse(payload_json), `${kind} payload is not a JSON object`);
   switch (kind) {
+    case 'agent_turn_started':
+      return new E.AgentTurnStartedEventPayload({
+        reason: text(stored, 'reason'),
+        turn_number: optionalNumber(stored, 'turn_number', true)!,
+      });
+    case 'background_task_started':
+      return new E.BackgroundTaskStartedEventPayload({
+        task_id: text(stored, 'task_id'),
+        task_description: text(stored, 'task_description'),
+      });
+    case 'background_task_ended':
+      return new E.BackgroundTaskEndedEventPayload({
+        task_id: text(stored, 'task_id'),
+        task_description: text(stored, 'task_description'),
+        task_status: text(stored, 'task_status'),
+      });
     case 'prompt':
       return new E.PromptEventPayload({
         ...promptFields(stored),
@@ -436,6 +452,16 @@ export function conversation_event_payload_json_object(
   payload: E.ConversationEventPayload,
 ): ObjectValue {
   switch (payload.kind) {
+    case 'agent_turn_started':
+      return { reason: payload.reason, turn_number: payload.turn_number };
+    case 'background_task_started':
+      return { task_id: payload.task_id, task_description: payload.task_description };
+    case 'background_task_ended':
+      return {
+        task_id: payload.task_id,
+        task_description: payload.task_description,
+        task_status: payload.task_status,
+      };
     case 'credential_request':
       return { request: payload.request };
     case 'prompt':

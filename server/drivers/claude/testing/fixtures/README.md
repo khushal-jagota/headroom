@@ -1,0 +1,7 @@
+`background-handback.recorded.json` contains real inbound stream-json frames from Claude Code 2.1.322 through Agent SDK 0.3.316. The capture ran on November 24, 2026, with the installed Claude login and Haiku. The existing replay capture tee observed the real adapter and CLI in a private temporary workspace.
+
+The prompt requested one background Agent, a `sleep 20` command in that Agent, an immediate `SPAWNED` reply, and a subsequent `echo NOTICE_RECEIVED` after the hand-back. Frames start at the first background task snapshot and end at the autonomous result. Only the Panels prompt UUID and private filesystem paths were replaced. Session IDs and task IDs remain recorded values.
+
+The sequence includes a nested Bash task notification before the root Agent notification. The root result uses `origin.kind: peer` with a hand-back, rather than `task-notification`. The driver therefore identifies the start from a notification for a tracked root background task and preserves the existing result UUID ownership rule.
+
+The adapter test reuses its existing injected client. This adds no browser host or backend connection to the test suite. It protects the gap where background completion after a prompted turn lost tools, text, usage, and the final turn ending. It also checks that a nested task notice does not start a parent turn. The focused adapter suite costs about two seconds including startup.

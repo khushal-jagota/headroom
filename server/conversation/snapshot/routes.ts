@@ -1,3 +1,5 @@
+import { resource_epoch } from '../../resource_versions/epoch.ts';
+import { BackendPickerResources, backend_resource_key } from './resource_versions.ts';
 import { decode_machine_update } from './machine.ts';
 import { decode_machine_usage } from '../backend_usage/machine.ts';
 import { read_machine } from '../../machines/data.ts';
@@ -52,6 +54,7 @@ async function machine_cards(
   machine_id: string,
   snapshots: readonly BackendSnapshot[],
   signal?: AbortSignal,
+  force = false,
 ) {
   if (runtime.machine_backends === undefined)
     return snapshots.map((snapshot) => home_card(runtime, snapshot));
@@ -62,7 +65,13 @@ async function machine_cards(
         machine_id,
         snapshot.backend_key,
       ) ?? { can_sign_in: false, reports_allowance_usage: false };
-      if (controls?.available) {
+      const source = runtime.backend_state?.capability_source(machine_id, snapshot.backend_key);
+      if (
+        controls?.available &&
+        (force ||
+          runtime.backend_state === null ||
+          !runtime.backend_state.capabilities_current(machine_id, snapshot.backend_key, source!))
+      ) {
         const value = await controls.request(
           { backend_key: snapshot.backend_key, operation: 'capabilities' },
           { signal },
@@ -71,11 +80,14 @@ async function machine_cards(
           can_sign_in: value.can_sign_in === true,
           reports_allowance_usage: value.reports_allowance_usage === true,
         };
-        runtime.backend_state?.keep_machine_capabilities(
+        const kept = runtime.backend_state?.keep_machine_capabilities(
           machine_id,
           snapshot.backend_key,
           capabilities,
+          source,
         );
+        if (kept === false)
+          throw new HttpError(409, 'The selected machine changed. Read its models again.');
       }
       return snapshot_json(
         snapshot,
@@ -94,8 +106,30 @@ async function remote_action(
 ) {
   const controls = runtime.machine_backends?.(machine_id);
   if (!controls) throw new HttpError(503, 'The selected machine is unavailable.');
-  return controls.request(request, { signal });
+  const result = await controls.request(request, { signal });
+  await refresh_changed_provider(runtime, machine_id, request, result, signal);
+  return result;
 }
+async function refresh_changed_provider(
+  runtime: BackendHttpRuntime,
+  machine_id: string,
+  request: Pick<BackendRequest, 'backend_key' | 'operation'>,
+  result: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const session = result.sign_in;
+  const confirmed = object(session) && session.state === 'confirmed';
+  if (
+    request.operation === 'sign_out' ||
+    confirmed ||
+    (request.operation === 'update_backend' && result.outcome === 'succeeded')
+  ) {
+    await runtime
+      .machine_catalog(machine_id)
+      ?.snapshot(request.backend_key as BackendInstanceId, { refresh: true, signal });
+  }
+}
+
 function backend(runtime: BackendHttpRuntime, raw: unknown): BackendInstanceId {
   const fields = new Fields(raw, ['path']);
   const result = fields.choice('backend_key', runtime.backend_ids);
@@ -171,6 +205,28 @@ export function createBackendRoutes(
         return options.writes.run(() => handler.call(this, request, reply));
       };
     });
+    const resources = new BackendPickerResources(runtime);
+    const epoch = resource_epoch(app);
+    function answer(
+      request: FastifyRequest,
+      selection: { machine_id: string } | { ticket_id: string },
+      backends: unknown,
+      expected_machine?: string,
+    ) {
+      const query = scalarQueries(object(request.query) ? request.query : {});
+      if (query.versioned === undefined || !boolean(query.versioned, ['query', 'versioned']))
+        return { backends };
+      const key = backend_resource_key(selection);
+      return runtime.database.read((sql) => {
+        if (
+          'ticket_id' in selection &&
+          read_ticket(sql, selection.ticket_id).machine_id !== expected_machine
+        )
+          throw new HttpError(409, 'The Ticket moved to another machine. Read its models again.');
+        const snapshot = resources.capture(sql, request, key)!;
+        return { epoch, key, revision: snapshot.revision, body: snapshot.read() };
+      });
+    }
     const requests = new WeakMap<FastifyRequest, { signal: AbortSignal; release(): void }>();
     app.addHook('onRequest', async (request, reply) => {
       const controller = new AbortController();
@@ -202,7 +258,17 @@ export function createBackendRoutes(
           source.snapshot(key, { refresh: refresh(request.query), signal: signal_of(request) }),
         ),
       );
-      return { backends: await machine_cards(runtime, machine_id, snapshots, signal_of(request)) };
+      return answer(
+        request,
+        { machine_id },
+        await machine_cards(
+          runtime,
+          machine_id,
+          snapshots,
+          signal_of(request),
+          refresh(request.query),
+        ),
+      );
     });
     app.post('/backends', async (request, reply) => {
       // Context validates identity only. This route has no owner-only rule.
@@ -235,9 +301,18 @@ export function createBackendRoutes(
           source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),
         ),
       );
-      return {
-        backends: await machine_cards(runtime, ticket.machine_id, snapshots, signal_of(request)),
-      };
+      return answer(
+        request,
+        { ticket_id: ticket.id },
+        await machine_cards(
+          runtime,
+          ticket.machine_id,
+          snapshots,
+          signal_of(request),
+          refresh_requested,
+        ),
+        ticket.machine_id,
+      );
     });
     app.post('/backends/refresh', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
@@ -264,7 +339,7 @@ export function createBackendRoutes(
           }),
         );
         return {
-          backends: await machine_cards(runtime, machine_id, snapshots, signal_of(request)),
+          backends: await machine_cards(runtime, machine_id, snapshots, signal_of(request), true),
           usage_outcomes: results,
         };
       }
@@ -419,12 +494,21 @@ export function createBackendRoutes(
           const controls = runtime.machine_backends?.(machine_id);
           if (!controls?.submit_return_url)
             throw new HttpError(503, 'The selected machine is unavailable.');
-          return controls.submit_return_url(
-            backend(runtime, request.params),
+          const backend_key = backend(runtime, request.params);
+          const result = await controls.submit_return_url(
+            backend_key,
             request.params.session_id,
             return_url!,
             { signal: signal_of(request) },
           );
+          await refresh_changed_provider(
+            runtime,
+            machine_id,
+            { backend_key, operation: 'sign_in_return_url' },
+            result,
+            signal_of(request),
+          );
+          return result;
         }
         const service = sign_in_service(runtime, request.params, 'submit_return_url');
         return sign_in_json(

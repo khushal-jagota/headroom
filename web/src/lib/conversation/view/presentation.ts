@@ -3,7 +3,7 @@ import type { ConversationViewRow, ViewRowBody, ViewRestEvent } from './contract
 import type { MessagePiece } from '../wire';
 import type { ViewMessagePiece } from './contracts';
 import type { TranscriptRow } from '../transcript';
-import { refusalSentence } from '../transcript';
+import { messageNotDelivered, refusalSentence } from '../transcript';
 import { whatThisRowSays } from '../whatHappened';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
@@ -34,6 +34,9 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
         case 'credential_request': return { ...base, kind: body.kind, request: body };
+        case 'agent_turn_started': return { ...base, kind: body.kind, reason: body.reason };
+        case 'background_task_started': return { ...base, kind: body.kind, taskDescription: body.task_description };
+        case 'background_task_ended': return { ...base, kind: body.kind, taskDescription: body.task_description, taskStatus: body.task_status };
         case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
         case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
         case 'prompt_uncertain':
@@ -73,7 +76,7 @@ export function happened(event: ViewRestEvent | null, sender: string): {
     if (event.kind === 'tool_call')
         return event.body.kind === 'inline' ? whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event.body.value), sender) : { who: null, text: event.title };
     if (event.kind === 'prompt_refused' || event.kind === 'prompt_uncertain' || event.kind === 'prompt_discarded') {
-        const text = event.kind === 'prompt_refused' ? `not delivered · ${refusalSentence(event.refusal_reason!, event.refusal_detail_excerpt)}` : event.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : 'discarded';
+        const text = event.kind === 'prompt_refused' ? messageNotDelivered(refusalSentence(event.refusal_reason!)) : event.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : 'discarded';
         return { who: event.sender_label === sender ? 'you' : event.sender_label, text };
     }
     if (event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')

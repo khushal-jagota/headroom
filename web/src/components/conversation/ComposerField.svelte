@@ -50,6 +50,7 @@
     intakeBusy = $bindable(false),
     onError,
     attachmentUnavailable,
+    attachmentDisabled = false,
     record,
     send,
     voice,
@@ -83,11 +84,13 @@
     onError?: (error: unknown) => void;
     /** Only an exact backend restriction removes the attachment control, with this reason. */
     attachmentUnavailable?: string;
+    /** A caller can suspend file intake while keeping the text field usable. */
+    attachmentDisabled?: boolean;
     /** The microphone, first of the controls at the right. */
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
      *  while it goes. */
-    send?: Control & { ready: boolean; sending: boolean; checkingReceipt?: boolean };
+    send?: Control & { ready: boolean; sending: boolean; allowWhileIntake?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -105,7 +108,7 @@
   function keydown(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }): void {
     onkeydown?.(event);
     if (onsubmit === undefined || event.defaultPrevented || event.key !== "Enter") return;
-    if (intakeBusy && !send?.checkingReceipt) { event.preventDefault(); return; }
+    if (intakeBusy && !send?.allowWhileIntake) { event.preventDefault(); return; }
     if (event.shiftKey || event.altKey) return;
     // Enter that confirms an input method's text (keyCode 229) is not a send.
     if (event.isComposing || event.keyCode === 229) return;
@@ -132,7 +135,7 @@
   $effect(() => { intakeBusy = uploads.some((attachment) => attachment.phase !== "ready"); });
 
   function intake(chosen: readonly File[]): void {
-    if (chosen.length === 0 || disabled || attachmentUnavailable) return;
+    if (chosen.length === 0 || disabled || attachmentDisabled || attachmentUnavailable) return;
     intakeError = "";
     onError?.(null);
     const key = registryKey;
@@ -326,7 +329,7 @@
 <div
   class="composer-field"
   class:drag={dragging}
-  use:attachmentSurface={{ disabled: disabled || Boolean(attachmentUnavailable), onFiles: (chosen) => void intake(chosen), onDragChange: (active) => dragging = active }}
+  use:attachmentSurface={{ disabled: disabled || attachmentDisabled || Boolean(attachmentUnavailable), onFiles: (chosen) => void intake(chosen), onDragChange: (active) => dragging = active }}
   class:has-leading={hasLeading}
   class:has-trailing={hasTrailing}
   class:has-attachments={hasAttachments}
@@ -364,7 +367,7 @@
           class="composer-field-tool"
           aria-label="Attach a file"
           data-review-attach
-          disabled={disabled}
+          disabled={disabled || attachmentDisabled}
           onclick={() => fileInput?.click()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -404,8 +407,8 @@
 
   {#if hasAttachments}
     <div class="composer-field-attachments">
-      {#if images.length || files.length}<AttachmentChips bind:images bind:files disabled={disabled} />{/if}
-      <ComposerAttachments attachments={uploadTiles} inputDisabled={disabled}
+      {#if images.length || files.length}<AttachmentChips bind:images bind:files disabled={disabled || attachmentDisabled} />{/if}
+      <ComposerAttachments attachments={uploadTiles} inputDisabled={disabled || attachmentDisabled}
         onChooseAgain={() => fileInput?.click()} onRetry={(attachment) => void attachmentTransfersFor(registryKey, videoUploadAdapter).start(attachment)}
         onRemove={(attachment) => { if (attachment.kind === "video") removeUpload(attachment.value); }} videoProgress={uploadProgress} />
     </div>
@@ -448,7 +451,7 @@
             class:on={send.ready}
             aria-label={send.label}
             aria-busy={send.sending}
-            disabled={send.disabled || (intakeBusy && !send.checkingReceipt)}
+            disabled={send.disabled || (intakeBusy && !send.allowWhileIntake)}
             onclick={send.onclick}
             {...(send.attributes ?? {})}
           >

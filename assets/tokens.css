@@ -755,10 +755,8 @@
   --cv-shimmer: 2s;
 }
 
-/* Inside the conversation pane (transcript, composer, header, dock) the accent, the quiet tone
-   and the placeholder are a step lighter, and the pane's own roles are named. Pages around the
-   pane (the proposal card, a ticket's document) keep the :root values. */
-[data-conversation-pane] {
+/* The pane and Review replies share the same conversation controls and surfaces. */
+[data-conversation-pane], [data-review-outgoing-replies] {
   --cv-accent: #bccbf0;
   --cv-accent-wash: rgb(188 203 240 / 12%);
   --cv-accent-line: rgb(188 203 240 / 45%);

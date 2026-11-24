@@ -128,15 +128,16 @@ describe("video attachment send intent", () => {
     resetOutgoingImageReservationsForTest();
   });
 
-  it("reload retains text and ready metadata without video bytes and requires explicit Send again", async () => {
+  it("reload retains its transcript time, text, and ready metadata without submitting the message", async () => {
     const store = new Map<string, string>();
     vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
     const attachment = video(); attachment.phase = "ready"; attachment.uploadId = "saved-token";
-    rememberLocalSends("owner", [entry(attachment)]);
+    rememberLocalSends("owner", [{...entry(attachment), sentAtUnixMilliseconds: 1772000000000}]);
     expect([...store.values()].join("")).not.toContain("privateBytes");
     expect([...store.values()].join("")).not.toContain("never persist these");
     const recalled = recallLocalSends("owner");
+    expect(recalled[0]?.sentAtUnixMilliseconds).toBe(1772000000000);
     expect(recalled[0]?.attempt.draftBeforeSend.text).toBe("captured words");
     expect(recalled[0]?.attempt.draftBeforeSend.pendingVideos?.[0]?.uploadId).toBe("saved-token");
     expect(recalled[0]?.phase).toBe("interrupted");

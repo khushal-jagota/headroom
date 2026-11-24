@@ -16,13 +16,13 @@ import { MAX_CONVERSATION_MESSAGE_FILE_BYTES } from "./pendingFiles";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 
 /** Whether every piece of this recorded message can go out again as it went the first time. */
+function recordedPieceCanBeResent(piece: MessagePiece): boolean {
+  return piece.piece !== "file"
+    || (!/^(video|audio)\//.test(piece.media_type) && piece.byte_count <= MAX_CONVERSATION_MESSAGE_FILE_BYTES);
+}
+
 export function recordedContentCanBeResent(content: readonly MessagePiece[]): boolean {
-  if (content.length === 0) return false;
-  return content.every((piece) => {
-    if (piece.piece === "text") return true;
-    if (piece.piece === "image") return true;
-    return !/^(video|audio)\//.test(piece.media_type) && piece.byte_count <= MAX_CONVERSATION_MESSAGE_FILE_BYTES;
-  });
+  return content.length > 0 && content.every(recordedPieceCanBeResent);
 }
 
 function bytesAsBase64(bytes: Uint8Array): string {
@@ -66,6 +66,24 @@ export async function sentPiecesFromRecorded(
   return pieces;
 }
 
+/** Restore everything still available. The failed row keeps any piece that needs reattachment. */
+export async function editablePiecesFromRecorded(
+  conversationId: string,
+  content: readonly MessagePiece[],
+  read?: Parameters<typeof sentPiecesFromRecorded>[2]
+): Promise<{pieces: SentMessagePiece[]; needsReattachment: boolean}> {
+  const pieces: SentMessagePiece[] = [];
+  for (const piece of content) {
+    if (!recordedPieceCanBeResent(piece)) continue;
+    try {
+      pieces.push(...await sentPiecesFromRecorded(conversationId, [piece], read));
+    } catch {
+      // Edit can still recover the other pieces. A send requires every piece.
+    }
+  }
+  return {pieces, needsReattachment: pieces.length !== content.length};
+}
+
 /** Given by the live conversation to the messages in it. `available` says whether this
  *  pane can send at all (a past conversation is read only); `resend` sends a recorded
  *  message's content again, as a new message, and resolves true once it got away. */
@@ -73,6 +91,8 @@ export type ResendRecordedMessage = {
   available(): boolean;
   /** ``refusedSequence`` is the refused row's sequence: the new prompt names it, and the
    *  refused bubble folds away once that prompt is recorded. */
+  edit?(conversationId: string, content: readonly MessagePiece[]): Promise<boolean>;
+  editLocal?(id: string): Promise<boolean>;
   resend(conversationId: string, content: readonly MessagePiece[], refusedSequence?: number): Promise<boolean>;
 };
 export const RESEND_RECORDED_MESSAGE = Symbol("conversation-resend-recorded-message");

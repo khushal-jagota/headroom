@@ -43,6 +43,26 @@ export function current_agent_owner(
     );
   return { kind, id };
 }
+/** An accepted native turn becomes the run that restart recovery retains. */
+export function record_agent_turn_in_transaction(
+  tx: TransactionSql,
+  child: ChildReference,
+  turn: WireValue<'TurnToken'>,
+): void {
+  if (turn.conversation_id !== child.conversation_id)
+    throw new ExecutorValidationError('agent turn conflicts with its child conversation');
+  const row = tx.get<{ turn_number: string }>(
+    "SELECT CAST(turn_number AS TEXT) AS turn_number FROM mac_runs WHERE conversation_id=? AND executor_incarnation=? AND child_id=? AND stop_state='open'",
+    [child.conversation_id, child.executor_incarnation, child.child_id],
+  );
+  if (row === undefined || turn.turn_number <= counter(row.turn_number))
+    throw new ExecutorValidationError('agent turn no longer owns the current Mac run');
+  tx.run(
+    'UPDATE mac_runs SET turn_number=?,delivery_uncertain=0 WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+    [turn.turn_number, child.conversation_id, child.executor_incarnation, child.child_id],
+  );
+}
+
 export function prepare_command_in_transaction(
   tx: TransactionSql,
   command: WireValue<'ChildCommand'>,

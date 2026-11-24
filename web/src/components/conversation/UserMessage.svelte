@@ -5,7 +5,9 @@
   import SystemLine from './SystemLine.svelte';
   import BackendWords from './BackendWords.svelte';
   import DetailsChevron from './DetailsChevron.svelte';
-  import { promptLabelFor, promptOutcomeStatus, statusReason, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
+  import QueuedMessageActions from './composer/QueuedMessageActions.svelte';
+  import { displayedOutgoingContent, editableHeldWords, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from '../../lib/conversation/transcriptOutgoing';
+  import { promptLabelFor, promptOutcomeStatus, messageNotDelivered, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
   import { openComposerModelPicker } from '../../lib/conversation/modelPicker';
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
@@ -24,7 +26,12 @@
   } = $props();
   let busy = $state(false);
   const label = $derived(promptLabelFor(row?.senderLabel ?? local?.senderLabel ?? '', ownSenderLabel));
-  const content = $derived(row?.content ?? local?.content ?? []);
+  const content = $derived(row?.content ?? (local ? displayedOutgoingContent(local) : []));
+  const actions = getContext<TranscriptSendActions | undefined>(TRANSCRIPT_SEND_ACTIONS);
+  const held = $derived(!row && local?.presentation?.kind === "held" ? local.presentation : null);
+  const upload = $derived(!row && local?.presentation?.kind === "upload" ? local.presentation : null);
+  const queuedWords = $derived(held ? editableHeldWords(held.row) : null);
+  const pendingNames = $derived(!row && !held && !upload ? local?.attachmentNames ?? [] : []);
   /** v6: a system note's words as one plain line of text (Markdown marks dropped). */
   const systemText = $derived(content.flatMap(piece => piece.piece === 'text' ? [piece.text] : []).join(' ')
     .replace(/`([^`]*)`/g, '$1').replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/\s+/g, ' ').trim());
@@ -34,17 +41,39 @@
   const resendRecorded = getContext<ResendRecordedMessage | undefined>(RESEND_RECORDED_MESSAGE);
   let resent = $state(false);
   let resendFailed = $state(false);
+  let edited = $state(false);
+  let editFailed = $state(false);
   const offersResend = $derived(row?.kind === 'prompt_refused' && resendRecorded !== undefined && resendRecorded.available() && refusalOffersResend(row.reason) && recordedContentCanBeResent(row.content));
+  const localFailed = $derived(!row && (local?.knownFate === 'not_sent' || local?.knownFate === 'machine_offline'));
+  const localUpload = $derived(local?.content.some(piece => piece.piece === 'video_upload' || piece.piece === 'attachment_upload') ?? false);
+  const offersEdit = $derived(!edited && !resent && resendRecorded?.available() && (
+    row?.kind === 'prompt_refused' && resendRecorded.edit && row.content.length > 0
+    || localFailed && resendRecorded.editLocal
+  ));
   // What became of the message, said under it in the thread's status voice, never inside
   // the words the person wrote.
   const status = $derived.by((): TranscriptStatus | null => {
     if (row?.kind === 'prompt_refused' || row?.kind === 'prompt_uncertain' || row?.kind === 'prompt_discarded') return promptOutcomeStatus(row, offersResend);
+    if (held) {
+      if (held.row.state === "unknown") return {tone: "warning", title: "The agent did not confirm receipt.", detail: null};
+      const place = held.count > 1 ? ` · ${held.position} of ${held.count}` : "";
+      const reason = held.row.queueReason === "attachment" ? "Attachments cannot join the running turn."
+        : held.row.queueReason === "run_change" ? "The run settings will change when it starts."
+        : held.row.queueReason === "steer_refused" ? "The running turn could not take the message."
+        : held.row.queueReason === "command_needs_its_own_turn" ? "The command needs its own turn." : null;
+      return {tone: "neutral", title: `Queued${place}`, detail: reason};
+    }
+    if (upload) return {tone: upload.failed ? "error" : "neutral", title: upload.note, detail: null};
+    if (local && (local.accepted || row?.kind === "prompt") && label === null) {
+      return {tone: "neutral", title: "Sent", detail: null};
+    }
     if (row || !local) return null;
     // The machine was away: not delivered, said inside the bubble (B5), the server's words behind Details.
     if (local.knownFate === 'machine_offline') return { tone: 'error', title: local.refusal?.reason ?? 'The machine is offline', detail: local.refusal?.detail || null };
+    if (local.knownFate === 'not_sent') return { tone: 'error', title: local.failureNote ?? 'The message did not reach Panels.', detail: null };
     const note = outgoingMessageNote(local);
     if (note === null) return null;
-    return { tone: local.knownFate === 'answer_never_came_back' ? 'warning' : 'neutral', title: note.charAt(0).toUpperCase() + note.slice(1), detail: null };
+    return { tone: (local.knownFate === 'answer_never_came_back' || local.knownFate === 'agent_unconfirmed') ? 'warning' : 'neutral', title: note.charAt(0).toUpperCase() + note.slice(1), detail: null };
   });
   // A message the running turn took in as it went. It reads as the person's message, and
   // a quiet line under it says it joined the turn rather than starting one.
@@ -53,7 +82,19 @@
   // A message the offline machine turned away can go again once the machine is back, or be let go.
   const machineOffline = $derived(!row && local?.knownFate === 'machine_offline');
   const heldActions = $derived(local && !row ? heldPromptRowActions(heldPromptRows([], [local])[0]!) : []);
-  const hasHeldLineActions = $derived(heldActions.includes('send_again') || heldActions.includes('stop_drawing'));
+  const canRetryUnanswered = $derived(heldActions.includes('send_again') && !!local?.sendTarget);
+  const hasQueuedActions = $derived(held?.row.state === "held" && !!held.row.heldPromptId && !!actions);
+  const hasHeldLineActions = $derived(hasQueuedActions || canRetryUnanswered || heldActions.includes('stop_drawing'));
+  async function recoverUpload(editing: boolean) {
+    if (!local || !actions || busy) return;
+    busy = true;
+    try {
+      if (editing) await actions.editUpload?.(local.messageId);
+      else await actions.retryUpload?.(local.messageId);
+    } finally {
+      busy = false;
+    }
+  }
   async function stop(): Promise<void> {
     if (!local || busy) return;
     busy = true;
@@ -68,6 +109,19 @@
     catch { resendFailed = true; }
     finally { busy = false; }
   }
+  async function edit(): Promise<void> {
+    if (!offersEdit || busy) return;
+    busy = true;
+    editFailed = false;
+    try {
+      if (row) edited = await resendRecorded!.edit!(conversationId, row.content);
+      else if (local) edited = await resendRecorded!.editLocal!(local.messageId);
+    } catch {
+      editFailed = true;
+    } finally {
+      busy = false;
+    }
+  }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
   // B5: the person's message that was not delivered says so inside its own bubble.
   const undelivered = $derived(label === null && status?.tone === 'error' ? status : null);
@@ -79,27 +133,55 @@
 <!-- Passed only when there is an action: an empty actions slot keeps its gap, and the
      caption would end short of the bubble's edge. -->
 {#snippet heldLineActions()}
-  {#if heldActions.includes('send_again')}<button type="button" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
+  {#if hasQueuedActions && held?.row.heldPromptId && actions}
+    {@const queuedRow = held.row}
+    <QueuedMessageActions heldPromptId={held.row.heldPromptId} showSteer={actions.canSteer()} running={actions.running()}
+      onDiscard={() => actions.discard(queuedRow)} onPromote={mode => actions.promote(queuedRow, mode)}
+      onEdit={queuedWords !== null && actions.canEditHeld() ? () => actions.editHeld(queuedRow, queuedWords!) : undefined}/>
+  {/if}
+  {#if canRetryUnanswered}<button type="button" data-conversation-held-send-again={local?.messageId} disabled={busy} onclick={()=>void resend()}>Try Again</button>{/if}
   {#if heldActions.includes('stop_drawing')}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
 {/snippet}
 {#snippet undeliveredFooter()}
   {#if undelivered}
     <div class="c2-undelivered" role="alert" data-conversation-message-status="error">
-      <p class="c2-undelivered-reason" data-conversation-status-next>Not delivered<span aria-hidden="true">{" · "}</span>{statusReason(undelivered)}</p>
-      {#if (offersResend && !resent) || machineOffline || undelivered.action === 'choose-model' || undelivered.detail}
+      <p class="c2-undelivered-reason" data-conversation-status-next>{messageNotDelivered(undelivered.brief ?? undelivered.title)}</p>
+      {#if (offersResend && !resent) || localFailed || offersEdit || undelivered.action === 'choose-model' || undelivered.detail}
         <div class="c2-undelivered-actions">
-          {#if offersResend && !resent}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
-          {#if machineOffline}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Resending…" : "Resend"}</button>{/if}
+          {#if offersResend && !resent && !edited}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Try again." : "Send this message again"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
+          {#if upload?.failed && actions}
+            <button type="button" data-conversation-upload-retry disabled={busy} onclick={() => void recoverUpload(false)}>Try Again</button>
+            <button type="button" data-conversation-upload-edit disabled={busy} onclick={() => void recoverUpload(true)}>Edit</button>
+          {/if}
+          {#if !upload && localFailed && !edited && !localUpload && onSendAgain}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
+          {#if !upload && offersEdit}<button type="button" data-conversation-edit-unsent disabled={busy} onclick={() => void edit()}>Edit</button>{/if}
           {#if undelivered.action === 'choose-model'}<button type="button" data-conversation-status-choose-model onclick={() => openComposerModelPicker(root)}>Choose another model</button>{/if}
           {#if undelivered.detail}<button type="button" aria-expanded={detailsOpen} aria-controls={detailsId} data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>Details<DetailsChevron open={detailsOpen}/></button>{/if}
-          {#if machineOffline}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
+          {#if localFailed && (machineOffline || edited)}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         </div>
       {/if}
+      {#if editFailed}<p role="status">An attachment could not be restored.</p>{/if}
       {#if undelivered.detail}<BackendWords id={detailsId} detail={undelivered.detail} open={detailsOpen}/>{/if}
     </div>
   {/if}
 {/snippet}
-<article bind:this={root} class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
+{#snippet bubbleFooter()}
+  {#each upload?.files ?? [] as file}
+    <div class="c2-outgoing-attachment">
+      <span>{file.name}</span>
+      {#if file.progress !== null}
+        <progress max="100" value={file.progress} aria-label={`Uploading ${file.name}`}></progress>
+        <span>{file.progress}%</span>
+      {:else}
+        <span>{file.note}</span>
+      {/if}
+    </div>
+  {/each}
+  {#each pendingNames as name}<div class="c2-outgoing-attachment">{name}</div>{/each}
+  {@render undeliveredFooter()}
+{/snippet}
+<article bind:this={root} class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}
+  data-conversation-held-row={held?.row.key} data-local-video-send={upload ? local?.messageId : undefined}>
   {#if label !== null}
     <!-- Someone other than the person wrote this (Panels, another agent): one system line,
          "From Panels · " and the words, at most two lines, on the thread's left edge (B3). -->
@@ -107,7 +189,7 @@
       <span class="c2-system-words"><span data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</span>
     </SystemLine>
   {:else}
-    <MessagePieces {presentationRowKey} {content} {conversationId} bubble failed={undelivered !== null} footer={undelivered ? undeliveredFooter : undefined}/>
+    <MessagePieces {presentationRowKey} {content} {conversationId} bubble failed={undelivered !== null} footer={undelivered || upload?.files.length || pendingNames.length ? bubbleFooter : undefined}/>
   {/if}
   {#if steered}
     <SystemLine align="end" data-conversation-steered="">Steered<span aria-hidden="true">{" · "}</span><span data-conversation-status-next>into the running turn</span></SystemLine>
@@ -123,6 +205,9 @@
 </article>
 <style>
   article { position: relative; }
+  .c2-outgoing-attachment { display: flex; flex-wrap: wrap; gap: var(--cv-s2); align-items: center; overflow-wrap: anywhere; }
+  .c2-outgoing-attachment progress { max-inline-size: 8rem; }
+  .c2-outgoing-attachment + .c2-outgoing-attachment { margin-block-start: var(--cv-s1); }
   /* The message is a column of the things that make it up: the bubble (with what was
      attached inside it) and the captions under it, on one right edge. */
   .chat-u, .chat-system {
@@ -152,8 +237,7 @@
     overflow: hidden;
   }
 
-  /* Not delivered: inside the bubble, under the words, a 1px rule 10 below them, "Not delivered ·
-     <reason>" 10 under the rule in the failure red, then one row of text actions. */
+  /* Keep the failure sentence and its actions beneath the message. */
   .c2-undelivered {
     margin-block-start: 10px;
     padding-block-start: 10px;

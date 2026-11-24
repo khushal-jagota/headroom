@@ -1,5 +1,6 @@
 /** Canonical sender facts stay identical across admission, queue, and durable receipt. */
 import { isDeepStrictEqual } from 'node:util';
+import type { Principal } from '../../core/contracts.ts';
 import {
   PromptDeliveryInjected,
   PromptDeliveryRefused,
@@ -17,6 +18,19 @@ import {
 } from '../events.ts';
 import type { ConversationEventPayload } from '../events.ts';
 import type { Message } from './contracts.ts';
+
+export function matches_owner_sender_message(
+  message: Pick<Message, 'sender' | 'recipient' | 'sender_message_id'>,
+  sender_message_id: string,
+  recipient: Principal,
+): boolean {
+  return (
+    message.sender?.kind === 'owner' &&
+    message.sender_message_id === sender_message_id &&
+    message.recipient?.kind === recipient.kind &&
+    message.recipient.id === recipient.id
+  );
+}
 
 export function same_message(message: Message, other: object, held = false): boolean {
   const fields = [

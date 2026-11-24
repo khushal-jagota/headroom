@@ -9,6 +9,7 @@ import {
   messageContentText,
   type HeldPrompt,
   type MessagePiece,
+  type PromptDeliveryMode,
   type PromptQueueReason,
   type SentMessagePiece
 } from "./wire";
@@ -25,6 +26,7 @@ export type HeldPromptRow = Readonly<{
   sentAtUnixMilliseconds: number;
   state: HeldPromptRowState;
   queueReason: PromptQueueReason | null;
+  mode?: PromptDeliveryMode;
 }>;
 
 /** What can be done with one row in the stack.
@@ -49,7 +51,7 @@ export type HeldPromptRowAction =
  * a question that is about to answer itself.
  */
 export function heldPromptRowActions(row: HeldPromptRow): readonly HeldPromptRowAction[] {
-  if (row.heldPromptId !== null) return ["discard", "send_now", "steer"];
+  if (row.heldPromptId !== null) return row.state === "unknown" ? [] : ["discard", "send_now", "steer"];
   if (row.state === "unknown") return ["stop_drawing", "send_again"];
   return [];
 }
@@ -88,9 +90,10 @@ export function heldPromptRows(
       heldPromptId: held.held_prompt_id,
       senderMessageId,
       content: local?.content ?? messageContentOf(held),
+      mode: held.requested_mode,
       senderLabel: held.sender_label,
       sentAtUnixMilliseconds: held.sent_at_unix_milliseconds,
-      state: "held",
+      state: held.delivery_uncertain ? "unknown" : "held",
       queueReason: held.queue_reason
     };
   });
@@ -102,6 +105,7 @@ export function heldPromptRows(
       heldPromptId: null,
       senderMessageId: message.messageId,
       content: message.content,
+      mode: message.mode,
       senderLabel: message.senderLabel,
       sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
       state: stateForLocal(message),

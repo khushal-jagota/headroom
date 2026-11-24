@@ -1,4 +1,5 @@
 /** What one ACP agent tells the shared ACP backend child. A Panels-sized subset of T3's flavor. */
+import type { SessionNotification } from '@agentclientprotocol/sdk/unstable';
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import type { BackendCapabilities } from '../core/capabilities.ts';
 
@@ -18,6 +19,8 @@ export interface AcpPromptOutcomeWatch {
 export interface AcpFlavor {
   /** The agent's display name, used in the base's own error text. */
   readonly label: string;
+  /** A candidate async tool. It becomes background work only if it outlives its prompt. */
+  background_task_description?(update: SessionNotification['update']): string | null;
   /**
    * Called once for each child start, before anything is spawned. It may check the agent first,
    * such as its CLI floor; a throw fails the start with `BackendSpawnFailed`.

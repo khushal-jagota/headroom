@@ -111,7 +111,7 @@ describe("the header", () => {
 });
 
 describe("queued messages in the pane", () => {
-  it("are drawn at the end of the thread, after everything said, and the thread reads from its top", () => {
+  it("use the held box before the composer", () => {
     const { body } = render(PaneWithQueryClient, {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
@@ -119,20 +119,27 @@ describe("queued messages in the pane", () => {
     const stack = body.indexOf("data-conversation-held-stack");
     expect(content).toBeGreaterThan(-1);
     expect(stack).toBeGreaterThan(content);
+    expect(stack).toBeLessThan(body.indexOf("data-conversation-held-row"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
     // One anchoring rule for every state: a short thread reads from the top.
     expect(body).not.toContain("data-anchor-end");
   });
 
-  it("come after the Working line of the running turn", () => {
+  it("places the held box below an agent-started turn and its Working line", () => {
     const turn: ConversationViewItem = {
       kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
       settled: false, stopped: false, started_at_unix_milliseconds: 100_000, ending: null,
       duration_seconds: null, tool_call_count: 0, folded_message_count: 0, latest_message_key: null, is_latest: true
     };
+    const header: ConversationViewItem = {
+      kind: "row", key: "e1", row_kind: "agent_turn_started", order: { sequence: 1, slot: 0 },
+      source_sequence: 1, sender_message_id: null, changed_through_sequence: 1, created_at: 100,
+      turn_key: null, work_group_key: null, fold_rule: "never",
+      body: { kind: "inline", value: { kind: "agent_turn_started", reason: "Sub-agent 'Check tests' finished" } }
+    };
     const reader = {
       id: "c-1", lens: "focus", coverage: 5, entryPhase: "ready",
-      pages: [{ conversation_id: "c-1", protocol_version: 1, projection_version: 1, lens: "focus", scope: { kind: "timeline", key: null }, items: [turn], older: null, newer: null, body_bytes: 0 }],
+      pages: [{ conversation_id: "c-1", protocol_version: 1, projection_version: 1, lens: "focus", scope: { kind: "timeline", key: null }, items: [header, turn], older: null, newer: null, body_bytes: 0 }],
       status: {
         turn_key: "turn:e1", turn_running: true, pending_permission: null, pending_user_input: null, stopped_without_ending: false, background_tasks: [],
         rest: { latest_happened: null, latest_turn: null, latest_tool: null, permission_title_excerpt: null, latest_owner_message_preview: null, latest_owner_message_sequence: 0, last_boundary_failed: false,
@@ -145,8 +152,14 @@ describe("queued messages in the pane", () => {
       props: { ...base, conversationState: "opened", running: true, reader, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const edge = body.indexOf("data-conversation-live-edge");
+    expect(body).toContain("Sub-agent 'Check tests' finished");
+    expect(body).toContain('data-conversation-row="agent_turn_started"');
+    expect(body).toContain('data-conversation-system-mark="spinner"');
+    expect(body).toContain("Working");
+    expect(body.indexOf('data-conversation-row="agent_turn_started"')).toBeLessThan(edge);
     expect(edge).toBeGreaterThan(-1);
-    expect(edge).toBeLessThan(body.indexOf("data-conversation-held-stack"));
+    expect(body.indexOf("data-conversation-held-stack")).toBeGreaterThan(edge);
+    expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
   it("offer no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {
@@ -162,7 +175,7 @@ describe("queued messages in the pane", () => {
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
     // The write's own answer decides: a message that the server did not discard keeps its words in the thread.
-    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?if \(await onDiscardHeldPrompt\(heldPromptId, true\) === false\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
+    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?if \(await onDiscardHeldPrompt\(heldPromptId, true\) === false\) return;[\s\S]*?origin !== conversationId[\s\S]*?composer\.takeBackQueuedWords\(words\);/);
     expect(pane).toContain("bind:this={composerHandle}");
     expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*deliveryMode = "queue";\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
   });

@@ -75,7 +75,7 @@ function begin_shutdown(
   });
   void host.shutdown_task.catch(() => {});
   host.shutting_down = true;
-  host.lost_task_notices.seal();
+  host.background_task_notices.seal();
   if (host.deferred_start_timer !== null) clearTimeout(host.deferred_start_timer);
   host.deferred_start_timer = null;
   host.deferred_start_conversations.clear();

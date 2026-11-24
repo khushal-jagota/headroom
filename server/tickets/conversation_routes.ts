@@ -25,6 +25,7 @@ import { start_ready_worker_step } from '../runtime/worker_step_readiness_loop.t
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { CHIEF_SETTINGS_KEY } from '../worker_settings/service.ts';
 import { send_message } from '../message_delivery/service.ts';
+import { run_owner_send, type OwnerSendTarget } from '../message_delivery/owner_sends.ts';
 import * as data from './data/index.ts';
 import { ticket_detail, ticket_json } from './views.ts';
 import { body_str, body_opt_str } from './routes.ts';
@@ -254,49 +255,65 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
         ticket_id?: string;
       };
     }>(path, async (request, reply) => {
-      const body = parse_owner_send_body(request.body, reply);
-      if (body === null) return;
-      const created_conversation_id = conversation_start.new_conversation_id();
-      // Resolve Chief launch overrides before attachment admission.
-      const chief_overrides = kind === 'chief' ? runs_under(body) : null;
-      const principal = services.identity(request).principal;
-      const target =
-        kind === 'chief' ? CHIEF : { kind: 'ticket' as const, id: request.params.ticket_id! };
-      const admission = video_send_admission(
+      const parsed = parse_owner_send_body(request.body, reply);
+      if (parsed === null) return;
+      const identity = services.identity(request);
+      const target: OwnerSendTarget = {
+        kind,
+        id: kind === 'chief' ? CHIEF.id : request.params.ticket_id!,
+      };
+      const system = conversations(services);
+      return run_owner_send(
         services.database,
-        services.config.db_path,
-        files,
-        body.content,
-        body.sender_message_id,
-        { kind, id: target.id, expected_conversation_id: body.conversation_id },
+        system,
+        identity.principal,
         target,
-        principal,
-      );
-      const delivered = await send_message(
-        conversations(services),
-        services.database,
-        services.clock,
-        services.identity(request),
-        target,
-        admission !== null
-          ? (id) => admission.content(id)
-          : (id) =>
-              conversation_message_content(files, id, body.content, {
-                sender_message_id: body.sender_message_id,
-              }),
-        body.mode,
-        {
-          admission,
-          conversation_id: body.conversation_id,
-          created_conversation_id,
-          runs_under: chief_overrides ?? runs_under(body),
-          owner_read_through_sequence: body.owner_read_through_sequence,
-          sender_message_id: body.sender_message_id,
-          sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
-          reconciles_sequence: body.reconciles_sequence,
+        parsed,
+        async (body, remember_destination) => {
+          const created_conversation_id = conversation_start.new_conversation_id();
+          const overrides = runs_under(body);
+          const admission = video_send_admission(
+            services.database,
+            services.config.db_path,
+            files,
+            body.content,
+            body.sender_message_id,
+            { kind, id: target.id, expected_conversation_id: body.conversation_id },
+            target,
+            identity.principal,
+          );
+          const delivered = await send_message(
+            system,
+            services.database,
+            services.clock,
+            identity,
+            target,
+            remember_destination(
+              admission !== null
+                ? (id) => admission.content(id)
+                : (id) =>
+                    conversation_message_content(files, id, body.content, {
+                      sender_message_id: body.sender_message_id,
+                    }),
+            ),
+            body.mode,
+            {
+              admission,
+              conversation_id: body.conversation_id,
+              created_conversation_id,
+              runs_under: overrides,
+              owner_read_through_sequence: body.owner_read_through_sequence,
+              sender_message_id: body.sender_message_id,
+              sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
+              reconciles_sequence: body.reconciles_sequence,
+            },
+          );
+          return {
+            conversation_id: delivered.conversation_id,
+            ...delivery_fate_json(delivered.fate),
+          };
         },
       );
-      return { conversation_id: delivered.conversation_id, ...delivery_fate_json(delivered.fate) };
     });
   }
 };

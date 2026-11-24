@@ -1,3 +1,4 @@
+import { owner_send_status } from '../message_delivery/owner_sends.ts';
 /** Product conversation HTTP surface, sharing the record and process runtime. */
 import { read_machine } from '../machines/data.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
@@ -199,6 +200,7 @@ async function state_json(
     is_running,
     held_prompts: held_prompts.map((held) => ({
       held_prompt_id: held.held_prompt_id,
+      requested_mode: held.requested_mode,
       ...message_content_json_entries(held.content),
       sender_label: held.sender_label,
       sender_message_id: held.sender_message_id,
@@ -315,6 +317,30 @@ export function createConversationRoutes(
   runtime: ConversationHttpRuntime,
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    app.get<{
+      Params: { message_id: string };
+      Querystring: { owner_kind?: string; owner_id?: string };
+    }>('/owner-sends/:message_id', async (request) => {
+      requireOwner(services.identity(request));
+      const { owner_kind, owner_id } = request.query;
+      const { message_id } = request.params;
+      if (
+        (owner_kind !== 'chief' && owner_kind !== 'manager' && owner_kind !== 'ticket') ||
+        typeof owner_id !== 'string' ||
+        owner_id.length === 0 ||
+        (owner_kind === 'chief' && owner_id !== 'chief') ||
+        message_id.length === 0
+      )
+        throw new HttpError(422, 'Invalid owner send address');
+      return {
+        delivery: await owner_send_status(
+          runtime.record.database,
+          runtime.core,
+          { kind: owner_kind, id: owner_id },
+          message_id,
+        ),
+      };
+    });
     app.post('/conversations', async (request, reply) => {
       const start = start_request(request.body);
       runtime.record.database.read((sql) => read_machine(sql, start.machine_id));

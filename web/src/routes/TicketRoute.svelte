@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
@@ -33,7 +34,6 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
-  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import CeilingPicker from "../components/CeilingPicker.svelte";
   import ClampedText from "../components/ClampedText.svelte";
@@ -236,11 +236,7 @@
    * same write that made the link.
    */
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
-      method: "POST",
-      body, limitMs: sendRequestLimitMs(body.content)});
-    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(`/api/tickets/${stableId}/conversation/send`, body);
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next

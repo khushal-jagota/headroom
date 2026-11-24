@@ -32,7 +32,9 @@ Each backend is a driver package under `server/drivers/`. Its manifest declares 
 
 Hermes is not a backend now. A saved Hermes conversation still opens with its whole record, under its name and initials, and a message to it, or any launch whose saved settings name Hermes, is refused by name and starts nothing; a Ticket saved on Hermes waits and says why until it is restarted on another backend.
 
-Every adapter keeps the same event rules, written in the backend contract. Each event inside a turn names its turn, and each accepted prompt ends in exactly one turn ending. Streamed text and tool progress go to the live tail and are never stored. A turn ending says whether the child can take another prompt. An ask is answered only through the child that raised it. A tool call names one of the standard ACP tool kinds and keeps the tool's own name as its title. A replay suite runs the Codex and Claude adapters against recorded wire traffic and checks these rules.
+Every adapter keeps the same event rules, written in the backend contract. Each event inside a turn names its turn. A prompt or the agent itself can start a turn, and each turn has one ending. Streamed text and tool progress go to the live tail and are never stored. A turn ending says whether the child can take another prompt. An ask is answered only through the child that raised it. A tool call names one of the standard ACP tool kinds and keeps the tool's own name as its title. A replay suite runs the Codex and Claude adapters against recorded wire traffic and checks these rules.
+
+Antigravity reports an explicit async command as background work when that command remains active after its prompt ends. Its later tool result ends the background task, and agy resumes itself without a Panels prompt. Its ACP stream does not expose a reliable subagent lifecycle, so Panels does not report subagents as background tasks. Unsolicited agent activity and permission requests enter an agent-started turn. ACP supplies no successful ending for that turn, so it remains active until cancellation, stream failure, or the existing silence limit.
 
 Machine code gives each agent a capability for its exact child and conversation. Every agent request crosses the authenticated machine relay. Before delivering a message with attachments, machine code downloads the files and verifies the server's identity. Reset revokes the old conversation's authority and preserves its notebook. Generic conversation starts cannot choose a privileged identity.
 
@@ -66,6 +68,8 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 | suppressed | Dropped on purpose before the wire, usually because a notice went stale. |
 | recorded | A message to the owner was written. No backend was called. |
 
+On the web, Send clears the draft. Queue sends to a busy agent wait in the box above the composer, where the owner can use **Send now**, **Steer**, **Edit**, and **Remove** when available. A queued message enters the conversation when the agent takes it. Steer, Send now, and sends to an idle agent appear in the conversation at once with upload progress and the send result. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
+
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
 The phone keeps at most 300 transcript items and 512 KiB of inline and ordinary expanded bodies. One visible deferred expansion can exceed that budget, up to 2 MB. Another oversized expansion replaces it, and it leaves decoded memory when it leaves view. The reader preserves the visible neighborhood. Older ranges remain available through Earlier messages, and Latest returns to the newest window. The reader retains at most 20 server history scopes. A late older page survives reconnect only while its history window remains valid. A replacement snapshot invalidates the pending page and supplies the current Earlier messages cursor.
@@ -96,7 +100,9 @@ An executor agent can keep its process, turn, open asks and capability across a 
 
 A Mac Claude start that times out during initialization can recover before the waiting message is delivered. The [executor](executor.md#commands-and-output) keeps the message in order and only replaces a child after proving cleanup. This does not retry a message that may have reached an agent.
 
-A Claude agent can start a background task, such as a long test run, that outlives its turn. Headroom keeps the conversation's record equal to the set of live tasks Claude reports after every change; a ScheduleWakeup timer is not a task. While a task is live the child is not idle, the conversation shows as working, and after the turn's last row it names each live task until that task ends. Stop and the composer still follow the turn alone. If the child goes away first, because it was stopped, died, or the server restarted, its tasks die with it, and Headroom sends one prompt per lost task asking the agent to read its output and restart it or report. A killed conversation drops its tasks without a prompt. Headroom never puts a fresh agent behind an old transcript.
+An agent can start a background task, such as a long test run, that outlives its turn. Headroom records task starts and ends in history and names live tasks after the turn. A live task keeps the child active. Stop and the composer still follow the turn alone. If the child goes away first, Headroom asks the agent to read each lost task's output and restart it or report. A killed conversation drops its tasks without a prompt.
+
+Each driver declares whether background completion wakes its agent. Claude wakes itself. Codex uses a completion notice from Headroom to resume and read background results. Its experimental native wake setting stays off. Its driver reports the turn and its reason, which appears where a prompt normally goes. Headroom records that turn's text, tools, usage, and ending. The status and spinner show that it works. Queue waits, Steer joins the turn, and Send now interrupts it. For a driver that needs a prompt, Headroom sends a short completion notice through the same route as lost-task notices.
 
 Headroom can automatically compact a large, quiet conversation while its agent is still live and the backend's prompt cache is warm. It skips completed Tickets and conversations with no measured size. A message sent meanwhile goes straight in unless compaction is already under way. That compaction and a Worker's memory-loss note are upkeep, not work, so they never schedule another round. A Worker's conversation gets upkeep only while it is its Ticket's current one and the Ticket is not in the backlog.
 
@@ -117,6 +123,8 @@ Unresolved historical ownership keeps a conversation fenced. Stop, New Conversat
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 
 ## Worker processes
+
+On Linux and Apple Silicon, backend processes and their descendants start with a file mask of 0022. Machine code retains its own mask for private state and credentials.
 
 One subsystem supervises every agent process, whichever role it serves: Workers, the Chief, Managers, and generic and test conversations. Each machine's code runs it for the conversations of that machine. Supervision records exact ownership before the backend starts, bounds shutdown, and reconciles records after restart. A Worker's record belongs to its Ticket, so a new Worker stops that Ticket's previous one. Every other record belongs to its conversation, so a relaunch stops only that conversation's previous process, and a Chief or Manager can neither stop nor be stopped by a Worker's record. Machine code retains its supervision records through exact retirement. One shared observer checks local processes together. It saves new ownership evidence and drops processes that the cleanup check already counts as ended, so a long-running agent's record stays small. Concurrent stops share fresh checks without holding up other background work.
 
@@ -165,4 +173,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `server/runtime/conversation_start.ts`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-18._
+_Last verified: 2026-11-24._

@@ -1,3 +1,4 @@
+import { recover_owner_sends } from './owner_send_receipts.ts';
 /** Record-only runtime, initialized after the shared server acquires database ownership. */
 import { dirname, join } from 'node:path';
 import type { Database } from '../../core/database/contracts.ts';
@@ -53,6 +54,7 @@ export function createConversationRuntime() {
       database.write((tx) => store.reconcile_in_transaction(tx, open_runs), {
         changeSignal: 'silent',
       });
+      recover_owner_sends(database, store);
       const live_tail = new ConversationLiveTail({
         view_output_directory: join(dirname(config.db_path), 'conversation-view-output'),
       });

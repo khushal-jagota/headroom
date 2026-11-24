@@ -42,7 +42,7 @@ function scripted_entry(
     manifest: scripted_manifest(key),
     capabilities: {
       sessions: { supportsModelSwitchInSession: true },
-      turns: { supportsActiveSteering: true },
+      turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: false },
     },
     plan_selection_transition: turn_scoped_selection_transition,
     config: NO_DRIVER_CONFIG,
@@ -61,7 +61,7 @@ function scripted_entry(
       driver_kind,
       capabilities: {
         sessions: { supportsModelSwitchInSession: true },
-        turns: { supportsActiveSteering: true },
+        turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: false },
       },
       plan_selection_transition: turn_scoped_selection_transition,
       child_factory: () => {

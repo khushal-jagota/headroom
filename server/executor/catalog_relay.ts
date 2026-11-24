@@ -93,31 +93,9 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     return row ? this.decode(row.snapshot_json) : null;
   }
   private decode(body: string): BackendSnapshot {
-    const value = decode_json(body, 'BackendSnapshot');
-    return {
-      ...value,
-      backend_key: parse_backend_instance_id(value.backend_key),
-      identity:
-        value.identity === null
-          ? null
-          : {
-              ...value.identity,
-              account_label: value.identity.account_label ?? null,
-              detail: value.identity.detail ?? null,
-              login_command: value.identity.login_command ?? null,
-            },
-      available_models: value.available_models.map((model) => ({
-        ...model,
-        display_name: model.display_name ?? null,
-        detail: model.detail ?? null,
-        reasoning_effort_options: model.reasoning_effort_options ?? null,
-        selected_variant: model.selected_variant ?? null,
-        version: model.version ?? [],
-        resolved_model_id: model.resolved_model_id ?? null,
-      })),
-      models_complete: value.models_complete ?? false,
-    };
+    return decode_machine_snapshot(body);
   }
+
   async snapshot(
     backend_key: BackendInstanceId,
     options: SnapshotOptions = {},
@@ -130,6 +108,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
       const answer = this.answer(backend_key, kept);
       return { ...answer, diagnoses: [...answer.diagnoses, MAC_AWAY_DIAGNOSIS] };
     }
+    if (kept !== null && !refresh) return kept;
     let active = this.tasks.get(backend_key);
     if (active && refresh && !active.refresh) {
       try {
@@ -142,7 +121,6 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
       active = this.tasks.get(backend_key);
     }
     const pending = active ?? this.start_read(backend_key, refresh);
-    if (kept !== null && !refresh) return kept;
     try {
       return await observe_executor_wait(pending.promise, signal);
     } catch (error) {
@@ -273,23 +251,9 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     return snapshot;
   }
   private answer(backend_key: BackendInstanceId, kept: BackendSnapshot | null): BackendSnapshot {
-    return (
-      kept ?? {
-        backend_key,
-        installed: false,
-        executable_path: null,
-        version: null,
-        identity: null,
-        available_models: [],
-        reasoning_effort_options: [],
-        default_model_id: null,
-        default_reasoning_effort: null,
-        update_advisory: null,
-        diagnoses: ['No model list has been read from the Mac yet.'],
-        models_complete: false,
-      }
-    );
+    return kept ?? empty_machine_snapshot(backend_key);
   }
+
   connected(): void {
     if (this.closed) return;
     const driver_kinds = this.database.read((sql) => machine_driver_kinds(sql, this.machine_id));
@@ -322,4 +286,48 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   settled(): Promise<void> {
     return this.completion;
   }
+}
+
+export function empty_machine_snapshot(backend_key: BackendInstanceId): BackendSnapshot {
+  return {
+    backend_key,
+    installed: false,
+    executable_path: null,
+    version: null,
+    identity: null,
+    available_models: [],
+    reasoning_effort_options: [],
+    default_model_id: null,
+    default_reasoning_effort: null,
+    update_advisory: null,
+    diagnoses: ['No model list has been read from the Mac yet.'],
+    models_complete: false,
+  };
+}
+
+export function decode_machine_snapshot(body: string): BackendSnapshot {
+  const value = decode_json(body, 'BackendSnapshot');
+  return {
+    ...value,
+    backend_key: parse_backend_instance_id(value.backend_key),
+    identity:
+      value.identity === null
+        ? null
+        : {
+            ...value.identity,
+            account_label: value.identity.account_label ?? null,
+            detail: value.identity.detail ?? null,
+            login_command: value.identity.login_command ?? null,
+          },
+    available_models: value.available_models.map((model) => ({
+      ...model,
+      display_name: model.display_name ?? null,
+      detail: model.detail ?? null,
+      reasoning_effort_options: model.reasoning_effort_options ?? null,
+      selected_variant: model.selected_variant ?? null,
+      version: model.version ?? [],
+      resolved_model_id: model.resolved_model_id ?? null,
+    })),
+    models_complete: value.models_complete ?? false,
+  };
 }
