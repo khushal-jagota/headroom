@@ -51,6 +51,8 @@ async function wait_until<T>(
   }
 }
 
+export const NATIVE_CODEX_MODEL = 'gpt-6.1-sol';
+
 export async function start_native_server(
   reopen_credential?: string,
   options: {
@@ -181,7 +183,7 @@ export async function start_native_server(
       content: MessageContent = text_message_content('[CASE:plain]'),
     ) {
       const conversation_id = 'native_' + backend + '_' + randomUUID().replaceAll('-', '');
-      const model = backend === 'claude' ? 'haiku' : 'gpt-6.1-sol';
+      const model = backend === 'claude' ? 'haiku' : NATIVE_CODEX_MODEL;
       const ticket = context.database.write((tx) =>
         create_ticket(tx, {
           title: 'Native ' + backend + ' rehearsal',

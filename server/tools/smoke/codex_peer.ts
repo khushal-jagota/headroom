@@ -16,6 +16,7 @@ export async function write_default_backend_peer(
   const environment = {
     UNIT17_TRACE: join(root, 'codex-transcript.jsonl'),
     UNIT17_CORE_PROOF: '1',
+    UNIT17_CATALOG_MODEL: 'TEST',
   };
   await writeFile(
     join(bin, 'codex'),

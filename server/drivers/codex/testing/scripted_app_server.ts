@@ -36,6 +36,7 @@ const answered = new Set<string>();
 const identity = { threadId: 'scripted-thread', turnId: 'scripted-turn' };
 
 const coreProof = process.env.UNIT17_CORE_PROOF === '1';
+const catalogModel = process.env.UNIT17_CATALOG_MODEL;
 const providerMode = process.env.UNIT17_PROVIDER_MODE ?? '';
 const providerControl = process.env.UNIT17_PROVIDER_CONTROL;
 const statePath = `${trace}.state.json`;
@@ -116,12 +117,12 @@ function coreMessage(message: Record<string, unknown>): boolean {
     send({ method: 'remoteControl/status/changed', params: {} });
   } else if (message.method === 'initialized') {
     /* one-way handshake */
-  } else if (message.method === 'model/list') {
+  } else if (message.method === 'model/list' && catalogModel) {
     answer({
       data: [
         {
-          model: 'TEST',
-          displayName: 'Test',
+          model: catalogModel,
+          displayName: catalogModel,
           hidden: false,
           supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
           defaultReasoningEffort: 'low',
@@ -130,7 +131,7 @@ function coreMessage(message: Record<string, unknown>): boolean {
       ],
       nextCursor: null,
     });
-  } else if (message.method === 'account/rateLimits/read') {
+  } else if (message.method === 'account/rateLimits/read' && catalogModel) {
     answer({
       rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 2000000000 } },
     });
