@@ -728,3 +728,69 @@ it('aborts a pending autonomous receipt when the Claude child stops', async () =
     await state.child.stop();
   }
 });
+
+// Prior driver-only cases miss the core settlement barrier that must release a stale steer.
+it('a stale local steer releases the prior ending and autonomous activation', async () => {
+  const { setup } = await import('../../../tests/conversation_core_fixture.ts');
+  const { observe_promise } = await import('../../../core/promise_observer.ts');
+  const { PromptDeliveryQueued } = await import('../../../conversation/contracts.ts');
+  const f = setup();
+  await f.start();
+  await f.send();
+  const core_state = f.core.conversations.get('core')!;
+  const sink = core_state.child_event_sink!;
+  const start_agent_turn = vi.fn((reason: string, signal?: AbortSignal) =>
+    sink.start_agent_turn!(reason, signal),
+  );
+  const native = await live_child('core', { start_agent_turn });
+  core_state.child = native.child;
+  const gate = new Deferred<void>();
+  const entered = new Deferred<void>();
+  const original = f.core.begin_attempt.bind(f.core);
+  const spy = vi.spyOn(f.core, 'begin_attempt').mockImplementation(async (...args) => {
+    if (args[2] === 'steer') {
+      entered.resolve();
+      await gate.promise;
+    }
+    return original(...args);
+  });
+  let steering: Promise<unknown> | undefined;
+  try {
+    steering = f.core.send('core', text_message_content('steer'), {
+      sender_label: 'Owner',
+      sender_message_id: 'review-steer',
+      mode: 'steer',
+    });
+    await entered.promise;
+    // The driver ended its old turn. Its durable end waits behind the admitted steer.
+    await sink.report(core_state.running_turn!.token, new TurnEnded({ ending: 'completed' }));
+    const frames = JSON.parse(
+      readFileSync(
+        new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+        'utf8',
+      ),
+    ) as ClaudeSdkMessage[];
+    native.deliver({
+      value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+      done: false,
+    });
+    native.deliver({
+      value: frames.findLast((frame) => frame.subtype === 'task_notification')!,
+      done: false,
+    });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    gate.resolve();
+    const observed = await observe_promise(steering, 1000);
+    expect(observed.completed).toBe(true);
+    if (observed.completed) expect(observed.value).toBeInstanceOf(PromptDeliveryQueued);
+    expect(core_state.steer_settlements.size).toBe(0);
+    const activation = start_agent_turn.mock.results[0]!.value;
+    expect((await observe_promise(activation, 1000)).completed).toBe(true);
+  } finally {
+    gate.resolve();
+    spy.mockRestore();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+    await steering?.catch(() => {});
+    await native.child.stop();
+  }
+});
