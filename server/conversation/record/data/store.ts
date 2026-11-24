@@ -450,7 +450,8 @@ export class ConversationStorePrimitives {
     return this.database.read(
       (sql) =>
         sql.get(
-          "SELECT 1 FROM conversation_events WHERE conversation_id=? AND kind='prompt' LIMIT 1",
+          'SELECT 1 FROM conversation_events INDEXED BY sqlite_autoindex_conversation_events_1 ' +
+            "WHERE conversation_id=? AND kind='prompt' LIMIT 1",
           [conversation_id],
         ) !== undefined,
     );
