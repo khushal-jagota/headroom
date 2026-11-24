@@ -94,7 +94,7 @@ env -i PATH="$PATH" HOME="$TEST_SERVER_ROOT/home" TMPDIR="$TMPDIR" \
   PLAN_NOTIFICATIONS_ENABLED=false npm run test-server
 ```
 
-The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture and the production composition; this test server uses a fresh database and the test-mode composition.
+The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture, the production server and private home machine code connected through its local socket; this test server uses a fresh database and the test-mode composition.
 
 ## Ticket scratch
 

@@ -222,14 +222,50 @@ test('equal builds and an empty machine registry skip archive download and machi
   expect(f.context.provider.download_artifact).not.toHaveBeenCalled();
 });
 
-test('missing machine or publication build identity counts as changed even at the same revision', () => {
+test('a known publication build requires a matching machine build even at the same revision', () => {
   const f = machine_fixture();
   delete f.identity.build_id;
   f.identity.application_revision = f.release.manifest.app_sha;
   expect(f.service.machine_states(f.release)[0]?.changed).toBe(true);
-  delete f.release.parts;
-  expect(f.service.machine_states(f.release)[0]?.changed).toBe(true);
 });
+
+test.each(['darwin', 'linux'])(
+  'a legacy %s target clears after the machine reports its revision, including after restart',
+  async (platform) => {
+    const f = machine_fixture(platform);
+    delete f.release.parts;
+    const machine_id = '33333333-3333-4333-8333-333333333333';
+    f.set_machines([
+      { machine_id, name: 'Machine', platform, present: true, identity: f.identity },
+    ]);
+    f.attempts.create(f.attempt);
+    expect(f.service.machine_states()[0]).toMatchObject({ state: 'updating', changed: true });
+    f.identity.application_revision = f.release.manifest.app_sha;
+    const reconstructed = new MacUpdateService(f.context);
+    for (const service of [f.service, reconstructed]) {
+      expect(service.machine_states()[0]).toMatchObject({
+        state: 'current',
+        changed: false,
+        target_build_id: null,
+        can_retry: false,
+        detail: null,
+      });
+      expect(service.machine_states(f.release)[0]).toMatchObject({
+        state: 'current',
+        changed: false,
+      });
+      await service.prepare(f.release);
+      expect(service.for_machine(machine_id).check()).toMatchObject({
+        target: null,
+        prefetch: null,
+      });
+    }
+    f.set_machines([{ machine_id, name: 'Machine', platform, present: false, identity: null }]);
+    expect(reconstructed.machine_states()[0]).toMatchObject({ state: 'waiting', changed: true });
+    expect(f.context.provider.download_artifact).not.toHaveBeenCalled();
+    await reconstructed.settled();
+  },
+);
 
 test('retry changes only the selected machine request and survives service reconstruction', async () => {
   const f = machine_fixture();
