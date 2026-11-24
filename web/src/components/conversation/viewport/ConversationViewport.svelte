@@ -161,7 +161,7 @@
   let newestLineBelowTheView = $state(false);
   /** v8 (11): how far the thread's end was below the view at the last scroll or resize. */
   let endGapBeforeResize = 0;
-  /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
+  /** Newer content is below the view, past the near-the-bottom margin: Jump to latest shows. */
   let newestLineFarBelow = $state(false);
   /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
   let atTheTop = $state(true);
@@ -1195,10 +1195,11 @@
     return () => observer.disconnect();
   });
 
-  // The jump is drawn by the pane, straddling the composer's top edge. v5.4: it shows only
-  // while the newest content is more than one viewport below the visible area (or newer
-  // history is not loaded yet, or a jump is under way).
-  const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);
+  // The jump is drawn by the pane, straddling the composer's top edge. It shows while the newest
+  // content is below the view and the reader has moved off it. While the thread follows new
+  // output the following steps trail the arriving lines, so that gap does not show it. It also
+  // shows while newer history is not loaded yet, or a jump is under way.
+  const jumpShown = $derived((newestLineFarBelow && manualReader) || newerHistory || newerThanUnplacedAnchor || latestPending);
   $effect(() => {
     jump = jumpShown
       ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
