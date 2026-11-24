@@ -148,8 +148,9 @@ function release(): PublishedUpdate {
 async function owned_server(
   installer?: Partial<InstallerOperations>,
   startup?: {
-    before_start(root: string): void;
-    configure_environment(environment: ComposedEnvironmentRuntime): void;
+    before_start?(root: string): void;
+    configure_environment?(environment: ComposedEnvironmentRuntime): void;
+    worker_readiness?: boolean;
   },
 ) {
   const published = release();
@@ -208,9 +209,9 @@ async function owned_server(
     },
   };
   try {
-    startup?.before_start(root);
+    startup?.before_start?.(root);
     const server = await startServer({
-      enableWorkerReadiness: true,
+      enableWorkerReadiness: startup?.worker_readiness ?? true,
       createConversationCore(value) {
         return new SqliteProcessConversationSystem({
           store: value.record.store,
@@ -272,7 +273,7 @@ async function owned_server(
           // The status collector is real and is never requested by these proofs.
           collect_status: collect_vps_status,
         });
-        startup?.configure_environment(environment);
+        startup?.configure_environment?.(environment);
         return environment;
       },
     });
@@ -740,25 +741,36 @@ test('startup puts back the previous app before admission refuses a database an 
   expect(root).not.toBe('');
 });
 
-test('an accepted queued send drains before the installer stops the home', async () => {
+test('an accepted queued send drains even when worker readiness polling is disabled', async () => {
   const launched = deferred<void>();
-  const owned = await owned_server({
-    launch: async () => {
-      launched.resolve();
-      throw new Error('stop after observing the launch');
+  const owned = await owned_server(
+    {
+      launch: async () => {
+        launched.resolve();
+        throw new Error('stop after observing the launch');
+      },
     },
-  });
+    { worker_readiness: false },
+  );
   try {
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
     const first = await (await owned.send('first queued-update turn')).json();
     expect(first.fate).toBe('started');
     const second = await (await owned.send('second queued-update turn')).json();
     expect(second.fate).toBe('queued');
-    expect(owned.context.core!.has_pending_update_sends()).toBe(true);
+    const pending = deferred<void>();
+    const core = owned.context.core!;
+    const hasPending = core.has_pending_update_sends.bind(core);
+    vi.spyOn(core, 'has_pending_update_sends').mockImplementation(() => {
+      const held = hasPending();
+      if (held) pending.resolve();
+      return held;
+    });
     expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
       200,
     );
     expect((await owned.status()).attempt.state).toBe('preparing');
+    await reached(pending.promise, 'installer waiting for the queued send');
     await owned.registry.child(first.conversation_id).finish();
     await reached(launched.promise, 'installer launch after queued send delivery');
     expect(await owned.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);

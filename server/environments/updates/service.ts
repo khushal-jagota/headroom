@@ -7,6 +7,7 @@ import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identi
 import { randomUUID } from 'node:crypto';
 import { lstatSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { resolved_path } from '../paths.ts';
 import type { UpdateBarrier } from '../update_barrier.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
@@ -489,12 +490,6 @@ export class UpdateService {
       this.options.changes.emit();
     }
     const attempt = status.attempt;
-    if (
-      attempt?.state === 'preparing' &&
-      this.advancing === null &&
-      !this.options.runtime.conversation()?.has_pending_update_sends()
-    )
-      this.launch();
     return attempt !== null && states('preparing', 'installing').has(attempt.state);
   }
   private launch(): void {
@@ -560,7 +555,10 @@ export class UpdateService {
       if (snapshot_required)
         await require_snapshot_space(this.options.database, this.options.backup_directory);
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
-      if (this.options.runtime.conversation()?.has_pending_update_sends()) return;
+      while (this.options.runtime.conversation()?.has_pending_update_sends()) {
+        await delay(ATTEMPT_OBSERVER_SECONDS * 1000);
+        if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+      }
       const command = this.options.installer.prepare({
         current_root: this.options.current_root,
         database: this.options.database,
