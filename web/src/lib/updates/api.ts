@@ -78,6 +78,7 @@ export async function performUpdateAction(status: UpdateStatus, request: UpdateA
     throw error;
   } finally {
     pressInFlight = false;
-    await queryClient.invalidateQueries({ queryKey: ["updates"] });
+    // The press is answered. The status read that follows it is not waited for.
+    void queryClient.invalidateQueries({ queryKey: ["updates"] });
   }
 }

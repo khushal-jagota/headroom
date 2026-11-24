@@ -5,6 +5,7 @@ import { serverMoveActive } from "./machines/logic/serverMove";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
+import { USAGE_SCAN_LIMIT_MS } from "./requestLimit/config";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { readUsageLimits, usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
@@ -90,7 +91,7 @@ export const queries = {
     queryKey: ["usage-limits", machineId], queryFn: () => readUsageLimits(machineId), retry: false
   }),
   recordedUsage: (input: UsageSummaryInput) => ({
-    ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
+    ...resourceQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input), false, USAGE_SCAN_LIMIT_MS),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
     meta: { resourceBody: true, followsChangeStream: false },
     retry: false,

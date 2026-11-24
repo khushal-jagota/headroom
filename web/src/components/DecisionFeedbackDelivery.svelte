@@ -1,7 +1,7 @@
 <script lang="ts">
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJsonAndWaitForScreen } from "../lib/mutate";
   import type { TicketDetail } from "../lib/types";
 
   let { ticket }: { ticket: TicketDetail } = $props();
@@ -13,7 +13,7 @@
     busy = true;
     error = null;
     try {
-      await mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/restart-worker`, {
+      await mutateJsonAndWaitForScreen(`/api/tickets/${encodeURIComponent(ticket.id)}/restart-worker`, {
         method: "POST", body: {}
       });
       confirming = false;

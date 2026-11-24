@@ -35,6 +35,7 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
+  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
 
   import type { ManagedFileTarget } from "../lib/filePreview";
   let { requestedConversationId = null, openedFile = null, onOpenFile }: { requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
@@ -84,7 +85,7 @@
   });
 
   async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body});
+    const delivered=await mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body,limitMs:sendRequestLimitMs(body.content)});
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }

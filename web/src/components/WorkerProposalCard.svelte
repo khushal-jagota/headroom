@@ -176,8 +176,8 @@
           nextCeiling: change.ceiling,
           nextHolder: change.holder
         }));
-        // Run onAccept before checking mounted/decisionKey: invalidateQueries() inside
-        // submitReviewDecision can clear pending_proposal and unmount this bar first.
+        // Run onAccept before checking mounted/decisionKey: the refresh that
+        // submitReviewDecision starts can clear pending_proposal and unmount this bar first.
         await onAccept();
         if (!mounted || decisionKey !== key) return;
         revisionText = "";

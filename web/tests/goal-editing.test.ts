@@ -13,23 +13,38 @@ function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unkn
 const done = (itemId: string) => (block: ChecklistBlock): ChecklistBlock => ({ ...block, items: block.items.map(item => item.id === itemId ? { ...item, state: 'done' } : item) });
 
 describe('goal writes across control lifetimes', () => {
-  it('serializes editors for the captured goal, applies fresh documents, and lets another goal proceed', async () => {
-    const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>(), firstStarted = deferred<void>();
-    const refreshGate = deferred<void>(), refreshStarted = deferred<void>();
-    let holdFirstRefresh = false;
+  /** A server that admits a write only at the current revision, as the real one does. */
+  function server(...ids: string[]) {
+    const saved = new Map(ids.map(id => [id, goal(id)]));
     const writes: Array<[string, GoalEditBody]> = [];
-    const io = {
+    return {
+      saved, writes,
       read: async (id: string) => saved.get(id)!,
       write: async (id: string, body: GoalEditBody) => {
         writes.push([id, body]);
-        if (writes.length === 1) { firstStarted.resolve(); await gate.promise; holdFirstRefresh = true; }
-        const accepted = { ...saved.get(id)!, ...body, revision: saved.get(id)!.revision + 1 };
+        const current = saved.get(id)!;
+        if (body.expected_revision !== current.revision) throw new Error('this document changed; read it again before saving');
+        const accepted = { ...current, ...body, revision: current.revision + 1 };
         saved.set(id, accepted); return accepted;
-      }, refresh: async () => {
-        if (holdFirstRefresh) {
-          holdFirstRefresh = false; refreshStarted.resolve(); await refreshGate.promise;
-        }
       },
+      /** A change from another tab, an agent or the CLI. */
+      changeElsewhere(id: string) { saved.set(id, { ...saved.get(id)!, revision: saved.get(id)!.revision + 1 }); },
+    };
+  }
+
+  it('serializes editors for the captured goal, applies fresh documents, and lets another goal proceed', async () => {
+    const world = server('first', 'second'), { writes } = world, gate = deferred<void>(), firstStarted = deferred<void>();
+    const screenGate = deferred<void>();
+    let firstHeld = false;
+    const io = {
+      read: world.read,
+      // The server holds its answer to the first write until the gate opens.
+      write: async (id: string, body: GoalEditBody) => {
+        if (!firstHeld) { firstHeld = true; firstStarted.resolve(); await gate.promise; }
+        return world.write(id, body);
+      },
+      // The screen of the first goal does not show the accepted writes until the gate opens.
+      refresh: async () => { if (writes.at(-1)![0] === 'first') await screenGate.promise; },
     };
     const first = createGoalEditor('first', io), reopened = createGoalEditor('first', io);
     const writing: boolean[] = [], reopenedWriting: boolean[] = [], otherWriting: boolean[] = [];
@@ -37,31 +52,83 @@ describe('goal writes across control lifetimes', () => {
     const unsubscribeReopened = reopened.subscribeWriting(value => reopenedWriting.push(value));
     const second = createGoalEditor('second', io);
     const unsubscribeOther = second.subscribeWriting(value => otherWriting.push(value));
-    const one = first.updateBlock('steps', block => done('one')(block as ChecklistBlock));
+    let oneResolved = false;
+    const one = first.updateBlock('steps', block => done('one')(block as ChecklistBlock)).then(() => { oneResolved = true; });
     expect(writing).toEqual([false, true]);
     expect(reopenedWriting).toEqual(writing);
     expect(otherWriting).toEqual([false]);
-    const two = reopened.updateBlock('steps', block => done('two')(block as ChecklistBlock));
+    // A control that still shows revision 1 sends the second edit.
+    const two = reopened.updateBlock('steps', block => done('two')(block as ChecklistBlock), 1);
     await firstStarted.promise;
     await second.write({ completed: true });
-    await tick();
-    expect(otherWriting).toEqual([false, true, false]);
+    await vi.waitFor(() => expect(otherWriting).toEqual([false, true, false]));
     expect(writing.at(-1)).toBe(true);
-    expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
-    gate.resolve(); await refreshStarted.promise;
-    expect(writing.at(-1)).toBe(true);
-    expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
-    refreshGate.resolve(); await Promise.all([one, two]);
+    expect(writes.map(([id]) => id)).toEqual(['second']);
+    // The queued edit starts at the server's answer. It does not wait for the screen.
+    gate.resolve();
+    await vi.waitFor(() => expect(writes.map(([id]) => id)).toEqual(['second', 'first', 'first']));
+    // It is built on the document that holds the first edit, at that document's revision.
+    expect(writes[2][1]).toHaveProperty('expected_revision', 2);
+    expect((writes[2][1].page!.blocks[0] as ChecklistBlock).items.map(item => item.state)).toEqual(['done', 'done']);
+    // The caller and the writing mark wait until the screen shows the accepted document,
+    // so a control does not drop its pending state onto the old one.
     await tick();
-    expect(writing.at(-1)).toBe(false);
+    expect(oneResolved).toBe(false);
+    expect(writing.at(-1)).toBe(true);
+    screenGate.resolve(); await Promise.all([one, two]);
+    await vi.waitFor(() => expect(writing.at(-1)).toBe(false));
     expect(reopenedWriting).toEqual(writing);
     unsubscribe(); unsubscribeReopened(); unsubscribeOther();
     const afterUnsubscribe = [...writing];
-    await first.write({ completed: true });
+    // A field edit from a control that still shows revision 1 is admitted at the newest revision.
+    await first.write({ completed: true, expected_revision: 1 });
     await tick();
     expect(writing).toEqual(afterUnsubscribe);
-    expect(writes[2][1]).toHaveProperty('expected_revision', 2);
-    expect((writes[2][1].page!.blocks[0] as ChecklistBlock).items.map(item => item.state)).toEqual(['done', 'done']);
+    expect(writes[3][1]).toHaveProperty('expected_revision', 3);
+  });
+
+  // Risk: the editor sends a control's old revision at the newest one. That is correct
+  // only for this browser's own edits. It must never carry an edit past a change from elsewhere.
+  it('admits an old revision only along its own edits, and never past a change from elsewhere', async () => {
+    const world = server('chain'), { writes } = world;
+    const editor = createGoalEditor('chain', { read: world.read, write: world.write, refresh: async () => undefined });
+    await editor.write({ completed: true, expected_revision: 1 });
+    // The document changed elsewhere after this browser's edit. A control at 1 or 2 is refused.
+    world.changeElsewhere('chain');
+    await expect(editor.write({ completed: false, expected_revision: 1 })).rejects.toThrow('this document changed');
+    expect(writes.at(-1)![1]).toHaveProperty('expected_revision', 2);
+    // The refusal ended the chain, so nothing is admitted forward until an edit is accepted again.
+    await expect(editor.write({ completed: false, expected_revision: 2 })).rejects.toThrow('this document changed');
+    expect(writes.at(-1)![1]).toHaveProperty('expected_revision', 2);
+    // An edit at the revision that the screen now shows is accepted and starts a new chain.
+    await editor.write({ completed: false, expected_revision: 3 });
+    await editor.write({ completed: true, expected_revision: 3 });
+    expect(writes.at(-1)![1]).toHaveProperty('expected_revision', 4);
+    // The revisions before the change from elsewhere are not part of the new chain.
+    await expect(editor.write({ completed: false, expected_revision: 2 })).rejects.toThrow('this document changed');
+    expect(writes.at(-1)![1]).toHaveProperty('expected_revision', 2);
+  });
+
+  // Risk: a block edit sends the whole page. Built on a document that is older than this
+  // browser's own edit, or older than what the control showed, it would undo those edits.
+  it('builds a block edit only on a document that holds what came before it', async () => {
+    const world = server('basis'), { writes } = world;
+    const old = structuredClone(world.saved.get('basis')!);
+    let staleReads = 0;
+    const editor = createGoalEditor('basis', {
+      read: async id => staleReads-- > 0 ? old : world.read(id),
+      write: world.write, refresh: async () => undefined,
+    });
+    await editor.updateBlock('steps', block => done('one')(block as ChecklistBlock));
+    // One read is older than this browser's own edit. The editor reads once more.
+    staleReads = 1;
+    await editor.updateBlock('steps', block => done('two')(block as ChecklistBlock), 1);
+    expect((writes.at(-1)![1].page!.blocks[0] as ChecklistBlock).items.map(item => item.state)).toEqual(['done', 'done']);
+    // Both reads are older than what the control showed. Nothing is sent.
+    staleReads = 2;
+    const sent = writes.length;
+    await expect(editor.updateBlock('steps', block => block, 3)).rejects.toThrow('not up to date');
+    expect(writes).toHaveLength(sent);
   });
 
   it('keeps accepted writes successful when refresh fails, rejects absent blocks, and reports write failures', async () => {
