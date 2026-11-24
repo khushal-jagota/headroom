@@ -18,7 +18,7 @@ describe("the opened pane's top bar", () => {
     expect(paneHeadStatus({ ...quiet, running: true, elapsed: "2m 14s" })).toBeNull();
     expect(paneHeadStatus({ ...quiet, running: true, waitingForYou: true })).toBeNull();
     expect(paneHeadStatus({ ...quiet, backgroundWorking: true })).toBeNull();
-    expect(conversationState({ ...quiet, running: true, elapsed: "2m 14s" })).toMatchObject({ state: "working", text: "Working · 2m 14s", mark: "spinner" });
+    expect(conversationState({ ...quiet, running: true, elapsed: "2m 14s" })).toMatchObject({ state: "working", text: "Working for 2m 14s", mark: "spinner" });
     expect(conversationState({ ...quiet, running: true, waitingForYou: true, waitingFor: "approval" })).toMatchObject({ state: "waiting", text: "Needs your approval", mark: "dot" });
     expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "answer" }).text).toBe("Needs your answer");
     expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "key" }).text).toBe("Needs a key");
@@ -83,8 +83,10 @@ describe("the dock's status line", () => {
     expect(status({ settingUp: "Setting up · 1m 35s" })).toEqual({ kind: "setting-up", clock: "1m 35s" });
     expect(status({ running: true })).toEqual({ kind: "working", clock: "2m 14s" });
     expect(status({})).toEqual({ kind: "idle", clock: null });
-    // An ask, a proposal, a failure or a stop says itself elsewhere; the dock says Idle.
-    expect(status({ running: true, waitingForYou: true, waitingFor: "answer" }, false, true)).toEqual({ kind: "idle", clock: null });
+    // A running turn keeps saying Working, with its clock, while an ask waits: the server counts it working.
+    expect(status({ running: true, waitingForYou: true, waitingFor: "answer" }, false, true)).toEqual({ kind: "working", clock: "2m 14s" });
+    // An ask with no running turn, a failure or a stop says itself elsewhere; the dock says Idle.
+    expect(status({ waitingForYou: true, waitingFor: "answer" }, false, true)).toEqual({ kind: "idle", clock: null });
     for (const facts of [{ waitingForYou: true, waitingFor: "approval" as const },
       { failure: "turn_failed" as const }, { failure: "not_delivered" as const }, { interrupted: true }]) {
       expect(status(facts)).toEqual({ kind: "idle", clock: null });
@@ -101,7 +103,7 @@ describe("the dock's status line", () => {
   it("draws the state with its clock and no narration, a spinner only while live, and Open with its arrow", () => {
     const working = rest({ kind: "working", clock: "29h 28m" });
     expect(working).toContain('data-conversation-system-mark="spinner"');
-    expect(working).toMatch(/Working · <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
+    expect(working).toMatch(/Working for <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
     // No narration sentence under the Working line.
     expect(working).not.toContain("narration");
     expect(rest({ kind: "setting-up", clock: "1m 35s" })).toMatch(/Setting up · <span data-conversation-rest-clock[^>]*>1m 35s</);
@@ -116,7 +118,7 @@ describe("the dock's status line", () => {
     expect(rest({ kind: "idle", clock: null })).toMatch(/data-conversation-rest-line[^]*cv-system-line-mark[^]*cv-system-line-words/);
     // The line's text is exactly its words: no spaces around them from the markup.
     const line = working.slice(working.indexOf("<div class=\"cv-system-line"), working.indexOf("</div></div>") + 12).replace(/<[^>]+>/g, "");
-    expect(line).toBe("Working · 29h 28m");
+    expect(line).toBe("Working for 29h 28m");
     const open = rest({ kind: "idle", clock: null });
     expect(open).toMatch(/<button[^>]*data-conversation-rest-bar/);
     expect(open).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);
