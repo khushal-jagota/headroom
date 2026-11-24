@@ -418,7 +418,7 @@ jobs:
   release-gate:
     name: Release qualification
     needs: [linux, mac, linux-executor, machine-compatibility, linux-upgrade, mac-upgrade, server-suite, web-suite, mac-machine-suite]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require every candidate build, compatibility and installed upgrade
