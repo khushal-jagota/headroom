@@ -7,6 +7,7 @@ export type PendingComposerSend = {
   attempt: ComposerSendAttempt;
   mode: PromptDeliveryMode;
   sentAtUnixMilliseconds?: number;
+  restored?: boolean;
   phase: "waiting" | "dispatching" | "failed" | "interrupted";
   error?: string;
   needsReconciliation?: boolean;

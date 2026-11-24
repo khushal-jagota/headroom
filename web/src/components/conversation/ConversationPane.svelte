@@ -364,11 +364,14 @@
     return composerHandle?.takeBackUnsentMessage(content) ?? false;
   }
   async function editHeldPrompt(heldPromptId: string, words: string): Promise<void> {
-    if (!onDiscardHeldPrompt || composerHandle === null) return;
+    const composer = composerHandle;
+    const origin = conversationId;
+    if (!onDiscardHeldPrompt || composer === null) return;
     // The write's own answer says whether the message left the queue. A message that
     // already ran keeps its words in the thread, so they do not come back here.
     if (await onDiscardHeldPrompt(heldPromptId, true) === false) return;
-    composerHandle.takeBackQueuedWords(words);
+    if (composer !== composerHandle || origin !== conversationId || readOnly) return;
+    composer.takeBackQueuedWords(words);
   }
   let composerErrorNote = $derived(activityUncertain && errorNote !== null && errorNote === readError ? null : errorNote);
 

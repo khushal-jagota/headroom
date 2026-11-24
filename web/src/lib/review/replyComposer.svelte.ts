@@ -1,4 +1,4 @@
-import { untrack } from 'svelte';
+import { onDestroy, untrack } from 'svelte';
 import { connectionStatus } from '../changeStream';
 import { fateSentence } from '../conversation/composer';
 import { readComposerDraft, writeComposerDraft } from '../conversation/composerDraft';
@@ -48,14 +48,15 @@ function statusFor(delivery: DeliveredMessage): Pick<ReviewOutgoingReply, 'statu
 }
 
 // A card and its bar beneath an open artifact edit one draft and send from one list.
-const mounted = new Map<string, { composer: ReviewReplyComposer; mounts: number }>();
+const mounted = new Map<string, { composer: ReviewReplyComposer; references: number; mounts: number }>();
 
 export function reviewReplyComposer(options: Options): ReviewReplyComposer {
   let entry = mounted.get(options.draftKey);
   if (!entry) {
-    entry = { composer: new ReviewReplyComposer(options), mounts: 0 };
+    entry = { composer: new ReviewReplyComposer(options), references: 0, mounts: 0 };
     mounted.set(options.draftKey, entry);
   }
+  entry.composer.retain();
   return entry.composer;
 }
 
@@ -119,6 +120,17 @@ export class ReviewReplyComposer {
   }
   get hasDraft() { return Boolean(this.text.trim() || this.files.length || this.images.length || this.uploads.length); }
 
+  retain(): void {
+    const entry = mounted.get(this.#key)!;
+    // The replacement card can acquire this composer during setup, before
+    // the old card's cleanup and the replacement's onMount run.
+    entry.references += 1;
+    onDestroy(() => {
+      entry.references -= 1;
+      this.#disposeIfIdle();
+    });
+  }
+
   mount(): () => void {
     const entry = mounted.get(this.#key)!;
     entry.mounts += 1;
@@ -153,7 +165,8 @@ export class ReviewReplyComposer {
   }
 
   #disposeIfIdle(): void {
-    if (mounted.get(this.#key)?.mounts !== 0 || this.submitting || this.attempts.some(attempt =>
+    const entry = mounted.get(this.#key);
+    if (entry?.references !== 0 || entry.mounts !== 0 || this.submitting || this.attempts.some(attempt =>
       attempt.status === 'preparing' || attempt.status === 'uploading' || attempt.status === 'waiting')) return;
     this.#watchUploads?.();
     releasePendingImages(this.#images);

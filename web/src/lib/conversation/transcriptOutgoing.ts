@@ -61,7 +61,7 @@ export function transcriptOutgoing(
       senderLabel: ownerLabel,
       mode: entry.mode,
       sentAtUnixMilliseconds: entry.sentAtUnixMilliseconds ?? existing?.sentAtUnixMilliseconds ?? 0,
-      restored: entry.sentAtUnixMilliseconds === undefined || existing?.restored,
+      restored: entry.restored || entry.sentAtUnixMilliseconds === undefined || existing?.restored,
       knownFate: failed ? "not_sent" : "nothing_yet",
       presentation: {kind: "upload", files, failed, note: entry.error ?? (
         failed ? "An attachment could not be uploaded."
@@ -74,7 +74,8 @@ export function transcriptOutgoing(
     const messageId = row.senderMessageId ?? row.key;
     if (acknowledged.has(messageId)) continue;
     const existing = messages.get(messageId);
-    if (existing?.accepted) continue;
+    if (existing && (existing.accepted || existing.knownFate === "agent_unconfirmed"
+      || existing.knownFate === "not_sent" || existing.knownFate === "machine_offline")) continue;
     messages.set(messageId, {
       ...existing,
       messageId,

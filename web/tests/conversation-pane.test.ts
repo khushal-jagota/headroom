@@ -163,7 +163,7 @@ describe("queued messages in the pane", () => {
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
     // The write's own answer decides: a message that the server did not discard keeps its words in the thread.
-    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?if \(await onDiscardHeldPrompt\(heldPromptId, true\) === false\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
+    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?if \(await onDiscardHeldPrompt\(heldPromptId, true\) === false\) return;[\s\S]*?origin !== conversationId[\s\S]*?composer\.takeBackQueuedWords\(words\);/);
     expect(pane).toContain("bind:this={composerHandle}");
     expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*deliveryMode = "queue";\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
   });

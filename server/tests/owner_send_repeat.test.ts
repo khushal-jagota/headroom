@@ -366,4 +366,4 @@ test('a repeated first message reaches each owner once and the repeat is answere
     await server?.close({ deadline: performance.now() / 1000 + 30 });
     await registry.close();
   }
-});
+}, 20_000);

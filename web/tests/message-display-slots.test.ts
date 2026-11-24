@@ -60,6 +60,8 @@ describe('mounted message presentation',()=>{
    expect(queued).toHaveLength(1);
    expect(queued[0]).toMatchObject({messageId:'send',knownFate:'waiting_for_the_agent',presentation:{kind:'held'}});
    expect(transcriptOutgoing([local], [], [held], 'owner', new Set())).toEqual([local]);
+   const unconfirmed = {...unresolved,knownFate:'agent_unconfirmed' as const};
+   expect(transcriptOutgoing([unconfirmed], [], [held], 'owner', new Set())).toEqual([unconfirmed]);
    expect(transcriptOutgoing([], [], [held], 'owner', new Set(['send']))).toEqual([]);
  });
  it('commits one slot in either transport/record order and retains record chronology on record-first admission',()=>{
