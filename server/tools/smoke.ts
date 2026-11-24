@@ -20,7 +20,9 @@ import { load_ticket_for_write } from '../tickets/data/index.ts';
 import { ChildProcesses, signal_child } from '../lifecycle/owned_processes.ts';
 import { executor_link_socket_path } from '../core/http/executor_link.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
-import type { MachineView } from '../machines/contracts.ts';
+import type { MachineCredentialGrant } from '../machines/contracts.ts';
+import { credential_path, write_credential } from '../executor/credential_file.ts';
+import { local_status } from '../executor/mac/ipc_client.ts';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const { values } = parseArgs({
@@ -142,7 +144,8 @@ async function stop() {
     log = undefined;
   }
 }
-async function machine_ready() {
+const machine_environment = { ...environment, PLAN_EXECUTOR_ROOT: join(root, 'machine') };
+async function machine_ready(not_before = 0) {
   const ready = AbortSignal.timeout(30_000);
   while (true) {
     assert.ok(
@@ -150,14 +153,31 @@ async function machine_ready() {
       `Home machine exited: ${machine?.exitCode ?? machine?.signalCode}`,
     );
     ready.throwIfAborted();
-    const response = await fetch(`${base}/api/machines`, { signal: ready });
-    assert.equal(response.status, 200);
-    const body = (await response.json()) as { machines: MachineView[] };
-    if (body.machines.some((item) => item.machine_id === HOME_MACHINE_ID && item.available)) return;
+    try {
+      const status = await local_status(machine_environment);
+      assert.equal(status.identity.application_revision, environment.PLAN_APP_SHA);
+      if (
+        status.lease_accepted_at_mac_ms !== null &&
+        status.lease_accepted_at_mac_ms >= not_before &&
+        status.last_lease_failure === null
+      )
+        return;
+    } catch (error) {
+      if (!['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? ''))
+        throw error;
+    }
     await delay(100, undefined, { signal: ready });
   }
 }
 async function start_machine() {
+  const response = await fetch(`${base}/api/machines/${HOME_MACHINE_ID}/credential`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(response.status, 200);
+  const grant = (await response.json()) as MachineCredentialGrant;
+  assert.equal(grant.machine_id, HOME_MACHINE_ID);
+  await write_credential(credential_path(machine_environment.PLAN_EXECUTOR_ROOT), grant.credential);
   machine_log = await open(join(root, 'evidence/machine.log'), 'a');
   machine = children.spawn(
     process.execPath,
@@ -174,7 +194,7 @@ async function start_machine() {
     ],
     {
       cwd: app_root,
-      env: { ...environment, PLAN_EXECUTOR_ROOT: join(root, 'machine') },
+      env: machine_environment,
       stdio: ['ignore', machine_log.fd, machine_log.fd],
     },
   );
@@ -227,7 +247,7 @@ try {
   step('Production server stops cleanly');
   await start();
   step('Production server restarts against the same private database');
-  await machine_ready();
+  await machine_ready(Date.now());
   step('The same home machine reconnects after the server restart');
   await smoke_after_restart(base, state, environment, step);
   await stop_machine();
