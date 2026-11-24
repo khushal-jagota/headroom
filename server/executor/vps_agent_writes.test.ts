@@ -1,3 +1,16 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { send as cli_send } from '../cli/http.ts';
+import { parse } from '../cli/parser.ts';
+import { create_commands } from '../cli/commands.ts';
+import { parse_numeric_json } from '../core/http/numeric_json.ts';
+import { AgentGateway } from './mac/ipc/gateway.ts';
+import { GatewayOutbox } from './mac/ipc/outbox.ts';
+import { OutboxStore } from './mac/storage/outbox.ts';
+import { decode_json, encode_bounded } from './protocol.ts';
+import type { MacRunningChild } from './mac/runner/contracts.ts';
+import type { GatewayOptions } from './mac/ipc/contracts.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Gap: a generic agent write runs outside the receipt transaction. Prove one route run per
  * inbox position, the child's in-process identity, the local CLI's error payloads, and that a
@@ -303,5 +316,111 @@ test("a reset Manager's old child can no longer act for it", async () => {
     expect(seen).toEqual([]);
   } finally {
     await app.close();
+  }
+});
+
+// Gap: existing Home tests inject native envelopes and miss CLI JsonNumber markers.
+// One connected case crosses the real IPC socket, gateway, spool, and Home route.
+test('CLI numeric JSON reaches the Home route unchanged through the relay', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-json-'));
+  const made = world({ kind: 'manager', id: 'm_numeric' });
+  const app = Fastify();
+  const scope = install_request_lifetime(app);
+  const seen: unknown[] = [];
+  app.patch('/api/probe', async (request) => {
+    seen.push(request.body);
+    return { ok: true };
+  });
+  await app.ready();
+  made.writes.app = app;
+  const store = await OutboxStore.open(
+    join(root, 'spool'),
+    { monotonic: () => performance.now() / 1000, now_ns: () => BigInt(Date.now()) * 1_000_000n },
+    { deadline: performance.now() / 1000 + 10 },
+    (error) => {
+      throw error;
+    },
+  );
+  class ConnectedOutbox extends GatewayOutbox {
+    override async add(...args: Parameters<GatewayOutbox['add']>) {
+      const envelope = await super.add(...args);
+      // The sender's HTTP byte boundary uses the same executor codec.
+      const receipt = await made.send(
+        decode_json(encode_bounded(envelope, 'QueuedEnvelope'), 'QueuedEnvelope'),
+      );
+      await store.acknowledge(
+        receipt.submission_id,
+        store.sender_id,
+        Buffer.from(encode_bounded(receipt, 'AcceptanceReceipt')),
+        () => this.notify_confirmed(receipt),
+      );
+      return envelope;
+    }
+  }
+  const gateway = new AgentGateway({
+    runner: {
+      admission_stopped: false,
+      authenticate: () =>
+        ({
+          reference: made.child,
+          active_turn: null,
+          owner: { kind: 'manager', id: 'm_numeric' },
+        }) as MacRunningChild,
+      source_work: async (_reference, work) => work(),
+      seal_admission() {},
+      async quiesce() {
+        throw new Error('No quiescence request');
+      },
+    },
+    outbox: new ConnectedOutbox(store),
+    presence: {} as GatewayOptions['presence'],
+    client: {
+      async read() {
+        return { cli_request: true };
+      },
+    },
+    request_exit() {},
+    async settle_catalogs() {},
+    on_failure(error) {
+      throw error;
+    },
+  });
+  const environment = {
+    PLAN_EXECUTOR_ROOT: root,
+    PLAN_EXECUTOR_CHILD_ID: made.child.child_id,
+    PLAN_EXECUTOR_CAPABILITY: 'private',
+  };
+  const invocation = {
+    ...parse(['api', 'PATCH', '/api/probe'], create_commands, environment),
+    environment,
+    stdin: async () => Buffer.alloc(0),
+  };
+  const source =
+    '{"page":{"kind":"headroom.page","version":1,"title":"Relay proof","blocks":[{"type":"text","text":"Saved"}]},"nested":[-7,0,9007199254740991,-9007199254740991,1.25,1e20,true,false,null,{"count":3}],"label":"café"}';
+  try {
+    await gateway.start(join(root, 'run', 'executor.sock'));
+    expect(
+      await cli_send(invocation, 'PATCH', '/api/probe', {
+        json_body: parse_numeric_json(source),
+      }),
+    ).toEqual({ ok: true });
+    expect(seen).toEqual([JSON.parse(source)]);
+    // Reject exact integers that the executor number contract cannot retain.
+    for (const number of ['9007199254740993', '-9007199254740993'])
+      await expect(
+        cli_send(invocation, 'PATCH', '/api/probe', {
+          json_body: parse_numeric_json(`{"nested":[${number}]}`),
+        }),
+      ).rejects.toThrow('safe integer range');
+    expect(seen).toHaveLength(1);
+    expect(store.pending_count()).toBe(0);
+  } finally {
+    await gateway.stop({ deadline: performance.now() / 1000 + 10 });
+    await store.stop({ deadline: performance.now() / 1000 + 10 });
+    scope.seal();
+    await scope.settled();
+    await app.close();
+    made.database.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
