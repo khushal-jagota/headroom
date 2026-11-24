@@ -399,7 +399,7 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     assert.equal(statSync(dirname(token_file)).mode & 0o777, 0o700);
     const wrapper = `#!/bin/sh\nexec ${shell_quote(join(root, 'app/bin/panels'))} "$@"\n`;
     assert.equal(readFileSync(command_link, 'utf8'), wrapper);
-    assert.equal(statSync(command_link).mode & 0o777, 0o755);
+    assert.equal(statSync(command_link).mode & 0o777, 0o755 & ~process.umask());
     // A second home refuses the existing command before it writes anything.
     const second = { ...f.request, root: join(f.base, 'second'), service: 'com.panels.other' };
     await assert.rejects(
