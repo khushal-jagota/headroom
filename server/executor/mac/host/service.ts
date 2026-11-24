@@ -159,6 +159,7 @@ export class MacService {
       incarnation: identity.executor_incarnation,
       journal,
       outbox,
+      supports_agent_turns: () => this.presence.agent_started_turns,
       confirm_agent_turn: async (submission_id, cancelled) => {
         const signal = AbortSignal.any([this.controller.signal, cancelled]);
         while (!signal.aborted) {

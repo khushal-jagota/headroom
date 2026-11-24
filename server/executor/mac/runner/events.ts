@@ -45,6 +45,8 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
   event_sink(reference: ChildReference): BackendEventSink {
     return {
       start_agent_turn: async (reason) => {
+        // Older homes cannot decode this event. Keep their native reader unblocked.
+        if (this.dependencies.supports_agent_turns?.() !== true) return null;
         const confirm = this.dependencies.confirm_agent_turn;
         if (confirm === undefined)
           throw new ExecutorValidationError('agent turn receipt channel is unavailable');

@@ -4,8 +4,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import {
+  BackgroundTaskStarted,
   AgentMessageCompleted,
   AgentMessageDelta,
   ModelThinkingHappened,
@@ -21,6 +22,8 @@ import { MacRunnerEvents } from './events.ts';
 import { create_mac_output_publication } from './publication.ts';
 import { MacSourceWork } from './source_work.ts';
 import { MacChildState } from './state.ts';
+import { MacPresence } from '../transport/presence.ts';
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 
 test('offline event publication preserves every delta and its order with completed output', async () => {
   const root = await mkdtemp(join(tmpdir(), 'machine-events-'));
@@ -115,9 +118,22 @@ test('agent turn start waits for its durable receipt and installs the allocated 
   const gateway = new GatewayOutbox(store);
   const reference = { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'one' };
   const token = { conversation_id: 'one', turn_number: 7 };
-  const child = { reference, active_turn: null } as unknown as MacRunningChild;
+  const child = {
+    reference,
+    active_turn: null,
+    background_task_ids: new Set(),
+  } as unknown as MacRunningChild;
   const state = new MacChildState();
   const sources = new MacSourceWork(state, () => false);
+  const presence = new MacPresence({
+    application_revision: 'candidate',
+    executor_incarnation: 'inc',
+    protocol_version: PROTOCOL_VERSION,
+    spool_format_version: 5,
+  });
+  const confirm = vi.fn((id: string, signal: AbortSignal) =>
+    gateway.wait_confirmed(id, 10, signal),
+  );
   try {
     const sink = new MacRunnerEvents({
       state,
@@ -125,8 +141,14 @@ test('agent turn start waits for its durable receipt and installs the allocated 
       native_children: { get: () => child } as unknown as MacNativeChildrenContract,
       publication: create_mac_output_publication(store),
       live: null,
-      confirm_agent_turn: (id, signal) => gateway.wait_confirmed(id, 10, signal),
+      supports_agent_turns: () => presence.agent_started_turns,
+      confirm_agent_turn: confirm,
     }).event_sink(reference);
+    // An old lease has no opt-in. Skip unsupported work before a durable item or waiter exists.
+    expect(await sink.start_agent_turn!('Old home')).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(store.pending_count()).toBe(0);
+    presence.accepted(true);
     let settled = false;
     const started = sink.start_agent_turn!('Sub-agent finished').then((value) => {
       settled = true;
@@ -158,6 +180,25 @@ test('agent turn start waits for its durable receipt and installs the allocated 
     expect(await started).toEqual(token);
     expect(child.active_turn).toEqual(token);
     expect(store.pending_count()).toBe(0);
+    presence.accepted();
+    expect(await sink.start_agent_turn!('Server changed')).toBeNull();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    presence.accepted(true);
+    presence.failed('Connection lost');
+    expect(await sink.start_agent_turn!('Offline home')).toBeNull();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // Existing traffic still crosses the same publication path after the skipped start.
+    await sink.report(
+      token,
+      new AgentMessageCompleted({ content: text_message_content('ordinary turn') }),
+    );
+    await sink.report(
+      null,
+      new BackgroundTaskStarted({ task_id: 'legacy', task_description: 'Legacy task' }),
+    );
+    expect(store.pending().map((row) => row_envelope(store.sender_id, row).payload.method)).toEqual(
+      ['agent_message_completed', 'background_task_started'],
+    );
     await sources.finish();
   } finally {
     await store.stop(stop_options());

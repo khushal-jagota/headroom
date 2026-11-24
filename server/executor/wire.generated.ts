@@ -284,6 +284,7 @@ export type LeaseRefused = {
 };
 export type LeaseReply = {
   accepted_at_vps_ms: number;
+  agent_started_turns?: boolean;
   away_after_seconds: number;
   mailbox_high_sequence: number;
   server_move?: ServerMoveNotice | null;
