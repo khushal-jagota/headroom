@@ -337,6 +337,10 @@ final class ReviewQueueScreensTests: XCTestCase {
         let approval = bodies.first { $0["ask_id"] != nil }
         XCTAssertEqual(approval?["ask_id"] as? String, "ask-1")
         XCTAssertEqual(approval?["option_id"] as? String, "allow")
+        // The message the window never saw stays unread, so its card comes back as new beside
+        // the two skipped cards; the answered asks are gone.
+        let returned = NSPredicate(format: "label == %@", "3 to review.")
+        await fulfillment(of: [expectation(for: returned, evaluatedWith: headline)], timeout: 15)
         capture("never-read-after-reconnect")
     }
 }
