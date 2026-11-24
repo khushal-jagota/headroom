@@ -62,7 +62,7 @@ function resolved_display_name(
 }
 export function snapshot_json(
   snapshot: BackendSnapshot,
-  backend_state: BackendStateStore | null,
+  backend_state: Pick<BackendStateStore, 'read_usage' | 'read_disabled_models'> | null,
   facts: CardFacts,
   machine_id?: string,
 ) {

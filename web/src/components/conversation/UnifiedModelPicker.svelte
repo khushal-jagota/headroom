@@ -170,13 +170,16 @@
     refreshing = true;
     feedback = null;
     try {
-      const result = await refreshBackendSnapshots();
-      if (result.snapshots !== null && !onRetry) snapshots = result.snapshots;
-      feedback = result.error ?? (result.outcomes
-        .filter(outcome => outcome.outcome !== "succeeded")
-        .map(outcome => `${backendNameFor(outcome.backend_key)}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
-        .join(" · ") || null);
-      if (onRetry) await onRetry();
+      if (onRetry) {
+        await onRetry();
+      } else {
+        const result = await refreshBackendSnapshots();
+        if (result.snapshots !== null) snapshots = result.snapshots;
+        feedback = result.error ?? (result.outcomes
+          .filter(outcome => outcome.outcome !== "succeeded")
+          .map(outcome => `${backendNameFor(outcome.backend_key)}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+          .join(" · ") || null);
+      }
     } catch (error) {
       feedback = error instanceof Error ? error.message : "The read failed. Check again.";
     } finally { refreshing = false; }
