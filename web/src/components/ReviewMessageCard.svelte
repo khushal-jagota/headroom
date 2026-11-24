@@ -59,7 +59,12 @@
     untrack(() => onBusy?.(active, conversationId));
   });
   $effect(() => {
-    const settled = composer.accepted?.through ?? (events.length === 0 ? ownerReadThrough : null);
+    if (!loaded) return;
+    const acceptedThrough = composer.accepted?.through;
+    // A replacement card can share the receipt while showing a newer unread message.
+    const settled = acceptedThrough !== undefined && acceptedThrough >= through
+      ? acceptedThrough
+      : events.length === 0 ? ownerReadThrough : null;
     if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && !composer.hasUnsettled) resolve(settled);
   });
 
