@@ -137,7 +137,19 @@ function append(
     [conversation_id, VIEW_PROJECTION_VERSION],
   );
   const previous_summaries = rest_references(tx, conversation_id);
-  const effect = event_effect(payload);
+  const preceding =
+    payload.kind === 'background_task_ended'
+      ? tx.get<{ payload: string }>(
+          "SELECT payload FROM conversation_events WHERE conversation_id=? AND sequence=? AND kind='agent_turn_started'",
+          [conversation_id, sequence - 1],
+        )
+      : undefined;
+  const effect = event_effect(
+    payload,
+    preceding === undefined
+      ? null
+      : conversation_event_payload_from_canonical_json('agent_turn_started', preceding.payload),
+  );
   let [turn_key, group_key] = state(tx, conversation_id);
   const removed: number[] = [];
   if (effect.sender_message_id !== null) {

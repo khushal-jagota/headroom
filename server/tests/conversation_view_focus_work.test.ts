@@ -270,3 +270,41 @@ test('an agent-started turn owns its work and keeps background task history', ()
     ).toBe('turn:e5');
   });
 });
+
+// The same completion must appear once, while an adjacent different task completion
+// stays visible. The history remains canonical even when its display row is folded away.
+test('an adjacent autonomous header replaces only its matching completion row', () => {
+  for (const task of [
+    { task_id: 'wake', task_description: 'Check tests', visible: false },
+    { task_id: 'other', task_description: 'Build package', visible: true },
+  ]) {
+    const database = projected([
+      [
+        'background_task_started',
+        { task_id: task.task_id, task_description: task.task_description },
+      ],
+      ['agent_turn_started', { turn_number: 1, reason: 'Background task "Check tests" completed' }],
+      [
+        'background_task_ended',
+        {
+          task_id: task.task_id,
+          task_description: task.task_description,
+          task_status: 'completed',
+        },
+      ],
+      ['turn_ended', { ending: 'completed' }],
+    ]);
+    database.read((sql) => {
+      const rows = read_page(sql, 'c', 'full').items.filter((item) => item.kind === 'row');
+      expect(rows.filter((item) => item.row_kind === 'background_task_started')).toHaveLength(1);
+      expect(rows.filter((item) => item.row_kind === 'agent_turn_started')).toHaveLength(1);
+      expect(rows.some((item) => item.row_kind === 'background_task_ended')).toBe(task.visible);
+      expect(
+        sql.get<{ kind: string }>(
+          'SELECT kind FROM conversation_events WHERE conversation_id=? AND sequence=?',
+          ['c', 3],
+        )?.kind,
+      ).toBe('background_task_ended');
+    });
+  }
+});

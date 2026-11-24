@@ -2,7 +2,10 @@
 import type { ConversationEventPayload } from '../../events.ts';
 import { in_focus } from './bodies.ts';
 import type { EventEffect } from '../projection_contracts.ts';
-export function event_effect(payload: ConversationEventPayload): EventEffect {
+export function event_effect(
+  payload: ConversationEventPayload,
+  preceding: ConversationEventPayload | null = null,
+): EventEffect {
   const visible = in_focus(payload);
   const effect = (
     row_kind: EventEffect['row_kind'],
@@ -31,8 +34,18 @@ export function event_effect(payload: ConversationEventPayload): EventEffect {
     case 'agent_turn_started':
       return effect('agent_turn_started', true, { opens_turn: true });
     case 'background_task_started':
-    case 'background_task_ended':
       return effect(payload.kind, false);
+    case 'background_task_ended':
+      // The adjacent turn header already says this completion. Keep its source fact,
+      // but do not draw the same completion twice. Other task endings stay visible.
+      return effect(
+        preceding?.kind === 'agent_turn_started' &&
+          preceding.reason ===
+            `Background task "${payload.task_description}" ${payload.task_status}`
+          ? null
+          : payload.kind,
+        false,
+      );
     case 'prompt':
       return effect('prompt', visible, {
         opens_turn: payload.mode !== 'steer',
