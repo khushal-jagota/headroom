@@ -282,6 +282,8 @@ async function input_response(reply: FastifyReply, file: InputFile): Promise<voi
   reply.hijack();
   const response = reply.raw;
   try {
+    for (const [name, value] of Object.entries(reply.getHeaders()))
+      if (value !== undefined) response.setHeader(name, value);
     response.writeHead(200, {
       'content-type': 'application/octet-stream',
       'content-length': String(file.byte_count),

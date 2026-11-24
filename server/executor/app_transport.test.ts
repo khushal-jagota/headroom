@@ -27,6 +27,7 @@ import { VpsExecutorRegistry } from './registry.ts';
 import { executor_link_socket_path, open_executor_link } from '../core/http/executor_link.ts';
 import { MacHttpClient } from './mac/transport/http.ts';
 import { read_bounded } from './mac/transport/sessions.ts';
+import { prove_prompt_input_delivery } from './testing/prompt_input_delivery.ts';
 
 // A trial's accepted report precedes the supervisor's final keep decision.
 // Inject proves the real route/auth/commit boundary without a new network host.
@@ -445,6 +446,7 @@ test('machine code on the home account reaches executor routes, and only those, 
         Date.now(),
       ]),
     );
+    await prove_prompt_input_delivery(endpoint, client, child_reference, dirname(path));
     const child = {
       reference: child_reference,
       owner: { kind: 'ticket', id: ticket.id },
