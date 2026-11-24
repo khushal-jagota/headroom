@@ -81,7 +81,7 @@ Every update ends as done or failed. A failed update writes its reason to the jo
 
 ## The server and each machine
 
-The server keeps its own update attempt. Each registered machine keeps a separate state and retry. A new offer does not erase a failed machine's retry. The server compares machine content identities and skips unchanged builds and their downloads. Machines without a content identity count as changed.
+The server keeps its own update attempt. Each registered machine keeps a separate state and retry. A new offer does not erase a failed machine's retry. The server compares machine content identities and skips unchanged builds and their downloads. A known target build requires a matching machine identity. Older publications without machine build identities use the machine’s reported application revision to recognize completion.
 
 The machine channel retains targets for absent machines. Changed machines activate only after the server succeeds. A machine failure leaves its previous runtime available. Linux archive readiness survives a server restart through validation of the retained archive.
 
@@ -129,4 +129,4 @@ The archive digest detects damage after a write. If a write reaches the installe
 - `scripts/dev`: the npm launcher for development.
 - `ops/panels-environments/`: user units.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._
