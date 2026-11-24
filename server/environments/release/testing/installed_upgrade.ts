@@ -10,6 +10,8 @@ import { recorded_failure_detail } from '../../../conversation/logic/backend_eve
 import { chromium } from 'playwright';
 import { healthy } from '../../updates/installer/health.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
+import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
+import type { MachineUpdateState } from '../../updates/view_contracts.ts';
 import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
 import { credential_path } from '../../../executor/credential_file.ts';
@@ -72,6 +74,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     'waiting for predecessor discovery',
   );
   const browser = await chromium.launch();
+  let phase = 'installing and rolling back';
   try {
     const page = await browser.newPage();
     await page.goto(url);
@@ -205,6 +208,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       path: join(o.base, 'evidence/update-rolled-back.png'),
       animations: 'disabled',
     });
+    phase = 'retrying the update';
     const retried = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -214,29 +218,37 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     await headline.getByRole('button', { name: 'Try again', exact: true }).click();
     const retryResponse = await retried;
     assert.ok(retryResponse.ok(), await retryResponse.text());
+    phase = 'checking the release feed, home and enrolled machines';
+    const enrolled = [HOME_MACHINE_ID, o.machine_id];
     await wait_for(async () => {
       const status = await read_status();
       if (status?.attempt?.attempt_id === rolledBackAttempt) return false;
       if (status?.attempt?.state === 'failed') throw new Error(status.attempt.detail);
       return (
         status?.app_sha === candidate &&
-        status?.attempt?.state === 'done' &&
-        status.machines.some(
-          (m: { machine_id: string; state: string; present: boolean; build_id: string | null }) =>
-            m.machine_id === o.machine_id &&
-            m.state === 'current' &&
-            m.present &&
-            m.build_id === expectedBuild,
+        status.attempt?.state === 'done' &&
+        status.attempt.to_sha === candidate &&
+        status.state === 'up_to_date' &&
+        enrolled.every((id) =>
+          status.machines.some(
+            (m: MachineUpdateState) =>
+              m.machine_id === id &&
+              m.present &&
+              m.state === 'current' &&
+              m.build_id === expectedBuild,
+          ),
         )
       );
-    }, 'waiting for installed home and joined machine to run the candidate');
+    }, 'waiting for the checked release and both enrolled machines to run the committed candidate');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const after = await turn();
     assert.notEqual(before.conversation_id, after.conversation_id);
     await verify_smoke_history(url, preserved);
+    phase = 'reopening the update screen';
     await page.reload();
     await headline.getByText('Up to date', { exact: true }).waitFor();
-    await card.locator(`[data-machine-update="${o.machine_id}"][data-state="current"]`).waitFor();
+    for (const id of enrolled)
+      await card.locator(`[data-machine-update="${id}"][data-state="current"]`).waitFor();
     await page.screenshot({
       path: join(o.base, 'evidence/update-complete.png'),
       animations: 'disabled',
@@ -245,6 +257,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       | { entry: string; feed_entry: string; running_sha: string; conversation_id: string }
       | undefined;
     if (process.platform === 'linux') {
+      phase = 'restoring the original Linux service';
       await promisify(execFile)('python3', [
         'server/environments/release/testing/configure_feed.py',
         o.base,
@@ -288,6 +301,50 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         2,
       ),
     );
+  } catch (error) {
+    const page = browser.contexts()[0]?.pages()[0];
+    const status = await read_status();
+    const cards = await page
+      ?.locator('[data-shell-status]:visible')
+      .allInnerTexts()
+      .catch(() => []);
+    const evidence = {
+      phase,
+      card_text: cards?.map(recorded_failure_detail),
+      app_sha: status?.app_sha,
+      state: status?.state,
+      attempt: status?.attempt && {
+        state: status.attempt.state,
+        target: status.attempt.to_sha,
+        detail: recorded_failure_detail(status.attempt.detail),
+      },
+      machines: status?.machines?.map(
+        ({
+          machine_id,
+          state,
+          present,
+          build_id,
+          target_build_id,
+          detail,
+        }: MachineUpdateState) => ({
+          machine_id,
+          state,
+          present,
+          build_id,
+          target_build_id,
+          detail: recorded_failure_detail(detail),
+        }),
+      ),
+    };
+    await Promise.allSettled([
+      writeFile(join(o.base, 'evidence/update-failure.json'), JSON.stringify(evidence, null, 2)),
+      page?.screenshot({
+        path: join(o.base, 'evidence/update-failure.png'),
+        animations: 'disabled',
+        timeout: 5_000,
+      }),
+    ]);
+    throw error;
   } finally {
     await browser.close();
   }
