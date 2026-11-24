@@ -45,21 +45,13 @@ export function declare_worker_setup(
   );
 }
 
-/** Close Home's setup of exactly this start. A later start's setup stays open. */
-export function close_home_worker_setup(
-  tx: TransactionSql,
-  ticket_id: string,
-  conversation_id: string,
-): void {
-  tx.run(
-    'DELETE FROM ticket_worker_setups WHERE ticket_id=? AND conversation_id=? AND machine_id=?',
-    [ticket_id, conversation_id, HOME_MACHINE_ID],
-  );
-}
-
-/** Home setup runs inside the server process, so none survives a server restart. */
+/** The direct path set up inside the server process, so its setup never survives a restart.
+ * Machine code reports its own setups, and its start command settling closes them. */
 export function close_home_worker_setups(tx: TransactionSql): void {
-  tx.run('DELETE FROM ticket_worker_setups WHERE machine_id=?', [HOME_MACHINE_ID]);
+  tx.run(
+    "DELETE FROM ticket_worker_setups WHERE machine_id=? AND NOT EXISTS (SELECT 1 FROM executor_commands c WHERE c.conversation_id=ticket_worker_setups.conversation_id AND c.operation='start' AND c.state IN ('waiting','delivered'))",
+    [HOME_MACHINE_ID],
+  );
 }
 
 export function read_worker_setup(sql: ReadSql, ticket_id: string): WorkerSetup | null {

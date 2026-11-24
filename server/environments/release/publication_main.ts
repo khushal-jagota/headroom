@@ -30,7 +30,7 @@ try {
         'public_cli_entrypoint',
       ),
     };
-    const provenance = await source_run(options.requested_sha);
+    const provenance = await source_run(options.requested_sha, options.source_root, execution);
     execution.signal.throwIfAborted();
     const result = await build_linux_publication(options, dependencies, provenance, execution);
     if (result === undefined) throw new Error('Publication build produced no result');

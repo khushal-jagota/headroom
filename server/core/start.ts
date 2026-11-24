@@ -1,3 +1,4 @@
+import { clear_abandoned_executor_uploads } from '../executor/upload_cleanup.ts';
 import { writeSync } from 'node:fs';
 import type { AreaLoopOptions } from '../areas.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
@@ -39,7 +40,6 @@ export type {
 import { assert_test_database_path } from './test_paths.ts';
 import { ServerServices } from './server_services.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
-import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 export interface ExecutorCompositionContext {
   readonly database: Database;
@@ -63,7 +63,6 @@ export interface ConversationCompositionContext extends Omit<
   child_processes: OwnedChildProcesses;
   executor?: VpsExecutorRegistry | null;
   update_barrier?: UpdateBarrier;
-  worker_supervision: WorkerSupervisionRuntime;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */
@@ -215,6 +214,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stages.own('one-shot admission', () => one_shot_children.seal());
       stages.own('HTTP listener', () => {
         services.app.value?.server.close(() => {});
+        services.executor_link?.close();
       });
       stages.own('video timer', () => clearInterval(services.video_cleanup_timer));
       stages.own('normal work release', () => services.stop_normal_work_release());
@@ -347,6 +347,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   // Publish setup custody before a factory can reenter shutdown.
   const setting_up = Promise.resolve().then(async () => {
     try {
+      if (!config.test_mode) await clear_abandoned_executor_uploads(config.db_path);
       return await services.setup();
     } finally {
       try {

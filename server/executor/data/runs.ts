@@ -15,6 +15,13 @@ import {
   record_prompt_outcome_in_transaction,
 } from './child_custody.ts';
 
+/** Who a machine code child works for. A conversation without an agent identity owns itself. */
+export interface ChildOwner {
+  readonly kind: 'ticket' | 'chief' | 'manager' | 'conversation';
+  /** The Ticket id, the Chief principal's id, the Manager id, or the conversation id. */
+  readonly id: string;
+}
+
 export class ExecutorStore {
   readonly database: Database;
   readonly machine_id: string;
@@ -87,7 +94,7 @@ export class ExecutorStore {
   readonly record_prompt_outcome_in_transaction = record_prompt_outcome_in_transaction;
   register_child(
     child: ChildReference,
-    principal_kind: string,
+    principal_kind: ChildOwner['kind'],
     principal_id: string,
     now_ms: number,
   ): void {

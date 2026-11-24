@@ -108,7 +108,12 @@ export function create_release_staging(
         signal.throwIfAborted();
         const artifact = join(work, 'artifact.zip');
         const archive = join(work, APP_ARCHIVE_NAME);
-        await provider.download_artifact(release.artifact_id, artifact, signal);
+        await provider.download_artifact(
+          release.artifact_id,
+          artifact,
+          signal,
+          release.artifact_source,
+        );
         signal.throwIfAborted();
         await with_zip_member(artifact, APP_ARCHIVE_NAME, (input) =>
           pipeline(input, createWriteStream(archive, { flags: 'wx' }), { signal }),

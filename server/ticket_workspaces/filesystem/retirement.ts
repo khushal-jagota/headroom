@@ -324,10 +324,13 @@ async function cleanup_pass(
       else eligible.push({ path, checkout_only: now < state!.ended_at! + RETENTION_SECONDS });
     }
   }
-  await write_json(join(dirname(tickets_root), 'ticket-workspaces-cleanup.json'), {
-    at: now,
-    folders: manifest,
-  });
+  await write_json(
+    options.report_path ?? join(dirname(tickets_root), 'ticket-workspaces-cleanup.json'),
+    {
+      at: now,
+      folders: manifest,
+    },
+  );
   if (options.apply === false) return result;
   const retried = await retry_retired_workspaces(join(dirname(tickets_root), '.ticket-retired'), {
     ...options,

@@ -12,7 +12,6 @@ import {
   readable_file,
   type Audience,
 } from './declarations.ts';
-import { PROVISION_SKILLS_HOME_OPTIONS } from '../environments/command_contracts.ts';
 import { TICKET_NEEDS } from '../tickets/contracts.ts';
 
 /** `--json` means one thing on every command. */
@@ -250,20 +249,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     ...environment_inputs(['live', 'staging']),
     json_output('json_output'),
   ]);
-  command(
-    'environment provision-skills',
-    'Reconcile Panels skills into each production agent home.',
-    [
-      option('database_parent', '--database-parent <DIRECTORY>', readable_path('directory', true), {
-        required: true,
-      }),
-      ...PROVISION_SKILLS_HOME_OPTIONS.map(({ cli_option, destination }) =>
-        option(destination, `${cli_option} <DIRECTORY>`, readable_path('directory', false), {
-          required: true,
-        }),
-      ),
-    ],
-  );
   command('environment remove', 'Remove the stopped staging environment.', [
     ...environment_inputs(['staging']),
     json_output('json_output'),
@@ -323,6 +308,9 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   command('executor retry', 'Look up the receipt of one earlier submission.', [
     argument('submission_id', '<SUBMISSION_ID>', text, {}),
     json_output(),
+  ]);
+  command('executor server-address', 'Check and save the HTTPS address of this machine’s server.', [
+    option('url', '--url <URL>', text, { required: true }),
   ]);
   command('executor run', 'Run the executor service for one registered machine.', [
     option('executor_id', '--executor-id <TEXT>', text, { required: true }),
@@ -391,10 +379,34 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     json_output(),
   ]);
 
+  group('legacy-agents', 'Inspect agents from an old Panels build.', 'host');
+  command(
+    'legacy-agents dry-run',
+    'Read startup retirement candidates without source writes or target signals.',
+    [
+      option('database_path', '--database-path <PATH>', readable_path('any', false), {
+        required: true,
+      }),
+    ],
+  );
+
   group('machine', 'Read and register named execution destinations.', 'data');
   command('machine list', 'List destination machines and whether each is available.', [
     json_output(),
   ]);
+  command(
+    'machine move-work',
+    'Move work to a machine with a fresh conversation. Owner only.',
+    [
+      argument('machine_id', '<MACHINE_ID>', text, {}),
+      option('ticket_id', '--ticket <TEXT>', text, {}),
+      option('manager_id', '--manager <TEXT>', text, {}),
+      option('chief', '--chief', boolean, { default: false }),
+      option('everything', '--everything', boolean, { default: false }),
+      json_output(),
+    ],
+    { audience: 'host' },
+  );
   command(
     'machine register',
     'Register an extra machine and print its credential once.',
@@ -403,10 +415,15 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   );
   command(
     'machine join-command',
-    'Register a machine and print its private join command.',
+    "Register a machine, or the server's own machine code with --server-machine, and print its private join command.",
     [
-      argument('name', '<NAME>', text, {}),
+      argument('name', '[NAME]', text, {}),
       option('home_url', '--home <TEXT>', text, { required: true }),
+      option('server_machine', '--server-machine', boolean, {
+        default: false,
+        description:
+          "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. This replaces the earlier home credential, so machine code that holds it is cut off until it gets the new one.",
+      }),
     ],
     { audience: 'host' },
   );

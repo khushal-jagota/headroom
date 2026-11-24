@@ -95,3 +95,13 @@ test('failed preparation retries while attempted delivery stays uncertain until 
   a.retire_source(db, source);
   expect(a.snapshots()).toEqual([]);
 });
+
+// Gap: only the home kept its last slot for a supervisor. The Chief and Managers can now run elsewhere.
+test('every machine keeps its last start slot for a supervisor', () => {
+  const { admission: a, request: r, tick } = setup(2);
+  a.configure_destinations(() => true);
+  expect(a.try_start(r('worker', 'away'))).toBe(true);
+  tick();
+  expect(a.try_start(r('second worker', 'away'))).toBe(false);
+  expect(a.try_start(r('manager', 'away', 'supervisor'))).toBe(true);
+});

@@ -24,6 +24,8 @@ export interface PreviewRecord {
   state: 'prepared' | 'active' | 'ended';
   ended_reason: string | null;
   process: ProcessIdentity | null;
+  machine_id?: string;
+  target_port?: number;
 }
 export interface TicketEligibility {
   ticket_id: string;
@@ -34,6 +36,7 @@ export interface TicketEligibility {
 export const base_path = (record: PreviewRecord): string =>
   `/dev/tickets/${record.ticket_id}/${record.generation}/`;
 export function port(record: PreviewRecord): number {
+  if (record.target_port !== undefined) return record.target_port;
   if (!record.process) throw new PreviewError('Preview application is not registered.', 410);
   return record.process.port;
 }

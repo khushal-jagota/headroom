@@ -37,7 +37,6 @@ import {
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
 import { randomUUID } from 'node:crypto';
-import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
@@ -251,6 +250,16 @@ export async function take_backend_event_with_receipt(
     applied = true;
     if (agent_acted) state.background_tasks_stopped_since_the_agent_last_acted.clear();
     host.note_written(state, result.written);
+    if (
+      live &&
+      token !== null &&
+      (event instanceof AgentMessageDelta ||
+        event instanceof ModelThinkingHappened ||
+        event instanceof ToolCallProgress)
+    )
+      // Durable transport receipts deduplicate replay. The frame remains transient,
+      // as it does for local children, and only the committed first intake emits it.
+      publish_live(host, state, token, event);
     if (live && event instanceof VendorSessionCursorRebound) {
       state.record = new ConversationRecord({
         ...state.record,
@@ -380,17 +389,10 @@ function retire_broken_local_child(
 export function make_sink(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
-  options: { supervised_launch?: boolean } = {},
 ): CoreBackendEventSink {
-  const generation =
-    (options.supervised_launch === true ? SUPERVISED_CHILD_GENERATION_PREFIX : '') +
-    randomUUID().replaceAll('-', '');
+  const generation = randomUUID().replaceAll('-', '');
   const sink: CoreBackendEventSink = {
     generation,
-    record_local_child_supervision: (path) =>
-      host.options.store.record_child_supervision(state.record.conversation_id, generation, path),
-    record_local_child_custody: (identity) =>
-      host.options.store.record_child_custody(state.record.conversation_id, generation, identity),
     report: (token, event) =>
       own_settlement(
         state,

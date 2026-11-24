@@ -1,4 +1,5 @@
 import { require_usable_model } from '../conversation/backend_state.ts';
+import { agent_machine_id } from '../machines/conversation_machine.ts';
 import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { dirname, resolve } from 'node:path';
@@ -78,7 +79,13 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     if (!dictionaryBody(request.body, reply)) return;
     return service.update_chief_launch_defaults(
       database,
-      database.read((sql) => service.resolve_launch_defaults(sql, request.body)),
+      database.read((sql) =>
+        service.resolve_launch_defaults(
+          sql,
+          request.body,
+          agent_machine_id(sql, { kind: 'chief' }),
+        ),
+      ),
     );
   });
   for (const method of ['PUT', 'PATCH'] as const) {

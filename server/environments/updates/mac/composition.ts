@@ -10,6 +10,8 @@ export function create_mac_update_composition(
   return {
     service,
     operations: {
+      machine_states: (release) => service.machine_states(release),
+      retry_machine: (machine_id, attempt_id) => service.retry_machine(machine_id, attempt_id),
       prepare: (release) => service.prepare(release),
       phase: (id) => service.phase(id),
       reported_at: (id) => service.reported_at(id),

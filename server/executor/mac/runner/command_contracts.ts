@@ -8,6 +8,7 @@ import type {
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal, CanonicalReader } from '../storage/journal_contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
+import type { MacChildOwner } from './logic/child_owner.ts';
 
 export type OwedOutput = Pick<
   QueuedEnvelope,
@@ -16,7 +17,8 @@ export type OwedOutput = Pick<
 export type MacOutputEntry = Pick<QueuedEnvelope, 'conversation_id' | 'kind' | 'payload'> &
   Partial<Pick<QueuedEnvelope, 'submission_id'>>;
 export interface MacOutputPublication {
-  add(entry: MacOutputEntry, options?: { ticket_id?: string }): Promise<void>;
+  /** `owner` names the child whose synced files can differ after this item. */
+  add(entry: MacOutputEntry, options?: { owner?: MacChildOwner }): Promise<void>;
 }
 export interface MacCommandRecordView {
   readonly command: ChildCommand;

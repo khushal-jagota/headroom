@@ -10,16 +10,27 @@ import type {
   ConversationStartValues,
 } from '../runtime/logic/conversation_start_resolution.ts';
 import { read_manager } from './data.ts';
+import { agent_machine_id } from '../machines/conversation_machine.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import type { ManagerLaunchConfiguration } from './contracts.ts';
+/** A Manager's choice is checked on the machine of its next conversation; defaults on the home. */
 export function validate_launch_configuration(
   sql: ReadSql,
   value: ManagerLaunchConfiguration,
+  manager_id: string | null = null,
 ): void {
   const refusal = built_in_driver_of(value.employee_backend)?.launch_model_refusal?.(
     value.employee_launch_model,
   );
   if (refusal) throw new PlannerError('validation', refusal);
-  require_usable_model(sql, value.employee_backend, value.employee_launch_model, 'vps');
+  require_usable_model(
+    sql,
+    value.employee_backend,
+    value.employee_launch_model,
+    manager_id === null
+      ? HOME_MACHINE_ID
+      : agent_machine_id(sql, { kind: 'manager', id: manager_id }),
+  );
 }
 export function manager_reuse_overrides(
   sql: ReadSql,

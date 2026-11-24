@@ -23,7 +23,6 @@ const drivers = [
       environment_name: 'CODEX_HOME',
       default_path: '~/.codex',
       isolated_directory_name: 'codex',
-      cli_option: '--codex-home',
     },
   }),
   driver('claude', {

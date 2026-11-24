@@ -2,7 +2,6 @@
 import { homedir } from 'node:os';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
-import { CLAUDE_CAPABILITIES, claude_selection_transition } from './selection.ts';
 import { home_path } from '../../core/paths.ts';
 import { expand_path } from '../../../environments/paths.ts';
 import {
@@ -40,8 +39,8 @@ export async function create_claude_instance(
   const base = {
     instance_id: input.instance_id,
     driver_kind: claude_driver.driver_kind,
-    capabilities: CLAUDE_CAPABILITIES,
-    plan_selection_transition: claude_selection_transition,
+    capabilities: claude_driver.capabilities,
+    plan_selection_transition: claude_driver.plan_selection_transition,
     supervises_local_launches: true,
     child_factory: create_claude_backend_child_factory(claude_launch(host), {
       child_processes: host.child_processes,

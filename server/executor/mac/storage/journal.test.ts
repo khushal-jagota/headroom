@@ -55,9 +55,10 @@ async function actual_failure(owner: OutboxCleanup, message: string): Promise<vo
   );
 }
 const command =
-  '{"command_sequence":1,"command_id":"stop","created_at_vps_ms":1,"child_command":{"command_id":"stop","child":{"executor_incarnation":"inc","child_id":"child","conversation_id":"c"},"operation":"stop","turn":null,"arguments":{"kind":"stop"},"file_dependencies":[]},"model_list_request":null}';
+  '{"command_sequence":1,"command_id":"stop","created_at_vps_ms":1,"child_command":{"command_id":"stop","child":{"executor_incarnation":"inc","child_id":"child","conversation_id":"c"},"operation":"stop","turn":null,"arguments":{"kind":"stop"},"file_dependencies":[]},"model_list_request":null,"backend_request":null,"work_move_request":null}';
 const reply = '{"commands":[' + command + ']}';
-const result = '{"command_id":"stop","child_outcome":null,"model_list":null}';
+const result =
+  '{"command_id":"stop","child_outcome":null,"model_list":null,"backend_result":null,"work_move_result":null}';
 const duplicate = command.replace('"command_sequence":1', '"command_sequence":2');
 const repeated = '{"commands":[' + duplicate + ']}';
 const large_result = result.replace(

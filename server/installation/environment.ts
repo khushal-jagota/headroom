@@ -4,6 +4,8 @@ import { find_release_executable } from '../environments/release/process.ts';
 import { resolved_path } from '../environments/paths.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { home_path } from '../drivers/core/paths.ts';
+import { RELEASE_REPOSITORY } from '../environments/release/source.ts';
+import { HOME_UPDATE_TOKEN_FILE } from './configuration.ts';
 import type { HomeInstallRequest, HomeInstallHost } from './contracts.ts';
 
 export async function home_service_environment(
@@ -11,7 +13,7 @@ export async function home_service_environment(
   host: HomeInstallHost,
 ): Promise<Record<string, string>> {
   const root = request.root;
-  const node_directory = dirname(host.node_executable);
+  const node_directory = join(root, 'app/node/bin');
   const directories =
     host.system === 'darwin'
       ? [node_directory, join(root, 'app/agent_backends/node_modules/.bin')]
@@ -36,15 +38,33 @@ export async function home_service_environment(
     PLAN_PORT: String(request.port),
     PLAN_BACKUP_DIR: join(root, 'data/backups'),
     PLAN_DISPATCHER_LOCK_PATH: join(root, 'data/dispatcher.lock'),
+    PLAN_UPDATE_REPOSITORY: RELEASE_REPOSITORY,
+    PLAN_UPDATE_TOKEN_FILE: join(root, HOME_UPDATE_TOKEN_FILE),
     ...(host.system === 'linux'
       ? { PLAN_SERVER_CONTROL_SOCKET: join(root, 'data/server-control.sock') }
       : { PLAN_WORKSPACE_ROOT: join(root, 'workspaces') }),
+  };
+  return environment;
+}
+
+/** Provider homes and machine authority never enter the server service environment. */
+export async function machine_service_environment(
+  request: HomeInstallRequest,
+  host: HomeInstallHost,
+): Promise<Record<string, string>> {
+  const server = await home_service_environment(request, host);
+  const root = request.root;
+  const environment: Record<string, string> = {
+    HOME: host.account_home,
+    PATH: server.PATH!.replaceAll(join(root, 'app'), join(root, 'machine/runtime')),
+    ...(host.system === 'linux' ? { LANG: 'C.UTF-8' } : {}),
+    PLAN_EXECUTOR_ROOT: join(root, 'machine/data'),
   };
   for (const { manifest } of BUILT_IN_MANIFESTS) {
     const home = manifest.home;
     if (!home) continue;
     const configured = request.isolated_providers
-      ? join(root, 'providers', home.isolated_directory_name)
+      ? join(root, 'machine/providers', home.isolated_directory_name)
       : home_path(home, host.environment, host.account_home, {
           unset: '||',
           expand_configured: false,
@@ -52,13 +72,11 @@ export async function home_service_environment(
     environment[home.environment_name] = await resolved_path(configured, host.account_home);
   }
   // An executable override is kept only on macOS.
-  const retained = ['PLAN_UPDATE_REPOSITORY', 'PLAN_UPDATE_TOKEN_FILE'];
-  for (const { manifest } of BUILT_IN_MANIFESTS) {
-    const { override_environment_name } = manifest.executable;
-    if (override_environment_name && host.system === 'darwin')
-      retained.push(override_environment_name);
-  }
-  for (const variable of retained)
-    if (host.environment[variable]) environment[variable] = host.environment[variable]!;
+  if (host.system === 'darwin')
+    for (const { manifest } of BUILT_IN_MANIFESTS) {
+      const variable = manifest.executable.override_environment_name;
+      if (variable && host.environment[variable])
+        environment[variable] = host.environment[variable]!;
+    }
   return environment;
 }

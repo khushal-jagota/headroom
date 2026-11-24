@@ -39,6 +39,11 @@ function scripted_driver(
       accent_color: '#000000',
     },
     manifest: scripted_manifest(kind),
+    capabilities: {
+      sessions: { supportsModelSwitchInSession: true },
+      turns: { supportsActiveSteering: true },
+    },
+    plan_selection_transition: turn_scoped_selection_transition,
     config: NO_DRIVER_CONFIG,
     async create({ instance_id }): Promise<DriverInstance> {
       events.push(`create ${instance_id}`);

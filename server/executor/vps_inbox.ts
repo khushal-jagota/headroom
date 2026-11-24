@@ -243,7 +243,13 @@ export class MacInbox {
         // Stop receipts retain their required post-commit run consequence below.
         if (envelope.kind !== 'child_stopped') {
           const previous = this.store.preflight(envelope, { identity });
-          if (previous !== null) return previous;
+          // A dispatch reservation is not a terminal result while its producer runs.
+          // Retrying HTTP callers must wait through answer_item's existing owner.
+          const active =
+            this.still_settling.has(envelope.conversation_id) ||
+            this.conversation_locks.get(envelope.conversation_id)?.locked;
+          if (previous !== null && (previous.disposition !== 'uncertain' || !active))
+            return previous;
         }
         return this.answer_item(envelope, deadline, () =>
           this.accept_envelope(envelope, identity, deadline),

@@ -379,3 +379,16 @@ test('creation refuses controllers and missing kernel kill support without leaki
     readFile(join(parent, 'panels-worker-' + 'b'.repeat(32), 'cgroup.kill')),
   ).rejects.toMatchObject({ code: 'ENOENT' });
 });
+
+test('read-only cgroup inventory covers descendant groups and refuses changed custody', async () => {
+  const { identity, native } = await cgroup_fixture();
+  await mkdir(join(identity.path, 'child'), { recursive: true });
+  const group = { ...identity, inode: (await stat(identity.path, { bigint: true })).ino };
+  await writeFile(join(group.path, 'cgroup.procs'), '12\n');
+  await writeFile(join(group.path, 'child', 'cgroup.procs'), '34\n');
+  expect(await native.members(group)).toEqual([12, 34]);
+  expect(await readFile(join(group.path, 'cgroup.procs'), 'utf8')).toBe('12\n');
+  await expect(native.members({ ...group, inode: group.inode + 1n })).rejects.toThrow('identity');
+  await symlink(group.path, join(group.path, 'link'));
+  await expect(native.members(group)).rejects.toThrow('link');
+});

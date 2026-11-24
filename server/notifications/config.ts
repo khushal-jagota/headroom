@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { APNsConfig } from './contracts.ts';
 export const APNS_BATCH_SIZE = 50;
 export const NOTIFICATION_FRESHNESS_SECONDS = 300;
@@ -10,8 +11,15 @@ export const APNS_PAYLOAD_MAX_BYTES = 4096;
 export const NOTIFICATION_LABEL_MAX_CHARS = 60;
 export const NOTIFICATION_PREVIEW_MAX_CHARS = 240;
 export const MESSAGE_REPLY_CATEGORY = 'PANELS_MESSAGE_REPLY';
-export function load_apns_config(env: NodeJS.ProcessEnv = process.env): APNsConfig | null {
-  const key_path = (env.PLAN_APNS_KEY_PATH ?? '').trim();
+export function load_apns_config(
+  env: NodeJS.ProcessEnv = process.env,
+  server_root?: string,
+): APNsConfig | null {
+  const configured_path = (
+    env.PLAN_APNS_KEY_PATH ?? (server_root ? 'secrets/apns-key.p8' : '')
+  ).trim();
+  const key_path =
+    configured_path && server_root ? resolve(server_root, configured_path) : configured_path;
   const key_id = (env.PLAN_APNS_KEY_ID ?? '').trim();
   const team_id = (env.PLAN_APNS_TEAM_ID ?? '').trim();
   const bundle_ids = (env.PLAN_APNS_BUNDLE_IDS ?? '')

@@ -8,6 +8,7 @@ import SwiftUI
     @ObservationIgnored lazy var resources = ResourceOwner(api: client)
     /// Unfinished Goal edits survive route pop/reentry for this app session only.
     let goalEdits = PageSessionRoute()
+    let updateActions = UpdateActionsState()
     var client: APIClient { APIClient(baseURL: baseURL, session: session) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.
@@ -21,6 +22,7 @@ import SwiftUI
     /// counts but did not load: the shared row budget can cut a card short.
     var workspaceHidden: [String: Int] = [:]
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
+    var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
     private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
     private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
@@ -35,11 +37,13 @@ import SwiftUI
     /// The last admitted view; screens read window paging facts from it.
     private(set) var view: ViewSnapshot?
     var executorHealth: ExecutorHealth? { healthResource.value }
+    var updateStatus: PanelsUpdateStatus? { updateResource.value }
+    var updateFailure: ServerReadFailure? { updateResource.failure }
     var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
     var serverUnreachable: Bool {
         errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
-            deploymentResource.failure?.isServerUnreachable == true
+            deploymentResource.failure?.isServerUnreachable == true || updateResource.failure?.isServerUnreachable == true
     }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
@@ -113,6 +117,7 @@ import SwiftUI
         displayGeneration += 1
         displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
         self.baseURL = baseURL
+        updateActions.reset()
         resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
@@ -363,16 +368,20 @@ import SwiftUI
         runGeneration += 1
         let generation = runGeneration
         running = true
-        let chief = chiefResource, deployment = deploymentResource, health = healthResource, drivers = driversResource
-        chief.acquire(); deployment.acquire(); health.acquire(); drivers.acquire()
+        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource
+        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
         connection = "Connecting"
+        let updateReads = Task {
+            await UpdateStatusRefresh.follow(current: { updates.value }, refresh: { await updates.refresh() })
+        }
         if hasRun { connectionSession += 1 }
         hasRun = true
         defer {
-            chief.release(); deployment.release(); health.release(); drivers.release()
+            updateReads.cancel()
+            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 resources.stop(); running = false; closeStreams(); connection = "Connecting"
@@ -531,7 +540,8 @@ import SwiftUI
             async let chief: Void = chiefResource.refresh()
             async let deployment: Void = deploymentResource.refresh()
             async let health: Void = healthResource.refresh()
-            _ = await (chief, deployment, health)
+            async let updates: Void = updateResource.refresh()
+            _ = await (chief, deployment, health, updates)
         }
     }
 

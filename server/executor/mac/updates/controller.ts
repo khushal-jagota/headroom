@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { platform } from 'node:os';
 import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { ExecutorIdentity } from '../../../execution_identity.ts';
+import { same_machine_build, type ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -306,7 +306,9 @@ export class MacUpdateController {
   private async start_prefetch(value: MacUpdatePrefetch | null): Promise<void> {
     if (
       !value ||
-      value.application_revision === this.options.presence.identity.application_revision ||
+      (value.build_id !== undefined
+        ? value.build_id === this.options.presence.identity.build_id
+        : same_machine_build(value, this.options.presence.identity)) ||
       this.prefetch?.sha === value.archive_sha256 ||
       !this.valid_reference(value, `/api/executor/update/prefetch/${value.archive_sha256}`)
     )
@@ -357,7 +359,11 @@ export class MacUpdateController {
       return;
     }
     const identity = this.options.presence.identity;
-    if (target.application_revision === identity.application_revision) {
+    if (
+      target.build_id !== undefined
+        ? target.build_id === identity.build_id
+        : same_machine_build(target, identity)
+    ) {
       if (
         this.options.presence.leased() &&
         this.confirmed !== target.request_id &&
@@ -367,7 +373,7 @@ export class MacUpdateController {
         if (this.options.runtime.ready_path !== null)
           await atomic_record(this.options.files, this.options.runtime.ready_path, {
             request_id: target.request_id,
-            application_revision: target.application_revision,
+            application_revision: identity.application_revision,
             identity,
           });
         this.confirmed = target.request_id;

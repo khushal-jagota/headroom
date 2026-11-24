@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+import { PreviewError } from '../../../previews/contracts.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { MacPermissionDenied } from '../runner/contracts.ts';
 /** Capability-scoped CLI work remains owned after its caller loses the response. */
@@ -15,18 +17,31 @@ import type {
   IpcRequest,
   IpcResponse,
   JsonObject,
+  LiveReadRequest,
 } from '../../wire.generated.ts';
 import { safe_component } from '../files.ts';
-import { CLI_RESULT_TIMEOUT_SECONDS } from '../configuration.ts';
+import { CLI_RESULT_TIMEOUT_SECONDS, CLI_READ_RETRY_SECONDS } from '../configuration.ts';
 import { same_reference } from '../../child_reference.ts';
-import { ExecutorHttpError } from '../transport/errors.ts';
+import { ExecutorHttpError, HttpTimeout } from '../transport/errors.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';
 import { GatewayListener } from './listener.ts';
+import { child_ticket_id } from '../runner/logic/child_owner.ts';
 const monotonic = () => {
   const [seconds, nanoseconds] = process.hrtime();
   return seconds + nanoseconds / 1_000_000_000;
 };
+/** Writes that an older home cannot accept. The executor asks before it saves one. */
+const HOME_SUPPORT: ReadonlyMap<
+  string,
+  { readonly capability: string; readonly name: string; readonly label: string }
+> = new Map([
+  ['ticket.send_back', { capability: 'ticket_send_back', name: 'send-back', label: 'Send-back' }],
+  [
+    'cli.request',
+    { capability: 'cli_request', name: 'command', label: 'This command through machine code' },
+  ],
+]);
 class GatewayConnectionError extends Error {}
 const permission = (message: string) => new MacPermissionDenied(message);
 const connection = (message: string) => new GatewayConnectionError(message);
@@ -108,21 +123,48 @@ export class AgentGateway {
         };
       if (request.operation === 'quiesce') return await this.quiesce(request);
       const child = this.options.runner.authenticate(request.child_id, request.capability);
+      let deadline = monotonic() + CLI_RESULT_TIMEOUT_SECONDS;
+      if (request.response_deadline != null) {
+        if (!Number.isFinite(request.response_deadline))
+          throw new ExecutorValidationError('invalid IPC response deadline');
+        deadline = Math.min(deadline, request.response_deadline);
+      }
+      if (request.operation === 'preview') {
+        if (!this.options.previews) throw connection('Machine previews are unavailable');
+        try {
+          return {
+            request_id: request.request_id,
+            result: await this.options.previews.command(child, request.payload),
+            error: null,
+          };
+        } catch (error) {
+          if (error instanceof PreviewError) throw new ExecutorValidationError(error.message);
+          if (error instanceof ExecutorHttpError) {
+            if (error.status === 403) throw permission(error.message);
+            throw connection(error.message);
+          }
+          throw error;
+        }
+      }
       if (request.operation === 'read') {
         if (this.options.client === null)
           throw connection('VPS unavailable; reads never use journal');
         let result: JsonObject;
         try {
-          result = await this.options.client.read(
+          result = await this.read_through_restart(
             {
               child: child.reference,
               path: scalar_text(request.payload.path),
               params: (request.payload.params ?? {}) as JsonObject,
             },
-            this.controller.signal,
+            deadline,
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
+            if (error.status === 400 && error.message === 'unsupported executor read')
+              throw new ExecutorValidationError(
+                'This read is not supported by Home yet; update Home before retrying',
+              );
             if (error.status === 400)
               throw new ExecutorValidationError(error.message || 'read refused');
             if (error.status === 403) throw permission(error.message || 'read forbidden');
@@ -155,33 +197,24 @@ export class AgentGateway {
       }
       if (request.operation !== 'write')
         throw new ExecutorValidationError('unsupported executor IPC operation');
-      let deadline = monotonic() + CLI_RESULT_TIMEOUT_SECONDS;
-      if (request.response_deadline != null) {
-        if (!Number.isFinite(request.response_deadline))
-          throw new ExecutorValidationError('invalid IPC response deadline');
-        deadline = Math.min(deadline, request.response_deadline);
-      }
       const incoming = decode_value(request.payload, 'IpcWritePayload');
       const submission = safe_component(request.request_id);
       if (this.options.runner.admission_stopped) throw permission('executor admission stopped');
-      if (incoming.operation === 'ticket.send_back') {
+      const support = HOME_SUPPORT.get(incoming.operation);
+      if (support !== undefined) {
         if (this.options.client === null)
-          throw connection('Home unavailable; send-back support is unconfirmed');
-        let support: JsonObject;
+          throw connection(`Home unavailable; ${support.name} support is unconfirmed`);
+        const update = `${support.label} is not supported by Home yet; update Home before retrying`;
+        let capabilities: JsonObject;
         try {
-          support = await this.options.client.read(
+          capabilities = await this.read_through_restart(
             { child: child.reference, path: '/api/executor/capabilities', params: {} },
-            AbortSignal.any([
-              this.controller.signal,
-              AbortSignal.timeout(Math.max(1, Math.floor((deadline - monotonic()) * 1000))),
-            ]),
+            deadline,
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
             if (error.status === 400 && error.message === 'unsupported executor read')
-              throw new ExecutorValidationError(
-                'Send-back is not supported by Home yet; update Home before retrying',
-              );
+              throw new ExecutorValidationError(update);
             if (error.status === 403) throw permission(error.message || 'support read forbidden');
             throw connection(`Home support read failed: HTTP ${error.status} ${error.code}`);
           }
@@ -189,10 +222,7 @@ export class AgentGateway {
             `Home support read failed: ${error instanceof Error ? error.name : 'Error'}`,
           );
         }
-        if (support.ticket_send_back !== true)
-          throw new ExecutorValidationError(
-            'Send-back is not supported by Home yet; update Home before retrying',
-          );
+        if (capabilities[support.capability] !== true) throw new ExecutorValidationError(update);
       }
       const write = {
         operation: incoming.operation,
@@ -201,7 +231,7 @@ export class AgentGateway {
         turn: child.active_turn,
       };
       const task = this.options.runner.source_work(child.reference, () =>
-        this.options.outbox.add(write, submission, child.ticket_id),
+        this.options.outbox.add(write, submission, child_ticket_id(child.owner)),
       );
       const publication = { child: child.reference, task };
       this.publishing.set(submission, publication);
@@ -243,6 +273,37 @@ export class AgentGateway {
         result: null,
         error: { code, message: (error as Error).message, detail: {} },
       };
+    }
+  }
+  /** Reads have no effects. Only transport failures and temporary refusals repeat. */
+  private async read_through_restart(
+    request: LiveReadRequest,
+    deadline: number,
+  ): Promise<JsonObject> {
+    const signal = AbortSignal.any([
+      this.controller.signal,
+      AbortSignal.timeout(Math.max(1, Math.ceil((deadline - monotonic()) * 1000))),
+    ]);
+    for (;;) {
+      try {
+        signal.throwIfAborted();
+        return await this.options.client!.read(request, signal);
+      } catch (error) {
+        const temporary =
+          error instanceof ExecutorHttpError
+            ? [408, 429, 502, 503, 504].includes(error.status) || error.code === 'retry_later'
+            : error instanceof HttpTimeout ||
+              is_os_error(error) ||
+              (error instanceof Error &&
+                'code' in error &&
+                error.code === 'ERR_STREAM_PREMATURE_CLOSE');
+        if (!temporary || signal.aborted || monotonic() >= deadline) throw error;
+        await sleep(
+          Math.min(CLI_READ_RETRY_SECONDS, Math.max(0, deadline - monotonic())) * 1000,
+          undefined,
+          { signal },
+        );
+      }
     }
   }
   private release_publication(submission: string, publication: Publication): void {
@@ -319,6 +380,8 @@ export class AgentGateway {
     };
   }
   private receipt_response(request_id: string, receipt: AcceptanceReceipt): IpcResponse {
+    if (receipt.disposition === 'uncertain')
+      return this.unconfirmed(request_id, receipt.submission_id, 'queued');
     return receipt.disposition === 'refused'
       ? { request_id, result: null, error: (receipt.result.error ?? receipt.result) as JsonObject }
       : { request_id, result: receipt.result, error: null };

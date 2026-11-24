@@ -1,3 +1,4 @@
+import { remove_server_account_skill_links } from './legacy_server_links.ts';
 /** Blocking publication runs only in the owned worker, before provider creation. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -230,7 +231,16 @@ export async function install_native_skill_snapshot(
   input: SkillInstallation,
   signal: AbortSignal,
 ): Promise<string> {
-  validate_skill_snapshot(input.snapshot);
+  validate_skill_snapshot(input.snapshot, input.owner_kind);
+  if (input.legacy_server_skill_parent !== undefined) {
+    const warning = remove_server_account_skill_links(input.legacy_server_skill_parent, [
+      {
+        path: input.native_home,
+        skills_directory: input.native_skills_directory,
+      },
+    ]);
+    if (warning !== null) invalid(warning);
+  }
   let root_fd: number | undefined,
     parent: number | undefined,
     lock: number | undefined,
@@ -252,12 +262,17 @@ export async function install_native_skill_snapshot(
       invalid(`configured native provider home resolves elsewhere: ${native_home}`);
     home_fd = retain(open_directory_descriptor(home));
     try {
+      // Machine code is the only program that links skills, so it makes a missing skills folder.
       target_fd = retain(
-        open_directory_components(home_fd, relative_directory_components(native_skills_directory)),
+        open_directory_components(
+          home_fd,
+          relative_directory_components(native_skills_directory),
+          0o700,
+        ),
       );
     } catch (error) {
       invalid(
-        `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,
+        `native provider skills entry must be a real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,
         error,
       );
     }

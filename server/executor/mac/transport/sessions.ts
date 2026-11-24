@@ -1,5 +1,13 @@
 /** One native agent per loop. Request ownership includes producer and response settlement. */
 import http from 'node:http';
+import WebSocket from 'ws';
+import {
+  MOVE_NUMBER_HEADER,
+  SERVER_ID_HEADER,
+  SERVER_LOCATION_HEADER,
+  SERVER_LOCATION_PATH,
+} from '../../../server_link/contracts.ts';
+import { local_server_address } from '../../../server_link/logic.ts';
 import https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
@@ -13,11 +21,19 @@ import type {
   MacLoop,
   ReplyReader,
 } from './contracts.ts';
-import { HttpTimeout } from './errors.ts';
+import { HttpTimeout, http_error } from './errors.ts';
+import { ExecutorLinkAgent } from './executor_link.ts';
+/** Requests to the local link name `localhost`; the agent connects to the socket. */
+function request_origin(address: string): string {
+  return local_server_address(address) === null ? new URL(address).origin : 'http://localhost';
+}
 interface Session {
+  /** The server address this session's agent connects to. */
+  readonly address: string;
   readonly agent: http.Agent;
   readonly sockets: Map<Socket, Promise<void>>;
   readonly requests: Set<ClientRequest>;
+  readonly websockets: Set<WebSocket>;
   readonly actual: Set<Promise<unknown>>;
   readonly idle: Map<Socket, ReturnType<typeof setTimeout>>;
   readonly force_close: boolean;
@@ -35,23 +51,98 @@ export async function read_bounded(response: IncomingMessage, limit: number): Pr
   }
   return Buffer.concat(chunks, count);
 }
+export async function read_server_location_probe(incoming: IncomingMessage): Promise<unknown> {
+  const body = await read_bounded(incoming, 16384);
+  if (incoming.statusCode !== 200 && incoming.statusCode !== 503)
+    throw http_error(incoming.statusCode ?? 0, body);
+  let location: unknown;
+  try {
+    location = JSON.parse(body.toString('utf8')) as unknown;
+  } catch {
+    if (incoming.statusCode === 503) throw http_error(503, body);
+    throw new ExecutorValidationError('The server identity probe is invalid.');
+  }
+  if (incoming.statusCode === 503 && (location as { state?: unknown } | null)?.state !== 'moved')
+    throw http_error(503, body);
+  return location;
+}
 export class HttpSessions {
   private readonly sessions = new Map<MacLoop, Session>();
   private readonly closing = new Set<Promise<void>>();
   private closed = false;
-  readonly origin: string;
+  private readonly initial_address: string;
+  /** The current server address: an HTTPS origin, or the local link's socket path. */
+  get address(): string {
+    return this.options.server_link?.current_url ?? this.initial_address;
+  }
+  get origin(): string {
+    return request_origin(this.address);
+  }
   private readonly connectors: ConnectorTable;
   private readonly options: MacHttpOptions;
-  constructor(origin: string, connectors: ConnectorTable, options: MacHttpOptions = {}) {
-    this.origin = new URL(origin).origin;
+  constructor(address: string, connectors: ConnectorTable, options: MacHttpOptions = {}) {
+    this.initial_address = local_server_address(address) ?? new URL(address).origin;
     this.connectors = connectors;
     this.options = options;
+  }
+  async websocket(path: string, headers: Readonly<Record<string, string>>): Promise<WebSocket> {
+    const session = this.session('reads');
+    const address = this.address;
+    const target = new URL(path, this.origin);
+    target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
+    const current = this.options.server_link?.current();
+    const socket = new WebSocket(target, {
+      agent: session.agent,
+      perMessageDeflate: false,
+      maxPayload: 65540,
+      handshakeTimeout: HTTP_CONNECT_TIMEOUT_SECONDS * 1000,
+      headers: {
+        ...headers,
+        ...(current
+          ? {
+              [SERVER_ID_HEADER]: current.server_id!,
+              [MOVE_NUMBER_HEADER]: String(current.highest_move_number),
+            }
+          : {}),
+      },
+    });
+    session.websockets.add(socket);
+    const actual = new Promise<void>((resolve) =>
+      socket.once('close', () => {
+        session.websockets.delete(socket);
+        resolve();
+      }),
+    );
+    session.actual.add(actual);
+    void actual.finally(() => session.actual.delete(actual));
+    socket.on('error', () => {});
+    socket.once('upgrade', (response) => {
+      try {
+        this.options.server_link?.verify(response.headers[SERVER_LOCATION_HEADER], address);
+      } catch {
+        socket.terminate();
+      }
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+        socket.once('close', () => reject(new Error('Preview channel closed before acceptance')));
+      });
+      return socket;
+    } catch (error) {
+      socket.terminate();
+      await actual;
+      throw error;
+    }
   }
   private session(loop: MacLoop): Session {
     if (this.closed) throw new ServerLifecycleError('Mac HTTP transport is stopped.');
     let session = this.sessions.get(loop);
     if (session) return session;
-    const settings = this.connectors[loop],
+    const address = this.address,
+      link_socket = local_server_address(address),
+      settings = this.connectors[loop],
       Agent = this.origin.startsWith('https:') ? https.Agent : http.Agent;
     const agent_options: https.AgentOptions = {
       keepAlive: !settings.force_close,
@@ -62,9 +153,14 @@ export class HttpSessions {
       rejectUnauthorized: true,
     };
     session = {
-      agent: new Agent(agent_options),
+      address,
+      agent:
+        link_socket === null
+          ? new Agent(agent_options)
+          : new ExecutorLinkAgent(link_socket, agent_options),
       sockets: new Map(),
       requests: new Set(),
+      websockets: new Set(),
       actual: new Set(),
       idle: new Map(),
       force_close: settings.force_close,
@@ -125,11 +221,21 @@ export class HttpSessions {
       resolve = yes;
       reject = no;
     });
+    let failure_marked = false;
+    const note_failure = () => {
+      if (!failure_marked && !this.closed && !session.closing && !request.signal?.aborted) {
+        failure_marked = true;
+        this.options.server_link?.request_failed();
+      }
+    };
     const operation = this.retain(
       session,
-      this.perform(session, request, headers, consume, resolve, reject),
+      this.perform(session, request, headers, consume, resolve, reject, note_failure),
     );
-    void operation.then(resolve, reject);
+    void operation.then(resolve, (error: unknown) => {
+      note_failure();
+      reject(error);
+    });
     return reply;
   }
   private async perform<T>(
@@ -139,9 +245,48 @@ export class HttpSessions {
     consume: ReplyReader<T>,
     resolve: (value: T) => void,
     reject: (error: unknown) => void,
+    note_failure: () => void,
   ): Promise<T> {
-    const target = new URL(input.path, this.origin);
-    if (target.origin !== this.origin)
+    const probe = async (origin: string): Promise<unknown> => {
+      // A separate retained session avoids a limit-one lease reply blocking its own probe.
+      const owner = new HttpSessions(origin, this.connectors, { tls: this.options.tls });
+      try {
+        return await owner.request(
+          {
+            loop: 'lease',
+            method: 'GET',
+            path: SERVER_LOCATION_PATH,
+            timeout: HTTP_CONNECT_TIMEOUT_SECONDS,
+            signal: input.signal,
+          },
+          { 'Accept-Encoding': 'identity' },
+          read_server_location_probe,
+        );
+      } finally {
+        await owner.close();
+      }
+    };
+    const link = this.options.server_link;
+    const accepted = link?.needs_probe() ? await link.prepare(probe) : link?.current();
+    const current = link?.current();
+    if (
+      accepted &&
+      current &&
+      (accepted.server_id !== current.server_id ||
+        accepted.highest_move_number !== current.highest_move_number ||
+        accepted.server_url !== current.server_url)
+    )
+      throw new ExecutorValidationError('The server authority changed before this request.');
+    if (this.closed || session.closing)
+      throw new ServerLifecycleError('Machine HTTP session is stopped.');
+    const origin = accepted?.server_url ?? this.address;
+    if (local_server_address(origin) !== local_server_address(session.address)) {
+      // The address moved between the local link and HTTPS. Fresh sessions get the right agent.
+      void this.reset();
+      throw new ServerLifecycleError('The server address changed; the HTTP sessions restart.');
+    }
+    const target = new URL(input.path, request_origin(origin));
+    if (target.origin !== request_origin(origin))
       throw new Error('Executor request leaves configured origin.');
     const transport = target.protocol === 'https:' ? https : http;
     const request = transport.request(target, {
@@ -150,6 +295,12 @@ export class HttpSessions {
       headers: {
         ...headers,
         ...input.headers,
+        ...(accepted
+          ? {
+              [SERVER_ID_HEADER]: accepted.server_id!,
+              [MOVE_NUMBER_HEADER]: String(accepted.highest_move_number),
+            }
+          : {}),
         ...(session.force_close ? { Connection: 'close' } : {}),
       },
     });
@@ -162,6 +313,7 @@ export class HttpSessions {
       total: ReturnType<typeof setTimeout> | undefined,
       stall: ReturnType<typeof setTimeout> | undefined;
     const fail = (error: Error) => {
+      note_failure();
       // An early response can already resolve result while its producer waits.
       // Reject the public waiter independently of that inner response promise.
       reject(error);
@@ -212,12 +364,30 @@ export class HttpSessions {
         socket.once('timeout', read_timeout);
       }
     });
-    request.once('error', reject);
+    request.once('error', (error) => {
+      note_failure();
+      reject(error);
+    });
     const result = new Promise<T>((resolve, reject) => {
       request.once('error', reject);
       request.once('response', (incoming) => {
         response = incoming;
-        consumer = consume(incoming);
+        if ((incoming.statusCode ?? 0) >= 400) note_failure();
+        consumer = (async () => {
+          // A proxy can answer while the server is down. This is no authority to consume
+          // work, but its temporary availability status must remain retryable.
+          if (
+            link &&
+            incoming.headers[SERVER_LOCATION_HEADER] === undefined &&
+            [502, 503, 504].includes(incoming.statusCode ?? 0)
+          )
+            throw http_error(incoming.statusCode!, await read_bounded(incoming, 16384));
+          if (link) {
+            await link.accept(incoming.headers[SERVER_LOCATION_HEADER], origin, probe);
+            link.verify(incoming.headers[SERVER_LOCATION_HEADER], origin);
+          }
+          return consume(incoming);
+        })();
         void consumer.then(resolve, (error: unknown) => {
           fail(error instanceof Error ? error : new Error(String(error)));
           reject(error);
@@ -282,6 +452,7 @@ export class HttpSessions {
         session.idle.clear();
         for (const request of session.requests)
           request.destroy(new DOMException('HTTP sessions reset', 'AbortError'));
+        for (const socket of session.websockets) socket.terminate();
         session.agent.destroy();
       }
       for (const session of sessions) {

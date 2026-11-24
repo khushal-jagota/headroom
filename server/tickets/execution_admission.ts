@@ -1,9 +1,8 @@
-/** Canonical presence admission and the temporary local-only composition policy. */
+/** Canonical presence admission for every execution machine. */
 import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Ticket } from './contracts.ts';
 import { read_ticket_by_conversation_id } from './data/index.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import {
   can_execute_machine,
   CURRENT_EXECUTION_LOCALE,
@@ -20,9 +19,6 @@ function refusal(sql: ReadSql, ticket: Ticket): PlannerError {
 }
 export const canonical_ticket_execution_refusal: TicketExecutionRefusal = (sql, ticket) =>
   can_execute_machine(ticket.machine_id, sql) ? null : refusal(sql, ticket);
-/** Remove/replace this policy when the real executor router is composed. */
-export const local_ticket_execution_refusal: TicketExecutionRefusal = (sql, ticket) =>
-  ticket.machine_id === HOME_MACHINE_ID ? null : refusal(sql, ticket);
 
 export function conversation_execution_refusal(
   sql: ReadSql,

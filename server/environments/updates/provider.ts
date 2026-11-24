@@ -7,14 +7,14 @@ import { Readable } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
 import { parseIsoDatetime } from '../../core/clock.ts';
-import type { PublishedUpdate, UpdateProvider } from './contracts.ts';
+import type { ArtifactSource, PublishedUpdate, UpdateProvider } from './contracts.ts';
 import { is_object, parse_release } from './codec.ts';
 import { instant } from './logic/experience.ts';
 import { with_zip_member } from './zip.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
+import { TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
 
-export const TRUSTED_RELEASE_WORKFLOW = '.github/workflows/publish-typescript-release.yml';
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(
@@ -81,15 +81,18 @@ export class GitHubUpdateProvider implements UpdateProvider {
     parameters: Record<string, string>,
     missing_ok: false,
     signal?: AbortSignal,
+    accept?: string,
   ): Promise<Response>;
   private async request(
     path: string,
     parameters: Record<string, string> = {},
     missing_ok = false,
     signal?: AbortSignal,
+    accept?: string,
   ): Promise<Response | null> {
     signal?.throwIfAborted();
     const headers = this.headers();
+    if (accept !== undefined) headers.Accept = accept;
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     let response: Response;
@@ -175,31 +178,90 @@ export class GitHubUpdateProvider implements UpdateProvider {
     }
   }
   async available(): Promise<PublishedUpdate | null> {
-    const response = await this.request(
-      `actions/workflows/${TRUSTED_RELEASE_WORKFLOW.split('/').at(-1)}/runs`,
-      { branch: 'main', event: 'push', status: 'success', per_page: '20' },
-      true,
-    );
-    if (response === null) return null;
-    const runs = list((await this.response_json(response)).workflow_runs);
-    const ordered = runs
-      .map((run) => ({
-        run,
-        created: parseIsoDatetime(run.created_at as string),
-        id: Number(run.id),
-      }))
-      .sort((a, b) => {
-        if (a.created.aware !== b.created.aware)
-          throw new Error("can't compare offset-naive and offset-aware datetimes");
-        const left = a.created.epochMicroseconds,
-          right = b.created.epochMicroseconds;
-        return left === right ? (a.id === b.id ? 0 : a.id > b.id ? -1 : 1) : left > right ? -1 : 1;
-      });
-    for (const { run } of ordered) {
-      const release = await this.publication(run.id as number);
-      if (release !== null) return release;
+    for (let page = 1; ; page++) {
+      const response = await this.request('releases', { per_page: '100', page: String(page) });
+      const releases = list(await response.json());
+      for (const publication of releases) {
+        if (
+          publication.draft !== false ||
+          publication.prerelease !== false ||
+          typeof publication.tag_name !== 'string' ||
+          !publication.tag_name.startsWith('server-')
+        )
+          continue;
+        const assets = list(publication.assets);
+        const proof = assets.find((asset) => asset.name === 'publication.json');
+        if (proof === undefined) continue;
+        const payload = await this.response_json(
+          await this.request(
+            `releases/assets/${proof.id}`,
+            {},
+            false,
+            undefined,
+            'application/octet-stream',
+          ),
+        );
+        const source = record(payload.source_run);
+        if (
+          source.repository !== this.repository ||
+          source.workflow_path !== TRUSTED_RELEASE_WORKFLOW ||
+          source.workflow_ref !==
+            `${this.repository}/${TRUSTED_RELEASE_WORKFLOW}@refs/heads/main` ||
+          source.ref !== 'refs/heads/main' ||
+          source.event !== 'push' ||
+          typeof source.source_sha !== 'string' ||
+          !/^[0-9a-f]{40}$/.test(source.source_sha) ||
+          typeof source.run_id !== 'string' ||
+          !/^[1-9][0-9]*$/.test(source.run_id) ||
+          typeof source.run_attempt !== 'string' ||
+          !/^[1-9][0-9]*$/.test(source.run_attempt) ||
+          publication.tag_name !==
+            `server-${source.source_sha}-${source.run_id}-${source.run_attempt}` ||
+          publication.target_commitish !== source.source_sha ||
+          payload.publication_run_id !== Number(source.run_id)
+        )
+          throw new Error('Publication identity differs from trusted repository evidence.');
+        const check_asset = (value: Record<string, unknown>, name: string) => {
+          if (
+            value.artifact_source !== 'github-release' ||
+            !Number.isSafeInteger(value.artifact_id) ||
+            !assets.some((asset) => asset.id === value.artifact_id && asset.name === name)
+          )
+            throw new Error('Publication asset identity differs from its release.');
+        };
+        check_asset(payload, 'app.zip');
+        for (const [key, name] of [
+          ['mac', 'mac.zip'],
+          ['linux_executor', 'linux-executor.zip'],
+          ['mac_home', 'mac-home.zip'],
+        ]) {
+          if (payload[key!] !== undefined && payload[key!] !== null)
+            check_asset(record(payload[key!]), name!);
+        }
+        let selected = payload;
+        if (this.target.system === 'darwin') {
+          if (!is_object(payload.mac_home)) continue;
+          selected = { ...payload, ...payload.mac_home, mac: null };
+        }
+        const release = parse_release({ ...selected, proof_artifact_id: proof.id });
+        if (
+          release.manifest.app_sha !== source.source_sha ||
+          release.expires_at !== null ||
+          release.parts === undefined
+        )
+          throw new Error('Publication identity differs from trusted repository evidence.');
+        if (release.manifest.runtime_contract === null) continue;
+        if (
+          release.manifest.runtime_contract.system !== this.target.system ||
+          release.manifest.runtime_contract.architecture !== this.target.architecture ||
+          (release.manifest.runtime_contract.system === 'darwin' &&
+            release.manifest.runtime_contract.role !== this.target.role)
+        )
+          throw new Error('Publication runtime target differs from this home');
+        return release;
+      }
+      if (releases.length < 100) return null;
     }
-    return null;
   }
   async publication(run_id: number): Promise<PublishedUpdate | null> {
     const run = await this.json(`actions/runs/${run_id}`);
@@ -264,7 +326,11 @@ export class GitHubUpdateProvider implements UpdateProvider {
       (release.mac !== null && by_name.get('panels-mac-runtime')?.id !== release.mac.artifact_id)
     )
       throw new Error('Publication identity differs from trusted repository evidence.');
-    if (instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n) return null;
+    if (
+      release.expires_at === null ||
+      instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n
+    )
+      return null;
     if (release.manifest.runtime_contract === null) return null;
     if (
       release.manifest.runtime_contract.system !== this.target.system ||
@@ -286,12 +352,16 @@ export class GitHubUpdateProvider implements UpdateProvider {
     artifact_id: number,
     destination: string,
     signal?: AbortSignal,
+    source?: ArtifactSource,
   ): Promise<void> {
     signal?.throwIfAborted();
-    const metadata = await this.json(`actions/artifacts/${artifact_id}`, {}, signal);
-    signal?.throwIfAborted();
-    if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
+    if (source === undefined) {
+      const metadata = await this.json(`actions/artifacts/${artifact_id}`, {}, signal);
+      signal?.throwIfAborted();
+      if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
+    }
     const headers = this.headers();
+    if (source === 'github-release') headers.Accept = 'application/octet-stream';
     const controller = new AbortController();
     const request_signal = signal
       ? AbortSignal.any([controller.signal, signal])
@@ -314,7 +384,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     };
     const response = await network_read(() =>
       this.fetch(
-        `https://api.github.com/repos/${this.repository}/actions/artifacts/${artifact_id}/zip`,
+        `https://api.github.com/repos/${this.repository}/${source === 'github-release' ? `releases/assets/${artifact_id}` : `actions/artifacts/${artifact_id}/zip`}`,
         { method: 'GET', headers, redirect: 'follow', signal: request_signal },
       ),
     );

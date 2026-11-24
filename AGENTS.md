@@ -14,8 +14,8 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Conversation code lives in `server/conversation/`, and it is the only one: contract, core, record, live tail, and backend snapshots. Each backend is a driver package under `server/drivers/`. Every screen that shows a conversation and every worker step goes through it. `server/drivers/built_in.ts` lists the built-in drivers (Codex, Claude and Antigravity) in `BUILT_IN_DRIVERS`, and every backend list, route, installer file and app view derives from it. Backend keys are open strings: a key no driver serves, such as a stored `hermes`, reads back unchanged and is refused by name at launch. Antigravity (Google's `agy` CLI) runs over the Agent Client Protocol through the shared ACP layer in `server/drivers/acp/`.
 - Frontend is Svelte/Vite in `web/`; the server serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
 - A little Python remains, on purpose:
-  - `scripts/panels_install.py` is the download the Linux machine join runs. `scripts/check_published_http2.py` serves route recovery. `ios/scripts/` holds simulator scripts.
-- Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens, and every agent home — Codex, Claude, Antigravity — links to those copies. The packaged `server/skills/seeds` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Skills use `PATCH /api/skills/<name>`, atomic `POST /api/skills/apply`, `DELETE /api/skills/<name>`, and `PUT /api/skills/<name>/files` for a supporting file that lives only on disk, all behind the same owner-only door. Worker and Chief routes remain compatibility adapters. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` expose this system in the CLI. Workers must hand exact live skill edits to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks; it reads the command tree from `create_commands`.
+  - `scripts/panels_install.py` is the download that the machine join runs on Linux and on Apple Silicon. `scripts/check_published_http2.py` serves route recovery. `ios/scripts/` holds simulator scripts.
+- Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens. Machine code (the executor) makes its own copies from the rows, and links every agent home — Codex, Claude, Antigravity — to its copies. The packaged `server/skills/seeds` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Skills use `PATCH /api/skills/<name>`, atomic `POST /api/skills/apply`, `DELETE /api/skills/<name>`, and `PUT /api/skills/<name>/files` for a supporting file that lives only on disk, all behind the same owner-only door. Worker and Chief routes remain compatibility adapters. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` expose this system in the CLI. Workers must hand exact live skill edits to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks; it reads the command tree from `create_commands`.
 - `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, and smoke artifacts.
 
@@ -77,7 +77,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```sh
   npm ci --prefix server
   npm ci --prefix web
-  npm install --prefix agent_backends --no-save --no-package-lock
+  npm ci --prefix agent_backends
   ```
 
   An older checkout can have `node_modules` folders that link into
@@ -87,7 +87,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
   ```sh
   scripts/dev npm --prefix web ci
-  scripts/dev npm --prefix agent_backends install
+  scripts/dev npm --prefix agent_backends ci
   scripts/dev npm --prefix server run check
   scripts/dev npm --prefix web run check
   ```

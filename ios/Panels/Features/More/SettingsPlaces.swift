@@ -20,12 +20,30 @@ struct SettingsPlaces: View {
                 .accessibilityIdentifier("settings.deployment")
                 .accessibilityElement(children: .combine)
             }
+            updatesRow
         }.listRowBackground(PanelsTheme.raised)
         Section {
             place("All goals", symbol: "target", route: .goals)
             place("Usage", symbol: "chart.bar", route: .usage)
             place("VPS", symbol: "server.rack", route: .vps)
         }
+    }
+
+    /// The one place that tells of a server update: a short line while one is offered or running.
+    private var updatesRow: some View {
+        let status = store.updateStatus
+        let detail = status.map(\.title).flatMap { ["Up to date", "Update complete"].contains($0) ? nil : $0 }
+        return NavigationLink(value: AppRoute.updates) {
+            HStack(spacing: PanelsTheme.Space.md) {
+                Label("Updates", systemImage: "arrow.triangle.2.circlepath")
+                Spacer(minLength: PanelsTheme.Space.sm)
+                if let detail {
+                    Text(detail).font(PanelsTheme.TypeScale.small)
+                        .foregroundStyle(status?.needsAttention == true ? PanelsTheme.error : PanelsTheme.faint)
+                }
+            }.padding(.vertical, PanelsTheme.Space.xs)
+        }
+        .accessibilityIdentifier("settings.updates")
     }
 
     private func place(_ title: String, symbol: String, route: AppRoute) -> some View {

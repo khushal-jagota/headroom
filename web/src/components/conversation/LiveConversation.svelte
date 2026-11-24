@@ -187,7 +187,7 @@
   const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
   const pickerQuery = createQuery(() => ({
-    ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
+    ...queries.ticketBackends(pickerTicketId ?? "", [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
     // A Mac Panels cannot reach cannot list its models: the read would only be refused (409)
     // again on every change. It reads when the Mac is back.
     enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined && !activityUncertain
@@ -196,7 +196,7 @@
   async function retryScopedChoices(): Promise<void> {
     if (pickerTicketId === null) return;
     await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
-      [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
+      [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
   }
 
   $effect(() => {

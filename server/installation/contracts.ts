@@ -13,6 +13,10 @@ export interface HomeInstallRequest extends HomeInstall {
   readonly archive_sha256: string;
   readonly revision: string;
 }
+/** The installer's stdin request. Only the update token file receives the credential; services see the request without it. */
+export interface HomeInstallSubmission extends HomeInstallRequest {
+  readonly update_token: string;
+}
 export interface HomeInstallationFile {
   readonly path: string;
   readonly content: string;
@@ -36,12 +40,13 @@ export interface HomeServicePlan {
   readonly links: readonly HomeInstallationLink[];
   preflight(execution: ReleaseExecution): Promise<void>;
   start_home(execution: ReleaseExecution): Promise<void>;
+  start_machine(execution: ReleaseExecution): Promise<void>;
   start_auxiliaries(execution: ReleaseExecution): Promise<void>;
   stop(execution: ReleaseExecution, assert_owned: (path: string) => Promise<void>): Promise<void>;
   finish_cleanup?(execution: ReleaseExecution): Promise<void>;
 }
 export interface HomeInstallHost {
-  /** Canonical external host Node, shared by its service PATH and installation identity. */
+  /** Canonical Node of the process that performs installation. */
   readonly node_executable: string;
   readonly system: 'linux' | 'darwin';
   readonly architecture: string;
@@ -68,13 +73,49 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     app: string,
     path: string,
     execution: ReleaseExecution,
+    machine_root?: string,
+  ) => Promise<void>;
+  readonly prepare_machine: (
+    app: string,
+    root: string,
+    execution: ReleaseExecution,
+  ) => Promise<void>;
+  readonly machine_healthy: (
+    request: HomeInstallRequest,
+    execution: ReleaseExecution,
+    started_ms: number,
   ) => Promise<void>;
   readonly healthy: (port: number, revision: string, signal: AbortSignal) => Promise<boolean>;
   readonly service: (
     request: HomeInstallRequest,
     host: HomeInstallHost,
   ) => Promise<HomeServicePlan>;
-  readonly warning: (message: string) => void;
+}
+/** Stop and remove the home services of `root`, refusing any service that names another root. */
+export type HomeServiceRemoval = (
+  root: string,
+  service: string,
+  host: HomeInstallHost,
+  execution: ReleaseExecution,
+) => Promise<void>;
+/**
+ * The move mode installs a held server around copied state. It has no database creation, no
+ * credential and no machine code, because the target machine already runs machine code.
+ */
+export interface HomeMoveDependencies extends HomeInstallHost {
+  readonly execution: ReleaseExecution;
+  readonly extract: HomeInstallDependencies['extract'];
+  readonly admit: HomeInstallDependencies['admit'];
+  readonly healthy: HomeInstallDependencies['healthy'];
+  /** The home's service plan without its machine code service. */
+  readonly service: HomeInstallDependencies['service'];
+  /** Integrity test and schema admission, run by the installed app. */
+  readonly check_database: (
+    app: string,
+    path: string,
+    execution: ReleaseExecution,
+  ) => Promise<void>;
+  readonly remove_service: HomeServiceRemoval;
 }
 /** A bounded observer cannot release descriptors still used by a native cleanup. */
 export class HomeCleanupUnsettled extends Error {

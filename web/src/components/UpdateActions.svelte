@@ -1,7 +1,8 @@
 <script lang="ts">
   import { performUpdateAction, type UpdateActionRequest } from "../lib/updates/api";
   import type { UpdateStatus } from "../lib/updates/contracts";
-  import { updateDetails, type UpdateFailureState } from "../lib/updates/logic/presentation";
+  import { deviceUpdateWarnings, interruptionText, type UpdateFailureState } from "../lib/updates/logic/presentation";
+  import MachineRows from "../lib/updates/MachineRows.svelte";
 
   type DialogKind = "offer" | UpdateFailureState;
   let { status, now }: { status: UpdateStatus; now: number } = $props();
@@ -9,9 +10,9 @@
   let kind = $state<DialogKind>("offer");
   let error = $state<string | null>(null);
   const id = $props.id();
-  const details = $derived(kind === "offer" ? null : updateDetails(kind, status, now));
+  const impact = $derived(interruptionText(status.interruption));
   const allows = (action: UpdateStatus["allowed_actions"][number]) => status.allowed_actions.includes(action);
-  const canRetry = $derived(kind === "failed" ? allows("retry") : allows("retry_mac"));
+  const canRetry = $derived(kind === "failed" && allows("retry"));
 
   export function openDialog(view: DialogKind, message: string | null = null): void {
     kind = view;
@@ -39,15 +40,15 @@
   <div class="dlg">
     {#if kind === "offer"}
       <h2 id={id}>Update Panels</h2>
-      <p>A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.</p>
-      {#if status.detail}
-        <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.detail}</span></div>
+      <p>{impact}</p>
+      {#if status.interruption.stops_agents && status.interruption.agents.length}
+        <p class="agent-names">{status.interruption.agents.join(", ")}</p>
       {/if}
-    {:else if details}
-      <h2 id={id}>{details.title}</h2>
-      <dl class="facts">
-        {#each details.facts as [label, value] (label)}<dt>{label}</dt><dd>{value}</dd>{/each}
-      </dl>
+      {#each deviceUpdateWarnings(status) as warning (warning)}<p class="device-warning">{warning}</p>{/each}
+      <MachineRows machines={status.available_machines} />
+    {:else}
+      <h2 id={id}>Update did not install</h2>
+      <p>{status.detail ?? status.attempt?.detail ?? "Panels kept its previous version."}</p>
     {/if}
     {#if error}<p role="alert">{error}</p>{/if}
     <footer>
@@ -58,7 +59,7 @@
         {/if}
       {:else}
         <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
-        {#if canRetry && status.attempt}<button type="button" class="pill pill--primary" onclick={() => perform({ action: kind === "failed" ? "retry" : "retry_mac" })}>Try again</button>{/if}
+        {#if canRetry && status.attempt}<button type="button" class="pill pill--primary" onclick={() => perform({ action: "retry" })}>Try again</button>{/if}
       {/if}
     </footer>
   </div>
@@ -72,11 +73,8 @@
   h2 { font-size: var(--type-page-section); font-weight: var(--weight-title); color: var(--text-strong); margin: 0; }
   p { color: var(--text-muted); line-height: 1.45; margin: 0; }
   p[role="alert"] { color: var(--accent-error); }
-  .note { display: flex; gap: var(--space-2); align-items: baseline; color: var(--accent-attention); }
-  .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-attention); transform: translateY(-1px); }
-  .facts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4); margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
-  .facts dt { color: var(--text-faint); }
-  .facts dd { margin: 0; color: var(--text-default); }
+  .device-warning { color: var(--accent-attention); }
+  .agent-names { color: var(--text-default); overflow-wrap: anywhere; }
   footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
   .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: var(--weight-small); transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .pill--primary { background: var(--accent-bright); color: var(--surface-ink); }

@@ -27,6 +27,7 @@ export interface GatewayOptions {
   readonly client: {
     read(request: LiveReadRequest, signal?: AbortSignal): Promise<JsonObject>;
   } | null;
+  readonly previews?: { command(child: MacRunningChild, payload: JsonObject): Promise<JsonObject> };
   readonly request_exit: () => void;
   readonly settle_catalogs: (signal: AbortSignal) => Promise<void>;
   readonly on_failure: (error: Error) => void;

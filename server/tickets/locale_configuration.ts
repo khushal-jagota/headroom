@@ -1,9 +1,5 @@
 import type { ReadSql } from '../core/database/contracts.ts';
-import {
-  HOME_MACHINE_ID,
-  ORIGINAL_MAC_MACHINE_ID,
-  supports_executor_versions,
-} from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, supports_executor_versions } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
 import { judge_presence } from '../executor/logic/presence.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
@@ -60,7 +56,6 @@ export function execution_unavailable_reason(sql: ReadSql, locale: TicketLocale)
 }
 
 export function can_execute_machine(machine_id: string, connection: ReadSql): boolean {
-  if (machine_id === HOME_MACHINE_ID) return true;
   const record = read_presence(connection, machine_id);
   return (
     record !== null &&

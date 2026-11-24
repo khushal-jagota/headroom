@@ -1,40 +1,65 @@
 import { is_record } from '../../core/records.ts';
-import type { HomeInstallHost, HomeInstallRequest } from '../contracts.ts';
+import type { HomeInstallHost, HomeInstallRequest, HomeInstallSubmission } from '../contracts.ts';
 
-/** The bootstrap sends this same flat request to the sealed installer. */
-export function home_install_request(value: unknown): HomeInstallRequest {
-  if (!is_record(value)) throw new Error('Home installation request must be an object');
-  const text = (name: string): string => {
-    const item = value[name];
-    if (typeof item !== 'string' || !item || item.includes('\0'))
-      throw new Error(`Invalid home installation field: ${name}`);
-    return item;
-  };
+/** One required request text field: present, non-empty, and without NUL. */
+export function request_text(value: Record<string, unknown>, name: string): string {
+  const item = value[name];
+  if (typeof item !== 'string' || !item || item.includes('\0'))
+    throw new Error(`Invalid home installation field: ${name}`);
+  return item;
+}
+export function request_root(value: Record<string, unknown>): string {
+  const root = request_text(value, 'root');
+  if (/[\x00-\x1f\x7f]/u.test(root))
+    throw new Error('The installation root must not contain control characters');
+  return root;
+}
+export function request_service(value: Record<string, unknown>): string {
+  const service = request_text(value, 'service');
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.exec(service)?.[0] !== service)
+    throw new Error('Use a valid service name');
+  return service;
+}
+/** The fields of a sealed release installation that the first install and a move share. */
+export function release_install_fields(
+  value: Record<string, unknown>,
+): Omit<HomeInstallRequest, 'isolated_providers'> {
   const port = value.port;
   if (!Number.isInteger(port) || typeof port !== 'number' || port < 1 || port > 65535)
     throw new Error('Use a port from 1 through 65535');
-  if (typeof value.isolated_providers !== 'boolean')
-    throw new Error('isolated_providers must be a boolean');
   const request = {
-    root: text('root'),
-    service: text('service'),
+    root: request_root(value),
+    service: request_service(value),
     port,
-    isolated_providers: value.isolated_providers,
-    archive: text('archive'),
-    archive_sha256: text('archive_sha256'),
-    revision: text('revision'),
+    archive: request_text(value, 'archive'),
+    archive_sha256: request_text(value, 'archive_sha256'),
+    revision: request_text(value, 'revision'),
   };
-  if (/[\x00-\x1f\x7f]/u.test(request.root))
-    throw new Error('The installation root must not contain control characters');
-  if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.exec(request.service)?.[0] !== request.service)
-    throw new Error('Use a valid service name');
   if (/^[0-9a-f]{40}$/.exec(request.revision)?.[0] !== request.revision)
     throw new Error('The installation requires an exact release revision');
   if (/^[0-9a-f]{64}$/.exec(request.archive_sha256)?.[0] !== request.archive_sha256)
     throw new Error('The installation requires an archive SHA256');
   return request;
 }
-export function validate_home_host(request: HomeInstallRequest, host: HomeInstallHost): void {
+/** The bootstrap sends this same flat request to the sealed installer. */
+export function home_install_request(value: unknown): HomeInstallSubmission {
+  if (!is_record(value)) throw new Error('Home installation request must be an object');
+  if (typeof value.isolated_providers !== 'boolean')
+    throw new Error('isolated_providers must be a boolean');
+  const request = {
+    ...release_install_fields(value),
+    isolated_providers: value.isolated_providers,
+    update_token: request_text(value, 'update_token'),
+  };
+  // The message never repeats the credential.
+  if (!/^[\x21-\x7e]+$/.test(request.update_token))
+    throw new Error('The update token must be printable text without spaces');
+  return request;
+}
+export function validate_home_host(
+  request: Pick<HomeInstallRequest, 'service'>,
+  host: HomeInstallHost,
+): void {
   if (!(
     (host.system === 'linux' && host.architecture === 'x86_64') ||
     (host.system === 'darwin' && host.architecture === 'arm64')

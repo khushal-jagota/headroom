@@ -251,9 +251,11 @@ export async function smoke_before_restart(
   const stored_file_id = file.stored_file_id;
   await download(base, conversation_id, stored_file_id);
   step('06 uploaded file bytes round trip', { stored_file_id });
+  const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
+  assert.ok(typeof project.id === 'string');
   const goal = await api('/api/goals', {
     title: 'Production smoke goal',
-    project_id: 'project_other',
+    project_id: project.id,
     kind: 'binary',
     primary_checklist_block_id: null,
   });

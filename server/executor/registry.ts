@@ -1,3 +1,5 @@
+import type { WorkMoveOwner, WorkMoveProof } from '../work_moves/contracts.ts';
+import { HttpError } from '../core/http/errors.ts';
 /** One executor owner per destination, shared by startup adoption and new work. */
 import type { FastifyInstance } from 'fastify';
 import type {
@@ -16,16 +18,18 @@ import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { CleanupResult } from '../worker_supervision/contracts.ts';
 import { cleanup_result } from '../worker_supervision/inspection.ts';
-import { worker_ticket_id } from '../worker_supervision/logic/worker_launch.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
+import type { MachineBackendControls } from './backend_control_relay.ts';
 import type { VpsExecutorOptions } from './vps_transport.ts';
+import type { ServerMoveNotice } from './wire.generated.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -51,6 +55,7 @@ export class VpsExecutorRegistry {
       }
     | undefined;
   private updates: MacUpdateServiceContract | undefined;
+  private server_move_notice: ((machine_id: string) => ServerMoveNotice | null) | undefined;
   private started = false;
   private starting: Promise<void> | undefined;
   private closed = false;
@@ -81,6 +86,7 @@ export class VpsExecutorRegistry {
     if (configuration)
       owner.configure(configuration.core, configuration.app, configuration.barrier);
     if (this.updates) this.bind_owner_updates(owner, this.updates);
+    if (this.server_move_notice) this.bind_owner_server_move(owner, this.server_move_notice);
     return owner;
   }
 
@@ -91,8 +97,7 @@ export class VpsExecutorRegistry {
       'SELECT machine_id FROM machine_executor_credentials WHERE credential_sha256 IS NOT NULL OR (machine_id=? AND ?)',
       [ORIGINAL_MAC_MACHINE_ID, this.original_enabled ? 1 : 0],
     )) {
-      if (machine_id !== HOME_MACHINE_ID && !this.owners.has(machine_id))
-        this.owners.set(machine_id, this.new_owner(machine_id));
+      if (!this.owners.has(machine_id)) this.owners.set(machine_id, this.new_owner(machine_id));
     }
   }
 
@@ -111,8 +116,7 @@ export class VpsExecutorRegistry {
       const registered = this.database.read((sql) =>
         sql.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [machine_id]),
       );
-      if (!registered || machine_id === HOME_MACHINE_ID)
-        throw new Error('Unknown executor destination');
+      if (!registered) throw new Error('Unknown executor destination');
       const owner = this.new_owner(machine_id);
       if (this.started) await owner.start();
       this.admit();
@@ -125,6 +129,29 @@ export class VpsExecutorRegistry {
       () => this.pending.delete(machine_id),
     );
     return creation;
+  }
+
+  async work_move_source(machine_id: string, owner: WorkMoveOwner): Promise<WorkMoveProof> {
+    this.admit();
+    const endpoint = this.get(machine_id);
+    if (!endpoint?.presence.is_present())
+      throw new HttpError(503, 'The source machine is unavailable.');
+    if (endpoint.presence.current_identity()?.supports_work_moves !== true)
+      throw new HttpError(503, 'Update source machine code before a work move.');
+    const command = await endpoint.mailbox.put_work_move_request({
+      owner_kind: owner.kind,
+      owner_id: owner.kind === 'chief' ? 'chief' : owner.id,
+    });
+    try {
+      const result = await endpoint.mailbox.wait_result(command.command_id, 60);
+      const answer = result?.work_move_result;
+      if (!answer) throw new HttpError(503, 'The source machine did not answer.');
+      if (answer.error || !answer.proof)
+        throw new HttpError(409, answer.error ?? 'The source machine could not verify its work.');
+      return answer.proof;
+    } finally {
+      await endpoint.mailbox.withdraw_waiting(command.command_id, 'delivery_withdrawn');
+    }
   }
 
   configure(
@@ -150,6 +177,20 @@ export class VpsExecutorRegistry {
     owner.bind_updates(service.for_machine(owner.machine_id));
     // Authentication can change the persisted platform after this endpoint loads.
     owner.presence.update_check = () => service.for_machine(owner.machine_id).check();
+  }
+
+  /** Each lease reply to a move's target machine names the move. */
+  bind_server_move(notice: (machine_id: string) => ServerMoveNotice | null): void {
+    this.admit();
+    this.server_move_notice = notice;
+    for (const owner of this.owned) this.bind_owner_server_move(owner, notice);
+  }
+
+  private bind_owner_server_move(
+    owner: VpsExecutor,
+    notice: (machine_id: string) => ServerMoveNotice | null,
+  ): void {
+    owner.presence.server_move_notice = () => notice(owner.machine_id);
   }
 
   update_service_for(machine_id: string): MacUpdateServiceContract | null {
@@ -213,6 +254,10 @@ export class VpsExecutorRegistry {
     return this.get(machine_id)?.catalog ?? null;
   }
 
+  backend_controls_for(machine_id: string): MachineBackendControls | null {
+    return this.get(machine_id)?.backend_controls ?? null;
+  }
+
   stall_sources(): readonly StallSource[] {
     return [...this.owners].flatMap(([machine_id, owner]) =>
       owner.stall_sources().map((source) => ({
@@ -264,12 +309,11 @@ export class VpsExecutorRegistry {
 
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {
     this.admit();
-    const ticket_id = worker_ticket_id(options.resolved_start);
-    const row = this.database.read((sql) =>
-      sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [ticket_id]),
+    const machine_id = this.database.read((sql) =>
+      conversation_machine_id(sql, options.resolved_start.conversation_id),
     );
-    const owner = row && row.machine_id !== HOME_MACHINE_ID ? this.get(row.machine_id) : null;
-    if (!owner) throw new BackendSpawnFailed('Ticket executor is unavailable');
+    const owner = machine_id === null ? null : this.get(machine_id);
+    if (!owner) throw new BackendSpawnFailed("The conversation's machine code is unavailable");
     return owner.runs.create(options);
   }
 

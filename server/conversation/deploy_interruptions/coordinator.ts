@@ -17,14 +17,10 @@ import { text_message_content } from '../message_content.ts';
 import { PromptDeliveryUncertainEventPayload } from '../events.ts';
 import { select_recoveries } from './data.ts';
 import { recovery_message_identity } from './identity.ts';
-import { conversation_execution_refusal } from '../../tickets/execution_admission.ts';
-import { configured_ticket_execution_refusal } from '../../runtime/conversation_start.ts';
+import { configured_conversation_execution_refusal } from '../../runtime/conversation_start.ts';
+// A conversation whose machine is away waits. Its machine's return runs the recovery again.
 function execution_refusal(database: Database, id: string) {
-  return database.read((sql) =>
-    conversation_execution_refusal(sql, id, (current, ticket) =>
-      configured_ticket_execution_refusal(database, current, ticket),
-    ),
-  );
+  return database.read((sql) => configured_conversation_execution_refusal(database, sql, id));
 }
 export const RECOVERY_PROMPT =
   'Inspect the interrupted work and continue the current authorized step. ' +

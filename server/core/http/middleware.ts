@@ -17,6 +17,8 @@ import type { Database } from '../database/contracts.ts';
 import type { Clock } from '../clock.ts';
 import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
+import { is_executor_link_connection } from './executor_link.ts';
+import { SERVER_LOCATION_PATH } from '../../server_link/contracts.ts';
 export interface WorkspaceAdmission {
   operation(): {
     admitted: boolean;
@@ -81,6 +83,20 @@ export function installMiddleware(
   const identities = new WeakMap<FastifyRequest, ClientIdentity>();
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
+      const path = new URL(request.url, 'http://localhost').pathname;
+      const executor_link = is_executor_link_connection(request.raw.socket);
+      if (executor_link) {
+        // The machine credential, checked by the executor routes, says which machine this is.
+        // The matched route decides, because the router does not resolve `..` in a raw path.
+        const route = request.routeOptions.url;
+        if (
+          route === undefined ||
+          !(route.startsWith('/api/executor/') || route === SERVER_LOCATION_PATH)
+        )
+          return reject(reply, 'the local executor link serves executor routes only');
+        if (request.headers['tailscale-user-login'] !== undefined)
+          return reject(reply, 'the local executor link does not accept a Tailscale login');
+      }
       // Raw headers also reach the streams that hijack or flush their own headers.
       if (request.headers.origin === DESKTOP_APP_ORIGIN) {
         reply.raw.setHeader('access-control-allow-origin', DESKTOP_APP_ORIGIN);
@@ -94,12 +110,11 @@ export function installMiddleware(
           return;
         }
       }
-      const path = new URL(request.url, 'http://localhost').pathname;
       Object.assign(request, { [TRUSTED_INGRESS_CONFIGURED]: !!config.trusted_ingress_provider });
       const raw = rawHeaders(request);
-      let login: string | null;
+      let login: string | null = null;
       try {
-        login = trusted_ingress_login(config, raw, request.method);
+        if (!executor_link) login = trusted_ingress_login(config, raw, request.method);
       } catch (error) {
         if (!(error instanceof PlannerError)) throw error;
         reject(reply, error.message);

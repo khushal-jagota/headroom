@@ -15,7 +15,6 @@ export const claude_manifest: DriverManifest = {
     environment_name: 'CLAUDE_CONFIG_DIR',
     default_path: '~/.claude',
     isolated_directory_name: 'claude',
-    cli_option: '--claude-home',
     // A set CLAUDE_CONFIG_DIR makes macOS Claude read a suffixed Keychain item.
     leave_unset_on_macos: true,
   },

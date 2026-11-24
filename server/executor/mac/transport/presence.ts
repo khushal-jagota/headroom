@@ -15,6 +15,7 @@ import type {
   LeaseRequest,
   MacLocalStatus,
   MacUpdateCheck,
+  ServerMoveNotice,
   WorkingTurn,
   WorkerCleanupUncertainty,
   WorkspaceState,
@@ -26,14 +27,18 @@ import {
   MAX_LEASE_WAITING_CONVERSATIONS,
   MAX_WORKSPACE_STATE_IDS,
 } from '../configuration.ts';
-import { TICKET_ID_PATTERN } from '../../../ticket_workspaces/contracts.ts';
+import { OWNERSHIP_FILE, TICKET_ID_PATTERN } from '../../../ticket_workspaces/contracts.ts';
 import type { MacHttpClient } from './http.ts';
 import { failure_detail } from '../failure_detail.ts';
 import { ConnectionDiagnostics } from './diagnostics.ts';
 
 const WORKSPACE_CLEANUP_INTERVAL_SECONDS = 600;
 
-async function local_workspace_ticket_ids(root: string): Promise<string[]> {
+/**
+ * In the server's own Ticket folder, the folders of other machines' Tickets hold only
+ * served files. Only a folder with a workspace marker is this machine's work there.
+ */
+async function local_workspace_ticket_ids(root: string, marked_only: boolean): Promise<string[]> {
   let names: string[];
   try {
     const status = await lstat(root);
@@ -50,7 +55,9 @@ async function local_workspace_ticket_ids(root: string): Promise<string[]> {
     if (!match) continue;
     try {
       const status = await lstat(join(root, name));
-      if (status.isDirectory() && !status.isSymbolicLink()) owners.add(match[1]!);
+      if (!status.isDirectory() || status.isSymbolicLink()) continue;
+      if (marked_only && !(await lstat(join(root, name, OWNERSHIP_FILE))).isFile()) continue;
+      owners.add(match[1]!);
     } catch (error) {
       if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     }
@@ -109,6 +116,8 @@ export class MacPresence {
 export interface MacLeaseOptions {
   readonly client: Pick<MacHttpClient, 'lease' | 'workspace_states'>;
   readonly workspace_root: string;
+  /** True while workspace_root is the server's served Ticket folder. Read on each pass. */
+  readonly workspace_root_is_shared?: () => boolean;
   readonly presence: MacPresence;
   /** The driver kinds this machine runs, advertised on every lease. */
   readonly driver_kinds: readonly string[];
@@ -124,6 +133,10 @@ export interface MacLeaseOptions {
     seal(): void;
   };
   readonly updates: { offer(update: MacUpdateCheck): void };
+  /** Each accepted lease hands its server move notice, or null, to the move runner. */
+  readonly server_move?: { notice(notice: ServerMoveNotice | null): void };
+  /** After each accepted lease, so the host can follow a server address that changed. */
+  readonly after_lease?: () => void;
   readonly replaced: () => void;
   readonly on_failure: (error: unknown) => void;
   readonly warn: (message: string) => void;
@@ -164,6 +177,7 @@ export class MacLeaseLoop {
       cleanup_uncertainties: [...runner.cleanup_uncertainties],
       legacy_cleanup_notice: runner.legacy_cleanup_notice,
       driver_kinds: [...this.options.driver_kinds],
+      backend_controls: true,
     };
   }
   lease_once(): Promise<boolean> {
@@ -213,6 +227,8 @@ export class MacLeaseLoop {
     }
     presence.accepted();
     updates.offer(reply.update);
+    this.options.after_lease?.();
+    this.options.server_move?.notice(reply.server_move ?? null);
     this.schedule_workspace_cleanup();
     try {
       if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
@@ -243,7 +259,10 @@ export class MacLeaseLoop {
     const { runner, client, workspace_root, warn } = this.options;
     const signal = this.cancellation.signal;
     try {
-      const ids = await local_workspace_ticket_ids(workspace_root);
+      const ids = await local_workspace_ticket_ids(
+        workspace_root,
+        this.options.workspace_root_is_shared?.() === true,
+      );
       signal.throwIfAborted();
       const states: WorkspaceState[] = [];
       let at_vps_ms = Infinity;

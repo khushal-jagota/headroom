@@ -9,7 +9,7 @@ import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { TestClock } from '../../core/clock.ts';
-import { HOME_MACHINE_ID, valid_uuid } from '../../execution_identity.ts';
+import { valid_uuid } from '../../execution_identity.ts';
 import {
   ResolvedConversationStart,
   ConversationRoleMaterials,
@@ -513,7 +513,7 @@ if (spec.mode === 'machines') {
     const unknown_present = registry.is_present(unknown);
     const unknown_allocated = registry.get(unknown) !== null;
     const refused_destinations = [];
-    for (const machine of [unknown, HOME_MACHINE_ID]) {
+    for (const machine of [unknown]) {
       try {
         await registry.ensure(machine);
         refused_destinations.push(false);
@@ -548,14 +548,7 @@ if (spec.mode === 'machines') {
         choices.push(owner.machine_id);
         throw new Error('selection only');
       };
-    const router = new LocaleBackendChildFactory(
-      db,
-      () => {
-        choices.push('local');
-        throw new Error('selection only');
-      },
-      registry.as_factory(),
-    );
+    const router = new LocaleBackendChildFactory(db, registry.as_factory());
     const start = new ResolvedConversationStart({
       conversation_id: 'drain',
       backend_key: parse_backend_instance_id('codex'),
@@ -572,7 +565,7 @@ if (spec.mode === 'machines') {
       access: 'full',
     });
     try {
-      for (const machine of [...spec.machines, HOME_MACHINE_ID]) {
+      for (const machine of spec.machines) {
         db.write((tx) =>
           tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [machine, spec.ticket]),
         );
@@ -872,7 +865,9 @@ try {
     ),
   );
   output.after_rewrite = snapshot();
-  output.skills = database.read((sql) => read_canonical_skill_snapshot(sql, spec.ticket));
+  output.skills = database.read((sql) =>
+    read_canonical_skill_snapshot(sql, { kind: 'ticket', id: spec.ticket }),
+  );
   const choices: string[] = [];
   const local: BackendChildFactory = () => {
     choices.push('local');
@@ -891,7 +886,7 @@ try {
       },
     },
   ) as RetainedBackendChildFactory;
-  const router = new LocaleBackendChildFactory(database, local, remote);
+  const router = new LocaleBackendChildFactory(database, remote);
   for (const ticket of [spec.ticket, spec.local_ticket, null]) {
     const start = new ResolvedConversationStart({
       conversation_id: ticket === spec.ticket ? 'drain' : 'routing',

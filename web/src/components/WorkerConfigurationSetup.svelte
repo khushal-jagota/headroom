@@ -37,7 +37,7 @@
     employee_launch_model: employeeLaunchModel,
     employee_launch_reasoning_effort: employeeLaunchReasoningEffort
   }), (next) => onSave(next), (refresh) => ({...queries.ticketBackends(ticketId,
-    [destination, workspace?.workspace_folder, workspace?.workspace_path_policy], refresh),
+    [machineId, destination, workspace?.workspace_folder, workspace?.workspace_path_policy], refresh),
     enabled: workspace?.workspace_folder !== undefined}));
 </script>
 

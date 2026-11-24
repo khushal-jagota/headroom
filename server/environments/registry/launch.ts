@@ -1,11 +1,5 @@
-/** Existing environment allowlist and explicit skill provisioning. No runtime launcher argv. */
-import { statSync } from 'node:fs';
-import { join } from 'node:path';
+/** Existing environment allowlist. No runtime launcher argv. */
 import { expand_path } from '../paths.ts';
-import { managed_skills_home } from '../../skills/files.ts';
-import { provision_account_skills } from '../../skills/account.ts';
-import { PROVISION_SKILLS_HOME_OPTIONS } from '../command_contracts.ts';
-import type { OperatorArguments, OperatorPathInputs } from '../command_contracts.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contracts.ts';
 import { validate_environment_values } from './logic.ts';
@@ -55,29 +49,4 @@ export function build_test_environment_run_env(
     PLAN_FAKE_NOW: '2026-07-04T12:00:00+00:00',
     PLAN_TICK_SECONDS: '1',
   };
-}
-export function provision_environment_skills(
-  options: OperatorArguments['provision-skills'],
-  paths: OperatorPathInputs,
-): string | null {
-  const parent = paths.admit_path(paths.expand_path(options.database_parent));
-  const root = paths.admit_path(managed_skills_home(parent));
-  const homes = PROVISION_SKILLS_HOME_OPTIONS.map(({ destination, home: { skills_directory } }) => {
-    const home = paths.admit_path(paths.expand_path(options[destination]));
-    const skills = skills_directory ?? 'skills';
-    // Link replacement can read the previous target before replacing the link.
-    paths.admit_path(join(home, skills));
-    return { path: home, skills_directory: skills };
-  });
-  let exists = false;
-  try {
-    exists = statSync(root).isDirectory();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  if (!exists)
-    throw Object.assign(new Error(`managed Panels skills not found: ${root}`), {
-      code: 'ENOENT',
-    });
-  return provision_account_skills(parent, homes);
 }

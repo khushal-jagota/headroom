@@ -11,6 +11,7 @@ import type { LinuxExecutorJoinRequest } from './contracts.ts';
 import { LINUX_EXECUTOR_SERVICE_NAME } from './configuration.ts';
 import { install } from './install.ts';
 import { install_linux_executor } from './join.ts';
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 vi.mock('./install.ts', () => ({ install: vi.fn() }));
@@ -70,7 +71,7 @@ async function fixture() {
         code: 0,
         stderr: '',
         stdout: JSON.stringify({
-          identity: { application_revision: request.revision, protocol_version: 26 },
+          identity: { application_revision: request.revision, protocol_version: PROTOCOL_VERSION },
           last_lease_failure: null,
           going_to_sleep: false,
           admission_stopped: false,

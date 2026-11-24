@@ -50,6 +50,8 @@ export interface LinuxExecutorPublication {
     readonly executor_cli: 'passed';
   };
   readonly application_revision: string;
+  readonly build_id: string;
+  readonly repeat_build_id?: string;
   readonly archive_sha256: string;
   readonly archive_size: number;
   readonly platform: 'linux';
