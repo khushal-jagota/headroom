@@ -13,7 +13,7 @@ The app has two sides and a bridge between them.
 ```text
  Panels app
  ┌───────────────────────────────────────────────────────┐
- │ screens (sandbox, no Node)    address page            │
+ │ screens (sandbox, no Node)    setup screens            │
  │   relative /api, /files ──┐          │ bridge         │
  │                           ▼          ▼                │
  │ native side:  panels://app scheme, bridge answers     │
@@ -37,7 +37,11 @@ Screen trust stays with the selected server and its connection, as for the owner
 
 ## The server address
 
-On its first start, the app asks for a Panels server on this Mac, at `http://127.0.0.1:8767`. If one answers, the app keeps that address. Otherwise it opens the bundled baseline screens. "Change Server…" in the app menu opens the address page. It takes an address, such as a Tailscale address, and checks that a Panels server answers there. This page is temporary: the setup interface replaces it.
+First launch asks where the server lives: on this Mac or on another machine. The app never connects to a local server without that choice. The local path offers the default loopback address. The remote path asks for a Tailscale HTTPS address. Both paths offer an existing server or the complete installation and first-setup guide, which ships offline from `ops/mac-home/installation.md`. The existing installer runs separately on the chosen machine. The app does not install or run a server.
+
+The app checks the address before it stores it. HTTP works only on loopback. Remote addresses require HTTPS. An address cannot contain credentials, a path, a query, or a fragment. "Change Server…" opens the same flow, with an option to return to the current server.
+
+Setup uses the same Svelte build at `panels://setup`, a separate origin with no forwarding of `/api` or `/files`. Its entry does not start the workspace or server queries. Only this origin can change the server through the bridge. When the workspace cannot reach the server, it offers the saved address, retry, a link to setup, and access to the last session. The existing change stream restores fresh data after recovery.
 
 ## The last session
 
@@ -65,10 +69,10 @@ The native side holds a live stream to the server, `/api/notifications/desktop`,
 
 ## Artifacts and the bridge
 
-Artifact HTML runs at the screens' own origin, so a script in an artifact can reach the bridge. Today the bridge has only the address calls, and they answer the address page alone. **Do not add a bridge call that acts until artifacts are isolated.**
+Artifact HTML runs at the screens' own origin, so a script in an artifact can reach the bridge. The address read is available in the app and setup. All calls that can change the server answer only a top-level page at `panels://setup`. A frame check alone does not protect them: an artifact can call `parent.panels` in the app’s top frame. The separate setup origin protects the calls. Setup serves only bundled files and never serves artifacts. New calls that act must preserve this boundary.
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native update checks and installation), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native updates), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), and `web/src/desktop/` for the setup and connection screens. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
 _Last verified: 2026-11-23._

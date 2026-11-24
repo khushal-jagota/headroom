@@ -1,6 +1,7 @@
 /** Application preview commands only use the caller's canonical HTTP identity. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
-import { send, emit } from '../../cli/http.ts';
+import { executor_client_settings } from '../../core/config.ts';
+import { executor_request, send, emit } from '../../cli/http.ts';
 import { scalar_text } from '../../cli/text.ts';
 function human(data: Record<string, any>): string {
   if (data.preview === null) return 'No application preview is prepared.';
@@ -12,6 +13,13 @@ function human(data: Record<string, any>): string {
 export async function run_preview_command(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
   const command = inv.command.path[1];
+  if (executor_client_settings(inv.environment).root) {
+    const data = await executor_request(inv, 'preview', {
+      operation: command!,
+      ...(command === 'register' ? { port: v.port } : {}),
+    });
+    return emit(data, v.as_json, command === 'stop' ? 'Application preview ended.' : human(data));
+  }
   const data =
     command === 'prepare'
       ? await send(inv, 'POST', '/api/previews/prepare')

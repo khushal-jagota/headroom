@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
+import type { WriteEntry } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import { path_is_within } from '../../core/path_containment.ts';
@@ -60,6 +61,11 @@ export async function hash_archive(path: string): Promise<string> {
     digest.update(chunk);
   return digest.digest('hex');
 }
+/** Machine readers reject TAR hardlinks. Clear inode folding after each emitted header. */
+export function write_hardlinks_as_files(entry: WriteEntry): void {
+  entry.linkCache.clear();
+}
+
 export async function create_app_archive(
   app: string,
   archive: string,
@@ -86,6 +92,7 @@ export async function create_app_archive(
     gzip: { level: ARCHIVE_GZIP_LEVEL },
     strict: true,
     noDirRecurse: true,
+    onWriteEntry: write_hardlinks_as_files,
   });
   const writing = pipeline(pack, createWriteStream(archive, { flags: 'wx' }));
   // Pack.add treats a filename beginning with '@' as an ordinary path.

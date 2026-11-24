@@ -1,11 +1,12 @@
 /** The Linux executor uses the shared native builder and proves its relocated archive. */
-import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { build_exported_app } from '../release/build.ts';
 import { create_app_archive, hash_archive, remove_owned_tree } from '../release/archive.ts';
 import { AppValidationError, LINUX_EXECUTOR } from '../release/contracts.ts';
 import type { ReleaseExecution } from '../release/contracts.ts';
 import { digest_app_artifact, validate_app_manifest } from '../release/identity.ts';
+import { digest_machine_build } from '../release/machine_identity.ts';
 import { validate_app_sha } from '../release/logic/manifest.ts';
 import { require_minimum_node } from '../release/logic/host.ts';
 import { assert_release_execution, run_release_command } from '../release/process.ts';
@@ -43,7 +44,12 @@ export async function build_linux_executor(
     fence();
     const built = await build_exported_app(
       options.source_root,
-      { requested_sha: revision, candidate_app: runtime, install_dependencies: true },
+      {
+        requested_sha: revision,
+        candidate_app: runtime,
+        install_dependencies: true,
+        target: LINUX_EXECUTOR,
+      },
       { public_cli_entrypoint: 'server/cli/main.ts' },
       execution,
     );
@@ -60,6 +66,12 @@ export async function build_linux_executor(
         architecture: 'x86_64',
         role: 'executor',
       }) + '\n',
+    );
+    const build_id = await digest_machine_build(runtime);
+    const marker = JSON.parse(await readFile(join(runtime, MAC_RUNTIME_MANIFEST_NAME), 'utf8'));
+    await writeFile(
+      join(runtime, MAC_RUNTIME_MANIFEST_NAME),
+      JSON.stringify({ ...marker, build_id }) + '\n',
     );
     const manifest = { ...built, artifact_digest: await digest_app_artifact(runtime) };
     fence();
@@ -133,6 +145,7 @@ export async function build_linux_executor(
       schema_version: 1,
       proof: { native_startup: 'passed', relocated_archive: 'passed', executor_cli: 'passed' },
       application_revision: revision,
+      build_id,
       archive_sha256,
       archive_size,
       platform: 'linux',

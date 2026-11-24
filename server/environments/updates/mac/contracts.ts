@@ -4,7 +4,12 @@ import type { MacUpdateOperations } from '../contracts.ts';
 import type { UpdateMacReads } from '../routes.ts';
 import type { PresenceJudgement, PresenceRecord } from '../../../executor/contracts.ts';
 import type { FileUpdateAttemptStore } from '../attempts.ts';
-import type { PublishedUpdate, UpdateProvider } from '../contracts.ts';
+import type {
+  PublishedUpdate,
+  UpdateProvider,
+  MachineUpdateMachine,
+  MachineUpdateState,
+} from '../contracts.ts';
 
 import type {
   MacUpdateCheck,
@@ -33,6 +38,7 @@ export interface MacUpdateCompositionContext {
   readonly platform?: string;
   readonly platform_for?: (machine_id: string) => string;
   readonly linux_registered?: () => boolean;
+  readonly machines?: () => readonly MachineUpdateMachine[];
   readonly attempts: FileUpdateAttemptStore;
   readonly provider: UpdateProvider | null;
   readonly current_app_sha: string | null;
@@ -44,6 +50,8 @@ export interface MacUpdateCompositionContext {
 export interface MacUpdateServiceContract {
   for_machine(machine_id: string): MacUpdateServiceContract;
   settled(): Promise<void>;
+  machine_states(release?: PublishedUpdate | null): MachineUpdateState[];
+  retry_machine(machine_id: string, attempt_id: string): void;
   prepare(release: PublishedUpdate): Promise<void>;
   check(): MacUpdateCheck;
   status(): MacUpdateStatus | null;

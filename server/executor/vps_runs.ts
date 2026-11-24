@@ -35,6 +35,7 @@ import { native_message_content } from './backend_events.ts';
 import { CommandSettlementReason } from './contracts.ts';
 import type { WireValue } from './contracts.ts';
 import { ExecutorStore } from './data/runs.ts';
+import type { ChildOwner } from './data/runs.ts';
 import { steer_never_arrived } from './data/mailbox.ts';
 import { ExecutorValidationError } from './protocol.ts';
 import {
@@ -183,21 +184,27 @@ export class MacRuns {
     start: ResolvedConversationStart,
   ): WireValue<'CanonicalSkillSnapshot'> => {
     this.admit();
-    const ticket_id = this.require_current_ticket(start);
-    return this.database.read((sql) => read_canonical_skill_snapshot(sql, ticket_id));
+    const owner = this.require_current_owner(start);
+    return this.database.read((sql) => read_canonical_skill_snapshot(sql, owner));
   };
   private read_workspace_repository = (
     start: ResolvedConversationStart,
-  ): WireValue<'WorkspaceRepository'> => {
+  ): WireValue<'WorkspaceRepository'> | null => {
     this.admit();
-    const ticket_id = this.require_current_ticket(start);
+    const owner = this.require_current_owner(start);
+    // Only a Ticket has a workspace repository.
+    if (owner.kind !== 'ticket') return null;
     return this.database.read((sql) => {
-      const ticket = read_ticket(sql, ticket_id);
+      const ticket = read_ticket(sql, owner.id);
       if (ticket.project_id === null) return { repository_url: null, default_branch: null };
       const project = readProject(sql, ticket.project_id);
       return {
         repository_url: project.repository_url,
         default_branch: project.default_branch,
+        ...sql.get<{ published_branch: string | null; published_revision: string | null }>(
+          'SELECT published_branch,published_revision FROM tickets WHERE id=?',
+          [ticket.id],
+        ),
       };
     });
   };
@@ -214,20 +221,38 @@ export class MacRuns {
       throw new BackendSpawnFailed(
         this.database.read((sql) => execution_unavailable_reason(sql, 'macos')),
       );
-    const ticket_id = this.require_current_ticket(start);
+    const owner = this.require_current_owner(start);
     const child = {
       executor_incarnation: identity.executor_incarnation,
       child_id: randomUUID(),
       conversation_id: start.conversation_id,
     };
-    this.store.register_child(child, 'ticket', ticket_id, now_ms());
+    this.store.register_child(child, owner.kind, owner.id, now_ms());
     return child;
   }
-  private require_current_ticket(start: ResolvedConversationStart): string {
+  /** The child's owner, from the conversation's current identity. Its role identity must agree. */
+  private require_current_owner(start: ResolvedConversationStart): ChildOwner {
     const principal = this.database.read((sql) => canonical_principal(sql, start.conversation_id));
-    if (principal?.kind !== 'ticket' || worker_ticket_id(start) !== principal.id)
-      throw new BackendSpawnFailed("Mac runs require the Ticket's current conversation identity");
-    return principal.id;
+    const identity = new Map(start.role_materials?.identity_environment_variables ?? []);
+    const actor = identity.get('PLAN_ACTOR');
+    if (actor === 'worker') {
+      if (principal?.kind !== 'ticket' || worker_ticket_id(start) !== principal.id)
+        throw new BackendSpawnFailed("Mac runs require the Ticket's current conversation identity");
+      return { kind: 'ticket', id: principal.id };
+    }
+    if (actor === 'chief') {
+      if (principal?.kind !== 'chief')
+        throw new BackendSpawnFailed("Machine runs require the Chief's current conversation");
+      return { kind: 'chief', id: principal.id };
+    }
+    if (actor === 'manager') {
+      if (principal?.kind !== 'manager' || identity.get('PLAN_MANAGER_ID') !== principal.id)
+        throw new BackendSpawnFailed("Machine runs require the Manager's current conversation");
+      return { kind: 'manager', id: principal.id };
+    }
+    if (actor === undefined && principal === null)
+      return { kind: 'conversation', id: start.conversation_id };
+    throw new BackendSpawnFailed('The conversation identity does not match its owner');
   }
   private make_child(
     reference: ChildReference,

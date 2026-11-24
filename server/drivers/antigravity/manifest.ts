@@ -7,7 +7,6 @@ export const antigravity_manifest: DriverManifest = {
     environment_name: 'GEMINI_HOME',
     default_path: '~/.gemini',
     isolated_directory_name: 'antigravity',
-    cli_option: '--antigravity-home',
     // agy reads global skills from <home>/config/skills/<name>/SKILL.md.
     skills_directory: 'config/skills',
   },

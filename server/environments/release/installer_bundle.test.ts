@@ -41,7 +41,7 @@ import {
   DARWIN_HOME_INSTALLER_PACKAGE_ROOTS,
   DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
 } from './installer_bundle_configuration.ts';
-import { MAC_HOME } from './contracts.ts';
+import { LINUX_HOME, LINUX_EXECUTOR, MAC_HOME } from './contracts.ts';
 import { compose_mac_home_payload } from './mac_home_payload.ts';
 import { MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
 import { migration_frontier, read_migration_graph } from './migrations.ts';
@@ -412,7 +412,7 @@ it('loads the installer from the frozen files alone and reads every built-in man
   }
 }, 15000);
 
-it('copies a complete selected closure once and refuses changed source or an application-owned Node', async () => {
+it('copies Node and its selected closure independently and refuses changed source', async () => {
   // Existing installer parity never copies packages, native provider edges, links, or licenses.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-copy-'));
   const current = join(root, 'current'),
@@ -438,6 +438,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     symlinkSync('index.js', join(app, 'server/node_modules/yaml/alias.js'));
     write('server/node_modules/koffi/addon.node', 'structural native addon');
     write('runtime/lib/libfixture.so', 'structural provider');
+    write('node/bin/node', 'structural Node', 0o755);
+    write('node/LICENSE', 'Node license');
     write('runtime/licenses/fixture.txt', 'copied provider license\n');
     write('server/node_modules/unselected/private.js', 'must not travel');
     const record = (path: string, bytes: string, providers: Record<string, string>) => ({
@@ -461,6 +463,9 @@ it('copies a complete selected closure once and refuses changed source or an app
       cpu_policy: 'conservative x86-64-v3 support boundary, not vendor minimum',
       packaging_tools: ['readelf', 'patchelf'],
       native_files: [
+        record('node/bin/node', 'structural Node', {
+          'libfixture.so': 'runtime/lib/libfixture.so',
+        }),
         record('server/node_modules/koffi/addon.node', 'structural native addon', {
           'libfixture.so': 'runtime/lib/libfixture.so',
         }),
@@ -487,7 +492,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       minimum_node_version: '22.18.0',
       cpu_features: SUPPORTED_CPU_FEATURES,
       external_libraries: GLIBC_LIBRARIES,
-      external_executables: ['sh', 'node'],
+      external_executables: ['sh'],
       inventory_sha256: hash(inventory),
     };
     write('runtime/inventory.json', inventory);
@@ -565,6 +570,10 @@ it('copies a complete selected closure once and refuses changed source or an app
       'server/skills/seeds/panels/SKILL.md',
       'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
+      'assets/tokens.css',
+      'assets/app.css',
+      'assets/fonts/InterVariable.woff2',
+      'assets/fonts/InterVariable-Italic.woff2',
     ])
       assert.deepEqual(readFileSync(join(payload, name)), readFileSync(join(checkout, name)));
     for (const [name, bytes] of Object.entries(package_bytes)) {
@@ -581,7 +590,7 @@ it('copies a complete selected closure once and refuses changed source or an app
         seconds: (performance.now() - payload_began) / 1000,
       }),
     );
-    await write_installer_file_manifest(app, 'a'.repeat(40), execution);
+    await write_installer_file_manifest(app, 'a'.repeat(40), execution, LINUX_HOME);
     const recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(app, INSTALLER_RECIPE_PATH), 'utf8')),
     );
@@ -599,6 +608,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       health_timeout_seconds: 3,
     };
     const command = copy_installer_runtime(app, request, controller.signal);
+    assert.equal(command[0], join(data, 'update-installer-first/runtime/node/bin/node'));
     assert.equal(command[1], join(data, 'update-installer-first/runtime', INSTALLER_ENTRY));
     const runtime = join(data, 'update-installer-first/runtime');
     assert.equal(lstatSync(runtime).mode & 0o777, 0o700);
@@ -618,6 +628,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     assert.throws(() => copy_installer_runtime(app, request, controller.signal), /EEXIST/);
     const retired = join(current, 'retired');
     renameSync(app, retired);
+    assert.equal(readFileSync(command[0], 'utf8'), 'structural Node');
+    assert.equal(lstatSync(command[0]).mode & 0o777, 0o755);
     assert.equal(
       readFileSync(command[1], 'utf8'),
       '// structural source: ' + INSTALLER_ENTRY + '\n',
@@ -673,19 +685,31 @@ it('copies a complete selected closure once and refuses changed source or an app
       /complete selected closure/,
     );
     assert(!existsSync(join(data, 'update-installer-tamper')));
-    write('fake-node', 'not executed', 0o755);
-    const alias = join(root, 'node-alias');
-    symlinkSync(join(app, 'fake-node'), alias);
-    assert.throws(
-      () =>
-        copy_installer_runtime(
-          app,
-          { ...request, attempt_id: 'alias', node_executable: alias },
-          controller.signal,
-        ),
-      /replaceable application/,
+    // Linux machine code keeps its host-Node contract and recipe, without a private Node payload.
+    const executor_app = join(root, 'executor-app');
+    cpSync(app, executor_app, { recursive: true, verbatimSymlinks: true });
+    rmSync(join(executor_app, 'node'), { recursive: true });
+    const executor_inventory = JSON.stringify({
+      ...JSON.parse(inventory),
+      native_files: JSON.parse(inventory).native_files.filter(
+        (entry: { path: string }) => entry.path !== 'node/bin/node',
+      ),
+    });
+    writeFileSync(join(executor_app, 'runtime/inventory.json'), executor_inventory);
+    writeFileSync(
+      join(executor_app, 'runtime/contract.json'),
+      JSON.stringify({
+        ...contract,
+        external_executables: ['sh', 'node'],
+        inventory_sha256: hash(executor_inventory),
+      }),
     );
-    assert(!existsSync(join(data, 'update-installer-alias')));
+    await write_installer_file_manifest(executor_app, 'a'.repeat(40), execution, LINUX_EXECUTOR);
+    const executor_recipe = parse_installer_file_manifest(
+      JSON.parse(readFileSync(join(executor_app, INSTALLER_RECIPE_PATH), 'utf8')),
+      LINUX_EXECUTOR,
+    );
+    assert(!executor_recipe.files.some((entry) => entry.path.startsWith('node/')));
 
     // Reuse this copy lifetime for Darwin's distinct inventory and synchronous pure-ESM decoder.
     // These native bytes remain structural. The hosted package proves the real Darwin ABI.
@@ -704,6 +728,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     }
     mac_write('server/node_modules/koffi/addon.node', 'structural Mac addon');
     mac_write('runtime/lib/libfixture.dylib', 'structural Mac provider');
+    mac_write('node/bin/node', 'structural Mac Node');
+    mac_write('node/LICENSE', 'Node license');
     const mac_record = (path: string, bytes: string, providers: Record<string, string>) => ({
       path,
       sha256: hash(bytes),
@@ -721,6 +747,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       role: 'home',
       node_major: 22,
       native_files: [
+        mac_record('node/bin/node', 'structural Mac Node', {}),
         mac_record('server/node_modules/koffi/addon.node', 'structural Mac addon', {
           '@rpath/libfixture.dylib': 'runtime/lib/libfixture.dylib',
         }),
@@ -752,7 +779,7 @@ it('copies a complete selected closure once and refuses changed source or an app
         runtime_contract: mac_contract,
       }),
     );
-    await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution);
+    await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution, MAC_HOME);
     const mac_recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(mac_app, INSTALLER_RECIPE_PATH), 'utf8')),
       MAC_HOME,

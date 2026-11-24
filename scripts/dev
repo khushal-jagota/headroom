@@ -1,7 +1,6 @@
 #!/bin/sh
 # Run npm for this checkout: `scripts/dev npm --prefix <folder> <command> ...`.
-# The folder after --prefix resolves inside this checkout. `agent_backends install`
-# installs the current Claude Code and Codex releases, without a lockfile.
+# The folder after --prefix resolves inside this checkout. Dependencies use each folder's lockfile.
 set -eu
 case "$0" in
     */*) scripts_directory=${0%/*} ;;
@@ -26,19 +25,6 @@ if [ "$#" -ge 2 ] && [ "$1" = --prefix ]; then
         /*) ;;
         *) prefix=$tree/$prefix ;;
     esac
-    if [ "${prefix%/}" = "$tree/agent_backends" ] && [ "$#" -ge 1 ]; then
-        case "$1" in
-            ci)
-                echo "Development command failed: Backend CLIs have no lockfile. Use install." >&2
-                exit 2
-                ;;
-            install)
-                cd "$tree"
-                exec npm --prefix "$prefix" install --package-lock=false --save=false \
-                    @anthropic-ai/claude-code@latest @openai/codex@latest
-                ;;
-        esac
-    fi
     cd "$tree"
     exec npm --prefix "$prefix" "$@"
 fi

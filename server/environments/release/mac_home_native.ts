@@ -32,13 +32,13 @@ function loader_path(value: string, binary: string, executable: string): string 
   if (isAbsolute(value)) return resolve(value);
   throw new Error(`Unsupported Mach-O loader path: ${value}`);
 }
-async function executable_context(path: string): Promise<string> {
+async function executable_context(path: string, app: string): Promise<string> {
   const file = await open(path, 'r');
   try {
     const header = Buffer.alloc(16),
       { bytesRead } = await file.read(header, 0, header.length, 0);
     if (bytesRead !== header.length) throw new Error('Truncated Mach-O header');
-    return header.readUInt32LE(12) === 2 ? path : process.execPath;
+    return header.readUInt32LE(12) === 2 ? path : join(app, 'node/bin/node');
   } finally {
     await file.close();
   }
@@ -85,7 +85,7 @@ export async function collect_mac_home_inventory(
       continue;
     }
     await macho_arm64(path);
-    const executable = await executable_context(path),
+    const executable = await executable_context(path, app),
       load_commands = await tool('-l', path);
     const rpaths = [
       ...load_commands.matchAll(/cmd LC_RPATH\s+cmdsize \d+\s+path (.*?) \(offset \d+\)/g),

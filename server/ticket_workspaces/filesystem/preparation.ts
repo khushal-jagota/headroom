@@ -1,3 +1,4 @@
+import { reason_to_keep } from './safety.ts';
 import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { prepare_agent_home } from '../../agent_homes/agent_home.ts';
 import { dirname, join, resolve } from 'node:path';
@@ -156,6 +157,57 @@ async function repair_previous(
   if (removed && (await registered(repository, join(root, WORKTREE_DIRECTORY), null, options)))
     throw new Error('Retired checkout is missing but its former path remains registered');
 }
+async function recover_published_checkout(
+  root: string,
+  destination: string,
+  repository: ProjectRepository | null,
+  options: WorkspaceOptions,
+): Promise<void> {
+  const branch = repository?.published_branch;
+  const revision = repository?.published_revision;
+  if (branch == null && revision == null) return;
+  const marker_path = join(root, OWNERSHIP_FILE);
+  const marker = await json<WorkspaceMarker>(marker_path);
+  if (
+    revision != null &&
+    marker.recovered_published_revision === revision &&
+    marker.branch === branch
+  )
+    return;
+  if (!branch || !revision || !/^[0-9a-f]{40,64}$/.test(revision))
+    throw new Error('Published Ticket checkout identity is invalid.');
+  if ((await git(destination, ['check-ref-format', '--branch', branch], options)).returncode)
+    throw new Error('Published Ticket branch is invalid.');
+  const reason = await reason_to_keep(root, undefined, new Set(), options);
+  if (reason) throw new Error(`Cannot recover published work: ${reason}`);
+  const fetched = await git(destination, ['fetch', 'origin', `refs/heads/${branch}`], options);
+  if (
+    fetched.returncode ||
+    (await git(destination, ['merge-base', '--is-ancestor', revision, 'FETCH_HEAD'], options))
+      .returncode
+  )
+    throw new Error('The published Ticket revision is unavailable on its remote branch.');
+  const local = await git(
+    destination,
+    ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+    options,
+  );
+  if (local.returncode === 0) {
+    const unpublished = await git(
+      destination,
+      ['rev-list', '-n', '1', branch, '--not', 'FETCH_HEAD'],
+      options,
+    );
+    if (unpublished.returncode || unpublished.stdout.trim())
+      throw new Error('The destination has unpublished work on the Ticket branch.');
+  }
+  if ((await git(destination, ['switch', '-C', branch, revision], options)).returncode)
+    throw new Error('Cannot recover the published Ticket branch.');
+  marker.recovered_published_revision = revision;
+  marker.branch = branch;
+  await write_json(marker_path, marker);
+}
+
 export async function prepare_workspace(
   root: string,
   ticket_id: string,
@@ -190,6 +242,10 @@ export async function prepare_workspace(
     if (!(await entry_stat(destination))?.isDirectory())
       throw new Error('The managed Ticket workspace is missing or incomplete');
     await validate_clone(destination, marker.preparing ? marker.branch : null, options);
+    await recover_published_checkout(root, destination, repository, options);
+    if (repository?.published_branch != null) marker.branch = repository.published_branch;
+    if (repository?.published_revision != null)
+      marker.recovered_published_revision = repository.published_revision;
     if (marker.preparing) await prove_complete(destination, options);
     await mkdir(join(root, 'artifacts'), { recursive: true });
     marker.preparing = false;
@@ -204,20 +260,24 @@ export async function prepare_workspace(
       if (!(await entry_stat(destination))?.isDirectory())
         throw new Error('The managed Ticket workspace is missing');
       if (selected) await validate(selected, destination, null, options);
+      await recover_published_checkout(root, destination, repository, options);
       return destination;
     }
   } else {
     if (await entry_stat(destination))
       throw new Error('Ticket worktree exists without preparation ownership evidence');
     if (repository_url !== null) {
-      const branch = `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`;
+      const branch =
+        repository?.published_branch ??
+        `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`;
       const temporary = join(root, `.clone-${token()}`);
       let recorded = false;
       try {
         const cloned = await with_mirror(repository_url, options, (mirror) => {
           const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
           if (mirror !== null) args.push('--reference', mirror, '--dissociate');
-          if (default_branch !== null) args.push('--branch', default_branch);
+          const source_branch = repository?.published_branch ?? default_branch;
+          if (source_branch !== null) args.push('--branch', source_branch);
           args.push('--', repository_url, temporary);
           return git(root, args, options);
         });
@@ -231,7 +291,20 @@ export async function prepare_workspace(
               : `Cannot clone the Project repository ${target}; check remote access and branch`,
           );
         }
-        const switched = await git(temporary, ['switch', '-c', branch], options);
+        const revision = repository?.published_revision;
+        if (revision != null && !/^[0-9a-f]{40,64}$/.test(revision))
+          throw new Error('Published Ticket revision is invalid.');
+        if (
+          revision != null &&
+          (await git(temporary, ['merge-base', '--is-ancestor', revision, 'HEAD'], options))
+            .returncode
+        )
+          throw new Error('The published Ticket revision is unavailable on its remote branch.');
+        const switched = await git(
+          temporary,
+          revision == null ? ['switch', '-c', branch] : ['switch', '-C', branch, revision],
+          options,
+        );
         if (switched.returncode) throw new Error('Cannot create the Ticket branch');
         await validate_clone(temporary, branch, options);
         Object.assign(marker, {
@@ -240,6 +313,7 @@ export async function prepare_workspace(
           worktree: destination,
           preparing: true,
           checkout_kind: 'clone',
+          ...(revision == null ? {} : { recovered_published_revision: revision }),
           temporary: temporary.slice(root.length + 1),
         });
         await write_json(marker_path, marker);

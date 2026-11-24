@@ -1,4 +1,4 @@
-/** Resolve existing native workspaces and replace only the VPS transport identity. */
+/** Resolve each child's native folder and replace only the VPS transport identity. */
 import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
 import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import { stat } from 'node:fs/promises';
@@ -26,6 +26,9 @@ import {
   NATIVE_SKILLS_DIR_ENV,
 } from '../configuration.ts';
 import type { MacNativeChildrenOptions } from './contracts.ts';
+import { prepare_agent_home } from '../../../agent_homes/agent_home.ts';
+import { child_owner } from './logic/child_owner.ts';
+import type { MacChildOwner } from './logic/child_owner.ts';
 const workspace_resolution = { strict: true, require_directory_traversal: true };
 const removed_environment = [
   'HOME',
@@ -71,50 +74,60 @@ function workspace_failure(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   return error.message;
 }
-export async function localize_start(
+/** A workspace that the start names: a home-relative mapping, an absolute path, or the executor's. */
+async function mapped_workspace(
   input: StartRun,
-  reference: ChildReference,
-  capability: string,
-  generation: string,
   options: MacNativeChildrenOptions,
-): Promise<ResolvedConversationStart> {
+): Promise<string> {
   const resolved = input.resolved_start;
-  const identity = new Map(resolved.role_materials?.identity_environment_variables ?? []);
-  const ticket_id = safe_component(identity.get('PLAN_TICKET_ID')!);
-  const artifacts = join(options.paths.artifacts, ticket_id);
-  const managed = identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
-  let workspace = artifacts;
-  if (!managed) {
-    try {
-      let home = options.workspace_home;
-      const subfolder =
-        input.workspace_home_relative == null ? null : safe_relative(input.workspace_home_relative);
-      if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default) {
-        home = options.paths.workspace;
-        await create_directory(options, join(home, subfolder ?? ''));
-      }
-      if (subfolder !== null) {
-        home = resolve_path_sync(home, workspace_resolution);
-        workspace = resolve_path_sync(join(home, subfolder), workspace_resolution);
-        within(home, workspace);
-      } else {
-        const path =
-          resolved.workspace_path_policy === WorkspacePathPolicy.executor_default
-            ? options.paths.workspace
-            : resolved.workspace_folder;
-        if (!isAbsolute(path))
-          throw new Error('workspace needs absolute native path or home mapping');
-        workspace = resolve_path_sync(path, workspace_resolution);
-      }
-      if (!(await stat(workspace)).isDirectory())
-        throw new Error('mapped workspace is not a directory');
-      if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default)
-        within(resolve_path_sync(options.paths.root, { strict: true }), workspace);
-    } catch (error) {
-      if (error instanceof ServerLifecycleError) throw error;
-      throw new BackendSpawnFailed(`Mac workspace unavailable: ${workspace_failure(error)}`);
+  try {
+    let home = options.workspace_home;
+    let workspace: string;
+    const subfolder =
+      input.workspace_home_relative == null ? null : safe_relative(input.workspace_home_relative);
+    if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default) {
+      home = options.paths.workspace;
+      await create_directory(options, join(home, subfolder ?? ''));
     }
+    if (subfolder !== null) {
+      home = resolve_path_sync(home, workspace_resolution);
+      workspace = resolve_path_sync(join(home, subfolder), workspace_resolution);
+      within(home, workspace);
+    } else {
+      const path =
+        resolved.workspace_path_policy === WorkspacePathPolicy.executor_default
+          ? options.paths.workspace
+          : resolved.workspace_folder;
+      if (!isAbsolute(path))
+        throw new Error('workspace needs absolute native path or home mapping');
+      workspace = resolve_path_sync(path, workspace_resolution);
+    }
+    if (!(await stat(workspace)).isDirectory())
+      throw new Error('mapped workspace is not a directory');
+    if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default)
+      within(resolve_path_sync(options.paths.root, { strict: true }), workspace);
+    return workspace;
+  } catch (error) {
+    if (error instanceof ServerLifecycleError) throw error;
+    throw new BackendSpawnFailed(`Mac workspace unavailable: ${workspace_failure(error)}`);
   }
+}
+interface LocalizedFolder {
+  readonly workspace_folder: string;
+  readonly role_text: string;
+  /** A Ticket's folder, named to its Worker as PLAN_TICKET_FILES_DIR. */
+  readonly ticket_files: string | null;
+  readonly managed_ticket_folder: string | null;
+}
+async function ticket_folder(
+  input: StartRun,
+  ticket_id: string,
+  identity: ReadonlyMap<string, string>,
+  options: MacNativeChildrenOptions,
+): Promise<LocalizedFolder> {
+  const artifacts = join(options.paths.artifacts, safe_component(ticket_id));
+  const managed = identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
+  let workspace = managed ? artifacts : await mapped_workspace(input, options);
   try {
     await create_directory(options, artifacts);
     if (managed) {
@@ -135,13 +148,93 @@ export async function localize_start(
     if (error instanceof ServerLifecycleError) throw error;
     throw new BackendSpawnFailed(`Mac Ticket worktree unavailable: ${workspace_failure(error)}`);
   }
+  const role_text = managed
+    ? `\n\nPanels starts you in the Ticket folder at ${artifacts}. ` +
+      'Panels owns this Ticket workspace. ' +
+      `Use the supplied worktree at ${workspace}. ` +
+      'Do not create or remove worktrees. Keep scratch and dependencies inside it. ' +
+      `Write reviewable artifacts and evidence under ${join(artifacts, 'artifacts')}. ` +
+      'Follow repository setup instructions. Workers commit, push, open PRs, and merge. ' +
+      'Panels removes the complete Ticket folder seven days after the Ticket ends, ' +
+      'unless unpublished or uncommitted work prevents safe removal.'
+    : `\n\nThis existing conversation keeps its original workspace at ${workspace}. ` +
+      'Continue the work there, including any unpublished changes. ' +
+      `Write reviewable output under ${join(artifacts, 'artifacts')}.`;
+  return {
+    workspace_folder: managed ? artifacts : workspace,
+    role_text,
+    ticket_files: artifacts,
+    managed_ticket_folder: managed ? artifacts : null,
+  };
+}
+/**
+ * Machine code prepares the Chief's or a Manager's own home, including on the local link.
+ */
+async function supervisor_home(
+  owner: Extract<MacChildOwner, { kind: 'chief' | 'manager' }>,
+  options: MacNativeChildrenOptions,
+): Promise<string> {
+  try {
+    const home =
+      owner.kind === 'chief' ? options.paths.chief_home : options.paths.manager_home(owner.id);
+    await create_directory(options, home);
+    if (owner.kind === 'manager') {
+      // The file sync sends this folder, and the owner sees it.
+      await create_directory(options, join(home, 'artifacts'));
+      await prepare_agent_home(home, 'manager');
+    }
+    return home;
+  } catch (error) {
+    if (error instanceof ServerLifecycleError) throw error;
+    throw new BackendSpawnFailed(
+      `Mac ${owner.kind === 'chief' ? 'Chief' : 'Manager'} home unavailable: ${workspace_failure(error)}`,
+    );
+  }
+}
+async function child_folder(
+  input: StartRun,
+  owner: MacChildOwner,
+  identity: ReadonlyMap<string, string>,
+  options: MacNativeChildrenOptions,
+): Promise<LocalizedFolder> {
+  const role_text = '';
+  switch (owner.kind) {
+    case 'ticket':
+      return ticket_folder(input, owner.id, identity, options);
+    case 'chief':
+    case 'manager':
+      return {
+        workspace_folder: await supervisor_home(owner, options),
+        role_text: `\nThe repositories on this machine are under ${options.workspace_home}.`,
+        ticket_files: null,
+        managed_ticket_folder: null,
+      };
+    case 'conversation':
+      return {
+        workspace_folder: await mapped_workspace(input, options),
+        role_text,
+        ticket_files: null,
+        managed_ticket_folder: null,
+      };
+  }
+}
+export async function localize_start(
+  input: StartRun,
+  reference: ChildReference,
+  capability: string,
+  generation: string,
+  options: MacNativeChildrenOptions,
+): Promise<ResolvedConversationStart> {
+  const resolved = input.resolved_start;
+  const identity = new Map(resolved.role_materials?.identity_environment_variables ?? []);
+  const folder = await child_folder(input, child_owner(resolved), identity, options);
   for (const name of removed_environment) identity.delete(name);
-  if (managed && platform() === 'darwin') {
+  if (folder.managed_ticket_folder !== null && platform() === 'darwin') {
     identity.set(
       'XCODE_XCCONFIG_FILE',
       await prepare_xcode_compilation_cache(
         options.paths.root,
-        artifacts,
+        folder.managed_ticket_folder,
         process.env.XCODE_XCCONFIG_FILE,
       ),
     );
@@ -149,34 +242,17 @@ export async function localize_start(
   identity.set(EXECUTOR_CHILD_ID_ENV, reference.child_id);
   identity.set(EXECUTOR_CAPABILITY_ENV, capability);
   identity.set(EXECUTOR_ROOT_ENV, options.paths.root);
-  identity.set('PLAN_TICKET_FILES_DIR', artifacts);
+  if (folder.ticket_files !== null) identity.set('PLAN_TICKET_FILES_DIR', folder.ticket_files);
   identity.set(RECORD_ROOT_ENV, join(options.paths.run, 'worker-processes'));
   identity.set('PLAN_EXECUTOR_SOURCE_INCARNATION', reference.executor_incarnation);
   identity.set(NATIVE_SKILLS_DIR_ENV, join(generation, 'skills'));
-  let role_text = resolved.role_materials?.role_text ?? '';
-  if (managed) {
-    role_text +=
-      `\n\nPanels starts you in the Ticket folder at ${artifacts}. ` +
-      'Panels owns this Ticket workspace. ' +
-      `Use the supplied worktree at ${workspace}. ` +
-      'Do not create or remove worktrees. Keep scratch and dependencies inside it. ' +
-      `Write reviewable artifacts and evidence under ${join(artifacts, 'artifacts')}. ` +
-      'Follow repository setup instructions. Workers commit, push, open PRs, and merge. ' +
-      'Panels removes the complete Ticket folder seven days after the Ticket ends, ' +
-      'unless unpublished or uncommitted work prevents safe removal.';
-  } else {
-    role_text +=
-      `\n\nThis existing conversation keeps its original workspace at ${workspace}. ` +
-      'Continue the work there, including any unpublished changes. ' +
-      `Write reviewable output under ${join(artifacts, 'artifacts')}.`;
-  }
   return new ResolvedConversationStart({
     ...resolved,
     backend_key: parse_backend_instance_id(resolved.backend_key),
-    workspace_folder: managed ? artifacts : workspace,
+    workspace_folder: folder.workspace_folder,
     workspace_path_policy: WorkspacePathPolicy.absolute,
     role_materials: new ConversationRoleMaterials({
-      role_text,
+      role_text: (resolved.role_materials?.role_text ?? '') + folder.role_text,
       identity_environment_variables: [...identity],
     }),
   });

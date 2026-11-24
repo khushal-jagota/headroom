@@ -24,7 +24,28 @@ import {
 import { open_child_assignment } from './child_custody.ts';
 import { is_record as is_json_object } from '../../core/records.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
+import { manager_agent_key } from '../../managers/data.ts';
+import { conversation_machine_id } from '../../machines/conversation_machine.ts';
 
+/**
+ * File sync: a Manager's artifacts come only from the machine that runs the Manager's current
+ * conversation. Between a reset and the next conversation there is none, so the file waits.
+ * A Ticket's owner check stays with the Ticket's machine.
+ */
+export function require_manager_files_machine(
+  sql: ReadSql,
+  manager_id: string,
+  machine_id: string,
+): void {
+  const current = sql.get<{ conversation_id: string | null }>(
+    'SELECT a.conversation_id FROM managers m JOIN agents a ON a.agent_key=? WHERE m.id=?',
+    [manager_agent_key(manager_id), manager_id],
+  )?.conversation_id;
+  if (current === null)
+    throw new PlannerError('retry_later', 'The Manager has no current conversation yet');
+  if (current === undefined || conversation_machine_id(sql, current) !== machine_id)
+    throw new PlannerError('agent_forbidden', 'Manager runs on another machine');
+}
 export type TransactionalWriter = (
   tx: TransactionSql,
   envelope: WireValue<'QueuedEnvelope'>,

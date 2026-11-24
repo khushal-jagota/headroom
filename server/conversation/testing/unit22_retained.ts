@@ -71,11 +71,9 @@ async function cycle() {
         current,
         {
           registry: registry_of_factories(for_every_built_in_backend(() => local)),
-          host: unread_driver_host,
         },
         {
           drivers: [],
-          driver_host: () => unread_driver_host,
           http: () =>
             create_backend_runtime({
               database,

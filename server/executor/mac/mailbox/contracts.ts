@@ -17,6 +17,9 @@ export class MailboxRunCancelled extends DeliveryCancelled {
 }
 export interface MailboxRunner {
   readonly admission_stopped: boolean;
+  inspect_work_move?(
+    request: import('../../wire.generated.ts').WorkMoveSourceRequest,
+  ): Promise<import('../../wire.generated.ts').WorkMoveSourceResult>;
   /** Cancel only this waiter, never the runner's planned-replay gate. */
   planned_replay_finished(signal: AbortSignal): Promise<void>;
   /** Abort stops owned native work and joins its actual custody, not only this waiter.
@@ -31,6 +34,10 @@ export interface CanonicalCatalogResult {
   close(): Promise<void>;
 }
 export interface MailboxCatalog {
+  backend_result?(
+    command_id: string,
+    request: import('../../wire.generated.ts').BackendRequest,
+  ): Promise<CanonicalCatalogResult>;
   read_result(command_id: string, request: ModelListRequest): Promise<CanonicalCatalogResult>;
 }
 export interface MailboxClient {

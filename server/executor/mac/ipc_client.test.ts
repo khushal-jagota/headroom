@@ -17,10 +17,17 @@ test('maps proposal send-back to the executor without changing inspected revisio
   ]);
 });
 
-test('refuses retired help and unsafe sockets before child capability emission', async () => {
-  expect(() =>
-    cli_mutation('POST', '/api/tickets/t_12345678/request-help', { message: 'Help' }),
-  ).toThrow('This executor does not support POST /api/tickets/t_12345678/request-help');
+test('sends any other write as the route it names and refuses a body that is not a JSON object', () => {
+  expect(cli_mutation('DELETE', '/api/managers/m_1?force=true', null)).toEqual([
+    'cli.request',
+    { method: 'DELETE', path: '/api/managers/m_1?force=true', body: null },
+  ]);
+  expect(() => cli_mutation('POST', '/api/goals', ['not', 'an', 'object'])).toThrow(
+    'Machine code sends only a JSON object as a request body',
+  );
+});
+
+test('refuses unsafe sockets before child capability emission', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mac-ipc-trust-'));
   const actual = join(root, 'actual');
   const linked_run = join(root, 'linked-run');

@@ -1,4 +1,5 @@
 /** What an owner update interrupts, and the reopening of work after its trial. */
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
@@ -21,13 +22,21 @@ function state_has_update_work(state: ConversationState): boolean {
 }
 
 /** Named on the update card for information. It never refuses or delays an update. */
-export function update_interrupted_work(host: SqliteProcessConversationSystem): readonly string[] {
+export function update_interrupted_work(
+  host: SqliteProcessConversationSystem,
+  machine_ids?: readonly string[],
+): readonly string[] {
   const background = host.options.store.read_live_background_task_ids();
   const metadata = host.options.store.update_work_metadata();
+  const affected = machine_ids === undefined ? null : new Set(machine_ids);
   return [
     ...new Set(
       [...host.conversations]
         .filter(([identity, state]) => state_has_update_work(state) || background.has(identity))
+        .filter(
+          ([identity, state]) =>
+            affected === null || affected.has(metadata.get(identity)?.[1] ?? HOME_MACHINE_ID),
+        )
         .map(
           ([identity, state]) =>
             metadata.get(identity)?.[0] ?? `${state.record.backend_key} conversation`,

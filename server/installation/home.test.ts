@@ -1,134 +1,38 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer as http_server } from 'node:http';
-import { createServer } from 'node:net';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import {
   existsSync,
   linkSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
 import { test, vi } from 'vitest';
-import type { AppManifest } from '../environments/release/contracts.ts';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { install_home, check_home_port } from './home.ts';
-import type { HomeInstallDependencies, HomeInstallRequest, HomeServicePlan } from './contracts.ts';
+import { home_install_fixture as fixture } from './testing/home_fixture.ts';
+import type { HomeInstallDependencies, HomeServicePlan } from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import { create_darwin_home_service } from './darwin.ts';
+import { create_linux_home_service } from './linux.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
-
-async function unused_port(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-  const address = server.address();
-  assert(address && typeof address !== 'string');
-  await new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done())));
-  return address.port;
-}
-async function fixture() {
-  const base = mkdtempSync(join(tmpdir(), 'home-install-'));
-  const account = join(base, 'account');
-  mkdirSync(account);
-  const foreign = join(account, 'foreign');
-  writeFileSync(foreign, 'existing account data');
-  const controller = new AbortController(),
-    owner = new ChildProcesses();
-  const request: HomeInstallRequest = {
-    root: join(base, 'new-parent', 'home'),
-    service: 'com.panels.test',
-    port: await unused_port(),
-    isolated_providers: true,
-    archive: join(base, 'archive'),
-    archive_sha256: 'a'.repeat(64),
-    revision: 'b'.repeat(40),
-  };
-  const unit = join(account, '.config/systemd/user/com.panels.test.service');
-  const events: string[] = [];
-  const service: HomeServicePlan = {
-    files: [{ path: unit, content: 'owned unit\n', mode: 0o600 }],
-    links: [{ path: join(account, 'home.plist'), target: join(request.root, 'agents/home.plist') }],
-    async preflight() {},
-    async start_home() {
-      assert(events.includes('initialize'));
-      events.push('start');
-    },
-    async start_auxiliaries() {
-      events.push('auxiliary');
-    },
-    async stop(execution, assert_owned) {
-      events.push('stop');
-      assert.notEqual(execution.child_processes, owner);
-      assert(!execution.signal.aborted);
-      if (existsSync(unit)) await assert_owned(unit);
-    },
-  };
-  const deps: HomeInstallDependencies = {
-    node_executable: process.execPath,
-    execution: { child_processes: owner, signal: controller.signal, deadline: null },
-    environment: { HOME: account },
-    account_home: account,
-    system: 'linux',
-    architecture: 'x86_64',
-    uid: process.getuid!(),
-    command: async () => {
-      throw new Error('No real commands in the fixture');
-    },
-    async extract(_archive, destination) {
-      // The private admission tree shares the nearest destination ancestor.
-      assert.equal(dirname(dirname(destination)), base);
-      mkdirSync(destination);
-      writeFileSync(join(destination, 'sealed'), 'candidate bytes');
-      symlinkSync(foreign, join(destination, 'foreign-link'));
-      return { runtime_contract: { version: 2 } } as AppManifest;
-    },
-    async admit() {
-      assert(!existsSync(request.root));
-    },
-    async initialize_database(app, path) {
-      assert.equal(app, join(request.root, 'app'));
-      assert.equal(path, join(request.root, 'data/planner.db'));
-      assert(existsSync(dirname(path)));
-      events.push('initialize');
-    },
-    async healthy() {
-      return false;
-    },
-    service: async () => service,
-    warning: () => {
-      throw new Error('Isolated installation must not inspect account skills');
-    },
-  };
-  return {
-    base,
-    account,
-    foreign,
-    controller,
-    owner,
-    request,
-    unit,
-    events,
-    service,
-    deps,
-    close: async () => {
-      owner.seal();
-      await owner.settled();
-      rmSync(base, { recursive: true, force: true });
-    },
-  };
-}
 
 test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
   const f = await fixture(),
@@ -206,19 +110,28 @@ test('fresh database initialization closes its child before activation and faile
   }) as ChildProcesses['spawn'];
   const began = performance.now();
   try {
-    await initialize_candidate_home_database(candidate, path, f.deps.execution, process.execPath);
+    const machine = join(f.base, 'machine-data');
+    mkdirSync(machine);
+    await initialize_candidate_home_database(
+      candidate,
+      path,
+      f.deps.execution,
+      process.execPath,
+      machine,
+    );
+    const identity = JSON.parse(readFileSync(join(machine, 'identity.json'), 'utf8'));
+    const credential_file = join(machine, 'machine-credential.json');
+    const credential = JSON.parse(readFileSync(credential_file, 'utf8')).credential;
+    assert.equal(statSync(credential_file).mode & 0o777, 0o600);
+    assert.match(credential, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(spawns, 1);
     assert.equal(closes, 1);
     require_application_schema(path);
     const reader = createReadAccess(path);
     try {
       reader.read((sql) => {
-        assert.deepEqual(
-          sql
-            .all<{ name: string }>('SELECT name FROM projects ORDER BY name')
-            .map(({ name }) => name),
-          ['Other', 'Personal', 'Tribe', 'Vylo'],
-        );
+        // A fresh home starts with no projects.
+        assert.deepEqual(sql.all('SELECT name FROM projects'), []);
         assert(
           (sql.get<{ count: number }>('SELECT count(*) AS count FROM managed_skills')?.count ?? 0) >
             0,
@@ -228,6 +141,17 @@ test('fresh database initialization closes its child before activation and faile
             0,
         );
         assert(sql.get('SELECT 1 FROM chief_page WHERE singleton=1'));
+        const registered = sql.get<{ credential_sha256: string; is_home: number }>(
+          'SELECT credential_sha256,is_home FROM machine_executor_credentials JOIN machines USING(machine_id) WHERE machine_id=?',
+          [identity.machine_id],
+        );
+        assert.equal(
+          registered?.credential_sha256,
+          createHash('sha256').update(credential).digest('hex'),
+        );
+        // The first machine is the server's own machine, with the home identity.
+        assert.equal(identity.machine_id, HOME_MACHINE_ID);
+        assert.equal(registered?.is_home, 1);
       });
     } finally {
       reader.close();
@@ -270,6 +194,8 @@ test('fresh database initialization closes its child before activation and faile
     assert(!existsSync(f.request.root));
     assert(!existsSync(join(f.base, 'new-parent')));
     assert(!existsSync(f.unit));
+    // The command link and the account folders made for it leave with the rest.
+    assert(!existsSync(join(f.account, '.local')));
     assert.equal(readFileSync(f.foreign, 'utf8'), 'existing account data');
   } finally {
     await f.close();
@@ -395,6 +321,118 @@ test('replacement root and changed service files retain their trees before any u
     }
   } finally {
     await darwin.close();
+  }
+});
+
+test('a Linux home installs every scheduled job, writes the panels command, and keeps the update token out of its units', async () => {
+  const f = await fixture(),
+    commands: string[] = [];
+  try {
+    const root = join(realpathSync(f.base), 'new-parent', 'home'),
+      unit_directory = join(f.account, '.config/systemd/user'),
+      command_link = join(f.account, '.local/bin/panels');
+    const deps: HomeInstallDependencies = {
+      ...f.deps,
+      service: create_linux_home_service,
+      healthy: async () => true,
+      async command(argv) {
+        commands.push(argv.join(' '));
+        const stdout = argv.includes('--property=Linger')
+          ? 'yes\n'
+          : argv.includes('--property=LoadState')
+            ? 'not-found\n'
+            : '';
+        return { code: 0, stdout, stderr: '' };
+      },
+    };
+    assert.equal(await install_home(f.request, deps), `http://127.0.0.1:${f.request.port}`);
+    const units = Object.fromEntries(
+      readdirSync(unit_directory).map((name) => [
+        name,
+        readFileSync(join(unit_directory, name), 'utf8'),
+      ]),
+    );
+    assert.deepEqual(Object.keys(units).sort(), [
+      'com.panels.test.backup.service',
+      'com.panels.test.backup.timer',
+      'com.panels.test.machine.service',
+      'com.panels.test.maintenance.service',
+      'com.panels.test.maintenance.timer',
+      'com.panels.test.service',
+      'com.panels.test.stall-watchdog.service',
+      'com.panels.test.stall-watchdog.timer',
+    ]);
+    for (const timer of ['backup', 'maintenance', 'stall-watchdog'])
+      assert(commands.includes(`systemctl --user enable --now com.panels.test.${timer}.timer`));
+    assert.match(units['com.panels.test.service']!, /^Restart=always$/m);
+    assert.match(units['com.panels.test.service']!, /^Delegate=yes$/m);
+    const panels = JSON.stringify(join(root, 'app/bin/panels'));
+    assert(
+      units['com.panels.test.maintenance.service']!.includes(
+        `\nExecStart=${panels} "environment" "cleanup" "--apply"\n`,
+      ),
+    );
+    assert.match(units['com.panels.test.maintenance.timer']!, /^OnCalendar=\*-\*-\* 03:15:00$/m);
+    assert(
+      units['com.panels.test.stall-watchdog.service']!.includes(
+        `\nExecStart=${panels} "stalls" "watchdog" "--db" `,
+      ),
+    );
+    assert.match(units['com.panels.test.stall-watchdog.timer']!, /^OnUnitActiveSec=30s$/m);
+    const token_file = join(root, 'data/secrets/update-token');
+    for (const [name, content] of Object.entries(units)) {
+      assert(!content.includes(f.request.update_token), name);
+      if (name === 'com.panels.test.machine.service') {
+        assert(!content.includes('PLAN_UPDATE_TOKEN_FILE'));
+        assert(content.includes(`PLAN_EXECUTOR_ROOT=${join(root, 'machine/data')}`));
+        assert(content.includes(join(root, 'machine/providers')));
+        assert(!content.includes(join(root, 'app/agent_backends')));
+      } else if (name.endsWith('.service')) {
+        assert(!content.includes('CODEX_HOME'));
+        assert(!content.includes('CLAUDE_CONFIG_DIR'));
+        assert(content.includes('Environment="PLAN_UPDATE_REPOSITORY=khushal-jagota/headroom"'));
+        assert(content.includes(`Environment="PLAN_UPDATE_TOKEN_FILE=${token_file}"`));
+      }
+    }
+    assert.equal(readFileSync(token_file, 'utf8'), f.request.update_token + '\n');
+    assert.equal(statSync(token_file).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(token_file)).mode & 0o777, 0o700);
+    const wrapper = `#!/bin/sh\nexec ${shell_quote(join(root, 'app/bin/panels'))} "$@"\n`;
+    assert.equal(readFileSync(command_link, 'utf8'), wrapper);
+    assert.equal(statSync(command_link).mode & 0o777, 0o755);
+    // A second home refuses the existing command before it writes anything.
+    const second = { ...f.request, root: join(f.base, 'second'), service: 'com.panels.other' };
+    await assert.rejects(
+      install_home(second, { ...deps, service: async () => f.service }),
+      /panels command already exists/,
+    );
+    assert(!existsSync(second.root));
+    assert.equal(readFileSync(command_link, 'utf8'), wrapper);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a refused first-machine connection rolls back the complete new installation', async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(
+      install_home(f.request, {
+        ...f.deps,
+        healthy: async () => true,
+        machine_healthy: async () => {
+          throw new Error('first machine refused');
+        },
+      }),
+      /first machine refused/,
+    );
+    assert.deepEqual(f.events, ['initialize', 'start', 'machine', 'stop']);
+    assert(!existsSync(f.request.root));
+    assert(!existsSync(f.unit));
+    assert(!existsSync(join(f.account, '.local/bin/panels')));
+    assert.equal(readFileSync(f.foreign, 'utf8'), 'existing account data');
+  } finally {
+    await f.close();
   }
 });
 

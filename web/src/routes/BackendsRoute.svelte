@@ -3,22 +3,25 @@
   import { onMount } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import SkeletonRegion from "../components/SkeletonRegion.svelte";
+  import MachineChoice from "../components/machines/MachineChoice.svelte";
   import UsageHeader from "../components/usage/UsageHeader.svelte";
   import RecordedUsage from "../components/usage/RecordedUsage.svelte";
   import UsageLimits from "../components/usage/UsageLimits.svelte";
   import type { UsageTab } from "../lib/usageAddress";
   import { prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { readUsageLimits, type UsageDays } from "../lib/conversation/recordedUsageWire";
+  import { type UsageDays } from "../lib/conversation/recordedUsageWire";
   import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
-  import type { BackendUsageRefreshOutcome } from "../lib/conversation/wire";
+  import { refreshBackends, type BackendUsageRefreshOutcome } from "../lib/conversation/wire";
   import { refreshUsage } from "../lib/usage/usage";
   import { makeWindow } from "../lib/usage/usageFormat";
-  import type { ServerProviderUsageLimits } from "../lib/usage/contracts";
   let { tab = "limits", href = prefixHref("#/backends") }: {
     tab?: UsageTab; href?: UtilityHref;
   } = $props();
   const queryClient = useQueryClient();
+  const machines = createQuery(() => ({...queries.machines(), enabled: tab === "limits"}));
+  let selectedMachineId = $state<string | null>(null);
+  const machine = $derived(machines.data?.machines.find(item => selectedMachineId === null ? item.is_home : item.machine_id === selectedMachineId));
   const driversQuery = createQuery(() => queries.drivers());
   // Usage names, colours and stacking come from the driver list, so the usage body waits
   // for it. A failed list falls back to each key's own name and the neutral colour.
@@ -28,10 +31,8 @@
   let providerSelection = $state<string[] | null>(null);
   const recorded = createQuery(() => ({ ...queries.recordedUsage(windowSelection), enabled: tab === "tokens" || tab === "cost", retry: false }));
   const summary = $derived(recorded.data ?? null);
-  const limits = createQuery(() => ({ queryKey: ["usage-limits"], queryFn: readUsageLimits, enabled: tab === "limits", retry: false }));
-  let lastLimits = $state<Readonly<Record<string, ServerProviderUsageLimits>>>({});
-  $effect(() => { if (limits.data) lastLimits = limits.data; });
-  const allowance = $derived(limits.data ?? lastLimits);
+  const limits = createQuery(() => ({ ...queries.usageLimits(machine?.machine_id ?? ""), enabled: tab === "limits" && machine !== undefined, retry: false }));
+  const allowance = $derived(limits.data ?? {});
   const providerKeys = $derived(tab === "limits" ? Object.keys(allowance) : [...new Set(summary?.sources.map(source => source.fingerprint.provider) ?? [])]);
   const selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
   let refreshing = $state(false);
@@ -42,13 +43,21 @@
     days = value;
     windowSelection = makeWindow(value, new Date(), value === 1 ? "hour" : "day");
   }
+  function selectMachine(machineId: string) {
+    selectedMachineId = machineId;
+    providerSelection = null;
+    refreshOutcomes = [];
+    refreshError = null;
+  }
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
     refreshError = null;
     try {
       if (tab === "limits") {
-        const result = await refreshBackendSnapshots();
+        if (!machine) return;
+        const machineId = machine.machine_id;
+        const result = await refreshBackendSnapshots(() => refreshBackends(machineId));
         refreshOutcomes = result.outcomes;
         refreshError = result.error;
         await limits.refetch({ throwOnError: true });
@@ -72,7 +81,12 @@
     onDays={selectWindow} onProviders={value => providerSelection = value} onRefresh={() => void refresh()} />
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
-      {#if limits.error}<p class="error" role="alert">Could not refresh limits. Showing the last known values.</p>{/if}
+      <div class="limits-machine">
+        {#if machine}<MachineChoice machines={machines.data?.machines ?? []} value={machine.machine_id} disabled={refreshing} onchange={selectMachine} />
+        {:else if machines.error}<p class="error" role="alert">Could not read machines.</p>
+        {:else}<span role="status">Loading machines…</span>{/if}
+      </div>
+      {#if limits.error}<p class="error" role="alert">Could not refresh limits. The last successful observation stays available.</p>{/if}
       <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !Object.keys(allowance).length && !limits.error)} loadingText="Reading subscription limits…">
         {#if drivers !== undefined}<UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />{/if}
       </SkeletonRegion>
@@ -84,5 +98,6 @@
     {/if}
 </section>
 <style>
+  .limits-machine { margin-bottom:var(--page-block-gap); }
   .backends-page { width:100%; max-width:var(--page-measure); min-width:0; margin-inline:auto; padding-block:var(--page-top) var(--space-7); }.error { color:var(--accent-error); font-size:var(--type-body); }
 </style>

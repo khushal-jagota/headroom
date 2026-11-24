@@ -29,8 +29,6 @@ export interface DriverManifest {
     readonly default_path: string;
     /** The home's directory name in isolated provider state and release probe state. */
     readonly isolated_directory_name: string;
-    /** The CLI option that names this home. A CLI contract: never renamed. */
-    readonly cli_option: string;
     /** A relative path inside the home, one or more components. Default 'skills'. */
     readonly skills_directory?: string;
     /**

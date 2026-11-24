@@ -38,8 +38,10 @@ export function create_mac_output_publication(outbox: OutboxStore): MacOutputPub
           );
         },
       );
-      // The item is queued. Its Ticket's files follow separately and never delay it.
-      if (options?.ticket_id !== undefined) outbox.note_ticket_activity(options.ticket_id);
+      // The item is queued. A Ticket's or a Manager's files follow separately and never delay it.
+      const owner = options?.owner;
+      if (owner?.kind === 'ticket') outbox.note_ticket_activity(owner.id);
+      else if (owner?.kind === 'manager') outbox.note_manager_activity(owner.id);
     },
   };
 }

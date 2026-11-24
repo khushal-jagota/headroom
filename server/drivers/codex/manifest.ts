@@ -11,7 +11,6 @@ export const codex_manifest: DriverManifest = {
     environment_name: 'CODEX_HOME',
     default_path: '~/.codex',
     isolated_directory_name: 'codex',
-    cli_option: '--codex-home',
   },
   launcher_environment_names: ['OPENAI_API_KEY'],
   cli_floor: {

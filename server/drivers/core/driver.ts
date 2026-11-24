@@ -25,6 +25,8 @@ export interface AgentDriver<Config> {
   readonly has_default_instance?: boolean;
   readonly client: DriverClientDefinition;
   readonly manifest: DriverManifest;
+  readonly capabilities: BackendCapabilities;
+  plan_selection_transition(input: SelectionTransitionInput): SelectionTransitionPlan;
   /** The file this agent reads from its start folder for standing instructions. */
   readonly home_instructions_file: string;
   readonly config: { parse(raw: unknown): Config; defaults(host: DriverHost): Config };

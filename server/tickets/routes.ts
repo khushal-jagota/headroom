@@ -204,7 +204,7 @@ export function write_create_ticket(
     now,
     title_max_chars: TITLE_MAX_CHARS,
     brief,
-    project_id: project?.id ?? (manager.kind === 'manager' ? null : 'project_other'),
+    project_id: project?.id ?? null,
     deadline,
     manager_id: manager.kind === 'manager' ? manager.id : null,
     manager_kind: manager.kind,

@@ -1,3 +1,6 @@
+import { CodexSignInService } from './runtime/login_session.ts';
+import { CodexUsageAdapter } from './runtime/allowance_usage.ts';
+import { read_codex_rate_limits } from './runtime/usage.ts';
 /** Codex on an executor machine: its app-server launch and its model list probe. */
 import { with_machine_environment } from '../core/executor.ts';
 import type { ExecutorDriver } from '../core/executor.ts';
@@ -29,7 +32,24 @@ export const codex_executor: ExecutorDriver = {
     );
   },
   catalog(host, custody) {
+    const sign_in = new CodexSignInService({
+      child_processes: host.child_processes,
+      environment: host.environment,
+      home: host.home ?? undefined,
+      resolve_argv: async () => [host.executable, 'app-server'],
+    });
     return {
+      sign_in,
+      allowance_usage: new CodexUsageAdapter({
+        executable_path: () => host.executable,
+        now: () => new Date(),
+        read_codex_rate_limits: (executable, options) =>
+          read_codex_rate_limits(executable, options, {
+            child_processes: host.child_processes,
+            environment: host.environment,
+          }),
+      }),
+      shutdown: () => sign_in.shutdown(),
       status: create_codex_status({
         catalog: (executable) =>
           custody.probe((signal) =>

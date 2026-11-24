@@ -531,6 +531,7 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  machine_id?: string;
   workspace_folder?: string | null;
   workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;
@@ -768,17 +769,22 @@ export async function readScopedBackends(
   return answer.backends;
 }
 
-export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {
+export function backendMachinePath(path: string, machineId?: string): string {
+  return machineId === undefined ? path : `${path}${path.includes("?") ? "&" : "?"}machine_id=${encodeURIComponent(machineId)}`;
+}
+
+export async function readBackends(refresh = false, machineId?: string): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
-    `/backends${refresh ? "?refresh=true" : ""}`
+    backendMachinePath(`/backends${refresh ? "?refresh=true" : ""}`, machineId)
   );
   return answer.backends;
 }
 
 export function updateBackend(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<BackendUpdateResult> {
-  return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
+  return request<BackendUpdateResult>(backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/update`, machineId), {
     method: "POST"
   });
 }
@@ -803,28 +809,31 @@ export type BackendSignIn = {
 };
 
 export function startBackendSignIn(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in`, machineId),
     { method: "POST" }
   );
 }
 
 export function readBackendSignIn(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn | null }> {
   return request<{ sign_in: BackendSignIn | null }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in`
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in`, machineId)
   );
 }
 
 export function cancelBackendSignIn(
   backendKey: ConversationBackendKey,
-  sessionId: string
+  sessionId: string,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`, machineId),
     { method: "DELETE" }
   );
 }
@@ -834,16 +843,17 @@ export function cancelBackendSignIn(
 export function submitBackendSignInReturnUrl(
   backendKey: ConversationBackendKey,
   sessionId: string,
-  returnUrl: string
+  returnUrl: string,
+  machineId?: string
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
-    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`,
+    backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`, machineId),
     postJson({ return_url: returnUrl })
   );
 }
 
-export function refreshBackends(): Promise<BackendsRefreshResult> {
-  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
+export function refreshBackends(machineId?: string): Promise<BackendsRefreshResult> {
+  return request<BackendsRefreshResult>(backendMachinePath("/backends/refresh", machineId), { method: "POST" });
 }
 
 export function setBackendModelEnabled(

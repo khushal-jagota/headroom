@@ -20,9 +20,12 @@ import type {
 import { production_notification_delivery, production_stall_checker } from './background.ts';
 import { write_held_ticket_configuration } from '../runtime/conversation_start.ts';
 import { WAITS } from '../stalls/registry.ts';
-import { compose_production_backends, require_backend_bindings } from './production_bindings.ts';
+import {
+  compose_production_backends,
+  require_backend_bindings,
+  prepare_machine_backends,
+} from './production_bindings.ts';
 import type { ProductionBackendBindings } from './production_bindings.ts';
-import { create_driver_registry, default_instance_configs } from '../drivers/core/registry.ts';
 import type { ShutdownCompletion } from './contracts.ts';
 import { makeUsageService } from '../conversation/usage/composition.ts';
 
@@ -57,14 +60,11 @@ export async function start_production_server(
       if (owner !== undefined && owner !== context.database)
         throw new Error('Production composition belongs to another server invocation');
       owner = context.database;
-      const host = bindings.driver_host(context);
-      const registry = await create_driver_registry({
-        drivers: bindings.drivers,
-        configs: default_instance_configs(bindings.drivers),
-        host,
-        signal,
-      });
-      backends = compose_production_backends(context, { registry, host }, bindings);
+      backends = compose_production_backends(
+        context,
+        prepare_machine_backends(bindings.drivers),
+        bindings,
+      );
     },
     createExecutor(context) {
       return new VpsExecutorRegistry(context.database, context.clock, {
@@ -113,8 +113,12 @@ export function create_production_conversation_core(
     store: context.record.store,
     backend_registry: current.registry,
     execution_refusal: current.execution_refusal,
-    delivery_model_refusal: (backend, model, ticket_id) =>
-      new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, conversation_id) =>
+      new BackendStateStore(context.database).delivery_model_refusal(
+        backend,
+        model,
+        conversation_id,
+      ),
     message_files: new ConversationMessageFiles(context.config.db_path),
     unix_time_now: () => context.clock.nowUnix(),
     require_runtime_ownership: context.require_runtime_ownership,

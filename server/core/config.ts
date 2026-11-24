@@ -1,7 +1,7 @@
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
-import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, dirname, join, delimiter } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { isAbsolute, dirname, join, delimiter, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
@@ -40,6 +40,7 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'DBUS_SESSION_BUS_ADDRESS',
   'PLAN_CONFIG_PATH',
   'PLAN_DB_PATH',
+  'PLAN_SERVER_ROOT',
   'PLAN_PORT',
   'PLAN_BOUNDARY_HOUR',
   'PLAN_TICK_SECONDS',
@@ -59,7 +60,6 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_APNS_KEY_ID',
   'PLAN_APNS_TEAM_ID',
   'PLAN_APNS_BUNDLE_IDS',
-  'PLAN_PROVISION_ACCOUNT_SKILLS',
   'PLAN_SERVER_CONTROL_SOCKET',
   'PLAN_UPDATE_REPOSITORY',
   'PLAN_UPDATE_TOKEN_FILE',
@@ -96,7 +96,6 @@ export interface Config {
   app_sha: string | null;
   credential_key_path: string;
   measure_source_timeout_seconds: number;
-  provision_account_skills?: boolean | null;
   workspace_root: string | null;
   ticket_scratch_root: string | null;
   ticket_scratch_database: string | null;
@@ -147,9 +146,13 @@ export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
 /** Update discovery uses the invocation snapshot, without another Config load. */
 export function update_repository_configuration(
   environment: Readonly<NodeJS.ProcessEnv>,
+  server_root?: string,
 ): { readonly repository: string; readonly token_file: string } | null {
   const repository = environment.PLAN_UPDATE_REPOSITORY;
-  const token_file = environment.PLAN_UPDATE_TOKEN_FILE;
+  const configured_token =
+    environment.PLAN_UPDATE_TOKEN_FILE ?? (server_root ? 'secrets/update-token' : undefined);
+  const token_file =
+    configured_token && server_root ? resolve(server_root, configured_token) : configured_token;
   return repository && token_file ? { repository, token_file } : null;
 }
 
@@ -176,6 +179,7 @@ const installer_unit_environment_names = new Set([
   'DBUS_SESSION_BUS_ADDRESS',
   'PLAN_CONFIG_PATH',
   'PLAN_DB_PATH',
+  'PLAN_SERVER_ROOT',
   'PLAN_APP_ROOT',
   'PLAN_LOGS_DIR',
   'PLAN_BACKUP_DIR',
@@ -198,6 +202,7 @@ const installer_unit_path_names = new Set([
   'XDG_RUNTIME_DIR',
   'PLAN_CONFIG_PATH',
   'PLAN_DB_PATH',
+  'PLAN_SERVER_ROOT',
   'PLAN_APP_ROOT',
   'PLAN_LOGS_DIR',
   'PLAN_BACKUP_DIR',
@@ -261,32 +266,7 @@ export function loadConfig(
       throw new PlannerError('validation', `invalid integer for ${key}: ${JSON.stringify(v)}`);
     return Number(v);
   };
-  const directory = (key: string, variable: string): string | null => {
-    const v = raw(key, variable);
-    if (v == null) return null;
-    if (typeof v !== 'string' || !v.trim())
-      throw new PlannerError('validation', `invalid ${key}: ${JSON.stringify(v)}`);
-    // Partial-env callers keep their existing ambient default unless home is explicit.
-    const directory_home = paths.home === '' ? '/' : paths.home;
-    const expanded =
-      v === '~'
-        ? (directory_home ?? homedir())
-        : v.startsWith('~/')
-          ? join(directory_home ?? homedir(), v.slice(2))
-          : v;
-    try {
-      if (!isAbsolute(expanded)) throw new Error('the path must be absolute');
-      const result = realpathSync(paths.admit_path?.(expanded) ?? expanded);
-      if (!statSync(result).isDirectory())
-        throw new Error('the path must be an existing directory');
-      return result;
-    } catch (error) {
-      throw new PlannerError(
-        'validation',
-        `invalid ${key} ${JSON.stringify(v)}: ${(error as Error).message}`,
-      );
-    }
-  };
+
   const test_mode = testModeFromEnvironment(env);
   let provider =
     optional('trusted_ingress_provider', 'PLAN_TRUSTED_INGRESS_PROVIDER')?.toLowerCase() ?? null;
@@ -345,7 +325,27 @@ export function loadConfig(
   const executor_id = optional('executor_id', 'PLAN_EXECUTOR_ID');
   if (executor_id && !/^[A-Za-z0-9_.:-]{1,128}$/.test(executor_id))
     throw new PlannerError('validation', 'executor_id must name a logical executor');
-  const db_path = text('db_path', 'PLAN_DB_PATH', 'data/planning.db');
+  // An explicit root is relative to the settings file, never the launch directory.
+  // Legacy settings without a root retain their existing path interpretation.
+  const configured_root = optional('server_root', 'PLAN_SERVER_ROOT');
+  const server_root =
+    configured_root === null
+      ? null
+      : env.PLAN_DB_PATH && isAbsolute(env.PLAN_DB_PATH) && !env.PLAN_SERVER_ROOT
+        ? resolve(dirname(env.PLAN_DB_PATH))
+        : resolve(dirname(path), configured_root);
+  const server_path = (key: string, variable: string, fallback: string): string => {
+    const value = text(key, variable, fallback);
+    return server_root === null ? value : resolve(server_root, value);
+  };
+  const db_path = server_path(
+    'db_path',
+    'PLAN_DB_PATH',
+    server_root ? 'planning.db' : 'data/planning.db',
+  );
+  if (server_root !== null && dirname(db_path) !== server_root)
+    throw new PlannerError('validation', 'The database must be directly inside server_root');
+  const state_root = dirname(resolve(db_path));
   const automatic_cutoff = optional(
     'automatic_tickets_created_after',
     'PLAN_AUTOMATIC_TICKETS_CREATED_AFTER',
@@ -368,15 +368,8 @@ export function loadConfig(
       `measure_source_timeout_seconds must be greater than zero: ${timeout}`,
     );
   return {
-    apns: load_apns_config(env),
+    apns: load_apns_config(env, state_root),
     db_path,
-    provision_account_skills:
-      raw('provision_account_skills', 'PLAN_PROVISION_ACCOUNT_SKILLS') == null
-        ? null
-        : parseConfigBoolean(
-            raw('provision_account_skills', 'PLAN_PROVISION_ACCOUNT_SKILLS'),
-            'provision_account_skills',
-          ),
     automatic_tickets_created_after,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
@@ -391,13 +384,17 @@ export function loadConfig(
             raw('notifications_enabled', 'PLAN_NOTIFICATIONS_ENABLED'),
             'notifications_enabled',
           ),
-    dispatcher_lock_path: text(
+    dispatcher_lock_path: server_path(
       'dispatcher_lock_path',
       'PLAN_DISPATCHER_LOCK_PATH',
-      'data/dispatcher.lock',
+      server_root ? 'dispatcher.lock' : 'data/dispatcher.lock',
     ),
-    logs_dir: text('logs_dir', 'PLAN_LOGS_DIR', 'data/logs'),
-    backup_dir: text('backup_dir', 'PLAN_BACKUP_DIR', 'data/backups'),
+    logs_dir: server_path('logs_dir', 'PLAN_LOGS_DIR', server_root ? 'logs' : 'data/logs'),
+    backup_dir: server_path(
+      'backup_dir',
+      'PLAN_BACKUP_DIR',
+      server_root ? 'backups' : 'data/backups',
+    ),
     trusted_ingress_provider: provider,
     trusted_ingress_allowed_login: login,
     trusted_ingress_canonical_origin: origin,
@@ -416,14 +413,14 @@ export function loadConfig(
     fake_now: test_mode ? env.PLAN_FAKE_NOW || null : null,
     executor_id,
     app_sha,
-    credential_key_path: text(
+    credential_key_path: server_path(
       'credential_key_path',
       'PLAN_CREDENTIAL_KEY_PATH',
-      join(dirname(db_path), 'credential-secrets', 'key'),
+      server_root ? 'credential-secrets/key' : join(dirname(db_path), 'credential-secrets', 'key'),
     ),
     measure_source_timeout_seconds: timeout,
-    workspace_root: directory('workspace_root', 'PLAN_WORKSPACE_ROOT'),
-    ticket_scratch_root: directory('ticket_scratch_root', 'PLAN_TICKET_SCRATCH_ROOT'),
+    workspace_root: optional('workspace_root', 'PLAN_WORKSPACE_ROOT'),
+    ticket_scratch_root: optional('ticket_scratch_root', 'PLAN_TICKET_SCRATCH_ROOT'),
     ticket_scratch_database: optional('ticket_scratch_database', 'PLAN_TICKET_SCRATCH_DATABASE'),
   };
 }

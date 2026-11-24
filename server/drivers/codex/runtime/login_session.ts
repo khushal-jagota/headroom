@@ -1,3 +1,4 @@
+import { copy_environment } from '../../../core/environment.ts';
 /** One process-owned device-code sign-in. Evidence is drained before the final login read. */
 import { randomBytes } from 'node:crypto';
 import { observe_promise } from '../../../core/promise_observer.ts';
@@ -47,6 +48,8 @@ export interface SignInClient {
 }
 export interface CodexSignInOptions {
   child_processes: OwnedChildProcesses;
+  environment?: Readonly<NodeJS.ProcessEnv>;
+  home?: string;
   resolve_argv(): Promise<readonly string[] | null>;
   remembered_login_rejection?: CodexLoginRejectionMemory | null;
   bounds?: Partial<SignInBounds>;
@@ -188,7 +191,7 @@ export class CodexSignInService implements DriverSignInController {
   }
 
   private read_login(): StoredCodexLogin {
-    return (this.options.read_login ?? read_stored_codex_login)(codex_home());
+    return (this.options.read_login ?? read_stored_codex_login)(this.options.home ?? codex_home());
   }
 
   private async start_session(): Promise<SignInSession> {
@@ -293,7 +296,9 @@ export class CodexSignInService implements DriverSignInController {
     if (argv === null) throw new SignInUnavailable('codex is not installed on this machine');
     await session.client.start({
       argv,
-      environment: child_environment(),
+      environment: child_environment({
+        overrides: Object.entries(copy_environment(this.options.environment ?? {})),
+      }),
       working_directory: homedir(),
     });
     if (session.startup_aborted) return;

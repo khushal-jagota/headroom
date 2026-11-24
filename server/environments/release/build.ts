@@ -19,7 +19,7 @@ import type {
   ReleaseExecution,
 } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
-import { APP_FORMAT } from './configuration.ts';
+import { APP_FORMAT, PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES } from './configuration.ts';
 import {
   digest_app_artifact,
   app_tree_paths,
@@ -129,19 +129,14 @@ async function install_app_dependencies(
   if (await exists(join(root, 'web/package-lock.json')))
     await run('web', ['npm', 'ci', '--prefix', join(root, 'web')]);
   if (await exists(join(root, 'agent_backends/package.json')))
-    await run('agent_backends', [
-      'npm',
-      'install',
-      '--prefix',
-      join(root, 'agent_backends'),
-      '--package-lock=false',
-      '--save=false',
-      ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.npm_packages ?? []).map(
-        (name) => `${name}@latest`,
-      ),
-    ]);
+    await run('agent_backends', ['npm', 'ci', '--prefix', join(root, 'agent_backends')]);
   if (await exists(join(root, 'web/package.json')))
     await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
+  for (const name of PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES) {
+    const scratch_file = join(root, 'server/node_modules', name);
+    assert_release_execution(execution);
+    if (await exists(scratch_file)) await unlink(scratch_file);
+  }
   // The server serves web/dist, so browser build tools are no longer needed. Each driver names
   // the dependencies the supported Linux runtime does not use.
   for (const name of [
@@ -254,12 +249,12 @@ export async function build_exported_app(
     if (options.install_dependencies) {
       await require_generated_schema_frontier(payload);
       await install_app_dependencies(payload, join(workspace, 'npm-home'), execution);
-      runtime_contract = await complete_node_runtime(payload, execution);
+      runtime_contract = await complete_node_runtime(payload, execution, options.target);
     }
     assert_release_execution(execution);
-    await write_app_entrypoints(payload, requested, dependencies, execution);
+    await write_app_entrypoints(payload, requested, dependencies, execution, options.target);
     if (options.install_dependencies)
-      await write_installer_file_manifest(payload, requested, execution);
+      await write_installer_file_manifest(payload, requested, execution, options.target);
     manifest = {
       app_sha: requested,
       source_digest,

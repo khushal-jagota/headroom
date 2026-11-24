@@ -38,7 +38,7 @@ The ceiling is not a readiness question. It decides what a finished proposal doe
 
 A busy conversation receives its next step in Queue mode. The claim stays out while the prompt waits for that conversation’s turn to end. The loop keeps one hand-over per Ticket in flight, with no per-machine hand-over limit.
 
-Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
+Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. Each destination reserves capacity for the Chief and Managers that run there. A busy or absent destination cannot consume another destination's permits.
 
 Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. A Ticket that waits for restart retirement gives up its queue priority so other ready Tickets can start. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
 
