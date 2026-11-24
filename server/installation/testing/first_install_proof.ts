@@ -30,7 +30,11 @@ import { executor_link_socket_path } from '../../core/http/executor_link.ts';
 import { mac_installation_paths } from '../../executor/mac/platform.ts';
 import { installed_mac_launcher } from '../../environments/release/testing/installed_mac_launcher.ts';
 import { qualify_installed_upgrade } from '../../environments/release/testing/installed_upgrade.ts';
-import { write_default_backend_peer } from '../../tools/smoke/codex_peer.ts';
+import {
+  DEFAULT_BACKEND_PEER_REPLY,
+  write_default_backend_peer,
+} from '../../tools/smoke/codex_peer.ts';
+import { smoke_file_turn } from '../../tools/smoke/steps.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'This proof requires a disposable hosted runner');
@@ -238,13 +242,10 @@ try {
     ? [linux_join_root]
     : [mac.install, mac.app, mac.state, mac.plist])
     await absent(path);
-  if (qualifying) {
-    const bin = join(home, '.local/bin');
-    await mkdir(bin, { recursive: true });
-    // The scripted account has the same native skill directory as a configured Codex account.
-    await mkdir(join(home, '.codex'), { recursive: true, mode: 0o700 });
-    await write_default_backend_peer(base, source, bin);
-  }
+  const bin = join(home, '.local/bin');
+  await mkdir(bin, { recursive: true });
+  await mkdir(join(home, '.codex'), { recursive: true, mode: 0o700 });
+  await write_default_backend_peer(base, source, bin);
   install_attempted = true;
   const installed = await run(
     'first-install',
@@ -420,6 +421,15 @@ try {
       verify_rollback: launcher?.verify_rollback,
     });
     await launcher?.verify_current();
+  } else {
+    const workspace = join(base, 'conversation-workspace');
+    await mkdir(workspace, { mode: 0o700 });
+    const { conversation_id, stored_file_id } = await smoke_file_turn(
+      `http://127.0.0.1:${port}`,
+      { workspace, model: 'TEST', reply: DEFAULT_BACKEND_PEER_REPLY },
+      named[0].machine_id,
+    );
+    report.joined_file_turn = { machine_id: named[0].machine_id, conversation_id, stored_file_id };
   }
   if (system === 'darwin') {
     // The requested screenshot uses the real installed package on this existing
