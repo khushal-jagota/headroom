@@ -91,6 +91,41 @@ class ServerWithoutHostNode(unittest.TestCase):
                         panels_install.preflight(args, target)
 
 
+class BootstrapEntryPath(unittest.TestCase):
+    def test_sealed_node_receives_the_resolved_entry_from_both_temp_paths(self) -> None:
+        def unpack(_archive: Path, payload: Path, _digest: str) -> None:
+            node = payload / "node/bin/node"
+            node.parent.mkdir(parents=True)
+            node.touch(mode=0o755)
+
+        # macOS commonly spells the same directory /var and /private/var.
+        # The historical Node entrypoint compares import.meta.url to its argv.
+        with tempfile.TemporaryDirectory() as sandbox:
+            root = Path(sandbox).resolve()
+            actual, alias = root / "private", root / "alias"
+            actual.mkdir()
+            alias.symlink_to(actual, target_is_directory=True)
+            for temporary in (actual, alias):
+                with (
+                    self.subTest(temporary=temporary),
+                    patch.object(tempfile, "tempdir", str(temporary)),
+                    patch.object(sys, "argv", ["panels-install", "home", "--root", str(root / "home")]),
+                    patch.object(panels_install, "host_target", return_value="darwin"),
+                    patch.object(panels_install, "preflight"),
+                    patch.object(panels_install, "select_publication", return_value=(
+                        root / "archive", {"revision": "a" * 40, "archive_sha256": "b" * 64}
+                    )),
+                    patch.object(panels_install, "extract_bootstrap", side_effect=unpack),
+                    patch.object(panels_install, "release_update_token", return_value="fixture"),
+                    patch.object(panels_install, "run_installer") as launch,
+                ):
+                    panels_install.main()
+                    node, entry = map(Path, launch.call_args.args[0])
+                    self.assertTrue(node.is_relative_to(actual))
+                    self.assertTrue(entry.is_relative_to(actual))
+                    self.assertEqual(entry.name, "home_main.ts")
+
+
 class PermanentReleaseSource(unittest.TestCase):
     # Existing rollback coverage never resolves release metadata or a package source.
     # This adapter boundary proves each role survives removal of Actions artifacts.

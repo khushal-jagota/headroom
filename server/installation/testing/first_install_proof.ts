@@ -1,7 +1,17 @@
 /** Hosted proof of the real bootstrap, native services, and a second isolated machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -73,6 +83,12 @@ await writeFile(
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
 for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
+if (qualifying) {
+  // The public predecessor compares its entry URL with argv literally.
+  const temporary = join(base, 'tmp');
+  await mkdir(temporary, { recursive: true, mode: 0o700 });
+  environment.TMPDIR = await realpath(temporary);
+}
 // Retain the runner's tools but exclude every PATH entry named node. This proves the
 // downloaded Python bootstrap and native server jobs do not need a host Node.
 const no_node_bin = join(base, 'host-without-node');
@@ -215,7 +231,7 @@ try {
     await write_default_backend_peer(base, source, bin);
   }
   install_attempted = true;
-  await run(
+  const installed = await run(
     'first-install',
     [
       'python3',
@@ -236,6 +252,10 @@ try {
       '--isolated-providers',
     ],
     qualifying ? { ...no_node_environment, GH_TOKEN: 'local-qualification' } : no_node_environment,
+  );
+  assert.ok(
+    installed.includes('Installed Panels at ' + root + '.'),
+    'The native home installer returned without reporting the installation',
   );
   // The native package can boot while its shared styles are absent. Check the
   // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
