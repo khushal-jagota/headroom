@@ -1527,6 +1527,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Panels;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a revision or speak a message when you tap the microphone.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Turn your speech into an editable message.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -1672,6 +1673,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Panels;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a revision or speak a message when you tap the microphone.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Turn your speech into an editable message.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
