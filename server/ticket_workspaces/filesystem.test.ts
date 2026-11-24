@@ -1,3 +1,4 @@
+import * as workspace_git from './filesystem/shared.ts';
 import { inspect_work_move } from './filesystem/work_move.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
@@ -199,8 +200,42 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     await command(checkout, ['commit', '-m', 'published']);
     await command(checkout, ['remote', 'add', 'origin', remote]);
     await command(checkout, ['push', 'origin', 'HEAD:refs/heads/published']);
+    const revision = await command(checkout, ['rev-parse', 'HEAD']);
+    for (let index = 0; index < 80; index++)
+      writeFileSync(join(remote, 'refs', 'heads', `advertised-${index}`), `${revision}\n`);
+    // Risk: a batch must retain tag peeling and reject unavailable/non-commit objects.
+    await command(checkout, ['tag', '-a', 'release-proof', '-m', 'Published tag']);
+    const blob = await command(checkout, ['rev-parse', 'HEAD:tracked.txt']);
+    await command(checkout, ['tag', 'blob-proof', blob]);
+    await command(checkout, ['push', 'origin', '--tags']);
+    const original_git = workspace_git.git;
+    const git_calls = vi
+      .spyOn(workspace_git, 'git')
+      .mockImplementation(async (directory, args, supplied_options, input) => {
+        const result = await original_git(directory, args, supplied_options, input);
+        // Remote advertisement can name an object that this clone does not hold.
+        return args[0] === 'ls-remote'
+          ? { ...result, stdout: result.stdout + `${'f'.repeat(40)}\trefs/heads/unavailable\n` }
+          : result;
+      });
+    const began = performance.now();
     expect(await reason_to_keep(path, undefined, undefined, options)).toBeNull();
+    console.info(
+      `Many-ref source proof: ${git_calls.mock.calls.length} Git calls, ${git_calls.mock.calls.filter((call) => call[1][0] === 'cat-file').length} object checks, ${(performance.now() - began).toFixed(1)} ms`,
+    );
+    expect(git_calls.mock.calls.filter((call) => call[1][0] === 'cat-file')).toHaveLength(1);
+    git_calls.mockRestore();
+    for (let index = 0; index < 80; index++)
+      rmSync(join(remote, 'refs', 'heads', `advertised-${index}`));
     await command(remote, ['update-ref', '-d', 'refs/heads/published']);
+    // An annotated tag alone still proves the published commit.
+    expect(await reason_to_keep(path, undefined, undefined, options)).toBeNull();
+    await command(remote, ['update-ref', '-d', 'refs/tags/release-proof']);
+    // A tag that points to a blob cannot prove the commit.
+    expect(await reason_to_keep(path, undefined, undefined, options)).toBe(
+      `no remote copy can be verified for ${checkout}`,
+    );
+    await command(remote, ['update-ref', '-d', 'refs/tags/blob-proof']);
     expect(await reason_to_keep(path, undefined, undefined, options)).toBe(
       `no remote copy can be verified for ${checkout}`,
     );
@@ -715,7 +750,24 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   await command(checkout, ['commit', '-m', 'work']);
   await expect(inspect_work_move(source, true, options)).rejects.toThrow('unpushed work');
   await command(checkout, ['push', 'origin', 'HEAD']);
+  // Risk: the cleanup proof accepts publication under any ref, but a move must recover
+  // the exact current branch. Reuse the real Git fixture to prove both boundaries.
+  const current_branch = await command(checkout, ['symbolic-ref', '--short', 'HEAD']);
+  await command(checkout, ['push', 'origin', 'HEAD:refs/heads/published-elsewhere']);
+  await command(checkout, ['push', 'origin', '--delete', current_branch]);
+  await expect(inspect_work_move(source, true, options)).rejects.toThrow(
+    'Push the current Ticket branch before the move.',
+  );
+  await command(checkout, ['push', 'origin', 'HEAD']);
+  const git_calls = vi.spyOn(workspace_git, 'git');
+  const began = performance.now();
   const proof = await inspect_work_move(source, true, options);
+  const remote_reads = git_calls.mock.calls.filter((call) => call[1][0] === 'ls-remote').length;
+  console.info(
+    `Move source proof: ${git_calls.mock.calls.length} Git calls, ${remote_reads} advertisements, ${(performance.now() - began).toFixed(1)} ms`,
+  );
+  git_calls.mockRestore();
+  expect(remote_reads).toBe(1);
   const target = join(root, 'other-machine', ticket);
   const moved = await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
   expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(proof.published_revision);

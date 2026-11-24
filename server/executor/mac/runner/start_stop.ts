@@ -170,7 +170,6 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     // older home server refuses the route, so a failed report only costs the display.
     let reports = Promise.resolve();
     const report_setup = (step: WorkerSetupReport['step']) => {
-      if (ticket_id === null) return;
       reports = reports
         .then(() => this.options.report_worker_setup(entry.reference, step))
         .catch((error: unknown) => console.warn(`Worker setup report (${step}) failed`, error));
