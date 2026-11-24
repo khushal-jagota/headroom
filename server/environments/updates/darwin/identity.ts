@@ -11,16 +11,21 @@ import {
 } from '../../../executor/mac/platform.ts';
 import type { DarwinHomeIdentity } from './contracts.ts';
 
-export function home_node(root: string, path: string): string {
+function home_node(root: string, path: string): string {
   if (!isAbsolute(path) || path.includes('\0')) throw new Error('Installer Node must be absolute');
   const actual = realpathSync(path);
+  const bundled = path === join(root, 'app/node/bin/node');
   if (
     !lstatSync(actual).isFile() ||
-    (path_is_within(root, actual) && actual !== join(selected_release(root), 'node/bin/node'))
+    (bundled
+      ? actual !== join(selected_release(root), 'node/bin/node')
+      : actual !== path || path_is_within(root, actual))
   )
     throw new Error('Installer Node must be the bundled server Node or an external executable');
   accessSync(actual, constants.X_OK);
-  return actual;
+  // The configured command is part of the home identity. Revalidate its selected
+  // executable on every read, including immediately after a switch.
+  return path;
 }
 export function read_owned_home_file(path: string, uid: number): Buffer {
   const parent = open_directory_descriptor(dirname(path));
@@ -73,7 +78,5 @@ export function read_home_identity(root: string, service: string, uid: number): 
   const selected = value.installer_node;
   if (typeof selected !== 'string') throw new Error('Mac installation Node is invalid');
   const installer_node = home_node(root, selected);
-  if (installer_node !== selected && selected !== join(root, 'app/node/bin/node'))
-    throw new Error('Mac installation Node must be canonical');
   return { version: 2, uid, root, label, domain, home_plist, backup_plist, installer_node };
 }

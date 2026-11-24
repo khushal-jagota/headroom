@@ -73,7 +73,7 @@ const server=createServer(async(req,res)=>{
    const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:8});
    writeFileSync(join(data,'probe-launch-'+input.attempt_id+'.json'),JSON.stringify({command,app_pid:process.pid,supervisor_pid:process.ppid}));
    res.end(JSON.stringify({prepared:true}));
-   void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(data,'probe-launch-error-'+input.attempt_id+'.json'),String(error.stack||error)));
+   void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(root,'logs/probe-launch-error-'+input.attempt_id+'.log'),String(error.stack||error)));
   }else{
    const current=policy(),ready=current.fail_sha!==revision&&current.hold_sha!==revision;
    res.statusCode=ready?200:503;res.setHeader('content-type','application/json');
@@ -306,8 +306,19 @@ export async function native_retained_updates(options: {
       assert.deepEqual(launch.command, item.command);
       assert.equal(launch.app_pid, old.app.pid);
       assert.equal(launch.supervisor_pid, old.supervisor.pid);
+      const check_launch = async () => {
+        const failure = await readFile(
+          join(root, 'logs/probe-launch-error-' + attempt + '.log'),
+          'utf8',
+        ).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return null;
+        });
+        if (failure) throw new Error(failure);
+      };
       record.update_observation = 'updater process';
       item.birth = await wait(async () => {
+        await check_launch();
         const value = await control(['print', item.target], true);
         if (value.code !== 0) {
           if (value.stderr.includes('Could not find service')) return undefined;
@@ -335,11 +346,7 @@ export async function native_retained_updates(options: {
       });
       record.update_observation = 'app swap';
       await wait(async () => {
-        const error = await readFile(
-          join(root, 'data/probe-launch-error-' + attempt + '.json'),
-          'utf8',
-        ).catch(() => null);
-        if (error) throw new Error(error);
+        await check_launch();
         const state = await json(attempt_path);
         return state.steps?.app_swapped ? true : undefined;
       });
