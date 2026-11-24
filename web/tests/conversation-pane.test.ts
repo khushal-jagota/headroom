@@ -73,7 +73,7 @@ describe("the header", () => {
     const workerSetup = { step: "preparing_workspace" as const, began_at: 1, machine_id: "mac" };
     const setting = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", workerSetup } }).body.replace(/<!--[^]*?-->/g, "");
     // The shared system line with its spinner; the clock joins once the page is live.
-    expect(setting).toMatch(/data-conversation-head-status="setting-up"[^>]*><div class="cv-system-line[^>]*><div[^>]*><span class="cv-system-line-words[^>]*>Setting up<\/span><span[^>]*data-conversation-system-mark="spinner"/);
+    expect(setting).toMatch(/data-conversation-head-status="setting-up"[^>]*><div class="cv-system-line[^>]*><div[^>]*><span[^>]*data-conversation-system-mark="spinner"[^]*?<span class="cv-system-line-words[^>]*>Setting up</);
     expect(setting).not.toContain("preparing workspace");
     for (const conversationState of ["opened", "rest"] as const) {
       const body = render(PaneWithQueryClient, { props: { ...base, conversationState, workerSetup, activityUncertain: true } }).body.replace(/<!--[^]*?-->/g, "");

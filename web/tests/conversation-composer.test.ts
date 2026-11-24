@@ -116,7 +116,7 @@ describe("queued messages and the composer", () => {
 describe("a send from the dock that was not delivered", () => {
   it("says why under the box as one system line with the failure dot, the words kept above it", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, undeliveredReason: "The Mac is offline" } });
-    expect(body).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline[\s\S]*data-conversation-system-mark="failure"/);
+    expect(body).toMatch(/data-conversation-system-mark="failure"[\s\S]*Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
     expect(body).toContain("data-conversation-undelivered-note");
   });
 });

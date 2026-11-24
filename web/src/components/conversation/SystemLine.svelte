@@ -6,8 +6,8 @@
    *
    *  Inter 13/20 #8f8f8f, no box, no border, no fill. An optional mark sits in a 16 px slot:
    *  a spinner while live, otherwise a 6 px dot (#8f8f8f, or #ff8f85 for a failure only). The mark
-   *  follows the words, so every line starts at x = 0, the column's one left edge, with no gutter
-   *  and nothing outside the column. Actions are #d0d0d0 text.
+   *  leads the line and is the line's leftmost thing, at x = 0, the column's one left edge, with no
+   *  gutter and nothing outside the column; the words follow it. Actions are #d0d0d0 text.
    *
    *  The words and actions are the caller's: a line knows its layout, not its meaning. */
   import type { Snippet } from "svelte";
@@ -45,7 +45,7 @@
   class="cv-system-line cv-system-line--{align}"
   data-conversation-system-line={align}
   {...attributes}
-><div class="cv-system-line-row"><span class="cv-system-line-words">{@render children()}</span>{#if mark !== null}<span class="cv-system-line-mark" aria-hidden="true" data-conversation-system-mark={mark}>{#if mark === "spinner"}<span class="cv-system-line-spinner" class:is-turning={turning} data-conversation-live-mark></span>{:else}<span class="cv-system-line-dot" class:is-failure={mark === "failure"}></span>{/if}</span>{/if}{#if actions}<span class="cv-system-line-actions">{@render actions()}</span>{/if}</div>{#if below}{@render below()}{/if}</div>
+><div class="cv-system-line-row">{#if mark !== null}<span class="cv-system-line-mark" aria-hidden="true" data-conversation-system-mark={mark}>{#if mark === "spinner"}<span class="cv-system-line-spinner" class:is-turning={turning} data-conversation-live-mark></span>{:else}<span class="cv-system-line-dot" class:is-failure={mark === "failure"}></span>{/if}</span>{/if}<span class="cv-system-line-words">{@render children()}</span>{#if actions}<span class="cv-system-line-actions">{@render actions()}</span>{/if}</div>{#if below}{@render below()}{/if}</div>
 
 <style>
   .cv-system-line {
