@@ -1,6 +1,6 @@
 /** Run the real production entry against one explicitly prepared private fixture. */
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdir, open, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { once } from 'node:events';
@@ -17,6 +17,10 @@ import { createReadAccess } from '../core/database/index.ts';
 import { register_test_root } from '../core/test_paths.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
 import { load_ticket_for_write } from '../tickets/data/index.ts';
+import { ChildProcesses, signal_child } from '../lifecycle/owned_processes.ts';
+import { executor_link_socket_path } from '../core/http/executor_link.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import type { MachineView } from '../machines/contracts.ts';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const { values } = parseArgs({
@@ -72,11 +76,14 @@ const step = (message: string) => {
   steps.push(message);
   console.log(`${steps.length}. ${message}`);
 };
-let server: ReturnType<typeof spawn> | undefined;
+const children = new ChildProcesses();
+let server: ChildProcess | undefined;
+let machine: ChildProcess | undefined;
+let machine_log: FileHandle | undefined;
 let log: FileHandle | undefined;
 async function start() {
   log = await open(join(root, 'evidence/server.log'), 'a');
-  server = spawn(process.execPath, [join(app_root, 'server/main.ts')], {
+  server = children.spawn(process.execPath, [join(app_root, 'server/main.ts')], {
     cwd: app_root,
     env: environment,
     stdio: ['ignore', log.fd, log.fd],
@@ -104,29 +111,83 @@ async function start() {
     await delay(100, undefined, { signal: ready });
   }
 }
-async function stop() {
-  if (server && server.exitCode === null && server.signalCode === null) {
-    const exited = once(server, 'exit', {
-      signal: AbortSignal.timeout(45_000),
-    });
-    server.kill('SIGTERM');
-    let outcome;
+async function stop_process(child: ChildProcess | undefined, name: string, expected_code: number) {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exited = once(child, 'exit', { signal: AbortSignal.timeout(45_000) });
+    signal_child(child, 'SIGTERM', false);
     try {
-      outcome = await exited;
+      await exited;
     } catch (error) {
-      if (server.exitCode === null && server.signalCode === null) {
-        const killed = once(server, 'exit', { signal: AbortSignal.timeout(5_000) });
-        server.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) {
+        const killed = once(child, 'exit', { signal: AbortSignal.timeout(5_000) });
+        signal_child(child, 'SIGKILL');
         await killed;
       }
       throw error;
     }
-    const [code, signal] = outcome;
-    assert.equal(code, 0, `Production shutdown: ${code ?? signal}`);
   }
-  server = undefined;
-  await log?.close();
-  log = undefined;
+  if (child)
+    assert.equal(
+      child.exitCode,
+      expected_code,
+      `${name} shutdown: ${child.exitCode ?? child.signalCode}`,
+    );
+}
+async function stop() {
+  try {
+    await stop_process(server, 'Production server', 0);
+  } finally {
+    server = undefined;
+    await log?.close();
+    log = undefined;
+  }
+}
+async function machine_ready() {
+  const ready = AbortSignal.timeout(30_000);
+  while (true) {
+    assert.ok(
+      machine && machine.exitCode === null && machine.signalCode === null,
+      `Home machine exited: ${machine?.exitCode ?? machine?.signalCode}`,
+    );
+    ready.throwIfAborted();
+    const response = await fetch(`${base}/api/machines`, { signal: ready });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { machines: MachineView[] };
+    if (body.machines.some((item) => item.machine_id === HOME_MACHINE_ID && item.available)) return;
+    await delay(100, undefined, { signal: ready });
+  }
+}
+async function start_machine() {
+  machine_log = await open(join(root, 'evidence/machine.log'), 'a');
+  machine = children.spawn(
+    process.execPath,
+    [
+      join(app_root, 'server/executor/mac/entrypoint.ts'),
+      'executor',
+      'run',
+      '--executor-id',
+      HOME_MACHINE_ID,
+      '--application-revision',
+      environment.PLAN_APP_SHA,
+      '--panels-server-url',
+      executor_link_socket_path(environment.PLAN_DB_PATH),
+    ],
+    {
+      cwd: app_root,
+      env: { ...environment, PLAN_EXECUTOR_ROOT: join(root, 'machine') },
+      stdio: ['ignore', machine_log.fd, machine_log.fd],
+    },
+  );
+  await machine_ready();
+}
+async function stop_machine() {
+  try {
+    await stop_process(machine, 'Home machine', 143);
+  } finally {
+    machine = undefined;
+    await machine_log?.close();
+    machine_log = undefined;
+  }
 }
 async function web() {
   const browser = await chromium.launch({ headless: true, env: environment });
@@ -153,6 +214,8 @@ async function web() {
 try {
   await start();
   step('Production server reaches expected-SHA health');
+  await start_machine();
+  step('Production home machine leases through the private local link');
   await web();
   const state = await smoke_before_restart(base, environment, {
     step,
@@ -164,7 +227,11 @@ try {
   step('Production server stops cleanly');
   await start();
   step('Production server restarts against the same private database');
+  await machine_ready();
+  step('The same home machine reconnects after the server restart');
   await smoke_after_restart(base, state, environment, step);
+  await stop_machine();
+  step('Production home machine stops cleanly');
   await stop();
   step('Restarted production server stops cleanly');
   await writeFile(
@@ -179,8 +246,17 @@ try {
   throw error;
 } finally {
   try {
-    await stop();
+    try {
+      await stop_machine();
+    } finally {
+      await stop();
+    }
   } finally {
-    unregister();
+    children.seal();
+    try {
+      await children.settled();
+    } finally {
+      unregister();
+    }
   }
 }
