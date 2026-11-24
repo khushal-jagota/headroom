@@ -39,7 +39,7 @@ Passive wakes are gathered into short bursts, so a busy agent's stream of commit
 
 The server looks for navigation index changes on a short timer, so the rail can follow a write by a moment. The conversation tail does not wait for the change signal.
 
-A few writers commit quietly on purpose: skill history, and conversation rows that only an open pane reads, which that pane already receives through its tail.
+A few writers commit quietly on purpose: skill history, conversation-only rows, and machine receipts for transient output. The conversation tail delivers that output after acceptance. Shared conversation effects retain the global change signal.
 
 Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).
 
@@ -71,4 +71,4 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 - `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._
