@@ -40,6 +40,7 @@ targets:
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Record a revision or speak a message when you tap the microphone.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into an editable message.
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         TARGETED_DEVICE_FAMILY: '1,2'
       configs:
         Release:
