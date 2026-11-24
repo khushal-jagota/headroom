@@ -73,7 +73,6 @@
     models = [],
     backends = $bindable([]),
     ownSenderLabel = null,
-    livenessPulse = 0,
     effortOptions = [],
     composerCatalog = [],
     startsOnModel = null,
@@ -173,7 +172,6 @@
     backends?: readonly BackendSnapshot[];
     /** The label this pane sends under, so your own messages are not labelled as yours. */
     ownSenderLabel?: string | null;
-    livenessPulse?: number;
     effortOptions?: readonly string[];
     /** The typed text shortcuts this conversation offers in the composer. */
     composerCatalog?: readonly ComposerCatalogEntry[];
@@ -671,7 +669,6 @@
     {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
-    {livenessPulse}
     {activityUncertain}
     {conversationState}
     {emptyState}

@@ -51,7 +51,6 @@
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0,
     projectedItems = null,
     narration = null,
     outgoingMessages = [], onStopDrawingMessage, onSendAgain, acknowledgedMessageIds = new Set<string>()
@@ -73,7 +72,6 @@
     conversationId: string;
     models?: readonly BackendModel[];
     /** Moves whenever a live frame arrives, so a running turn can say it is alive. */
-    livenessPulse?: number;
     /** The label this pane sends under. Messages carrying it are yours, and yours are
      *  not labelled — you know who wrote them. Everyone else's still are. */
     ownSenderLabel?: string | null;
@@ -185,7 +183,6 @@
         toolCallCount={item.toolCallCount}
         foldedMessageCount={item.foldedMessageCount}
         expanded={lens === "full" || expandedTurns[item.turnKey] === true}
-        {livenessPulse}
       />
     {:else if item.kind === "work_group"}
       <!-- Focus shows no tool calls at all; Full keeps each run behind its own summary. -->
