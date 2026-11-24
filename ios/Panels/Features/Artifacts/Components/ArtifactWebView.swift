@@ -1,10 +1,11 @@
 import SwiftUI
 import WebKit
 
-/// Loads managed HTML with ordinary browser navigation, from this phone through its page source.
+/// Loads managed HTML from its Panels URL with ordinary browser navigation. A page opened
+/// offline from its saved copy loads through its page source instead.
 struct ArtifactWebView: UIViewRepresentable {
     let url: URL
-    /// Serves the page and its files from this phone when the URL uses its scheme.
+    /// Serves the saved copy when the page opened from it offline.
     var source: ArtifactPageSource? = nil
     var desktopPreview = false
     var reloadSignal = 0
@@ -13,8 +14,12 @@ struct ArtifactWebView: UIViewRepresentable {
     let reload: () -> Void
     let navigated: (URL) -> Void
     let openExternal: (URL) -> Void
+    /// The page could not reach the server.
+    var unreachable: () -> Void = {}
+    /// A page finished: its address and the files it loaded (images, styles, scripts).
+    var loaded: (URL, [URL]) -> Void = { _, _ in }
 
-    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal) }
+    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal, unreachable: unreachable, loaded: loaded) }
     func makeUIView(context: Context) -> ArtifactWebContainer {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -63,9 +68,13 @@ struct ArtifactWebView: UIViewRepresentable {
         let reload: () -> Void
         let navigated: (URL) -> Void
         let openExternal: (URL) -> Void
+        let unreachable: () -> Void
+        let loaded: (URL, [URL]) -> Void
         @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
-        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void) {
+        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void,
+             unreachable: @escaping () -> Void, loaded: @escaping (URL, [URL]) -> Void) {
             self.failed = failed; self.ready = ready; self.reload = reload; self.navigated = navigated; self.openExternal = openExternal
+            self.unreachable = unreachable; self.loaded = loaded
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
@@ -156,12 +165,21 @@ struct ArtifactWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
+            else if webView === mainView, (error as NSError).code != NSURLErrorCancelled { unreachable() }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if webView === mainView, let url = webView.url { navigated(url) }
+            if webView === mainView, let url = webView.url {
+                navigated(url)
+                // Fetches and beacons are the page's own requests, never files to keep.
+                let script = "performance.getEntriesByType('resource').filter(e => !['fetch', 'xmlhttprequest', 'beacon'].includes(e.initiatorType)).map(e => e.name)"
+                webView.evaluateJavaScript(script) { [weak self] result, _ in
+                    let files = (result as? [String] ?? []).compactMap(URL.init(string:))
+                    self?.loaded(url, files)
+                }
+            }
             ready()
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failed("The preview stopped. Try loading it again.") }

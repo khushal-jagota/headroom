@@ -113,7 +113,8 @@ final class ArtifactDockTests: XCTestCase {
     }
 
     /// The three docks on a bad connection, and the saved copies under them. Each artifact
-    /// is opened once online, then the stub drops every connection: the proposal's, the
+    /// is opened once online, where the HTML page loads from the server and its own write
+    /// lands. Then the stub drops every connection: the proposal's, the
     /// message's and the conversation's viewers open again from their saved copies, with
     /// their docks and no cover, banner or status note. The HTML page keeps the screenshot
     /// it loads from its own Ticket. After a relaunch, still offline, the Review card and the
@@ -199,6 +200,12 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertTrue(html.waitForExistence(timeout: 5)); html.tap()
         XCTAssertTrue(viewer.waitForExistence(timeout: 8))
         XCTAssertTrue(page.waitForExistence(timeout: 10)); XCTAssertTrue(screenshot.waitForExistence(timeout: 10))
+        // Online, the page loads from the server's own address, so its write is accepted.
+        XCTAssertTrue(app.webViews.staticTexts["Page post landed"].waitForExistence(timeout: 10), "The page's POST lands online")
+        let (posts, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/page-posts")!)
+        let origins = try XCTUnwrap(JSONSerialization.jsonObject(with: posts) as? [Any])
+        XCTAssertEqual(origins.count, 1)
+        XCTAssertFalse(origins.contains { ($0 as? String)?.hasPrefix("panels-artifact") == true }, "The write carries the server's origin")
         app.backButton.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 8))
 
@@ -206,7 +213,9 @@ final class ArtifactDockTests: XCTestCase {
         try await proof("offline")
         html.tap()
         XCTAssertTrue(viewer.waitForExistence(timeout: 8), "The message's viewer opens offline")
-        drawsFromCopy(page, "The HTML page")
+        // The app has not yet seen the drop, so the page tries the server first and falls
+        // back to its copy when that load fails. After the relaunch below it opens at once.
+        XCTAssertTrue(page.waitForExistence(timeout: 10), "The HTML page falls back to its saved copy")
         XCTAssertTrue(screenshot.waitForExistence(timeout: 3), "The page's screenshot comes from its copy")
         XCTAssertTrue(app.textFields["conversation-input"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["review.markRead"].exists)

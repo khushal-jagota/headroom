@@ -380,6 +380,8 @@ def main() -> int:
         "offline": False,
         # Set by /proof/artifact-revision: the dock artifact's file changes on the server.
         "artifact_revision": False,
+        # The Origin header of each write from the proof page.
+        "page_posts": [],
         "slow": (
             not REVIEW_COMPLETION and not GOALS_SMOKE
             and not REACHABILITY_SMOKE and not DESIGN_REVIEW
@@ -1403,6 +1405,9 @@ def main() -> int:
                     state["new_message"] = True
                 elif name == "artifact-revision":
                     state["artifact_revision"] = True
+                elif name == "page-posts":
+                    self.respond(state["page_posts"])
+                    return
                 elif DESIGN_REVIEW and name == "stall-refresh":
                     state["stall_refresh"] = True
                 elif DESIGN_REVIEW and name == "unstall-refresh":
@@ -1779,7 +1784,9 @@ def main() -> int:
                     b"<!doctype html><html><body><h1>Inline artifact proof</h1>"
                     b"<img src='shots/proof-shot.png' width='120' alt='' "
                     b"onload=\"document.getElementById('shot').textContent='Screenshot loaded'\">"
-                    b"<p id='shot'></p></body></html>"
+                    b"<p id='shot'></p><p id='post'></p>"
+                    b"<script>fetch('page-post', {method: 'POST', body: 'proof'}).then(r => { if (r.ok) "
+                    b"document.getElementById('post').textContent = 'Page post landed' })</script></body></html>"
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
@@ -1966,6 +1973,17 @@ def main() -> int:
             if self.disconnected():
                 return
             path = urlparse(self.path).path
+            if path == "/files/tickets/offline-1/page-post" and REVIEW_MESSAGES:
+                # The proof page's own write. Like the server's trusted ingress, a write
+                # whose Origin is not the server's own address is refused.
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                origin = self.headers.get("Origin")
+                allowed = origin is None or origin == f"http://127.0.0.1:{self.server.server_port}"
+                with lock:
+                    state["page_posts"].append(origin)
+                self.respond({"ok": allowed} if allowed else {"error": {"message": "request origin is not allowed"}},
+                             200 if allowed else 403)
+                return
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
             kind = (
                 "message" if path.endswith("/send")

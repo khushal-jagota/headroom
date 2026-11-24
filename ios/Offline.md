@@ -55,11 +55,17 @@ copy and are read each time.
 The viewer draws the saved copy at once, then reads the file again. The server's ETag
 answers 304 for an unchanged file; without one, the phone compares the bytes. Only a
 changed file draws again, so the scroll position stays. A failed read keeps the copy with
-no note. Until a read succeeds, the next connection reads again. An HTML page loads
-through the app's own scheme, so its page and saved files come from the phone, and a file
-that the copy lacks comes from the server with the page's own method, body and headers. A
-page's saved files are read again after the page. A changed file reloads the page. A file
-that the server no longer has leaves the copy, and so does a file that can no longer be kept.
+no note. Until a read succeeds, the next connection reads again.
+
+An HTML page opens from the server as before while the app follows the server: same origin,
+WebKit's own streaming, redirects and downloads. When it finishes, the reader saves the page
+and the images, styles and scripts that it loaded from its own Ticket or Manager, off the
+main thread. Offline, or when the server load fails, a page with a copy opens from it
+through the app's `panels-artifact` scheme, with one host for each server. That scheme
+serves only saved files and forwards nothing, so any other request fails quietly. When the
+connection returns, the copy is checked whole; a changed page loads from the server in its
+place, and a check that could not read every file counts as not fresh. A file that the
+server no longer has leaves the copy, and so does a file that can no longer be kept.
 
 All copies stay under 256 MiB, and one page's copy never takes more. The copy opened least
 recently leaves first, and a copy not opened for 30 days leaves. Copies are kept per server address. A Ticket's file list is a

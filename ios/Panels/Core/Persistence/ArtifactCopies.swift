@@ -44,6 +44,12 @@ actor ArtifactCopies {
         return [.markdown, .text, .html, .image].contains(ArtifactKind(path: path)) || ["pdf", "gif", "tif", "tiff"].contains(ext)
     }
 
+    /// A file an HTML page loads joins its copy, unless it is video or audio.
+    nonisolated static func keepsPageFile(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return !["mp4", "mov", "m4v", "webm", "mp3", "m4a", "wav", "ogg", "aac", "flac"].contains(ext)
+    }
+
     /// The copy of an artifact opened before. Opening it counts as use for eviction.
     func open(server: String, id: String) -> Entry? {
         var index = entries()

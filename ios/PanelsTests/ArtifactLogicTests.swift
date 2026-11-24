@@ -142,6 +142,7 @@ final class ArtifactLogicTests: XCTestCase {
         let other = APIClient(baseURL: URL(string: "https://artifact-test-b.example")!, session: session)
         let target = ArtifactTarget(owner: .init(kind: .ticket, id: "t_copy\(UUID().uuidString.prefix(6))"), path: "artifacts/plan.md", title: "Plan")
         ArtifactFileProtocol.body = "# First"
+        ArtifactFileProtocol.bodies = [:]; ArtifactFileProtocol.failing = []; ArtifactFileProtocol.conditionalReads = 0
         let read = try await client.artifactDocument(target)
         XCTAssertEqual(read.text, "# First")
 
@@ -166,6 +167,40 @@ final class ArtifactLogicTests: XCTestCase {
         _ = try await client.artifactDocument(video)
         let videoCopy = await client.savedArtifactDocument(video)
         XCTAssertNil(videoCopy, "Video is not kept")
+    }
+
+    /// An HTML page's copy holds the page and the files it loaded from its own owner, and
+    /// only those. A refresh that could not read every file is not fresh (nil), so the
+    /// viewer reads again at the next connection.
+    @MainActor func testPageCopyKeepsOwnFilesAndAPartialRefreshIsNotFresh() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ArtifactFileProtocol.self]
+        let base = URL(string: "https://artifact-test-page.example")!
+        let client = APIClient(baseURL: base, session: URLSession(configuration: configuration))
+        let owner = "t_page\(UUID().uuidString.prefix(6))"
+        let target = ArtifactTarget(owner: .init(kind: .ticket, id: owner), path: "artifacts/report.html", title: "Report")
+        let shot = base.appendingPathComponent("files/tickets/\(owner)/artifacts/shots/a.png")
+        ArtifactFileProtocol.bodies = ["/files/tickets/\(owner)/artifacts/report.html": "<img src=shots/a.png>", shot.path: "A"]
+        ArtifactFileProtocol.failing = []
+        let loaded = [shot, URL(string: "https://elsewhere.example/files/tickets/\(owner)/x.png")!,
+                      base.appendingPathComponent("files/tickets/t_other/x.png"), base.appendingPathComponent("files/tickets/\(owner)/clip.mp4")]
+        let first = await client.refreshPageCopy(target, files: loaded)
+        XCTAssertEqual(first, true)
+        let server = LocalStore.server(base)
+        let entry = await ArtifactCopies.shared.open(server: server, id: target.id)
+        XCTAssertEqual(Set(entry?.files.keys.map { $0 } ?? []), ["/files/tickets/\(owner)/artifacts/report.html", shot.path],
+                       "Only the page and its own owner's files join the copy; video and other hosts do not")
+        let unchanged = await client.refreshPageCopy(target)
+        XCTAssertEqual(unchanged, false, "Every saved file answers 304")
+        ArtifactFileProtocol.failing = [shot.path]
+        let partial = await client.refreshPageCopy(target)
+        XCTAssertNil(partial, "A file that could not be read leaves the refresh unfinished")
+        ArtifactFileProtocol.failing = []
+        ArtifactFileProtocol.bodies[shot.path] = "B"
+        let changed = await client.refreshPageCopy(target)
+        XCTAssertEqual(changed, true)
+        let saved = await ArtifactCopies.shared.data(server: server, id: target.id, path: shot.path)
+        XCTAssertEqual(saved, Data("B".utf8))
     }
 
     /// Bounds: the copy opened least recently leaves first, the copy just saved stays, one
@@ -229,11 +264,15 @@ private final class TestClock: @unchecked Sendable { var now = Date(timeInterval
 /// Serves one Markdown body with its version, and a 304 when the phone names that version.
 private final class ArtifactFileProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var body = ""
+    /// Bodies by request path, over `body`; a path in `failing` loses its connection.
+    nonisolated(unsafe) static var bodies: [String: String] = [:]
+    nonisolated(unsafe) static var failing: Set<String> = []
     nonisolated(unsafe) static var conditionalReads = 0
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("artifact-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let data = Data(Self.body.utf8)
+        if Self.failing.contains(request.url!.path) { client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost)); return }
+        let data = Data((Self.bodies[request.url!.path] ?? Self.body).utf8)
         let etag = "\"\(data.hashValue)\""
         let conditional = request.value(forHTTPHeaderField: "If-None-Match")
         if conditional != nil { Self.conditionalReads += 1 }

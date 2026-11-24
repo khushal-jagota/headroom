@@ -29,10 +29,12 @@ struct ArtifactViewerView: View {
     @State private var htmlReloadSignal = 0
     @State private var webReady = false
     @State private var desktopPreview = false
-    /// Serves an HTML page and its files to the web view, from the saved copy first.
+    /// Serves an HTML page's saved copy, only while the page opened from it offline.
     @State private var pageSource: ArtifactPageSource?
     /// Set once this viewer read the server's file. Until then the next connection reads again.
     @State private var isFresh = false
+    /// The server's page failed to load, so the next load builds it again.
+    @State private var serverPageFailed = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
     /// The conversation whose composer sits below, when the dock is a conversation's.
@@ -43,7 +45,7 @@ struct ArtifactViewerView: View {
 
     private var hasPreview: Bool { document != nil || webReady }
     /// A saved copy or a read file is on screen, so a failed read says nothing.
-    private var hasContent: Bool { document != nil || pageSource?.page != nil }
+    private var hasContent: Bool { document != nil || pageSource != nil }
     /// A read that could not reach the server leaves no error, so the quiet placeholder stays.
     private var waitingForPreview: Bool { isLoading || (!hasPreview && error == nil) }
 
@@ -140,7 +142,8 @@ struct ArtifactViewerView: View {
                 Text("Fit desktop").tag(true)
             }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
                 .accessibilityIdentifier("artifact-preview-width")
-            ArtifactWebView(url: pageSource?.pageURL ?? url, source: pageSource, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true }, reload: { reloadPreview() }, navigated: { currentHTMLURL = pageSource?.remote($0) ?? $0 }, openExternal: { openURL($0) })
+            ArtifactWebView(url: pageSource?.pageURL ?? url, source: pageSource, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0; serverPageFailed = true }, ready: { webReady = true; if pageSource == nil { isFresh = true } }, reload: { reloadPreview() }, navigated: { currentHTMLURL = pageSource?.remote($0) ?? $0 }, openExternal: { openURL($0) },
+                            unreachable: { serverPageFailed = true; Task { await openCopy() } }, loaded: { saveCopy(page: $0, files: $1) })
                 .id(renderVersion)
                 .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
         }
@@ -191,7 +194,7 @@ struct ArtifactViewerView: View {
                     shareDocument = try await store.client.artifactDocument(currentTarget)
                 } else { shareURL = currentHTMLURL }
             } else if let document { shareDocument = document }
-            else if let page = pageSource?.page { shareDocument = page }
+            else if pageSource != nil, let saved = await store.client.savedArtifactDocument(target) { shareDocument = saved }
             else { shareDocument = try await store.client.artifactDocument(target) }
             sharePresented = true
         } catch {
@@ -200,24 +203,26 @@ struct ArtifactViewerView: View {
         }
     }
     private func reloadPreview() {
-        if htmlURL != nil { error = nil; webReady = false; htmlReloadSignal += 1 }
-        loadVersion += 1
+        if htmlURL != nil {
+            error = nil; webReady = false; htmlReloadSignal += 1
+            // A page on its copy also checks the server, which loads in its place if it changed.
+            if pageSource != nil { loadVersion += 1 }
+        } else { loadVersion += 1 }
     }
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            if target.kind == .html { try await loadPage() }
-            else {
-                htmlURL = nil; currentHTMLURL = nil
-                try await loadArtifact(target, client: store.client, shown: document) { result in
-                    let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
-                        UIImage(contentsOfFile: result.localURL.path)
-                    }.value : nil
-                    try Task.checkCancellation()
-                    self.image = image
-                    document = result; error = nil; webReady = false; renderVersion += 1
-                }
+            // A page is fresh once the server's page draws, or its copy was checked whole.
+            if target.kind == .html { try await loadPage(); return }
+            htmlURL = nil; currentHTMLURL = nil
+            try await loadArtifact(target, client: store.client, shown: document) { result in
+                let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
+                    UIImage(contentsOfFile: result.localURL.path)
+                }.value : nil
+                try Task.checkCancellation()
+                self.image = image
+                document = result; error = nil; webReady = false; renderVersion += 1
             }
             isFresh = true
         } catch {
@@ -227,23 +232,42 @@ struct ArtifactViewerView: View {
             }
         }
     }
-    /// The page draws from its saved copy at once. A changed page or a changed saved file
-    /// reloads the same web view, so the preview keeps its place.
+    /// Online, the page loads from the server exactly as before, and its copy is saved beside
+    /// it. Offline, a page with a copy opens from it. When the connection returns, the copy
+    /// is checked, and a changed page loads from the server in its place.
     private func loadPage() async throws {
         document = nil
-        guard let source = pageSource ?? ArtifactPageSource(client: store.client, target: target) else {
-            throw APIError(status: 0, message: "This artifact has an invalid file path.")
+        let remote = try store.client.artifactURL(target)
+        let online = store.connection == "Following changes"
+        if pageSource != nil {
+            guard online, let changed = await store.client.refreshPageCopy(target) else { return }
+            if changed { showServerPage(remote) } else { isFresh = true }
+            return
         }
-        pageSource = source
-        try await loadArtifact(target, client: store.client, shown: source.page) { page in
-            let first = source.page == nil
-            source.page = page
-            if first {
-                htmlURL = page.remoteURL; currentHTMLURL = page.remoteURL
-                error = nil; webReady = false; renderVersion += 1
-            } else { htmlReloadSignal += 1 }
-        }
-        if await source.refreshFiles() { htmlReloadSignal += 1 }
+        if !online, await openCopy() { return }
+        // A server page still loading or already drawn is left alone.
+        if htmlURL == remote, !serverPageFailed { return }
+        showServerPage(remote)
+    }
+    private func showServerPage(_ remote: URL) {
+        pageSource = nil; serverPageFailed = false; htmlURL = remote; currentHTMLURL = remote
+        error = nil; webReady = false; renderVersion += 1
+    }
+    /// Opens the page's saved copy, when there is one. True when it did.
+    @discardableResult private func openCopy() async -> Bool {
+        guard pageSource == nil, let remote = try? store.client.artifactURL(target),
+              let source = ArtifactPageSource(client: store.client, target: target),
+              await ArtifactCopies.shared.open(server: LocalStore.server(store.baseURL), id: target.id) != nil,
+              pageSource == nil else { return false }
+        pageSource = source; htmlURL = remote; currentHTMLURL = remote
+        error = nil; webReady = false; renderVersion += 1
+        return true
+    }
+    /// The server's page finished: save it and the files it loaded, off the main thread.
+    private func saveCopy(page: URL, files: [URL]) {
+        guard pageSource == nil, let remote = try? store.client.artifactURL(target), page.path == remote.path else { return }
+        let client = store.client, target = target
+        Task.detached(priority: .utility) { _ = await client.refreshPageCopy(target, files: files) }
     }
 }
 

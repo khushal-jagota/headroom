@@ -86,6 +86,66 @@ extension APIClient {
         }
     }
 
+    /// Brings an HTML page's copy up to date, off the main thread: the page, then the files
+    /// it loads from its own owner. `files` names what the page just loaded on screen; without
+    /// it, the files already saved are read again. Returns whether anything changed, or nil
+    /// when a read failed, so a partial refresh never counts as fresh.
+    func refreshPageCopy(_ target: ArtifactTarget, files: [URL]? = nil) async -> Bool? {
+        guard let page = try? artifactURL(target) else { return nil }
+        let server = LocalStore.server(baseURL)
+        let copies = ArtifactCopies.shared
+        let saved = await copies.open(server: server, id: target.id)
+        guard let pageChanged = await refreshCopyFile(target, main: page.path, path: page.path, url: page, etag: saved?.files[page.path]?.etag) else { return nil }
+        let prefix = "/files/\(target.owner.collection)/\(target.owner.id)/"
+        let paths: [String]
+        if let files {
+            paths = files.compactMap { url in
+                guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port,
+                      url.path.hasPrefix(prefix), url.path != page.path, ArtifactCopies.keepsPageFile(url.path) else { return nil }
+                return url.path
+            }
+        } else { paths = saved?.files.keys.filter { $0 != page.path } ?? [] }
+        let entry = await copies.open(server: server, id: target.id)
+        var changed: Bool? = pageChanged
+        await withTaskGroup(of: Bool?.self) { group in
+            for (index, path) in Set(paths).enumerated() {
+                if index >= 4, let result = await group.next() { changed = result.flatMap { r in changed.map { $0 || r } } }
+                var parts = URLComponents(url: page, resolvingAgainstBaseURL: false)!
+                parts.path = path; parts.query = nil; parts.fragment = nil
+                guard let url = parts.url else { continue }
+                let etag = entry?.files[path]?.etag
+                group.addTask { await self.refreshCopyFile(target, main: page.path, path: path, url: url, etag: etag) }
+            }
+            for await result in group { changed = result.flatMap { r in changed.map { $0 || r } } }
+        }
+        return changed
+    }
+
+    /// One conditional read into the copy. True when the saved file changed or left.
+    private func refreshCopyFile(_ target: ArtifactTarget, main: String, path: String, url: URL, etag: String?) async -> Bool? {
+        let server = LocalStore.server(baseURL)
+        guard var request = try? self.request(url) else { return nil }
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        guard let (download, response) = try? await session.download(for: request), let http = response as? HTTPURLResponse else { return nil }
+        defer { try? FileManager.default.removeItem(at: download) }
+        switch http.statusCode {
+        case 304 where etag != nil: return false
+        case 404 where path != main:
+            let had = await ArtifactCopies.shared.location(server: server, id: target.id, path: path) != nil
+            await ArtifactCopies.shared.drop(server: server, id: target.id, path: path)
+            return had
+        case 200:
+            let old = await ArtifactCopies.shared.data(server: server, id: target.id, path: path)
+            if let old, (try? Data(contentsOf: download)) == old { return false }
+            await ArtifactCopies.shared.save(server: server, id: target.id, main: main, path: path, file: download,
+                                             etag: http.value(forHTTPHeaderField: "ETag"))
+            return true
+        default: return nil
+        }
+    }
+
     private static func temporaryFolder() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("artifact-\(UUID().uuidString)", isDirectory: true)
     }
