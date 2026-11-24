@@ -89,6 +89,7 @@ export class MacRunner implements MacRunnerContract {
       state,
       sources,
       publication,
+      confirm_agent_turn: options.confirm_agent_turn,
       live:
         options.live === null
           ? null

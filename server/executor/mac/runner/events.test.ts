@@ -96,3 +96,72 @@ test('offline event publication preserves every delta and its order with complet
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Gap: an autonomous turn must receive the core token before later native events,
+// and native steer/cancel must see that same token. No network/backend is needed.
+test('agent turn start waits for its durable receipt and installs the allocated token', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-turn-receipt-'));
+  const stop_options = () => ({ deadline: performance.now() / 1000 + 10 });
+  const store = await OutboxStore.open(
+    root,
+    {
+      monotonic: () => performance.now() / 1000,
+      now_ns: () => BigInt(Date.now()) * 1_000_000n,
+    },
+    stop_options(),
+    () => {},
+  );
+  const { GatewayOutbox } = await import('../ipc/outbox.ts');
+  const gateway = new GatewayOutbox(store);
+  const reference = { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'one' };
+  const token = { conversation_id: 'one', turn_number: 7 };
+  const child = { reference, active_turn: null } as unknown as MacRunningChild;
+  const state = new MacChildState();
+  const sources = new MacSourceWork(state, () => false);
+  try {
+    const sink = new MacRunnerEvents({
+      state,
+      sources,
+      native_children: { get: () => child } as unknown as MacNativeChildrenContract,
+      publication: create_mac_output_publication(store),
+      live: null,
+      confirm_agent_turn: (id, signal) => gateway.wait_confirmed(id, 10, signal),
+    }).event_sink(reference);
+    let settled = false;
+    const started = sink.start_agent_turn!('Sub-agent finished').then((value) => {
+      settled = true;
+      return value;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(child.active_turn).toBeNull();
+    const row = store.pending()[0]!;
+    const envelope = row_envelope(store.sender_id, row);
+    expect(envelope.payload).toMatchObject({
+      turn: null,
+      method: 'agent_turn_started',
+      arguments: { reason: 'Sub-agent finished' },
+    });
+    const receipt = {
+      sender_id: store.sender_id,
+      submission_id: row.submission_id,
+      disposition: 'accepted' as const,
+      result: { applied: true, turn: token },
+      accepted_at_vps_ms: Date.now(),
+    };
+    await store.acknowledge(
+      row.submission_id,
+      store.sender_id,
+      Buffer.from(JSON.stringify(receipt)),
+      () => gateway.notify_confirmed(receipt),
+    );
+    expect(await started).toEqual(token);
+    expect(child.active_turn).toEqual(token);
+    expect(store.pending_count()).toBe(0);
+    await sources.finish();
+  } finally {
+    await store.stop(stop_options());
+    await store.settled();
+    await rm(root, { recursive: true, force: true });
+  }
+});
