@@ -258,6 +258,15 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     });
     expect(await conversation(oversized)).toMatchObject({ pending_ask: null });
     expect(await conversation(superseded)).toMatchObject({ pending_ask: null });
+    // Outside the review window the record leaves the ask out of the view's budget. The Chief's
+    // conversation is admitted with the Chief first, so the Review case above also proves that
+    // the review window brings the ask back to a record admitted without it.
+    const outside = (await answerable.app.inject(snapshotPath)).json() as CurrentViewSnapshot;
+    const plain = outside.content.records.find(
+      (record) => record.kind === 'conversation' && record.id === 'actual',
+    )?.value;
+    expect(plain).toMatchObject({ latest_owner_message_sequence: 1 });
+    expect(plain).not.toHaveProperty('pending_ask');
     expect(await members(asking, 'review')).toHaveLength(1);
     expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
     expect(await members(asking, 'unread')).toEqual([]);

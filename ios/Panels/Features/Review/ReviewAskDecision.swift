@@ -5,9 +5,9 @@ extension APIClient {
     func reviewAsk(_ conversationID: String) async throws -> ReviewAskState {
         try await get("/api/conversation/conversations/\(conversationID)")
     }
-    /// The last read of this conversation saved on the phone.
-    @MainActor func savedReviewAsk(_ conversationID: String) -> ReviewAskState? {
-        cached("/api/conversation/conversations/\(conversationID)")
+    /// The last read of this conversation saved on the phone, with when it was saved.
+    @MainActor func savedReviewAsk(_ conversationID: String) -> (value: ReviewAskState, saved: Date)? {
+        cachedRead("/api/conversation/conversations/\(conversationID)")
     }
 }
 
@@ -46,14 +46,19 @@ extension APIClient {
     func load(item: ReviewItem, api: APIClient) async {
         guard let id = item.conversationId, !loading else { return }
         if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
-        // The ask the view carries comes before an earlier read of another ask, which it replaced.
-        if let windowAsk = item.pendingAsk, windowAsk.askIdentity != state?.askIdentity { accept(windowAsk) }
-        else if state == nil, let saved = api.savedReviewAsk(id) { accept(saved) }
+        if state == nil, let saved = api.savedReviewAsk(id) { accept(saved.value, knownAt: saved.saved) }
+        // The view's ask stands in only for a read that predates it: with no read, or a read
+        // made before the ask was raised. A later read already knows whether it still waits.
+        if let windowAsk = item.pendingAsk, windowAsk.askIdentity != state?.askIdentity {
+            // An ask with no raised time is never newer than a read.
+            let raised = item.waitingSince == ReviewItem.unknownAskTime ? .distantPast : Date(timeIntervalSince1970: item.waitingSince)
+            if stateKnownAt.map({ $0 < raised }) ?? true { accept(windowAsk, knownAt: raised) }
+        }
         loading = true; defer { loading = false }
         do {
             let read = try await api.reviewAsk(id)
             guard !Task.isCancelled else { return }
-            accept(read)
+            accept(read, knownAt: .now)
             error = nil
             if !read.waiting { gone = true }
         } catch {
@@ -62,10 +67,13 @@ extension APIClient {
             if state == nil { self.error = error.localizedDescription }
         }
     }
-    private func accept(_ read: ReviewAskState) {
+    /// When the shown ask was known to wait: a read's time, or the view's ask's raised time.
+    private var stateKnownAt: Date?
+    private func accept(_ read: ReviewAskState, knownAt: Date) {
         // A new question starts with nothing chosen.
         if read.pendingUserInput?.requestId != state?.pendingUserInput?.requestId { selected = [:] }
         state = read
+        stateKnownAt = knownAt
         loaded = true
     }
 

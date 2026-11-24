@@ -268,6 +268,38 @@ import XCTest
         await read.load(item: unread, api: api, shownAt: .now)
         XCTAssertEqual(read.markReadThrough, 66)
     }
+    /// Risk: the view's ask is older than a read, for example one answered on the web while
+    /// another now waits, and replaces it, so the card answers a dead ask. The view's ask
+    /// stands in only for a read made before it was raised, or for no read at all.
+    func testWindowAskStandsInOnlyForAnOlderRead() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        ReviewMessageProtocol.state.ask = true
+        defer { clean(api) }
+        func ask(raisedAt: Double) -> ReviewItem {
+            var item = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: raisedAt, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+            item.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-window", title: "Run ls", detail: nil, options: [
+                .init(optionId: "allow", label: "Allow", optionKind: "allow_once")]), pendingUserInput: nil)
+            return item
+        }
+        let stale = ask(raisedAt: Date().timeIntervalSince1970 - 3600)
+        // A live read after the view's ask was raised wins, online and offline after it.
+        let live = ReviewAskDecision()
+        await live.load(item: stale, api: api)
+        XCTAssertEqual(live.userInput?.requestId, "request-1")
+        await LocalStore.shared.flushCache()
+        ReviewMessageProtocol.state.offline = true
+        await live.load(item: stale, api: api)
+        XCTAssertEqual(live.userInput?.requestId, "request-1")
+        // A saved read newer than the view's ask wins too.
+        let saved = ReviewAskDecision()
+        await saved.load(item: stale, api: api)
+        XCTAssertEqual(saved.userInput?.requestId, "request-1")
+        // An ask raised after the saved read replaces it.
+        let newer = ReviewAskDecision()
+        await newer.load(item: ask(raisedAt: Date().timeIntervalSince1970 + 60), api: api)
+        XCTAssertEqual(newer.permission?.askId, "ask-window")
+    }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()

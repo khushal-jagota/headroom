@@ -148,7 +148,7 @@ import SwiftUI
                   let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: record.payload),
                   snapshot.wireVersion == NavigationViewVersion.wire,
                   snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
-            admit(snapshot.savedDisplay, persist: false)
+            admit(snapshot.restoredDisplay(savedAt: record.updated), persist: false)
         }
     }
 

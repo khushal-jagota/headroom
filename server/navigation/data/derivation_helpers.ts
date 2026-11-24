@@ -190,7 +190,8 @@ export function pendingAsk(sql: ReadSql, id: string): Row | null {
     event.kind === 'permission_asked'
       ? ['permission_answered', '$.ask_id', stored.ask_id]
       : ['user_input_answered', '$.request_id', stored.request_id];
-  // A refused answer leaves the ask waiting; an answer with no fate is an applied one.
+  // A refused answer leaves the ask waiting; an answer with no fate is an applied one. This
+  // reads the events after the ask, which is only while the conversation awaits an answer.
   const closed = sql.get(
     "SELECT 1 FROM conversation_events WHERE conversation_id=? AND sequence>? AND (kind='turn_ended' OR (kind=? AND json_extract(payload,?)=? AND COALESCE(json_extract(payload,'$.fate'),'applied')<>'refused')) LIMIT 1",
     [id, event.sequence, answered, identity, value],

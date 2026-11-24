@@ -160,9 +160,14 @@ extension APIClient {
          path.hasPrefix("/api/conversation/conversations/"))
     }
     @MainActor func cached<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> T? {
+        cachedRead(path, query: query)?.value
+    }
+    /// A saved response with the time it was saved.
+    @MainActor func cachedRead<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> (value: T, saved: Date)? {
         guard let url = try? url(path, query: query),
-              let row = try? LocalStore.shared.record(server: LocalStore.server(baseURL), kind: "cache", id: url.absoluteString) else { return nil }
-        return try? Self.decoder().decode(T.self, from: row.payload)
+              let row = try? LocalStore.shared.record(server: LocalStore.server(baseURL), kind: "cache", id: url.absoluteString),
+              let value = try? Self.decoder().decode(T.self, from: row.payload) else { return nil }
+        return (value, row.updated)
     }
     @MainActor func cachedTicket(_ id: String) -> TicketDetail? {
         cached("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)])
