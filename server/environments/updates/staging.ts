@@ -1,9 +1,10 @@
 /** Bind the exact publication receipt before an app becomes the retained stage. */
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdtemp, open, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
+import { fsync_path } from '../../core/fsync.ts';
 import { is_os_error } from '../../core/system_errors.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, ReleaseStaging } from './contracts.ts';
@@ -37,22 +38,14 @@ async function remove_directory(path: string): Promise<void> {
     throw new Error('Cannot call rmtree on a symbolic link');
   await rm(path, { recursive: true });
 }
-async function flush(path: string): Promise<void> {
-  const descriptor = await open(path, 'r');
-  try {
-    await descriptor.sync();
-  } finally {
-    await descriptor.close();
-  }
-}
 async function flush_release(directory: string, signal: AbortSignal): Promise<void> {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     signal.throwIfAborted();
     const path = join(directory, entry.name);
     if (entry.isDirectory()) await flush_release(path, signal);
-    else if (entry.isFile()) await flush(path);
+    else if (entry.isFile()) await fsync_path(path);
   }
-  await flush(directory);
+  await fsync_path(directory);
 }
 async function staged_manifest(
   path: string,
@@ -157,7 +150,7 @@ export function create_release_staging(
         signal.throwIfAborted();
         await flush_release(unpacked, signal);
         await rename(unpacked, staged);
-        await flush(current_root);
+        await fsync_path(current_root);
         return staged;
       } catch (error) {
         failure = error;

@@ -1,7 +1,6 @@
 /** The cross-version update attempt file, outside SQLite and database backups. */
 import {
   closeSync,
-  constants,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -14,6 +13,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { fsync_directory_sync } from '../../core/fsync.ts';
 import { flock } from '../../core/locks/flock.ts';
 import { getSystemErrorName } from 'node:util';
 import type { UpdateAttempt, UpdateAttemptState } from './contracts.ts';
@@ -107,12 +107,7 @@ export function replace_existing_text(path: string, text: string): void {
     }
     throw error;
   }
-  const directory = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY);
-  try {
-    fsyncSync(directory);
-  } finally {
-    closeSync(directory);
-  }
+  fsync_directory_sync(parent);
 }
 export class FileUpdateAttemptStore {
   readonly path: string;

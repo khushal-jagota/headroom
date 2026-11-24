@@ -1,16 +1,20 @@
 /** The old installed supervisor starts the candidate before it accepts any lease. A
  * launchd-owned transaction pairs that candidate with the signed app at the fixed path.
  * It outlives both runtimes and can restore the old bundle if the trial disappears. */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { userInfo } from 'node:os';
-import { lstat, open, readFile, rename, rm, unlink } from 'node:fs/promises';
+import { lstat, open, readFile, rm, unlink } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { exchange_names, flock } from '../../../core/locks/flock.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
-import { atomic_write_json } from '../../../environments/updates/attempts.ts';
+import { fsync_path } from '../../../core/fsync.ts';
+import {
+  atomic_write_json,
+  replace_existing_text,
+} from '../../../environments/updates/attempts.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { copy_environment } from '../../../core/environment.ts';
 import { WORKER_LAUNCHER_MODE } from '../../../platform_runtime/darwin/launchd/configuration.ts';
@@ -34,14 +38,6 @@ async function read(path: string): Promise<RecordFields | null> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
-  }
-}
-async function sync_dir(path: string) {
-  const fd = await open(path, 'r');
-  try {
-    await fd.sync();
-  } finally {
-    await fd.close();
   }
 }
 async function command(argv: string[], allow_nonzero = false) {
@@ -158,16 +154,7 @@ export async function admit_launcher(root: string, runtime: string): Promise<voi
     KeepAlive: { SuccessfulExit: false },
     StandardErrorPath: t.install.stderr,
   });
-  const temp = t.plist_path + '.' + randomUUID();
-  const fd = await open(temp, 'wx', 0o600);
-  try {
-    await fd.writeFile(definition);
-    await fd.sync();
-  } finally {
-    await fd.close();
-  }
-  await rename(temp, t.plist_path);
-  await sync_dir(dirname(t.plist_path));
+  replace_existing_text(t.plist_path, definition);
   const boot = await command(['/bin/launchctl', 'bootstrap', t.domain, t.plist_path], true);
   if (boot.code !== 0) await command(['/bin/launchctl', 'print', t.domain + '/' + t.label]);
   const deadline = performance.now() + MAC_RUNTIME_READY_TIMEOUT_SECONDS * 1000;
@@ -274,7 +261,7 @@ export async function supervise_launcher(
           )
             throw new Error('Mac launcher files changed during activation.');
           exchange_names(t.staged, app);
-          await sync_dir(dirname(app));
+          await fsync_path(dirname(app));
         }
         await options.probe(app);
         atomic_write_json(t.receipt, {
@@ -294,7 +281,7 @@ export async function supervise_launcher(
         )
           throw new Error('Cannot identify the previous signed Mac launcher for rollback.');
         exchange_names(t.staged, app);
-        await sync_dir(dirname(app));
+        await fsync_path(dirname(app));
       }
       failure ??= 'The Mac runtime trial reverted.';
     }
@@ -302,11 +289,11 @@ export async function supervise_launcher(
     // Until the transaction is resolved, keep both bundles and the restartable job.
     if (intent) {
       await unlink(t.journal);
-      await sync_dir(t.root);
+      await fsync_path(t.root);
     }
     await rm(t.staged, { recursive: true, force: true });
     await rm(t.plist_path, { force: true });
-    await sync_dir(dirname(t.plist_path));
+    await fsync_path(dirname(t.plist_path));
   } finally {
     await lock.close();
   }
