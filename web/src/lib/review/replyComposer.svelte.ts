@@ -215,8 +215,11 @@ export class ReviewReplyComposer {
       // Older Review stored the very same text and attachments as both draft and send.
       // Preserve anything that differs, including a draft typed on this mount.
       const savedDraft = attachments.status === 'fulfilled' ? this.#content(attachments.value) : null;
-      if (savedDraft && openedText === this.text
-        && attempts.value.some(attempt => JSON.stringify(attempt.message.content) === JSON.stringify(savedDraft))) {
+      const unrecordedUpload = this.uploads.some(upload => !savedDraft?.some(piece =>
+        (piece.piece === 'attachment_upload' || piece.piece === 'video_upload') && piece.upload_id === upload.uploadId));
+      if (savedDraft && !unrecordedUpload && openedText === this.text
+        && attempts.value.some(attempt => attempt.pendingUploads === undefined
+          && JSON.stringify(attempt.message.content) === JSON.stringify(savedDraft))) {
         this.text = '';
         this.#clearAttachments();
         await this.#attachmentWrite;
@@ -246,8 +249,11 @@ export class ReviewReplyComposer {
     this.#images = [];
     this.#files = [];
     if (moveUploads) this.#setUploads([]);
-    else { clearAttachmentDraft(this.draftKey); this.#uploads = []; }
-    void this.#saveAttachments();
+    else {
+      clearAttachmentDraft(this.draftKey);
+      this.#uploads = [];
+      void this.#saveAttachments();
+    }
   }
 
   #store(attempts: ReviewOutgoingReply[]): Promise<boolean> {
@@ -355,6 +361,7 @@ export class ReviewReplyComposer {
     if (!this.ready || !this.hasDraft) return;
     this.error = null;
     const uploads = this.uploads;
+    const originalText = this.text;
     const content = this.#content([...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files)]);
     const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : this.uploadDestination.expected_conversation_id;
     const message = mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' });
@@ -362,13 +369,17 @@ export class ReviewReplyComposer {
     const entry: ReviewOutgoingReply = { conversationId, message, pendingUploads: uploads, status: 'preparing', note: null };
 
     this.attempts = [...this.attempts, entry];
-    this.text = '';
+    // Empty the field now. Keep its stored words until the outgoing snapshot has
+    // a durable copy, and never erase a newer draft saved during that write.
+    this.#text = '';
     this.#clearAttachments(true);
     if (!await this.#store(this.attempts)) {
       this.#update(message.messageId, { status: 'upload-failed', note: 'The message could not be saved in this browser.' });
       this.#disposeIfIdle();
       return;
     }
+    if (this.text === '' && readComposerDraft(this.draftKey) === originalText) writeComposerDraft(this.draftKey, '');
+    void this.#saveAttachments();
     this.#update(message.messageId, { status: uploads.length > 0 ? 'uploading' : 'waiting', note: null });
     await this.#pump();
   }
