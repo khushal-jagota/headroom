@@ -10,7 +10,7 @@ The command name grants nothing. Headroom gives each agent conversation a privat
 
 Role and workspace variables, such as `PLAN_ACTOR`, `PLAN_TICKET_ID`, and `PLAN_MANAGER_ID`, are context, not credentials. The CLI uses them to choose the caller's own record and the caller's help.
 
-If an operation has no dedicated command, `panels api METHOD PATH --input-json FILE --json` calls the route with the same credential. Agents do not copy tokens or construct identity headers. On a remote Worker, the executor transport still decides which operations are supported.
+If an operation has no dedicated command, `panels api METHOD PATH --input-json FILE --json` calls the route with the same credential. Agents do not copy tokens or construct identity headers. Agent calls pass through machine code and its relay to the same server routes. The relay converts document numbers to JSON numbers before validation and refuses integers that it cannot carry exactly. The executor transport still decides which operations are supported.
 
 ## What it is made of
 
@@ -74,4 +74,4 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 - Each domain's `cli/` folder holds its own group, such as `server/credentials/cli/` and `server/goals/cli/`. The routes they call are in each domain's `routes.ts`.
 - `server/skills/staleness.ts`: the skill check, which reads `create_commands`.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._
