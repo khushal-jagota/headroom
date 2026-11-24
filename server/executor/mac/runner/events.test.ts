@@ -13,6 +13,7 @@ import {
   ToolCallProgress,
   TurnEnded,
   BackendPromptAccepted,
+  BackendSteerRefused,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { OutboxStore } from '../storage/outbox.ts';
@@ -129,12 +130,15 @@ test('agent turn start waits for its durable receipt and installs the allocated 
   const write_prompt = vi.fn(
     async () => new BackendPromptAccepted({ composed_content_delivered: true }),
   );
+  const steer = vi.fn(
+    async () => new BackendSteerRefused({ refusal_reason: 'no_running_turn_to_steer_into' }),
+  );
   const child = {
     reference,
     active_turn: null,
     pending_agent_turn: null,
     lock: new FifoLock(),
-    native: { cancel_running_turn: cancel, write_prompt },
+    native: { cancel_running_turn: cancel, write_prompt, steer },
     background_task_ids: new Set(),
     open_tool_calls: new Set(),
   } as unknown as MacRunningChild;
@@ -192,6 +196,30 @@ test('agent turn start waits for its durable receipt and installs the allocated 
       operation: 'cancel_running_turn',
       arguments: { kind: 'cancel_running_turn' },
     } as const;
+    // A steer for an ended prior turn must refuse without waiting for its replacement.
+    const stale_steer = await dispatch_command(
+      dependencies,
+      {
+        command_id: 'old-steer',
+        child: reference,
+        turn: { conversation_id: 'one', turn_number: 1 },
+        operation: 'steer',
+        arguments: {
+          kind: 'steer',
+          content: [{ text: 'Old turn' }],
+          sender_content: [{ text: 'Old turn' }],
+          sender_label: 'Owner',
+        },
+      },
+      new Map(),
+      {} as MacCommandWork,
+      () => {},
+    );
+    expect(stale_steer.result).toMatchObject({
+      kind: 'steer_refused',
+      refusal_reason: 'no_running_turn_to_steer_into',
+    });
+    expect(settled).toBe(false);
     const cancellation = dispatch_command(
       dependencies,
       cancel_command,

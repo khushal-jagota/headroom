@@ -224,10 +224,13 @@ export async function dispatch_command(
     }
     if (!same_reference(child.reference, command.child))
       return outcome(command, 'uncertain', { reason: 'child_gone' });
+    // A stale steer must reach the driver and refuse, so the prior turn's ending can settle.
+    const waits_for_activation = command.arguments.kind !== 'steer';
     for (;;) {
-      if (child.pending_agent_turn != null) await child.pending_agent_turn.promise;
+      if (waits_for_activation && child.pending_agent_turn != null)
+        await child.pending_agent_turn.promise;
       const release = await child.lock.acquire();
-      if (child.pending_agent_turn != null) {
+      if (waits_for_activation && child.pending_agent_turn != null) {
         release();
         continue;
       }

@@ -183,6 +183,29 @@ function blocks(message: ClaudeSdkMessage): Record<string, unknown>[] {
         )
     : [];
 }
+/** Plain background deliveries are distinct from human/catalog command input. */
+export function is_background_result(message: ClaudeSdkMessage): boolean {
+  const origin = record(message.origin);
+  return (
+    (origin?.kind === 'peer' && origin.handback === true) ||
+    (origin?.kind === 'task-notification' && origin.subkind == null)
+  );
+}
+/** Result origin names the background delivery even when its output is delayed. */
+export function result_matches_background_task(
+  message: ClaudeSdkMessage,
+  task_id: string,
+  run_id: string | null,
+): boolean {
+  const origin = record(message.origin);
+  if (origin?.kind === 'peer')
+    return origin.handback === true && (origin.senderTaskId === task_id || origin.from === task_id);
+  if (origin?.kind !== 'task-notification') return false;
+  // Legacy SDKs omit runId. There is only one retained refused background activity.
+  return (
+    (origin.runId == null && origin.subkind == null) || (run_id !== null && origin.runId === run_id)
+  );
+}
 export class ClaudeEvents {
   private readonly sink: B.BackendEventSink;
   private live_background_tasks = new Map<string, string>();
