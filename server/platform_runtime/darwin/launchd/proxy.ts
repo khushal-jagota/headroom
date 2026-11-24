@@ -3,6 +3,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { userInfo } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
@@ -10,23 +11,35 @@ import { copy_environment } from '../../../core/environment.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import { START_SECONDS, STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import * as records from '../../../worker_supervision/records.ts';
+import { mac_installation_paths } from '../../../executor/mac/platform.ts';
+import { start_worker_job, usable_worker_launcher } from './launcher.ts';
+import { WORKER_APP_START_SECONDS } from './configuration.ts';
 import { DarwinWorkerJobs } from './adapter.ts';
 import { channels, type Channel, job_plist, cleanup_transport } from './transport.ts';
 
-export async function run_proxy(record_path: string, command: readonly string[]): Promise<number> {
+export async function run_proxy(
+  record_path: string,
+  command: readonly string[],
+  launcher_path = mac_installation_paths(userInfo().homedir).app_executable,
+): Promise<number> {
   const children = new ChildProcesses();
   const probes = new OneShotChildren(children);
   const jobs = new DarwinWorkerJobs({ children: probes });
   const record = await records.read(record_path);
   const job = record.launchd;
   if (!job || !command.length) throw new Error('Mac Worker proxy requires a job and command');
-  const directory = await mkdtemp('/tmp/panels-worker-');
-  const token = randomBytes(32).toString('hex');
+  let directory = '';
+  let token = '';
+  let attempt_failure = Promise.withResolvers<never>();
+  void attempt_failure.promise.catch(() => {});
   const servers: Server[] = [];
   const sockets = new Set<Socket>();
   const interrupted = Promise.withResolvers<never>();
-  const failure = (error: unknown) => interrupted.reject(error);
-  const stop = () => failure(new Error('Mac Worker proxy stopped'));
+  let interruption: Error | undefined;
+  const stop = () => {
+    interruption = new Error('Mac Worker proxy stopped');
+    interrupted.reject(interruption);
+  };
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
   // Every reject has an observer before startup performs asynchronous work.
@@ -34,79 +47,115 @@ export async function run_proxy(record_path: string, command: readonly string[])
   let admitted = false;
   let removed = false;
   try {
-    const connected = new Map<Channel, Promise<Socket>>();
-    for (const channel of channels) {
-      const accepted = Promise.withResolvers<Socket>();
-      let selected = false;
-      const server = createServer({ allowHalfOpen: true }, (socket) => {
-        sockets.add(socket);
-        socket.once('close', () => sockets.delete(socket));
-        socket.on('error', failure);
-        let header = Buffer.alloc(0);
-        const authenticate = (chunk: Buffer) => {
-          header = Buffer.concat([header, chunk]);
-          const end = header.indexOf(10);
-          if (end < 0 && header.length <= 128) return;
-          if (end < 0 || header.subarray(0, end).toString('utf8') !== token || selected) {
-            socket.destroy();
-            return;
-          }
-          selected = true;
-          socket.pause();
-          socket.off('data', authenticate);
-          if (header.length > end + 1) socket.unshift(header.subarray(end + 1));
-          accepted.resolve(socket);
-          server.close();
-        };
-        socket.on('data', authenticate);
-      });
-      servers.push(server);
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(join(directory, channel), resolve);
-      });
-      connected.set(channel, accepted.promise);
-    }
-    const plist = join(directory, 'job.plist');
-    await writeFile(
-      plist,
-      job_plist(
-        job.label,
-        [
-          process.execPath,
-          fileURLToPath(new URL('./entry.ts', import.meta.url)),
-          record_path,
-          directory,
-          token,
-          ...command,
-        ],
-        copy_environment(process.env),
-        process.cwd(),
-        { lower_priority: record.worker_priority !== false },
-      ),
-      { mode: 0o600, flag: 'wx' },
-    );
     const deadline = monotonic_seconds() + START_SECONDS;
-    await records.locked(record_path, deadline, async () => {
-      const current = await records.read(record_path);
-      if (current.launch_revoked || current.state === 'complete')
-        throw new Error('Mac Worker launch authorization was revoked');
-      current.launchd_socket_directory = directory;
-      await records.write(record_path, current);
-      admitted = true;
-      // The same record lock surrounds stop/revoke, so a late bootstrap cannot
-      // create a job after cleanup commits its absence receipt.
-      await jobs.bootstrap(job, plist, deadline);
+    const close_transport = async () => {
+      for (const socket of sockets) socket.destroy();
+      await Promise.all(
+        servers
+          .splice(0)
+          .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+      );
+      if (directory) await cleanup_transport(directory);
+    };
+    const ready = await start_worker_job({
+      app: await usable_worker_launcher(launcher_path),
+      command: [
+        process.execPath,
+        fileURLToPath(new URL('./entry.ts', import.meta.url)),
+        record_path,
+      ],
+      notice: (message) => console.warn(message),
+      remove_failed_attempt: async () => {
+        if (interruption) throw interruption;
+        await records.locked(record_path, deadline, async () => {
+          const current = await records.read(record_path);
+          if (current.launch_revoked || current.state === 'complete')
+            throw new Error('Mac Worker launch authorization was revoked');
+          await jobs.stop(job, deadline);
+        });
+        await close_transport();
+      },
+      attempt: async (argv) => {
+        if (interruption) throw interruption;
+        directory = await mkdtemp('/tmp/panels-worker-');
+        token = randomBytes(32).toString('hex');
+        attempt_failure = Promise.withResolvers<never>();
+        void attempt_failure.promise.catch(() => {});
+        const this_attempt_failure = attempt_failure;
+        const failure = (error: unknown) => this_attempt_failure.reject(error);
+        const connected = new Map<Channel, Promise<Socket>>();
+        for (const channel of channels) {
+          const accepted = Promise.withResolvers<Socket>();
+          let selected = false;
+          const server = createServer({ allowHalfOpen: true }, (socket) => {
+            sockets.add(socket);
+            socket.once('close', () => sockets.delete(socket));
+            socket.on('error', failure);
+            let header = Buffer.alloc(0);
+            const authenticate = (chunk: Buffer) => {
+              header = Buffer.concat([header, chunk]);
+              const end = header.indexOf(10);
+              if (end < 0 && header.length <= 128) return;
+              if (end < 0 || header.subarray(0, end).toString('utf8') !== token || selected) {
+                socket.destroy();
+                return;
+              }
+              selected = true;
+              socket.pause();
+              socket.off('data', authenticate);
+              if (header.length > end + 1) socket.unshift(header.subarray(end + 1));
+              accepted.resolve(socket);
+              server.close();
+            };
+            socket.on('data', authenticate);
+          });
+          servers.push(server);
+          await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(join(directory, channel), resolve);
+          });
+          connected.set(channel, accepted.promise);
+        }
+
+        const plist = join(directory, 'job.plist');
+        await writeFile(
+          plist,
+          job_plist(
+            job.label,
+            [...argv, directory, token, ...command],
+            copy_environment(process.env),
+            process.cwd(),
+            { lower_priority: record.worker_priority !== false },
+          ),
+          { mode: 0o600, flag: 'wx' },
+        );
+        const attempt_deadline =
+          argv[0] === process.execPath
+            ? deadline
+            : Math.min(deadline, monotonic_seconds() + WORKER_APP_START_SECONDS);
+        await records.locked(record_path, attempt_deadline, async () => {
+          const current = await records.read(record_path);
+          if (current.launch_revoked || current.state === 'complete')
+            throw new Error('Mac Worker launch authorization was revoked');
+          current.launchd_socket_directory = directory;
+          await records.write(record_path, current);
+          admitted = true;
+          await jobs.bootstrap(job, plist, attempt_deadline);
+        });
+        const connected_sockets = await observe_promise(
+          Promise.race([
+            Promise.all(channels.map((channel) => connected.get(channel)!)),
+            interrupted.promise,
+            attempt_failure.promise,
+          ]),
+          Math.max(0, attempt_deadline - monotonic_seconds()) * 1000,
+        );
+        if (!connected_sockets.completed)
+          throw new Error('Mac Worker transport connection deadline expired');
+        return connected_sockets.value;
+      },
     });
-    const ready = await observe_promise(
-      Promise.race([
-        Promise.all(channels.map((channel) => connected.get(channel)!)),
-        interrupted.promise,
-      ]),
-      AbortSignal.timeout(START_SECONDS * 1000),
-    );
-    if (!ready.completed) throw new Error('Mac Worker transport connection deadline expired');
-    const [input, output, error, control] = ready.value;
+    const [input, output, error, control] = ready;
     process.stdin.pipe(input!);
     output!.pipe(process.stdout, { end: false });
     error!.pipe(process.stderr, { end: false });
@@ -143,7 +192,11 @@ export async function run_proxy(record_path: string, command: readonly string[])
       control!.once('error', reject);
       control!.resume();
     });
-    const code = await Promise.race([outcome, interrupted.promise]);
+    // Only this admission permits entry.ts to spawn the provider. No fallback
+    // occurs after this point, even if the provider exits before registration.
+    if (interruption) throw interruption;
+    control!.write('start\n');
+    const code = await Promise.race([outcome, interrupted.promise, attempt_failure.promise]);
     // A detached marked descendant can retain the provider's stream descriptors.
     // Remove the job and sweep descendants before waiting for their output EOF.
     await records.locked(record_path, monotonic_seconds() + STOP_SECONDS, async () => {
@@ -157,7 +210,7 @@ export async function run_proxy(record_path: string, command: readonly string[])
       await records.write(record_path, current);
       removed = true;
     });
-    await Promise.race([outputs, interrupted.promise]);
+    await Promise.race([outputs, interrupted.promise, attempt_failure.promise]);
     return code;
   } finally {
     process.off('SIGTERM', stop);
