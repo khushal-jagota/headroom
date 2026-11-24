@@ -116,7 +116,7 @@ describe("queued messages in the pane", () => {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const content = body.indexOf("data-conversation-content");
-    const stack = body.indexOf("data-conversation-held-stack");
+    const stack = body.indexOf("data-conversation-held-row");
     expect(content).toBeGreaterThan(-1);
     expect(stack).toBeGreaterThan(content);
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
@@ -124,7 +124,7 @@ describe("queued messages in the pane", () => {
     expect(body).not.toContain("data-anchor-end");
   });
 
-  it("come after the working agent-started turn, whose reason replaces a prompt", () => {
+  it("keep queued messages in the thread below an agent-started turn and its Working line", () => {
     const turn: ConversationViewItem = {
       kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
       settled: false, stopped: false, started_at_unix_milliseconds: 100_000, ending: null,
@@ -157,7 +157,8 @@ describe("queued messages in the pane", () => {
     expect(body).toContain("Working");
     expect(body.indexOf('data-conversation-row="agent_turn_started"')).toBeLessThan(edge);
     expect(edge).toBeGreaterThan(-1);
-    expect(edge).toBeLessThan(body.indexOf("data-conversation-held-stack"));
+    expect(body.indexOf("data-conversation-held-row")).toBeGreaterThan(body.indexOf("data-conversation-content"));
+    expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
   it("offer no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {
@@ -172,7 +173,8 @@ describe("queued messages in the pane", () => {
     // Edit is a click and the tests run without a DOM; the wiring is read from the source.
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
-    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?await onDiscardHeldPrompt\(heldPromptId, true\);[\s\S]*?if \(heldPromptRows\.some\(\(row\) => row\.heldPromptId === heldPromptId\)\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
+    // The write's own answer decides: a message that the server did not discard keeps its words in the thread.
+    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?if \(await onDiscardHeldPrompt\(heldPromptId, true\) === false\) return;[\s\S]*?origin !== conversationId[\s\S]*?composer\.takeBackQueuedWords\(words\);/);
     expect(pane).toContain("bind:this={composerHandle}");
     expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*deliveryMode = "queue";\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
   });

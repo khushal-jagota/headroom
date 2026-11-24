@@ -1,3 +1,4 @@
+import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
 /** Turn and queue controls retain provider receipts before a successor takes ownership. */
 import {
   BackendSteerAccepted,
@@ -372,6 +373,15 @@ async function attempt_steer(
     host.start_admission.persist_bindings(host.options.store.start_admission_database, token),
   );
   try {
+    await host.persist(state, () =>
+      note_pending_owner_sends(
+        host.options.store.start_admission_database,
+        state.record.conversation_id,
+        [message],
+        PromptDeliveryMode.steer,
+        true,
+      ),
+    );
     host.start_admission.bind_source(token, child);
     outcome = await host.native_operation(() =>
       child.steer(token, message.content, {

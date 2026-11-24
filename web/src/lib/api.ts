@@ -1,5 +1,6 @@
 import { clientFetch } from "./clientIdentity";
 import { mutationHeaders } from "./releaseMonitor";
+import { RequestLimitError } from "./requestLimit/limit";
 
 export type JsonValue =
   | null
@@ -17,6 +18,8 @@ export type FetchOptions = {
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /** A request that is slow for a known reason names its own time limit. */
+  limitMs?: number;
   /** Optional response evidence. Domain results and error behavior stay unchanged. */
   responseMetadata?: { decodedBytes?: number };
 };
@@ -43,6 +46,16 @@ function makePlannerError(envelope: JsonObject, status: number): PlannerFetchErr
   });
 }
 
+/** No answer is not a refusal. A write that got no answer can still be saved. */
+function noAnswer(method: string): PlannerFetchError {
+  return new PlannerFetchError(
+    ["GET", "HEAD", "OPTIONS"].includes(method)
+      ? "The server did not answer in time."
+      : "The server did not answer in time. Check the result before another attempt.",
+    "timeout"
+  );
+}
+
 export async function fetchJson<T = unknown>(path: string, options: FetchOptions = {}): Promise<T> {
   let headers: Record<string, string> = { ...(options.headers || {}) };
   const method = (options.method || "GET").toUpperCase();
@@ -61,13 +74,14 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   }
 
   let response: Response;
+  let raw: string;
   try {
-    response = await clientFetch(path, init);
-  } catch {
+    response = await clientFetch(path, init, options.limitMs);
+    raw = await response.text();
+  } catch (error) {
+    if (error instanceof RequestLimitError) throw noAnswer(method);
     throw new PlannerFetchError("network error", "network");
   }
-
-  const raw = await response.text();
   if (options.responseMetadata) {
     options.responseMetadata.decodedBytes = new TextEncoder().encode(raw).byteLength;
   }

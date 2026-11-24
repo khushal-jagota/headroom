@@ -228,8 +228,8 @@ describe("the credential request", () => {
     });
     expect(body).not.toContain("Needs a key");
     expect(body).not.toMatch(/class="key-request[^"]*is-ask/);
-    // The shared system line with its hanging dot, in the Decline button's word.
-    expect(body.replace(/<!--[^]*?-->/g, "")).toMatch(/<div class="cv-system-line[^"]*is-hanging[^"]*"[^>]*data-credential-record[^]*>Sentry API key · <span class="saved-name[^"]*">SENTRY_AUTH_TOKEN<\/span> · Declined</);
+    // The shared system line with its trailing dot, in the Decline button's word.
+    expect(body.replace(/<!--[^]*?-->/g, "")).toMatch(/<div class="cv-system-line[^"]*"[^>]*data-credential-record[^]*>Sentry API key · <span class="saved-name[^"]*">SENTRY_AUTH_TOKEN<\/span> · Declined</);
     expect(body).not.toContain("Rejected");
   });
 });

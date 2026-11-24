@@ -118,7 +118,7 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
   expect(held.map((row: JsonObject) => row.text)).toEqual(['queued message 1', 'queued message 2']);
   const [discardId, promoteId] = held.map((row: JsonObject) => row.held_prompt_id);
   const context = await newContext();
-  const page = await openTicketConversation(server, ticketId, context, '[data-conversation-held-stack]');
+  const page = await openTicketConversation(server, ticketId, context, '[data-conversation-content] [data-conversation-held-row]');
   await expect(page.locator('[data-conversation-held-row]')).toHaveCount(2);
   const discardedResponse = page.waitForResponse(
     (response) =>

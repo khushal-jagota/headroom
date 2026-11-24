@@ -76,11 +76,6 @@ export const operator_commands: OperatorTable = {
   run: definition('run', 'environment', async () => (await import('./run_cli.ts')).environment_run),
   serve: definition('serve', null, async () => (await import('../lifecycle/cli.ts')).serve),
   restart: definition('restart', null, async () => (await import('../lifecycle/cli.ts')).restart),
-  'server-event-loop-tasks': definition(
-    'server-event-loop-tasks',
-    null,
-    async () => (await import('../lifecycle/cli.ts')).server_event_loop_tasks,
-  ),
   watchdog: definition(
     'watchdog',
     'stalls',

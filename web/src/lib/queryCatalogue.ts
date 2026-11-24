@@ -5,6 +5,7 @@ import { serverMoveActive } from "./machines/logic/serverMove";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
+import { USAGE_SCAN_LIMIT_MS } from "./requestLimit/config";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { readUsageLimits, usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
@@ -13,8 +14,6 @@ import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   ChiefManagementSettings,
   EmployeeConfigurationSnapshot,
-  ManagerPrincipal,
-  ManagerChildFilter,
   NotificationSettingsResponse,
   ProjectsResponse,
   SkillsHomeResponse,
@@ -22,7 +21,6 @@ import type {
   ManagerWorkspace,
   ManagerWorkspaceContent,
   TicketDetail,
-  TicketSummariesResponse,
   WorkerManagementDetail,
   WorkersResponse
 } from "./types";
@@ -93,7 +91,7 @@ export const queries = {
     queryKey: ["usage-limits", machineId], queryFn: () => readUsageLimits(machineId), retry: false
   }),
   recordedUsage: (input: UsageSummaryInput) => ({
-    ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
+    ...resourceQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input), false, USAGE_SCAN_LIMIT_MS),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
     meta: { resourceBody: true, followsChangeStream: false },
     retry: false,
@@ -101,11 +99,6 @@ export const queries = {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false
   }),
-  managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
-    jsonQuery<TicketSummariesResponse>(
-      ["tickets", "manager", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
-    ),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>

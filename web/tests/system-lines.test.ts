@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
 import UserMessage from "../src/components/conversation/UserMessage.svelte";
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
@@ -56,7 +56,6 @@ describe("a turn's status line", () => {
     const html = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", rateLimited)!, role: "alert" } }).body;
     expect(html).toContain('data-conversation-system-line="start"');
     expect(html).toContain('data-conversation-system-mark="failure"');
-    expect(html).toContain("is-hanging");
     expect(html).toMatch(/This turn failed<span aria-hidden="true">( · )<\/span><span data-conversation-status-next="">The model's rate limit was reached\. It resets in 41m<\/span>/);
     // The real next step comes before Details; the backend's words wait closed behind Details.
     expect(html.indexOf("data-conversation-status-choose-model")).toBeGreaterThan(-1);
@@ -90,6 +89,23 @@ describe("a turn's status line", () => {
     expect(running).toContain('data-conversation-system-mark="spinner"');
     expect(running).toContain('data-conversation-alive-word="">Working</span>');
   });
+
+  // The spinner follows the server's word that the turn runs, not the rhythm of live frames:
+  // a quiet tool run sends none for far longer than the 2 s it used to be allowed.
+  afterEach(() => vi.useRealTimers());
+  it("a running turn with no update for 30 s still turns; a turn that is no longer running draws no spinner", () => {
+    vi.useFakeTimers();
+    const props = { settled: false, startedAtUnixMilliseconds: Date.now() };
+    const first = render(TurnAnchor, { props }).body;
+    vi.advanceTimersByTime(30_000);
+    const quiet = render(TurnAnchor, { props }).body;
+    for (const html of [first, quiet]) {
+      expect(html).toContain("is-turning");
+      expect(html).not.toContain("data-conversation-alive-fresh");
+    }
+    expect(render(TurnAnchor, { props: { ...props, activityUncertain: true } }).body).not.toContain("is-turning");
+    expect(render(TurnAnchor, { props: { settled: true, durationSeconds: 30 } }).body).not.toContain("is-turning");
+  });
 });
 
 describe("a message's system lines", () => {
@@ -118,13 +134,13 @@ describe("a message's system lines", () => {
     }
   });
 
-  it("a message the offline Mac turned away is not delivered, in its bubble, with Resend and the server's words", () => {
+  it("a message the offline Mac turned away is not delivered, in its bubble, with Try Again and the server's words", () => {
     const local = { messageId: "m1", content: words, senderLabel: "owner", mode: "queue" as const, sentAtUnixMilliseconds: 1,
       knownFate: "machine_offline" as const, refusal: { reason: "The Mac is offline", detail: "Mac Tickets cannot start: no compatible Mac executor has leased yet" } };
-    const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner" } }).body;
+    const html = render(UserMessage, { props: { local, conversationId: "c", ownSenderLabel: "owner", onSendAgain: () => undefined } }).body;
     expect(html).toMatch(/class="c2-bubble[^"]*is-failed/);
     expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
-    expect(html).toMatch(/data-conversation-held-send-again="m1"[^>]*>Resend</);
+    expect(html).toMatch(/data-conversation-held-send-again="m1"[^>]*>Try Again</);
     expect(html).toContain("Mac Tickets cannot start");
   });
 
@@ -167,7 +183,7 @@ describe("the room under a message for its hover row", () => {
       status: { turn_key: null, pending_permission: null, pending_user_input: null, ...status }, discardedBodies: 0, openTools: new SvelteSet<string>(),
       isExpanded: () => false, expand: async () => {}, load: async () => {}, textBodyReady: () => {}, failTextRestoration: () => {}, body: async () => "", receipts: async () => ({ receipts: [] })
     } as unknown as ConversationViewReader;
-    const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner", livenessPulse: 0 } }).body;
+    const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner" } }).body;
     return { html, gaps: [...html.matchAll(/data-conversation-view-key="([^"]+)"[^>]*data-rhythm="([^"]+)"/g)].map(([, key, rhythm]) => `${key}:${rhythm}`) };
   }
   it("puts a turn's gap after every message, also between two agent messages", () => {

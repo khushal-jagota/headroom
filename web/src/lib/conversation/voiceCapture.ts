@@ -12,6 +12,7 @@ import { clientFetch } from "../clientIdentity";
  */
 
 import { mutationHeaders } from "../releaseMonitor";
+import { VOICE_TRANSCRIPTION_LIMIT_MS } from "../requestLimit/config";
 import { CONVERSATION_BASE } from "./wire";
 
 export type VoiceCaptureState =
@@ -42,6 +43,7 @@ export async function postVoiceTranscription(
 ): Promise<VoiceTranscriptionResult> {
   const headers = await mutationHeaders({ "Content-Type": "application/json" });
   let response: Response;
+  let raw: string;
   try {
     response = await clientFetch(
       `${CONVERSATION_BASE}/voice-transcriptions`,
@@ -50,13 +52,14 @@ export async function postVoiceTranscription(
         headers,
         body: JSON.stringify(body),
         signal
-      }
+      },
+      VOICE_TRANSCRIPTION_LIMIT_MS
     );
+    raw = await response.text();
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new VoiceTranscriptionError("The server could not be reached.");
   }
-  const raw = await response.text();
   if (response.ok) {
     try {
       const parsed = JSON.parse(raw) as { transcript?: unknown };

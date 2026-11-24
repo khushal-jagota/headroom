@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   /** The Chief of Staff's conversation, wherever the Chief is shown.
    *
    * There is nothing here a Ticket does not also have: the same pane, the same two doors,
@@ -84,9 +85,7 @@
   });
 
   async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body});
-    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
-    return delivered;
+    return postOwnerSend("/api/chief/conversation/send", body);
   }
   async function newConversation():Promise<void> {
     await mutateJson("/api/chief/conversation/reset",{method:"POST"});

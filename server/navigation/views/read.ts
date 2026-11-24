@@ -27,7 +27,7 @@ const identity = (key: Key): string => compact(key);
 function sortPairs(left: Key, right: Key): number {
   return binaryCompare(left[0], right[0]) || binaryCompare(left[1], right[1]);
 }
-function continuity(sql: ReadSql): Continuity {
+export function continuity(sql: ReadSql): Continuity {
   const source = coverage(sql);
   const meta = sql.get<{
     projection_version: number;

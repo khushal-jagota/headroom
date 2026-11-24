@@ -7,12 +7,9 @@
    * was. When an ask is waiting the whole box gives way to it, because until it is
    * answered there is nothing else this composer could usefully do.
    *
-   * Pressing Enter empties the box there and then and the box stays typeable, because the
-   * message is already gone as far as the person is concerned — only the send control says
-   * anything is still happening. If the send turns out not to have gone anywhere, its text,
-   * pictures and run choices come back exactly as they were, with the cursor at the end;
-   * unless something else has been composed in the meantime, in which case that draft is
-   * what matters and the error under the box is the whole of the news.
+   * Pressing Enter puts the current draft into the conversation and leaves the box open
+   * for the next message. Uploads can keep running after the draft leaves the box.
+   * Edit can take back the outgoing text and attachments when the next draft is empty.
    *
    * Writing a catalog token starts the message with slash, dollar, or at. While the cursor
    * is still inside that first word the eligible catalog entries are offered under it.
@@ -102,6 +99,8 @@
     draftKey,
     uploadDestination = null,
     reconcileLocalSend = async () => false,
+    onPendingSends,
+    onMessageComposed,
     backendKey = null,
     conversationExists = false,
     running = false,
@@ -130,6 +129,7 @@
     undeliveredReason = null,
     placeholder = "Message the agent...",
     disabled = false,
+    sendAvailable = true,
     showRunPicker = true,
     onSend,
     onStop,
@@ -147,6 +147,10 @@
     draftKey: string;
     uploadDestination?: UploadDestination | null;
     reconcileLocalSend?: (messageId: string) => Promise<boolean>;
+    /** The transcript draws the browser-owned send until transport takes over. */
+    onPendingSends?: (entries: readonly PendingComposerSend[]) => void;
+    /** A valid message left the draft. Opens a closed conversation before any upload settles. */
+    onMessageComposed?: () => void;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -202,6 +206,7 @@
     undeliveredReason?: string | null;
     placeholder?: string;
     disabled?: boolean;
+    sendAvailable?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
     showRunPicker?: boolean;
     onSend: (
@@ -214,7 +219,7 @@
     onAnswer?: (optionId: string) => void;
     onSubmitUserInput?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
     onCancelTurn?: () => void;
-    onDiscardHeldPrompt?: (heldPromptId: string) => Promise<void> | void;
+    onDiscardHeldPrompt?: (heldPromptId: string) => Promise<unknown> | void;
     onPromoteHeldPrompt?: (
       heldPromptId: string,
       mode: "send_now" | "steer"
@@ -270,14 +275,18 @@
   let pendingImages = $state<PendingConversationImage[]>([]);
   let pendingFiles = $state<PendingConversationFile[]>([]);
   let pendingVideos = $state.raw<PendingVideo[]>(untrack(() => recallDraftVideo(draftKey)));
-  let localSends = $state.raw<PendingComposerSend[]>([]);
+  let localSends: PendingComposerSend[] = [];
   let restoredSendContext: ComposerSendContext | null = null;
   let nextVideoId = untrack(() => Math.max(1, ...pendingVideos.map((attachment) => attachment.id + 1)));
   let localStorageKey = untrack(() => draftKey);
   const transfers = new AttachmentTransfers(videoUploadAdapter, videoChanged);
   const makeSendQueue = () => new LocalComposerSends(async (entry, content) => {
     if (destroyed) return false;
-    return onSend(content, entry.mode, entry.attempt.carriedRunValues, entry.context);
+    return onSend(content, entry.mode, entry.attempt.carriedRunValues, {
+      ...entry.context,
+      sentAtUnixMilliseconds: entry.sentAtUnixMilliseconds ?? entry.context.sentAtUnixMilliseconds,
+      attachmentNames: (entry.attempt.draftBeforeSend.pendingVideos ?? []).map(video => video.fileName)
+    });
   }, videoChanged);
   let sendQueue = makeSendQueue();
   function rememberCurrentUploadDraft(): void {
@@ -292,6 +301,7 @@
     rememberCurrentUploadDraft();
     rememberLocalSends(localStorageKey, localSends);
     releaseRemovedLocalSends(previousEntries, localSends);
+    onPendingSends?.(localSends);
     void sendQueue.pump();
   }
   async function restoreLocalState(): Promise<void> {
@@ -302,7 +312,7 @@
     attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
     sendQueue.entries = recallLocalSends(localStorageKey);
     for (const entry of sendQueue.entries) reserveLocalSend(entry);
-    localSends = [...sendQueue.entries];
+    videoChanged();
     for (const entry of [...sendQueue.entries]) {
       if (entry.phase !== "dispatching") continue;
       try {
@@ -333,6 +343,7 @@
       transfers.dispose(); sendQueue.dispose();
       releasePendingImages(pendingImages);
       pendingImages = []; pendingFiles = []; pendingVideos = []; attachmentOrder = [];
+      restoredSendContext = null;
       localStorageKey = key; sendQueue = makeSendQueue();
       void restoreLocalState();
     });
@@ -419,7 +430,6 @@
    *  once the draft is empty again, so it never flickers between the two while typing. */
   let draftWraps = $state(false);
   let compact = $derived(!draftWraps && attachments.length === 0 && voiceState.phase === "idle");
-  $effect(() => { if (text === "") draftWraps = false; });
   // The composer stays usable under a waiting ask (owner): the ask is answered in its own
   // shell, and a message still goes as the delivery chip says.
   let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
@@ -468,7 +478,7 @@
     startsOnModel,
     startsOnReasoningEffort,
     inputDisabled: inputDisabled || questionUploadBusy,
-    hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
+    hasSendableContent: sendAvailable && (text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0),
     sendsInFlight,
     deliveryMode,
     supportsSteer,
@@ -624,27 +634,42 @@
       // A pending question keeps this send on the answer path.
       return;
     }
+    if (!sendAvailable) return;
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
     const capturedRetryContext = restoredSendContext;
-    restoredSendContext = null;
-    // The mode the controls show, which is the person's choice only while a turn runs.
     const capturedMode = runControlsView.deliveryMode;
-    const capturedConversationId = conversationId;
-    const capturedDestination = uploadDestination ? {...uploadDestination} : undefined;
-    const attempt = beginComposerSend(
-      currentComposerDraft(),
-      runControlsView.carriedRunValues
-    );
+    const attempt = beginComposerSend(currentComposerDraft(), runControlsView.carriedRunValues);
+    let pending: PendingComposerSend | null = null;
+    if ((attempt.draftBeforeSend.pendingVideos?.length ?? 0) > 0 || sendQueue.entries.length > 0) {
+      const sentAtUnixMilliseconds = Date.now();
+      const messageId = capturedRetryContext?.messageId ?? mintOutgoingMessage({
+        content: [...attempt.content], mode: capturedMode, senderLabel: "owner", sentAtUnixMilliseconds
+      }).messageId;
+      pending = {
+        context: capturedRetryContext ?? {
+          messageId,
+          expectedConversationId: conversationId,
+          destination: uploadDestination ? {...uploadDestination} : undefined
+        },
+        attempt,
+        mode: capturedMode,
+        phase: "waiting",
+        sentAtUnixMilliseconds
+      };
+      if (!reserveLocalSend(pending)) return;
+    }
+    restoredSendContext = null;
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
     releasePendingImages(attempt.draftBeforeSend.pendingImages);
     intakeError = null;
-    if ((attempt.draftBeforeSend.pendingVideos?.length ?? 0) > 0 || sendQueue.entries.length > 0) {
-      const messageId = capturedRetryContext?.messageId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-      const entry: PendingComposerSend = {context: capturedRetryContext ?? {messageId, expectedConversationId: capturedConversationId, destination: capturedDestination}, attempt, mode: capturedMode, phase: "waiting"};
-      if (!reserveLocalSend(entry)) { await restoreRefusedAttempt(attempt); return; }
-      sendQueue.enqueue(entry);
+    onMessageComposed?.();
+    void tick().then(() => {
+      if (!destroyed && !inputDisabled) returnFocusToTheField();
+    });
+    if (pending) {
+      sendQueue.enqueue(pending);
       return;
     }
     sendsInFlight += 1;
@@ -740,37 +765,87 @@
     if (!reserveOutgoingMessageFiles(message)) { releaseOutgoingMessageImages(message.messageId); intakeError = "Wait for an outstanding file message to reach the conversation."; return false; }
     return true;
   }
-  async function recoverLocalSend(entry: PendingComposerSend, removeVideo = false): Promise<void> {
-    if (entry.phase === "dispatching") return;
-    if (entry.needsReconciliation) {
-      try {
-        if (await reconcileLocalSend(entry.context.messageId)) { sendQueue.remove(entry.context.messageId); return; }
-        entry.needsReconciliation = false;
-      } catch { entry.error = "The earlier send could not be checked. Wait for the conversation to reconnect before returning it to the composer."; videoChanged(); return; }
-    }
-    entry.phase = "interrupted"; // Explicitly removes the automatic-send intent.
-    if (removeVideo) {
-      for (const video of entry.attempt.draftBeforeSend.pendingVideos ?? []) transfers.remove(video);
-      entry.attempt = {...entry.attempt,
-        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload"),
-        draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingVideos: [], attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind !== "video")}};
-    }
-    const restoration = restoreRefusedComposerSend(currentComposerDraft(), entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight);
-    // An earlier interrupted draft may be returned once the newer draft is empty.
-    const empty = text === "" && !pendingImages.length && !pendingFiles.length && !pendingVideos.length;
-    const result = restoration.restored ? restoration : empty
-      ? restoreRefusedComposerSend({...entry.attempt.draftAfterSend}, entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight) : restoration;
-    if (result.restored) {
-      for (const video of result.draft.pendingVideos ?? []) {
-        if (video.uploadId && video.phase === "ready") { video.phase = "validating"; void transfers.validate(video); }
+  async function pendingSendForAction(messageId: string): Promise<PendingComposerSend | null> {
+    const queue = sendQueue;
+    const entry = queue.entries.find(candidate => candidate.context.messageId === messageId);
+    if (!entry || entry.phase === "dispatching") return null;
+    if (!entry.needsReconciliation) return entry;
+    try {
+      const alreadyDispatched = await reconcileLocalSend(messageId);
+      if (destroyed || sendQueue !== queue || !queue.entries.includes(entry)) return null;
+      if (alreadyDispatched) { queue.remove(messageId); return null; }
+      entry.needsReconciliation = false;
+      return entry;
+    } catch {
+      if (!destroyed && sendQueue === queue) {
+        entry.error = "Panels could not check the earlier send. Try again when the connection returns.";
+        videoChanged();
       }
-      restoredSendContext = {...entry.context};
-      applyComposerDraft(result.draft); nextImageId = result.nextImageId; nextFileId = result.nextFileId;
-      sendQueue.remove(entry.context.messageId);
-      releaseOutgoingMessageImages(entry.context.messageId); releaseOutgoingMessageFiles(entry.context.messageId);
-      void tick().then(() => returnFocusToTheField());
-    } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
+      return null;
+    }
+  }
+
+  export async function retryPendingSend(messageId: string): Promise<boolean> {
+    const queue = sendQueue;
+    const entry = await pendingSendForAction(messageId);
+    if (!entry || destroyed || sendQueue !== queue || !queue.entries.includes(entry) || entry.phase === "dispatching") return false;
+    const videos = entry.attempt.draftBeforeSend.pendingVideos ?? [];
+    if (entry.needsReattachment || videos.some(video => (video.phase === "failed" || video.phase === "interrupted") && !video.file))
+      return restorePendingSend(entry);
+
+    const restoringTokens = entry.phase === "interrupted";
+    entry.phase = "waiting";
+    entry.error = undefined;
+    for (const video of videos) {
+      if ((video.phase === "failed" || video.phase === "interrupted") && video.file) void transfers.start(video);
+      else if (restoringTokens && video.uploadId && video.phase === "ready") {
+        video.phase = "validating";
+        void transfers.validate(video);
+      }
+    }
     videoChanged();
+    return true;
+  }
+
+  export async function editPendingSend(messageId: string): Promise<boolean> {
+    const queue = sendQueue;
+    const entry = await pendingSendForAction(messageId);
+    if (!entry || destroyed || sendQueue !== queue || !queue.entries.includes(entry) || entry.phase === "dispatching") return false;
+    return restorePendingSend(entry);
+  }
+
+  function restorePendingSend(entry: PendingComposerSend): boolean {
+    const empty = text === "" && !attachments.length && voiceState.phase === "idle";
+    if (!empty || inputDisabled || takenOver) {
+      entry.error = "Your newer draft is kept. Finish it before editing this message.";
+      videoChanged();
+      return false;
+    }
+    const restored = restoreRefusedComposerSend(entry.attempt.draftAfterSend, entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight);
+    if (!restored.restored) return false;
+    entry.phase = "interrupted";
+    for (const video of restored.draft.pendingVideos ?? []) {
+      if (video.uploadId && video.phase === "ready") {
+        video.phase = "validating";
+        void transfers.validate(video);
+      }
+    }
+    // Edit starts a new send and keeps the original destination for the retained upload tokens.
+    const { messageId } = mintOutgoingMessage({
+      content: [...entry.attempt.content], senderLabel: "owner", mode: entry.mode
+    });
+    const { expectedConversationId, destination } = entry.context;
+    restoredSendContext = {messageId, expectedConversationId, destination};
+    deliveryMode = entry.mode;
+    applyComposerDraft(restored.draft);
+    nextImageId = restored.nextImageId;
+    nextFileId = restored.nextFileId;
+    nextVideoId = Math.max(nextVideoId, ...(restored.draft.pendingVideos ?? []).map(video => video.id + 1));
+    if (entry.needsReattachment || restored.draft.pendingVideos?.some(video => !video.file && (video.phase === "interrupted" || video.phase === "failed")))
+      intakeError = "Select the missing attachments again before sending.";
+    sendQueue.remove(entry.context.messageId);
+    void tick().then(() => returnFocusToTheField());
+    return true;
   }
   function videoProgress(video: PendingVideo): string {
     return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / Math.max(1, video.byteCount) * 100)}%`
@@ -930,33 +1005,90 @@
 
   let boxElement = $state<HTMLDivElement | null>(null);
 
+  /** The draft's shape is decided here, before Svelte writes the new text and layout to the
+   *  page, so the old positions can still be read when the move is drawn. Words that wrap
+   *  or break grow the box; it returns to one line only when the draft is empty. A change of
+   *  width alone is still found by resizeWritingArea. */
+  $effect.pre(() => {
+    const draft = text;
+    untrack(() => {
+      if (draft === "") { draftWraps = false; return; }
+      const input = inputElement;
+      if (draftWraps || input === null || input.hidden || input.getClientRects().length === 0) return;
+      const style = getComputedStyle(input);
+      if (!Number.isFinite(Number.parseFloat(style.lineHeight))) return;
+      if (textareaMeasurement?.input !== input) {
+        textareaMeasurement?.dispose();
+        textareaMeasurement = createComposerTextareaMeasurement(input);
+      }
+      if (draft.includes("\n") || textareaMeasurement.measure(style, draft).growth > 0) draftWraps = true;
+    });
+  });
+
   /** The box morphs between its shapes (one line, two rows, an ask) rather than jumping: its
-   *  height is read before the change and eased from there to its new natural height. The
-   *  words inside are laid out at once; only the frame travels. */
+   *  height, the draft and every control are read before the change and eased from there to
+   *  where they land, over one duration. The draft's height is settled in the new layout
+   *  before the landing place is read, so nothing moves a second time. */
+  const MORPH_MS = 220;
+  const MORPH_EASING = "cubic-bezier(.2,.7,.3,1)";
   let morphFrom: number | null = null;
-  let morphAnimation: Animation | null = null;
+  let moversFrom = new Map<Element, DOMRect>();
+  let morphAnimations: Animation[] = [];
+  function movers(box: HTMLElement): HTMLElement[] {
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    return [inputElement, ...Array.from(foot?.children ?? [])].filter(
+      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
+    );
+  }
   $effect.pre(() => {
     compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
-    untrack(() => { morphFrom = boxElement?.isConnected ? boxElement.getBoundingClientRect().height : null; });
+    untrack(() => {
+      const box = boxElement?.isConnected ? boxElement : null;
+      morphFrom = box?.getBoundingClientRect().height ?? null;
+      moversFrom = new Map(box === null ? [] : movers(box).map((element) => [element, element.getBoundingClientRect()]));
+    });
   });
   $effect(() => {
     compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
     untrack(() => {
       const box = boxElement;
       const from = morphFrom;
+      const rects = moversFrom;
       morphFrom = null;
+      moversFrom = new Map();
+      for (const animation of morphAnimations) animation.cancel();
+      morphAnimations = [];
+      resizeWritingArea();
       if (box === null || from === null || !box.isConnected) return;
       if (panelTakesTheBox && !animateAskEntrance) return;
       if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-      morphAnimation?.cancel();
       const to = box.getBoundingClientRect().height;
-      if (Math.abs(to - from) < 1) return;
+      // The box's own animation starts first, so each landing place is read with the box at
+      // its starting height. A draft centred in a shrinking box, or controls hung from its
+      // bottom, are then drawn from exactly where they stood.
       box.style.overflow = "clip";
-      const animation = box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)" });
-      morphAnimation = animation;
-      const release = (): void => { if (morphAnimation === animation) { box.style.removeProperty("overflow"); morphAnimation = null; } };
-      animation.onfinish = release;
-      animation.oncancel = release;
+      const grow = Math.abs(to - from) < 1 ? null
+        : box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: MORPH_MS, easing: MORPH_EASING });
+      const slides = movers(box).flatMap((element) => {
+        const before = rects.get(element);
+        if (before === undefined) return [];
+        const after = element.getBoundingClientRect();
+        const dx = before.left - after.left;
+        const dy = before.top - after.top;
+        return Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 ? [] : [element.animate(
+          [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }],
+          { duration: MORPH_MS, easing: MORPH_EASING }
+        )];
+      });
+      const running = grow === null ? slides : [grow, ...slides];
+      morphAnimations = running;
+      const release = (): void => {
+        if (morphAnimations !== running) return;
+        box.style.removeProperty("overflow");
+        morphAnimations = [];
+      };
+      if (running.length === 0) release();
+      else void Promise.all(running.map((animation) => animation.finished)).then(release, release);
     });
   });
 
@@ -1018,6 +1150,27 @@
       if (!destroyed && !inputDisabled && (active === null || active === document.body)) returnFocusToTheField();
     });
   });
+  export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
+    if (text !== "" || attachmentIntakesInFlight > 0 || attachments.length > 0 || voiceState.phase !== "idle") return false;
+    if (content.some(piece => piece.piece === "video_upload" || piece.piece === "attachment_upload")) return false;
+    const images = restoredPendingImages(content, nextImageId);
+    const files = restoredPendingFiles(content, nextFileId);
+    let imageIndex = 0;
+    let fileIndex = 0;
+    const order: ComposerAttachmentReference[] = [];
+    for (const piece of content) {
+      if (piece.piece === "image") order.push({kind: "image", id: images.images[imageIndex++]!.id});
+      if (piece.piece === "file") order.push({kind: "file", id: files.files[fileIndex++]!.id});
+    }
+    pendingImages = images.images;
+    pendingFiles = files.files;
+    nextImageId = images.nextId;
+    nextFileId = files.nextId;
+    attachmentOrder = order;
+    takeBackQueuedWords(content.flatMap(piece => piece.piece === "text" ? [piece.text] : []).join("\n\n"));
+    return true;
+  }
+
   /** v11 (4): a queued message taken back to edit: its words come into the field, after
    *  anything already written there, and the cursor waits at their end. They were queued,
    *  so the composer sends them with Queue again unless the person picks another mode. */
@@ -1150,6 +1303,7 @@
       destroyed = true;
       transfers.dispose();
       sendQueue.dispose();
+      onPendingSends?.([]);
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
@@ -1175,29 +1329,6 @@
   data-conversation-composer
 >
   <div class="chat-box-stack">
-    {#each localSends as entry (entry.context.messageId)}
-      <article class="chat-local-send" data-local-video-send={entry.context.messageId} aria-label="Local pending message">
-        {#if entry.attempt.draftBeforeSend.text}<p class="chat-local-send-text">{entry.attempt.draftBeforeSend.text}</p>{/if}
-        {#each entry.attempt.draftBeforeSend.pendingVideos ?? [] as video}
-          <div class="chat-local-send-file">{video.fileName} · <span role="status">{videoProgress(video)}</span></div>
-          {#if video.phase === "failed" && video.file && entry.phase === "waiting"}
-            <button type="button" class="cv-btn cv-btn--ghost" onclick={() => void transfers.start(video)}>Retry</button>
-          {/if}
-        {/each}
-        <div class="chat-local-send-state" role="status">{entry.error || (entry.phase === "dispatching" ? "Sending…" : entry.phase === "interrupted" ? "Kept in this browser · review before sending" : "Pending in this browser · not sent yet")}</div>
-        {#if entry.phase !== "dispatching"}
-          <div class="chat-local-send-actions">
-            {#if entry.phase === "failed" && !entry.needsReconciliation}
-              <button type="button" class="cv-btn cv-btn--secondary" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
-            {/if}
-            <button type="button" class="cv-btn cv-btn--ghost" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
-            {#if entry.attempt.draftBeforeSend.pendingVideos?.length}
-              <button type="button" class="cv-btn cv-btn--ghost" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
-            {/if}
-          </div>
-        {/if}
-      </article>
-    {/each}
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
@@ -1468,23 +1599,6 @@
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
-
-  /* A message only this browser holds (a video still uploading, a send to be checked): a quiet
-     note over the composer, its words in the body tone, its state a step quieter. */
-  .chat-local-send {
-    display: grid;
-    gap: var(--cv-s1);
-    padding: var(--cv-s3) var(--cv-s4);
-    border-radius: var(--cv-r-lg);
-    background: var(--cv-well);
-    color: var(--cv-t3);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
-  }
-  .chat-local-send-text { margin: 0; white-space: pre-wrap; color: var(--cv-t1); font-size: var(--cv-type-ui); line-height: var(--cv-leading-ui); }
-  .chat-local-send-file { color: var(--cv-t2); }
-  .chat-local-send-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s1); margin: var(--cv-s1) 0 0 calc(var(--cv-s3) * -1); }
 
   /* --- drag over: the whole shell becomes the place to drop ---------------------------------- */
   /* The shell takes the accent wash and the words "Drop to attach" stand alone in its middle;

@@ -5,13 +5,13 @@
   import { READING_COLUMN_CLEARANCE_PX, TOOLTIP_DELAY_MS } from "../../lib/desktopWindow/config";
   import { isDesktopWindow, keyTogglesWindowSidebar, toggleWindowSidebar, windowSidebar } from "../../lib/desktopWindow/windowState.svelte";
 
-  let { reviewCount }: { reviewCount: number } = $props();
+  let { reviewCount, unreachable = false }: { reviewCount: number; unreachable?: boolean } = $props();
 
   const shown = isDesktopWindow();
   let controls = $state<HTMLElement | null>(null);
   let tipShown = $state(false);
   let tipTimer: ReturnType<typeof setTimeout> | undefined;
-  const sidebarLabel = $derived(windowSidebar.hidden ? "Show sidebar" : "Hide sidebar");
+  const sidebarLabel = $derived((windowSidebar.hidden ? "Show sidebar" : "Hide sidebar") + (windowSidebar.hidden && unreachable ? " — cannot reach Panels" : ""));
 
   function toggle(): void {
     hideTip();
@@ -62,13 +62,18 @@
       data-window-sidebar-button onclick={toggle} onpointerenter={showTipSoon} onpointerleave={hideTip}>
       <!-- The macOS sidebar glyph (sidebar.left) at its native 18x14 size and stroke. -->
       <svg viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><rect x="0.65" y="0.65" width="16.7" height="12.7" rx="3" /><path d="M6.5 0.9v12.2" /><path d="M2.6 3.6h1.9M2.6 5.8h1.9M2.6 8h1.9" /></svg>
-      {#if reviewCount > 0}<span class="window-review-pip" class:window-review-pip--shown={windowSidebar.hidden} aria-hidden={!windowSidebar.hidden} data-window-review-pip>{reviewCount}</span>{/if}
+      <span class="window-offline-dot" class:window-offline-dot--shown={windowSidebar.hidden && unreachable} aria-hidden="true" data-window-offline-dot></span>
+      {#if reviewCount > 0 && !unreachable}<span class="window-review-pip" class:window-review-pip--shown={windowSidebar.hidden} aria-hidden={!windowSidebar.hidden} data-window-review-pip>{reviewCount}</span>{/if}
     </button>
     <span class="window-tooltip" class:window-tooltip--shown={tipShown} aria-hidden="true">{sidebarLabel}<kbd>⌃⌘S</kbd></span>
   </div>
 {/if}
 
 <style>
+  .window-offline-dot { position:absolute; top:var(--space-1); right:calc(var(--space-1) - var(--border-hairline)); width:var(--desktop-status-dot-size); height:var(--desktop-status-dot-size); border-radius:var(--radius-pill); background:var(--accent-error); box-shadow:0 0 0 var(--desktop-status-dot-ring) var(--surface-1); pointer-events:none; opacity:0; transform:scale(var(--rail-grip-rest-scale)); transition:opacity var(--motion-base) var(--motion-ease), transform var(--motion-base) var(--motion-ease); }
+  .window-offline-dot--shown { opacity:1; transform:none; }
+  @media (prefers-reduced-motion: reduce) { .window-offline-dot { transition:none; } }
+
   .window-drag-region { position:absolute; top:0; left:0; right:0; height:var(--window-top-row); -webkit-app-region:drag; }
   /* The lights and the button share one centre line, the row's middle (y 26). The button
      starts where a native toolbar's first control starts (x 96), a clear gap after the lights. */

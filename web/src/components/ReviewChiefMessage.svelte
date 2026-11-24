@@ -1,142 +1,48 @@
 <script lang="ts">
-  import {onMount,untrack} from 'svelte';
-  import {pendingUploadsAsPieces,restoredPendingUploads,openAttachmentDraft,clearAttachmentDraft} from '../lib/conversation/videoUploads/uploads';
-  import type {PendingAttachment,UploadDestination} from '../lib/conversation/videoUploads/contracts';
+  import { onMount, untrack } from 'svelte';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
-  import {PlannerFetchError} from '../lib/api';
-  import {mutateJson} from '../lib/mutate';
-  import {navigationApplication} from '../lib/navigation/application.svelte';
+  import ReviewOutgoingReplies from './ReviewOutgoingReplies.svelte';
+  import ErrorLine from './ErrorLine.svelte';
+  import { workspaceAddress } from '../lib/workspaceAddress';
+  import { reviewReplyComposer } from '../lib/review/replyComposer.svelte';
+  import { chiefDraftKey, chiefAttachmentDraftId, chiefAttemptKey, chiefAttemptMetadataKey, readChiefPointer } from '../lib/review/chiefMessage';
 
-  import {workspaceAddress} from '../lib/workspaceAddress';
-  import {readComposerDraft,writeComposerDraft} from '../lib/conversation/composerDraft';
-  import {mintOutgoingMessage} from '../lib/conversation/outgoing';
-  import {pendingImagesAsPieces,restoredPendingImages,releasePendingImages,type PendingConversationImage} from '../lib/conversation/pendingImages';
-  import {pendingFilesAsPieces,restoredPendingFiles,type PendingConversationFile} from '../lib/conversation/pendingFiles';
-  import {sendBodyFor,fateSentence} from '../lib/conversation/composer';
-  import {readConversation,messageContentText,type DeliveredMessage} from '../lib/conversation/wire';
-  import {readReviewDraft,saveReviewDraft,reviewReplyReceipt} from '../lib/review/messages';
-  import {chiefDraftKey,chiefAttachmentDraftId,readChiefPointer,readChiefAttempt,saveChiefAttempt,clearChiefAttempt,type ChiefMessageAttempt} from '../lib/review/chiefMessage';
-
-  let {onBusy}:{onBusy?:(busy:boolean)=>void}=$props();
-  const navigation=navigationApplication();
-  let text=$state(untrack(()=>readComposerDraft(chiefDraftKey)));
-  let uploads=$state<PendingAttachment[]>([]);
-  let uploadDestination=$state<UploadDestination>({kind:'chief',id:'chief',expected_conversation_id:null});
-  let files=$state.raw<PendingConversationFile[]>([]);
-  let images=$state.raw<PendingConversationImage[]>([]);
-  let attempt=$state.raw<ChiefMessageAttempt|null>(null);
-  let ready=$state(false);
-  let busy=$state(false);
-  let intakeBusy=$state(false);
-  let voiceActive=$state(false);
-  let note=$state('');
-  let isError=$state(false);
-  let destroyed=false;
-  let disabled=$derived(busy || !ready || attempt!==null);
-  $effect(()=>{const active=busy || intakeBusy || voiceActive;untrack(()=>onBusy?.(active));});
-  $effect(()=>{
-    if(ready){
-      const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)];
-      void saveReviewDraft(chiefAttachmentDraftId,content).then(saved=>{if(!saved)showError(new Error('The attachment could not be saved in this browser.'));}).catch(showError);
-    }
+  let { onBusy }: { onBusy?: (busy: boolean) => void } = $props();
+  const composer = reviewReplyComposer({
+    draftKey: chiefDraftKey,
+    attachmentDraftId: chiefAttachmentDraftId,
+    owner: { kind: 'chief', id: 'chief' },
+    destination: readChiefPointer,
+    attemptKey: chiefAttemptKey,
+    attemptMetadataKey: chiefAttemptMetadataKey
   });
-  function showError(problem:unknown){if(problem===null){note='';isError=false;return;}note=problem instanceof Error?problem.message:String(problem);isError=true;}
-  onMount(()=>{
-    void (async()=>{
-      const [content,saved,pointer]=await Promise.all([readReviewDraft(chiefAttachmentDraftId),readChiefAttempt(),readChiefPointer()]);
-      if(destroyed)return;
-      const pictures=restoredPendingImages(content,0);images=pictures.images;
-      files=restoredPendingFiles(content,pictures.nextId).files;
-      uploadDestination={kind:'chief',id:'chief',expected_conversation_id:pointer.conversation_id};
-      const restored=restoredPendingUploads(content,uploadDestination);
-      uploads=openAttachmentDraft(chiefDraftKey,restored);
-      attempt=saved;
-      if(saved){note='Delivery is not confirmed. Check delivery before you send again.';isError=true;}
-      ready=true;
-    })().catch(showError);
-    return()=>{destroyed=true;onBusy?.(false);};
+  let voiceActive = $state(false);
+  let reply = $state<ReviewReplyInput>();
+  $effect(() => {
+    const active = composer.submitting || composer.intakeBusy || voiceActive;
+    untrack(() => onBusy?.(active));
   });
-  async function finish(sending:ChiefMessageAttempt,message:string):Promise<void>{
-    await clearChiefAttempt();
-    attempt=null;
-    // Another Chief surface can replace the shared text while this request waits.
-    // Clear only the attempted words, including after a remount checks an old receipt.
-    const attemptedText=messageContentText(sending.message.content);
-    const storedText=readComposerDraft(chiefDraftKey);
-    const storedChanged=storedText.trim()!==attemptedText;
-    const localChanged=text.trim()!==attemptedText;
-    text=storedChanged?storedText:localChanged?text:'';
-    if(!storedChanged)writeComposerDraft(chiefDraftKey,text);
-    releasePendingImages(images);images=[];files=[];uploads=[];clearAttachmentDraft(chiefDraftKey);
-    await saveReviewDraft(chiefAttachmentDraftId,[]);
-    uploadDestination={kind:'chief',id:'chief',expected_conversation_id:(await readChiefPointer()).conversation_id};
-    note=message;isError=false;
-  }
-  async function keepDraft(message:string):Promise<void>{
-    await clearChiefAttempt();attempt=null;note=message;isError=true;
-  }
-  async function checkDelivery(sending:ChiefMessageAttempt):Promise<void>{
-    // A changed Chief pointer never changes the destination captured for this attempt.
-    // For a first send only, the current pointer can help locate its correlated receipt.
-    const id=sending.expectedConversationId ?? (await readChiefPointer()).conversation_id;
-    if(id===null){note='Delivery is not confirmed. Your draft is kept. Open Chief before you send again.';isError=true;return;}
-    const receipt=await reviewReplyReceipt(id,sending.message.messageId);
-    if(receipt?.fate==='prompt'){await finish(sending,'Sent to Chief');return;}
-    if(receipt?.fate==='prompt_uncertain'){note='Delivery is uncertain. Your draft is kept. Do not resend.';isError=true;return;}
-    if(receipt){await keepDraft('The message did not reach Chief. Your draft is ready to retry.');return;}
-    const view=await readConversation(id);
-    if(view.held_prompts.some(prompt=>prompt.sender_message_id===sending.message.messageId)){
-      await finish(sending,'Queued for Chief');return;
-    }
-    // Missing receipts do not prove absence. Never issue a second POST for this attempt.
-    note='Delivery is not confirmed. Your draft is kept. Check again or open Chief.';isError=true;
-  }
-  async function send():Promise<void>{
-    if(busy || (intakeBusy && !attempt) || !ready || voiceActive)return;
-    busy=true;note='';isError=false;
-    let requestSent=false;
-    try{
-      if(attempt){await checkDelivery(attempt);return;}
-      if(!navigation)throw new Error('Chief messaging requires the application navigation owner.');
-      const content=[...(text.trim()?[{piece:'text' as const,text:text.trim()}]:[]),...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)];
-      if(!content.length)return;
-      const pointer=await readChiefPointer();
-      const sending:ChiefMessageAttempt={expectedConversationId:pointer.conversation_id,message:mintOutgoingMessage({content,senderLabel:'owner',mode:'queue'})};
-      await saveChiefAttempt(sending);attempt=sending;
-      const effective=navigation.state.effective;
-      requestSent=true;
-      const delivered=await mutateJson<DeliveredMessage>('/api/chief/conversation/send',{method:'POST',body:sendBodyFor({message:sending.message,current:{model:null,reasoningEffort:null},picked:{model:null,reasoningEffort:null},conversationId:sending.expectedConversationId})});
-      if(delivered.fate==='started'){await finish(sending,'Sent to Chief');}
-      else if(delivered.fate==='injected'){await finish(sending,'Sent to Chief’s current turn');}
-      else if(delivered.fate==='queued'){await finish(sending,'Queued for Chief');}
-      else if(delivered.fate==='uncertain'){
-        // A first send can name its new destination even when delivery is uncertain.
-        if(sending.expectedConversationId===null && delivered.conversation_id!==null){
-          attempt={...sending,expectedConversationId:delivered.conversation_id};await saveChiefAttempt(attempt);
-        }
-        note='Delivery is uncertain. Your draft is kept. Do not resend.';isError=true;
-      }else{await keepDraft(fateSentence(delivered) || 'The message did not reach Chief. Your draft is kept.');}
-    }catch(problem){
-      if(requestSent && problem instanceof PlannerFetchError && problem.status && problem.status>=400 && problem.status<500){
-        try{if(attempt)await clearChiefAttempt();attempt=null;}catch(storageProblem){showError(storageProblem);return;}
-      }
-      showError(problem);
-    }finally{busy=false;}
-  }
+  onMount(() => {
+    const unmount = composer.mount();
+    return () => { unmount(); onBusy?.(false); };
+  });
 </script>
 
 <div data-review-chief-composer>
-  <ReviewReplyInput bind:uploads {uploadDestination} bind:text bind:files bind:images bind:intakeBusy bind:voiceActive draftKey={chiefDraftKey}
-    {disabled} sendDisabled={busy || !ready} sending={busy} preserveHeight allowEmpty={attempt!==null}
-    placeholder="Message Chief…" label="Message Chief" sendLabel={attempt?'Check delivery':'Send message to Chief'} onSend={send} onError={showError}/>
-  <div class="review-chief-receipt" class:error={isError} role={isError?'alert':'status'} aria-live="polite">
-    <span>{note}</span>
-    {#if note}<a href={workspaceAddress({kind:'chief'})}>Open Chief</a>{/if}
+  <ReviewOutgoingReplies {composer} busy={voiceActive} onEdit={() => reply?.focus()} />
+  <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
+          bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
+    bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
+    sendDisabled={!composer.ready} preserveHeight
+    placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
+    onSend={() => composer.send()} onError={problem => composer.error = problem} />
+  <div class="review-chief-receipt">
+    {#if composer.error}<ErrorLine error={composer.error} />
+    {:else if composer.accepted}<a href={workspaceAddress({ kind: 'chief' })}>Open Chief</a>{/if}
   </div>
 </div>
 
 <style>
-  .review-chief-receipt{height:var(--space-7);overflow:auto;display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding-top:var(--space-2);color:var(--text-faint);font-size:var(--type-sm);line-height:1.5}
-  .review-chief-receipt.error{color:var(--text-default)}
+  .review-chief-receipt{min-height:var(--space-7);display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding-top:var(--space-2);color:var(--text-faint);font-size:var(--type-sm);line-height:1.5}
   .review-chief-receipt a{flex:none;color:var(--text-faint);text-underline-offset:var(--space-1)}
 </style>

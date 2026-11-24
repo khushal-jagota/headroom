@@ -10,12 +10,69 @@ import {
   PromptDiscardedEventPayload,
 } from '../conversation/events.ts';
 import { text_message_content } from '../conversation/message_content.ts';
-import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import type { ReadSql, SqlParameters, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { InboxStore } from '../executor/data/inbox.ts';
 import { FileStaging } from '../executor/vps_files.ts';
 import { as_object } from '../executor/protocol.ts';
 import type { WireValue } from '../executor/contracts.ts';
+
+// First-prompt behavior alone cannot prove that SQLite avoids other conversations' prompts.
+test('delivered prompt existence searches only the requested conversation across store instances', () => {
+  const database = fixture();
+  const store = new ConversationStore(database);
+  for (const conversation_id of ['requested', 'other']) {
+    store.create_conversation(
+      new ResolvedConversationStart({
+        conversation_id,
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: null,
+        workspace_folder: '/workspace',
+        access: 'full',
+      }),
+    );
+  }
+  expect(store.has_delivered_prompt('requested')).toBe(false);
+  const content = text_message_content('prompt');
+  const prompt = new PromptEventPayload({
+    content,
+    sender_label: 'owner',
+    mode: PromptDeliveryMode.queue,
+  });
+  store.append_events('other', [prompt]);
+  store.append_events('requested', [
+    new PromptDiscardedEventPayload({ content, sender_label: 'owner' }),
+  ]);
+  const read = database.read.bind(database);
+  const plans: { detail: string }[] = [];
+  const observed_read = <T>(work: (sql: ReadSql) => T): T =>
+    read((sql) =>
+      work({
+        all: sql.all.bind(sql),
+        get<Row>(query: string, parameters?: SqlParameters): Row | undefined {
+          plans.push(...sql.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, parameters));
+          return sql.get<Row>(query, parameters);
+        },
+      }),
+    );
+  const observed_database = {
+    read: observed_read,
+    write: database.write.bind(database),
+    close: database.close.bind(database),
+  };
+  expect(new ConversationStore(observed_database).has_delivered_prompt('requested')).toBe(false);
+  store.append_events('requested', [prompt]);
+  expect(new ConversationStore(observed_database).has_delivered_prompt('requested')).toBe(true);
+  expect(plans).toHaveLength(2);
+  for (const { detail } of plans) {
+    expect(detail).toContain('SEARCH conversation_events');
+    expect(detail).toContain(
+      'USING INDEX sqlite_autoindex_conversation_events_1 (conversation_id=?)',
+    );
+  }
+});
 
 // The output fixture cannot prove that a failed participant rolls back source rows,
 // sequence allocation, lifecycle, receipts, and projection before a safe retry.

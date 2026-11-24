@@ -6,7 +6,7 @@ import { copy_environment } from '../../../core/environment.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { START_SECONDS } from '../../../worker_supervision/config.ts';
 import * as records from '../../../worker_supervision/records.ts';
-import { channels, connect_channel } from './transport.ts';
+import { channels, connect_channel, await_worker_admission } from './transport.ts';
 
 async function main(): Promise<void> {
   const [record_path, directory, token, executable, ...args] = process.argv.slice(2);
@@ -29,7 +29,8 @@ async function main(): Promise<void> {
     }),
   );
   control!.on('end', () => failure(new Error('Mac Worker proxy disconnected')));
-  control!.resume();
+  control!.on('close', () => failure(new Error('Mac Worker proxy disconnected')));
+  await await_worker_admission(control!);
   await records.locked(record_path, monotonic_seconds() + START_SECONDS, async () => {
     const record = await records.read(record_path);
     if (!record.launchd || record.launch_revoked || record.state === 'complete')

@@ -9,8 +9,9 @@
  import {navigationApplication} from '../../lib/navigation/application.svelte';
  import {mutateJson} from '../../lib/mutate';
  import {fetchJson,PlannerFetchError} from '../../lib/api';
- import {queryClient} from '../../lib/queryClient';
+ import {refreshScreen} from '../../lib/resourceVersions/refresh';
  import {readBackends,type BackendSnapshot,type DeliveredMessage,type OwnerSendBody} from '../../lib/conversation/wire';
+ import {sendRequestLimitMs} from '../../lib/conversation/outgoing';
  import type {ConversationState} from '../../lib/conversation/conversationState';
  import type {ManagedFileTarget} from '../../lib/filePreview';
  import ManagerFrame from '../ManagerFrame.svelte';
@@ -37,14 +38,14 @@
  $effect(()=>{if(goal&&holderConversationId!==undefined&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;selectedPastConversationId=requestedConversationId&&requestedConversationId!==holderConversationId?requestedConversationId:null;if(requestedConversationId&&!openedFile)conversationState='opened';}});
  $effect(()=>{if(goal)navigation?.owner.setDemand('goal',{selected:holder,selected_conversation_id:selectedPastConversationId,windows:[]});return()=>navigation?.owner.setDemand('goal',undefined);});
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
- async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const delivered=await mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body});currentConversationId=delivered.conversation_id;return delivered;}
+ async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const delivered=await mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body,limitMs:sendRequestLimitMs(body.content)});currentConversationId=delivered.conversation_id;return delivered;}
  async function reset(){await mutateJson(`${conversationPath}/reset`,{method:'POST'});selectedPastConversationId=null;currentConversationId=null;}
  $effect(()=>{if(missing){conversationState='rest';if(openedFile)onOpenFile?.(null);}});
  let promoting=$state(false);
  async function makeManager(){
   if(!goal||promoting)return;
   promoting=true;
-  try{const result=await fetchJson<{manager_id:string}>(`/api/goals/${encodeURIComponent(id)}/make-manager`,{method:'POST',body:{}});window.location.hash=workspaceAddress({kind:'manager',id:result.manager_id});void queryClient.invalidateQueries();}catch(failure){error=failure;}finally{promoting=false;}
+  try{const result=await fetchJson<{manager_id:string}>(`/api/goals/${encodeURIComponent(id)}/make-manager`,{method:'POST',body:{}});window.location.hash=workspaceAddress({kind:'manager',id:result.manager_id});void refreshScreen();}catch(failure){error=failure;}finally{promoting=false;}
  }
  let holderLabel=$derived(holder.kind==='chief'?'Chief of Staff':navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective).managersById.get(holder.id)?.title??'Manager':'Manager');
 </script>

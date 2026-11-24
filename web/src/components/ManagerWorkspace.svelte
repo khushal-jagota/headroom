@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   import WorkMoveDialog from "./machines/WorkMoveDialog.svelte";
   import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import PageTickets from "./pageKit/PageTickets.svelte";
   import HolderDocument from "./pageKit/HolderDocument.svelte";
@@ -167,7 +168,7 @@
     settleBusy = true;
     settleError = "";
     try {
-      await mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
+      await mutateJsonAndWaitForScreen(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The manager could not be updated.";
     } finally {
@@ -176,10 +177,7 @@
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered = await mutateJson<DeliveredMessage>(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body});
-    conversationId = delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(`/api/managers/${encodeURIComponent(itemId)}/conversation/send`, body);
   }
 
   async function newConversation(): Promise<void> {

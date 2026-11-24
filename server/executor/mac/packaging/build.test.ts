@@ -136,6 +136,7 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
     });
     expect(account.launch_agent).toContain('Owner &amp; Test');
     expect(mac_launcher_bundle().launcher_source).not.toContain('/Users/');
+    expect(mac_launcher_bundle().launcher_source).toContain('--panels-worker-spawn-v2');
     const changed_launcher = Buffer.from(native);
     changed_launcher[16] = 1;
     await put(join(launcher_app, 'Contents/MacOS/Panels'), changed_launcher);

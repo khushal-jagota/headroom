@@ -1,4 +1,4 @@
-import { mutateJson } from "./mutate";
+import { mutateJsonAndWaitForScreen } from "./mutate";
 import type { ManagedSkill, ManagedSkillField, ManagedSkillPatch } from "./types";
 
 export async function saveSkillField(
@@ -7,7 +7,7 @@ export async function saveSkillField(
   raw: string
 ): Promise<void> {
   const body: ManagedSkillPatch = { [field]: raw };
-  await mutateJson<ManagedSkill>(`/api/skills/${encodeURIComponent(skillName)}`, {
+  await mutateJsonAndWaitForScreen<ManagedSkill>(`/api/skills/${encodeURIComponent(skillName)}`, {
     method: "PATCH",
     body
   });

@@ -67,7 +67,25 @@ function publication() {
     },
   };
 }
-async function setup(payload = publication()) {
+function release_entry() {
+  return {
+    draft: false,
+    prerelease: false,
+    tag_name: `server-${sha}-42-1`,
+    target_commitish: sha,
+    published_at: '2026-11-24T01:00:00Z',
+    assets: [
+      { id: 20, name: 'publication.json' },
+      { id: 21, name: 'app.zip' },
+      { id: 22, name: 'mac.zip' },
+    ],
+  };
+}
+async function setup(
+  payload = publication(),
+  pages = [[release_entry()]],
+  receipts = new Map([[20, payload]]),
+) {
   const root = await mkdtemp(join(tmpdir(), 'panels-release-provider-'));
   roots.push(root);
   const token = join(root, 'token');
@@ -79,22 +97,13 @@ async function setup(payload = publication()) {
       calls.push(path);
       expect(options?.headers).toHaveProperty('Authorization', 'Bearer secret');
       if (path.endsWith('/releases'))
-        return Response.json([
-          {
-            draft: false,
-            prerelease: false,
-            tag_name: `server-${sha}-42-1`,
-            target_commitish: sha,
-            assets: [
-              { id: 20, name: 'publication.json' },
-              { id: 21, name: 'app.zip' },
-              { id: 22, name: 'mac.zip' },
-            ],
-          },
-        ]);
-      if (path.endsWith('/releases/assets/20')) {
+        return Response.json(
+          pages[Number(new URL(String(url)).searchParams.get('page')) - 1] ?? [],
+        );
+      const proof = /\/releases\/assets\/(\d+)$/.exec(path);
+      if (proof && receipts.has(Number(proof[1]))) {
         expect(options?.headers).toHaveProperty('Accept', 'application/octet-stream');
-        return Response.json(payload);
+        return Response.json(receipts.get(Number(proof[1])));
       }
       if (path.endsWith('/actions/artifacts/7')) return Response.json({ expired: false });
       if (path.endsWith('/releases/assets/21') || path.endsWith('/actions/artifacts/7/zip'))
@@ -121,6 +130,63 @@ test('durable publication persists source, parts, and offered compatibility with
   );
   expect(await readFile(join(root, 'asset.zip'), 'utf8')).toBe('zip');
   expect(calls.every((path) => !path.includes('/actions/'))).toBe(true);
+});
+test('selects the newest eligible publication across pages when GitHub lists the older release first', async () => {
+  const older = release_entry();
+  const newer_payload = publication();
+  const newer_sha = 'c'.repeat(40);
+  newer_payload.publication_run_id = 43;
+  newer_payload.source_run.source_sha = newer_sha;
+  newer_payload.source_run.run_id = '43';
+  newer_payload.manifest.app_sha = newer_sha;
+  newer_payload.parts.server.app_sha = newer_sha;
+  const newer = {
+    ...older,
+    tag_name: `server-${newer_sha}-43-1`,
+    target_commitish: newer_sha,
+    published_at: '2026-11-24T03:00:00Z',
+    assets: older.assets.map((asset) =>
+      asset.name === 'publication.json' ? { ...asset, id: 30 } : asset,
+    ),
+  };
+  const ignored = { ...older, tag_name: 'desktop-latest' };
+  const { provider, calls } = await setup(
+    publication(),
+    [
+      [older, ...Array.from({ length: 99 }, () => ignored)],
+      [
+        newer,
+        {
+          ...newer,
+          draft: true,
+          published_at: '2026-11-25T01:00:00Z',
+          assets: [{ id: 40, name: 'publication.json' }],
+        },
+        {
+          ...newer,
+          prerelease: true,
+          published_at: '2026-11-26T01:00:00Z',
+          assets: [{ id: 50, name: 'publication.json' }],
+        },
+      ],
+    ],
+    new Map([
+      [20, publication()],
+      [30, newer_payload],
+    ]),
+  );
+  expect(await provider.available()).toMatchObject({
+    manifest: { app_sha: newer_sha },
+    proof_artifact_id: 30,
+    publication_run_id: 43,
+  });
+  expect(calls.filter((path) => path.endsWith('/releases'))).toHaveLength(2);
+});
+test('refuses an eligible publication whose date cannot establish its order', async () => {
+  const { provider } = await setup(publication(), [
+    [{ ...release_entry(), published_at: 'invalid' }],
+  ]);
+  await expect(provider.available()).rejects.toThrow('Invalid server publication date');
 });
 test('refuses a release whose archive ID does not name its declared asset', async () => {
   const payload = publication();

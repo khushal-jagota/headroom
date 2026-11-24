@@ -131,7 +131,8 @@ The command groups describe both the object being changed and the operation's au
 
 - `panels ticket ...` for ordinary, actor-neutral ticket creation, inspection, organization, and approval.
 - `panels manager ...` manages ordinary Managers.
-- `panels worker ...` for the gated worker flow: proposals and recaps.
+- `panels ticket show`, `panels ticket propose`, and `panels recap` for the gated worker flow: your Ticket, proposals, and recaps.
+- `panels review` shows what waits on Khushal.
 - `panels send-message --chief ...` addresses the Chief conversation. Ticket creation and edits stay under `panels ticket ...`.
 
 ## Skills
