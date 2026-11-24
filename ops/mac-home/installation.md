@@ -10,6 +10,9 @@ A release home runs the TypeScript server and supports updates and rollback.
 The home supplies native previews, metrics, maintenance, and stall alarms.
 One Panels instance can own the account skills in one OS account.
 Use a separate OS account for another instance, including an executor with a different record.
+A disposable test home can share an account with `--isolated-providers --skip-command-link`, a separate root, service prefix, and port.
+Use only its private provider folders. Use its absolute `ROOT/app/bin/panels` command.
+The test home does not create, replace, or remove the account command.
 
 ## Install with one command
 

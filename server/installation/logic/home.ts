@@ -23,7 +23,7 @@ export function request_service(value: Record<string, unknown>): string {
 /** The fields of a sealed release installation that the first install and a move share. */
 export function release_install_fields(
   value: Record<string, unknown>,
-): Omit<HomeInstallRequest, 'isolated_providers'> {
+): Omit<HomeInstallRequest, 'isolated_providers' | 'skip_command_link'> {
   const port = value.port;
   if (!Number.isInteger(port) || typeof port !== 'number' || port < 1 || port > 65535)
     throw new Error('Use a port from 1 through 65535');
@@ -46,8 +46,11 @@ export function home_install_request(value: unknown): HomeInstallSubmission {
   if (!is_record(value)) throw new Error('Home installation request must be an object');
   if (typeof value.isolated_providers !== 'boolean')
     throw new Error('isolated_providers must be a boolean');
+  if (value.skip_command_link !== undefined && typeof value.skip_command_link !== 'boolean')
+    throw new Error('skip_command_link must be a boolean');
   const request = {
     ...release_install_fields(value),
+    skip_command_link: value.skip_command_link ?? false,
     isolated_providers: value.isolated_providers,
     update_token: request_text(value, 'update_token'),
   };

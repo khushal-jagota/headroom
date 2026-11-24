@@ -89,6 +89,16 @@ class ServerWithoutHostNode(unittest.TestCase):
                 for target in ("linux", "darwin"):
                     with self.subTest(target=target):
                         panels_install.preflight(args, target)
+                # The home opt-out must pass this outer preflight too. The sealed
+                # installer test covers its writes and rollback.
+                command = home / ".local/bin/panels"
+                command.parent.mkdir(parents=True)
+                command.write_text("existing live command")
+                with self.assertRaisesRegex(ValueError, "panels command already exists"):
+                    panels_install.preflight(args, "linux")
+                args.skip_command_link = True
+                panels_install.preflight(args, "linux")
+                self.assertEqual(command.read_text(), "existing live command")
 
 
 class PermanentReleaseSource(unittest.TestCase):

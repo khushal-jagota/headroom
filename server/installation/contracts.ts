@@ -7,6 +7,8 @@ export interface HomeInstall {
   readonly service: string;
   readonly port: number;
   readonly isolated_providers: boolean;
+  /** Leave the account command untouched for a separately addressed test home. */
+  readonly skip_command_link?: boolean;
 }
 export interface HomeInstallRequest extends HomeInstall {
   readonly archive: string;
