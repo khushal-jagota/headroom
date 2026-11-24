@@ -36,9 +36,14 @@ struct AppShell: View {
                                    beginDrag: sidebar.beginDrag,
                                    drag: { sidebar.drag($0, width: width) },
                                    endDrag: { sidebar.endDrag(velocity: $0, width: width, reduceMotion: reduceMotion) })
+                        // The presentation mounts and removes the layer once it has settled, so no transition plays.
+                        .transition(.identity)
                 }
             }
-            .onChange(of: width, initial: true) { _, width in sidebarWidth = width }
+            .onChange(of: width, initial: true) { _, width in
+                sidebarWidth = width
+                sidebar.fit(width: width)
+            }
         }
         .task {
             while !Task.isCancelled {

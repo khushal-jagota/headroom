@@ -184,8 +184,18 @@ final class SidebarNavigationTests: XCTestCase {
         flick(at(0.6, 0.6), at(0.45, 0.6))
         closes("A short fast flick on the panel did not close the Sidebar")
 
-        // A card still opens on a tap.
+        // A rotation while open keeps the panel fully open at the new width.
         app.openSidebar()
+        step("rotate")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.buttons["sidebar-settings"].waitForExistence(timeout: 5))
+        usleep(1_000_000)
+        XCTAssertGreaterThanOrEqual(chief.frame.minX, 0, "After a rotation the panel is cut off at the leading edge")
+        XCUIDevice.shared.orientation = .portrait
+        restsOpen("After rotating back the panel is out of place")
+
+        // A card still opens on a tap.
         step("card-tap")
         chief.tap()
         XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8), "A tap on a card did not open it")

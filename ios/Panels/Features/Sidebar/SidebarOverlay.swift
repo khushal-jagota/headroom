@@ -19,6 +19,8 @@ import UIKit
 
     @ObservationIgnored private var motion: Motion?
     @ObservationIgnored private var dragStart: CGFloat = 0
+    /// True between a drag's start and its release. A reset ends it, and the rest of that drag does nothing.
+    @ObservationIgnored private var dragging = false
     @ObservationIgnored private lazy var ticker = FrameTicker { [weak self] now in self?.step(now) }
 
     private enum Motion {
@@ -45,16 +47,20 @@ import UIKit
     func beginDrag() {
         stop()
         dragStart = offset
+        dragging = true
         opacity = 1
         shown = true
     }
 
     func drag(_ translation: CGFloat, width: CGFloat) {
+        guard dragging else { return }
         offset = SidebarMotion.position(dragStart + translation, width: width)
     }
 
     /// Returns true when the release leaves the Sidebar open.
     @discardableResult func endDrag(velocity: CGFloat, width: CGFloat, reduceMotion: Bool) -> Bool {
+        guard dragging else { return false }
+        dragging = false
         let opens = SidebarMotion.opens(offset: offset, velocity: velocity, width: width)
         open = opens
         let target = opens ? width : 0
@@ -98,8 +104,17 @@ import UIKit
     /// Hidden at once, with no motion: a server change or a notification's page.
     func reset() {
         stop()
+        dragging = false
         open = false
         settleClosed()
+    }
+
+    /// A new panel width, after a rotation: an open Sidebar rests fully open at it.
+    func fit(width: CGFloat) {
+        guard open, !dragging else { return }
+        stop()
+        offset = width
+        opacity = 1
     }
 
     // MARK: Frames
