@@ -25,7 +25,7 @@ import {
   selectScreenPresentation,
   registerAppScheme,
 } from './app_scheme';
-import { bridgeChannel, type ServerAddressResult } from './bridge';
+import { bridgeChannel, WINDOW_STATE_CHANNEL, type DesktopWindowState, type ServerAddressResult } from './bridge';
 import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_session';
 import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
@@ -42,6 +42,10 @@ if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PA
 
 registerAppScheme();
 
+// Electron places the lights' top-left corner. This puts them where a native 52px toolbar puts
+// them, measured on macOS 27: the first light's left edge at x 19 and their centres at y 26.
+const TRAFFIC_LIGHT_POSITION = { x: 19, y: 19 };
+
 let mainWindow: BrowserWindow | null = null;
 let startingFirstWindow = true;
 let preparingScreens = 0;
@@ -54,7 +58,13 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     ...bounds,
     title: 'Panels',
-    backgroundColor: '#11151f',
+    // The page colour (`--surface-1`), so the window does not flash another colour on load.
+    backgroundColor: '#121212',
+    // On macOS, no system title bar: the traffic lights sit centred on the app's own 52px top
+    // row. Other systems keep their own frame, and the page draws no top row there.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: TRAFFIC_LIGHT_POSITION } : {}),
+    // At 720px or less the screens change to the phone layout, which the window never shows.
+    minWidth: 900,
     show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
@@ -70,11 +80,26 @@ function createWindow(): BrowserWindow {
   rememberLastScreen(window);
   sendLinksToTheBrowser(window);
   observeScreenStart(window);
+  sendWindowState(window);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
     shellUpdates?.windowChanged();
   });
   return window;
+}
+
+/** The page dims the top row while another app has focus and drops the lights' space in full screen. */
+function sendWindowState(window: BrowserWindow): void {
+  const send = () => {
+    if (window.isDestroyed()) return;
+    const state: DesktopWindowState = { focused: window.isFocused(), fullScreen: window.isFullScreen() };
+    window.webContents.send(WINDOW_STATE_CHANNEL, state);
+  };
+  window.on('focus', send);
+  window.on('blur', send);
+  window.on('enter-full-screen', send);
+  window.on('leave-full-screen', send);
+  window.webContents.on('dom-ready', send);
 }
 
 function openWindow(url: string): BrowserWindow {

@@ -23,7 +23,7 @@ export function manager_role_text(shared_workspace_folder: string): string {
     `${ROLE_DIRECTIVE_PREFIX} You are a Manager.` +
     home_folder_text(
       shared_workspace_folder,
-      ' Keep private notes out of artifacts/. The owner sees those files. Read `panels manager workspace "$PLAN_MANAGER_ID"` to identify your visible page and its edit command.',
+      ' Keep private notes out of artifacts/. The owner sees those files. Read `panels manager show` to identify your visible page and its edit command.',
     )
   );
 }

@@ -123,8 +123,11 @@
     "ts_0011_remove_tickets_blocks": [
       "ts_0010_answer_receipt_index"
     ],
-    "ts_0012_owner_send_receipts": [
+    "ts_0012_empty_attachments": [
       "ts_0011_remove_tickets_blocks"
+    ],
+    "ts_0013_owner_send_receipts": [
+      "ts_0012_empty_attachments"
     ],
     "worker_cleanup_recheck": [
       "worker_supervision"

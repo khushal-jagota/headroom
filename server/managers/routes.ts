@@ -187,7 +187,10 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       if (id !== undefined) {
         requireFullForOne(level);
         rejectParameters('id', { search, settled, project, project_id, limit, offset });
-        const row = views.manager_detail(sql, id);
+        const row = {
+          ...views.manager_detail(sql, id),
+          goals: views.manager_held_goals(sql, id, calendar_now(clock)),
+        };
         return { response: row, rows: [row] };
       }
       const resolved = resolveProject(sql, project_id ?? null, project ?? null)?.id ?? null;

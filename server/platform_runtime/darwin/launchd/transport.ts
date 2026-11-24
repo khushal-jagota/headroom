@@ -105,3 +105,36 @@ export function job_plist(
     options.lower_priority ? `<key>Nice</key><integer>${NICE}</integer>` : ''
   }<key>ExitTimeOut</key><integer>${TERM_SECONDS}</integer></dict></plist>\n`;
 }
+
+/** Until admission, a failed app attempt cannot execute the provider. */
+export function await_worker_admission(socket: Socket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.off('end', closed);
+      socket.off('close', closed);
+      socket.off('error', failed);
+      socket.off('data', data);
+    };
+    const closed = () => {
+      cleanup();
+      reject(new Error('Mac Worker proxy disconnected before admission'));
+    };
+    const failed = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    let header = '';
+    const data = (bytes: Buffer) => {
+      header += bytes.toString();
+      if (header.length < 6 && 'start\n'.startsWith(header)) return;
+      cleanup();
+      if (header !== 'start\n') reject(new Error('Invalid Mac Worker admission'));
+      else resolve();
+    };
+    socket.once('end', closed);
+    socket.once('close', closed);
+    socket.once('error', failed);
+    socket.on('data', data);
+    socket.resume();
+  });
+}

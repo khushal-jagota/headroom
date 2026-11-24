@@ -162,3 +162,36 @@ describe('MacCommandService input preparation', () => {
     expect(downloads).toEqual([]);
   });
 });
+
+// Gap: prompt transfer tests do not admit answer commands or resolve paths on the executor.
+test('question answer files land in the executor store and resolve to its readable paths', async () => {
+  const { inputs, requests, served, store } = world();
+  const command: ChildCommand = {
+    command_id: 'answer',
+    child,
+    turn: { conversation_id: 'c', turn_number: 1 },
+    operation: 'answer_user_input',
+    arguments: {
+      kind: 'answer_user_input',
+      request_id: 'question',
+      answers: [{ question_id: 'proof', answers: [], attachments: [image, file] }],
+    },
+  };
+  await inputs.download_inputs(command, new AbortController().signal);
+  expect(requests).toEqual([
+    ['answer', 'f_image'],
+    ['answer', 'f_file'],
+  ]);
+  const { answer_file_references } = await import('../../conversation/user_input_attachments.ts');
+  const { UserInputAnswer } = await import('../../conversation/events.ts');
+  const refs = answer_file_references(
+    [new UserInputAnswer({ question_id: 'proof', answers: [], attachments: [image, file] })],
+    store,
+    'c',
+  );
+  for (const piece of [image, file]) {
+    const reference = store.path_of('c', piece.stored_file_id);
+    expect(refs[0].answers[0]).toContain(reference);
+    expect(readFileSync(reference)).toEqual(served.get(piece.stored_file_id));
+  }
+});

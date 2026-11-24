@@ -18,40 +18,49 @@ test('send intake rejects declared and streamed overflow before parsing or dispa
         {
           prefix: '/api/conversation',
           routes: async (scope) => {
-            scope.post('/conversations/intake/send', async () => {
-              dispatched += 1;
-              return { ok: true };
-            });
+            for (const route of [
+              '/conversations/intake/send',
+              '/conversations/intake/user-input-answers',
+            ])
+              scope.post(route, async () => {
+                dispatched += 1;
+                return { ok: true };
+              });
           },
         },
       ],
     },
   );
   try {
-    const declared = await app.inject({
-      method: 'POST',
-      url: '/api/conversation/conversations/intake/send',
-      payload: 'not JSON',
-      headers: {
-        'content-type': 'application/json',
-        'content-length': String(MAX_CONVERSATION_SEND_REQUEST_BYTES + 1),
-      },
-    });
-    expect(declared.statusCode).toBe(413);
-    expect(declared.json()).toEqual({ detail: 'a conversation send request is too large' });
-    const streamed = await app.inject({
-      method: 'POST',
-      url: '/api/conversation/conversations/intake/send',
-      headers: { 'content-type': 'application/json', 'transfer-encoding': 'chunked' },
-      payload: Readable.from([
-        Buffer.from('{"text":"'),
-        Buffer.alloc(MAX_CONVERSATION_SEND_REQUEST_BYTES, 0x61),
-        Buffer.from('"}'),
-      ]),
-    });
-    expect(streamed.statusCode).toBe(413);
-    expect(streamed.json()).toEqual(declared.json());
-    expect(dispatched).toBe(0);
+    for (const url of [
+      '/api/conversation/conversations/intake/send',
+      '/api/conversation/conversations/intake/user-input-answers',
+    ]) {
+      const declared = await app.inject({
+        method: 'POST',
+        url,
+        payload: 'not JSON',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(MAX_CONVERSATION_SEND_REQUEST_BYTES + 1),
+        },
+      });
+      expect(declared.statusCode).toBe(413);
+      expect(declared.json()).toEqual({ detail: 'a conversation send request is too large' });
+      const streamed = await app.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/json', 'transfer-encoding': 'chunked' },
+        payload: Readable.from([
+          Buffer.from('{"text":"'),
+          Buffer.alloc(MAX_CONVERSATION_SEND_REQUEST_BYTES, 0x61),
+          Buffer.from('"}'),
+        ]),
+      });
+      expect(streamed.statusCode).toBe(413);
+      expect(streamed.json()).toEqual(declared.json());
+      expect(dispatched).toBe(0);
+    }
   } finally {
     await app.close();
   }

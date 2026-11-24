@@ -74,7 +74,6 @@
     models = [],
     backends = $bindable([]),
     ownSenderLabel = null,
-    livenessPulse = 0,
     effortOptions = [],
     composerCatalog = [],
     startsOnModel = null,
@@ -175,7 +174,6 @@
     backends?: readonly BackendSnapshot[];
     /** The label this pane sends under, so your own messages are not labelled as yours. */
     ownSenderLabel?: string | null;
-    livenessPulse?: number;
     effortOptions?: readonly string[];
     /** The typed text shortcuts this conversation offers in the composer. */
     composerCatalog?: readonly ComposerCatalogEntry[];
@@ -228,7 +226,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
-    onSubmitUserInput?: (answers: UserInputAnswers) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     /** ``forEdit``: Edit took the message back to the composer (no "Discarded" row). */
@@ -677,7 +675,6 @@
     {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
-    {livenessPulse}
     {activityUncertain}
     {conversationState}
     {emptyState}

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { NavigationRecord, ViewRecord } from '../../../web/src/lib/navigation/contracts.ts';
 import type { Fact, Key } from './contracts.ts';
+import type { TicketNeed } from '../../tickets/contracts.ts';
 import { compact } from '../logic/json.ts';
 import { VIEW_CONFIG } from './configuration.ts';
 export const GROUPS = [
@@ -88,6 +89,33 @@ export function group(value: Fact, attention: Fact | null, rail: boolean): strin
   if (parked && !owner) return 'status_awaiting_approval';
   if (value.stage === 'done') return 'done';
   return 'empty';
+}
+const NEED_BY_GROUP: Record<(typeof GROUPS)[number], TicketNeed> = {
+  awaiting_approval: 'owner_approval',
+  awaiting_answer: 'owner_answer',
+  assigned: 'owner_stage',
+  awaiting_reply: 'owner_reply',
+  status_awaiting_approval: 'agent_approval',
+  agent: 'working',
+  empty: 'ready',
+  blocked: 'blocked',
+  errored: 'errored',
+  backlog: 'backlog',
+  done: 'done',
+};
+/** A Ticket is terminal at its workflow's last Stage. Old records only say `done`. */
+export function ticketIsTerminal(value: Fact): boolean {
+  return !!value.terminal || value.stage === 'done';
+}
+/**
+ * The one word for what a Ticket needs next. Backlog and done win over every waiting word, and
+ * they never read `attention`, so a caller may pass null for those Tickets.
+ */
+export function ticket_need(value: Fact, attention: Fact | null): TicketNeed {
+  if ('integrity_error' in value) return 'errored';
+  if (value.is_backlogged) return 'backlog';
+  if (ticketIsTerminal(value)) return 'done';
+  return NEED_BY_GROUP[group(value, attention, false) as (typeof GROUPS)[number]];
 }
 export function eligibleForOwnerReview(value: Fact): boolean {
   return (

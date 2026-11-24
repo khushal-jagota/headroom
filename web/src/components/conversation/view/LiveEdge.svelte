@@ -7,10 +7,9 @@
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { liveTurnOf } from '../../../lib/conversation/view/liveEdge';
 
-  let { reader, activityUncertain = false, livenessPulse = 0 }: {
+  let { reader, activityUncertain = false }: {
     reader: ConversationViewReader;
     activityUncertain?: boolean;
-    livenessPulse?: number;
   } = $props();
 
   const turn = $derived(liveTurnOf(reader.pages, reader.status));
@@ -20,7 +19,7 @@
 
 {#if shown && turn !== null}
   <div class="c2-live-edge" data-conversation-live-edge>
-    <TurnAnchor {activityUncertain} settled={false} stopped={false} startedAtUnixMilliseconds={turn.started_at_unix_milliseconds} {waiting} {livenessPulse}/>
+    <TurnAnchor {activityUncertain} settled={false} stopped={false} startedAtUnixMilliseconds={turn.started_at_unix_milliseconds} {waiting}/>
   </div>
 {/if}
 

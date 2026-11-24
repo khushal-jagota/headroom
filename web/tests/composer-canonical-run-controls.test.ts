@@ -14,7 +14,7 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
   resetOutgoingImageReservationsForTest();
   try {
     const message = {
-      ...mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"}),
+      ...mintOutgoingMessage({content:[{piece:"text",text:"exact words"},{piece:"attachment_upload",upload_id:"binary-ready-reference"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"}),
       sendTarget: {conversation_id: null, backend_key: "claude", model: "opus", reasoning_effort: null}
     };
     const old = mintOutgoingMessage({content:[{piece:"text",text:"old words"}], senderLabel:"owner", mode:"queue"});
@@ -34,6 +34,7 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
     expect(reopened.sendTarget).toStrictEqual(message.sendTarget);
     expect(historical).not.toHaveProperty("sendTarget");
     expect(heldForFourth).toMatchObject({pickedBackend:"scripted-agent"});
+    expect(reopened.content).toEqual(message.content);
     expect(reopened).toMatchObject({pickedModel:"opus",pickedReasoningEffort:null,effortIsSet:true,pickedBackend:"claude",knownFate:"sent_before_this_page"});
     const body = sendBodyFor({message:reopened, current:{model:"sonnet",reasoningEffort:"high"}, picked:{model:reopened.pickedModel ?? null, reasoningEffort:reopened.pickedReasoningEffort ?? null, effortIsSet:reopened.effortIsSet, backendKey:reopened.pickedBackend}, conversationId:null});
     expect(body).toMatchObject({model:"opus",reasoning_effort:null,backend_key:"claude",sender_message_id:message.messageId});

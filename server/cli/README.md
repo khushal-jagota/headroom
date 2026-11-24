@@ -6,15 +6,16 @@ name it as their public CLI entry point.
 `commands.ts` declares the command tree with Commander. It is the source of truth
 for TypeScript command names, options, arguments, defaults, and validation.
 Commander supplies command selection, option parsing, usage errors, and help.
-The CLI keeps the existing command surface, JSON fields and types, exact integers,
-and exit codes. Human text and help use native TypeScript presentation.
+Each command declares its audience, and help is built for the caller. Removed
+command names are not declared; one table maps each to the replacement its error
+names. The CLI keeps JSON fields and types, exact integers, and exit codes. Human text and help use native TypeScript presentation.
 
 `main.ts` imports only the selected handler after parsing. Help uses the command
 declarations and does not initialize a server, database, or provider.
-`work_commands.ts` owns `send-message`, `project`, `ticket`, `manager`, `worker`,
-`worker-type`, and `skill`. Other groups use handlers under their domains.
+`work_commands.ts` owns the work groups, such as `send-message`, `ticket`,
+`manager`, `worker-type`, and `skill`. Other groups use handlers under their domains.
 Operator and executor commands share the same declaration tree, including hidden
-commands. Transport sends the private launch credential automatically. Role variables
+commands. `panels skill check` reads that tree through `create_commands`. Transport sends the private launch credential automatically. Role variables
 remain context. The hidden `api` command shares that transport for routes without
 a dedicated command.
 

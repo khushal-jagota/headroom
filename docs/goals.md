@@ -59,7 +59,7 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 - **Holder pages.** Chief and each Manager have a page in the same page kit, with a fixed Tickets box above the document. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows active goals as cards. Chief also uses cards for active goals, even when it holds only one. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
 - **The rail header and preview.** A status tag summarizes the worst active goal status for that holder. On Manager header hover or focus, the tag slides left as Settle fades in. Reduced motion changes the positions immediately. Chief has no Settle. Chief and each Manager keep their existing goals. The preview keeps the recap and adds a chart for one numeric goal or a compact checklist for one checklist goal. A lone yes-or-no goal uses its compact completion display. Several goals use rows. Settings can restore the goal rows in the sidebar instead.
 - **All goals**, a table of every goal, opened from Goals in the main navigation.
-- `panels goal` for agents: list, show, create, edit, delete, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write. `panels page` reads and edits the separate Manager and Chief documents. `panels manager workspace` identifies which document supplies a Manager's visible page.
+- `panels goal` for agents: list, show, create, edit, delete, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write. `panels page` reads and edits the separate Manager and Chief documents. `panels manager show` identifies which document supplies a Manager's visible page.
 
 ## Decisions that shape it
 
@@ -74,7 +74,7 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 - `server/measures/` and `server/datasets/`: the numbers that charts and rules read.
 - `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-23._
 
 The iPhone shares accepted Goal lists, documents, readings, and holder pages through
 one resource owner. Each mounted page retains its unfinished edits separately.

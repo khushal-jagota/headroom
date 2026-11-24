@@ -1,8 +1,8 @@
 import type { SchemaStep } from './contracts.ts';
 
 export const owner_send_receipts_step: SchemaStep = {
-  revision: 'ts_0012_owner_send_receipts',
-  previous_revision: 'ts_0011_remove_tickets_blocks',
+  revision: 'ts_0013_owner_send_receipts',
+  previous_revision: 'ts_0012_empty_attachments',
   apply(tx) {
     tx.run(`CREATE TABLE owner_send_receipts (
       owner_kind TEXT NOT NULL,

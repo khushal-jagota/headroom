@@ -7,10 +7,9 @@
    * draft comes within reach of the controls, or holds a line break, the controls slide to a
    * row of their own under it (draftRows.ts decides, and draws the move). Attachments wait on
    * a strip between the draft and the controls, so attaching never moves the words being
-   * written. What is written, sent and spoken stays the caller's: this only draws the field and
-   * hands the person's actions back. The look lives in app.css, under THE COMPOSER FIELD.
+   * written. The field owns attachment intake and the caller owns the draft and its send. The look lives in app.css, under THE COMPOSER FIELD.
    */
-  import { onMount, untrack, type Snippet } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     controlsBelowTheDraft,
     createDraftLineMeasurement,
@@ -18,6 +17,16 @@
     DRAFT_ROWS_MOTION_MS
   } from "./composer/draftRows";
   import { formatVoiceTime, type VoiceCaptureState } from "../../lib/conversation/voiceCapture";
+
+  import AttachmentChips from "./AttachmentChips.svelte";
+  import { attachmentSurface } from "./composer/attachmentSurface";
+  import ComposerAttachments from "./composer/ComposerAttachments.svelte";
+  import { attachmentByteLabel } from "./composer/attachments";
+  import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
+  import { attachmentTransfersFor, openAttachmentDraft, liveAttachmentDrafts, publishAttachmentDraft } from "../../lib/conversation/videoUploads/uploads";
+  import type { PendingAttachment, UploadDestination } from "../../lib/conversation/videoUploads/contracts";
+  import { type PendingConversationFile } from "../../lib/conversation/pendingFiles";
+  import { type PendingConversationImage } from "../../lib/conversation/pendingImages";
 
   type Attributes = Record<string, string | boolean | undefined>;
   type Control = { label: string; disabled?: boolean; onclick: () => void; attributes?: Attributes };
@@ -33,11 +42,18 @@
     inputAttributes = {},
     onkeydown,
     onsubmit,
-    attach,
+    draftKey,
+    uploadDestination,
+    uploads = $bindable([]),
+    images = $bindable([]),
+    files = $bindable([]),
+    intakeBusy = $bindable(false),
+    onError,
+    attachmentUnavailable,
+    attachmentDisabled = false,
     record,
     send,
     voice,
-    attachments,
     variant = "field"
   }: {
     value?: string;
@@ -58,13 +74,23 @@
     /** Opt in to "Enter sends": plain Enter and Cmd/Ctrl+Enter call this, Shift+Enter adds a
      *  line, and Enter while an input method is composing, or held down, does nothing. */
     onsubmit?: () => void;
-    /** The + at the left: what it adds is the caller's. */
-    attach?: Control;
+    draftKey?: string;
+    uploadDestination: UploadDestination;
+    uploads?: PendingAttachment[];
+    images?: PendingConversationImage[];
+    files?: PendingConversationFile[];
+    /** A send or decision waits until the files are read. */
+    intakeBusy?: boolean;
+    onError?: (error: unknown) => void;
+    /** Only an exact backend restriction removes the attachment control, with this reason. */
+    attachmentUnavailable?: string;
+    /** A caller can suspend file intake while keeping the text field usable. */
+    attachmentDisabled?: boolean;
     /** The microphone, first of the controls at the right. */
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
      *  while it goes. */
-    send?: Control & { ready: boolean; sending: boolean };
+    send?: Control & { ready: boolean; sending: boolean; checkingReceipt?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -73,8 +99,6 @@
       stop: () => void;
       retry: () => void;
     };
-    /** What is attached and waiting, on a strip under the draft. */
-    attachments?: Snippet;
     /** "reply-strip" is the one-line reply an ask shell (AskShell) carries under its own
      *  actions: no shell of its own, 48px tall, the words in the conversation's body face and
      *  its mic and send at the right. The ask's shell is its frame. */
@@ -84,11 +108,63 @@
   function keydown(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }): void {
     onkeydown?.(event);
     if (onsubmit === undefined || event.defaultPrevented || event.key !== "Enter") return;
+    if (intakeBusy && !send?.checkingReceipt) { event.preventDefault(); return; }
     if (event.shiftKey || event.altKey) return;
     // Enter that confirms an input method's text (keyCode 229) is not a send.
     if (event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     if (!event.repeat) onsubmit();
+  }
+
+  let fileInput = $state<HTMLInputElement | null>(null);
+  let dragging = $state(false);
+  let intakeError = $state("");
+  const localKey = $props.id();
+  let registryKey = $derived(draftKey ?? localKey);
+  let hasAttachments = $derived(images.length > 0 || files.length > 0 || uploads.length > 0);
+  let uploadTiles = $derived(uploads.map((value) => ({ kind: "video" as const, value })));
+  $effect(() => {
+    const key = registryKey;
+    const shared = liveAttachmentDrafts.get(key);
+    untrack(() => {
+      uploads = shared ?? openAttachmentDraft(key, uploads);
+      const transfers = attachmentTransfersFor(key, videoUploadAdapter);
+      for (const attachment of uploads) if (attachment.phase === "validating" && attachment.uploadId) void transfers.validate(attachment);
+    });
+  });
+  $effect(() => { intakeBusy = uploads.some((attachment) => attachment.phase !== "ready"); });
+
+  function intake(chosen: readonly File[]): void {
+    if (chosen.length === 0 || disabled || attachmentDisabled || attachmentUnavailable) return;
+    intakeError = "";
+    onError?.(null);
+    const key = registryKey;
+    const transfers = attachmentTransfersFor(key, videoUploadAdapter);
+    for (const file of chosen) {
+      try {
+        const current = liveAttachmentDrafts.get(key) ?? uploads;
+        let attachment = $state(transfers.create(file, Math.max(0, ...current.map((entry) => entry.id)) + 1, uploadDestination));
+        const replaced = current.filter((entry) => (entry.phase === "interrupted" || (entry.phase === "failed" && !entry.file)) && entry.fileName === file.name);
+        for (const previous of replaced) transfers.remove(previous);
+        const replacement = current.filter((entry) => !replaced.includes(entry));
+        publishAttachmentDraft(key, [...replacement, attachment]);
+        void transfers.start(attachment);
+      } catch (problem) {
+        intakeError = problem instanceof Error ? problem.message : "The attachment could not be read.";
+        onError?.(problem);
+      }
+    }
+    if (fileInput) fileInput.value = "";
+  }
+
+  function removeUpload(attachment: PendingAttachment): void {
+    attachmentTransfersFor(registryKey, videoUploadAdapter).remove(attachment);
+    publishAttachmentDraft(registryKey, uploads.filter((entry) => entry !== attachment));
+  }
+  function uploadProgress(attachment: PendingAttachment): string {
+    return attachment.phase === "uploading" ? `Uploading ${Math.floor(attachment.receivedBytes / Math.max(1, attachment.byteCount) * 100)}%`
+      : attachment.phase === "validating" ? "Checking file…" : attachment.phase === "ready" ? attachmentByteLabel(attachment.byteCount)
+      : attachment.error || "Select the file again.";
   }
 
   let box = $state<HTMLDivElement | null>(null);
@@ -97,7 +173,7 @@
 
   let voicePhase = $derived(voice?.state.phase ?? "idle");
   let speaking = $derived(voicePhase !== "idle");
-  let hasLeading = $derived(Boolean(speaking || attach));
+  let hasLeading = $derived(Boolean(speaking || !attachmentUnavailable));
   let hasTrailing = $derived(Boolean((speaking && voicePhase !== "transcribing") || record || send));
 
   // --- the draft's row (ConversationComposer's placeDraftRow, for this field) ----------------
@@ -144,8 +220,8 @@
   function placeDraftRow(animate: boolean): void {
     const field = box;
     const text = input;
-    if (field !== null && attachments !== undefined && !controlsBelow) setControlsBelow(field, true);
-    const oneRowShape = !speaking && attachments === undefined;
+    if (field !== null && hasAttachments && !controlsBelow) setControlsBelow(field, true);
+    const oneRowShape = !speaking && !hasAttachments;
     if (field === null || text === null || text.hidden || !oneRowShape) {
       inOneRowShape = false;
       return;
@@ -200,7 +276,7 @@
   $effect(() => {
     value;
     voicePhase;
-    attachments;
+    hasAttachments;
     held;
     untrack(() => {
       if (held !== heldSeen) {
@@ -252,9 +328,11 @@
 
 <div
   class="composer-field"
+  class:drag={dragging}
+  use:attachmentSurface={{ disabled: disabled || attachmentDisabled || Boolean(attachmentUnavailable), onFiles: (chosen) => void intake(chosen), onDragChange: (active) => dragging = active }}
   class:has-leading={hasLeading}
   class:has-trailing={hasTrailing}
-  class:has-attachments={attachments !== undefined}
+  class:has-attachments={hasAttachments}
   class:is-voice={speaking}
   class:is-reply-strip={variant === "reply-strip"}
   bind:this={box}
@@ -263,6 +341,8 @@
   data-composer-field-held={held !== null ? "" : undefined}
   style:min-height={held !== null ? `${held.box}px` : undefined}
 >
+  <input bind:this={fileInput} hidden type="file" multiple
+    onchange={() => void intake(Array.from(fileInput?.files ?? []))} />
 
   {#if hasLeading}
     <div class="composer-field-leading" bind:this={leading}>
@@ -281,14 +361,14 @@
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
         </button>
-      {:else if attach}
+      {:else if !attachmentUnavailable}
         <button
           type="button"
           class="composer-field-tool"
-          aria-label={attach.label}
-          disabled={disabled || attach.disabled}
-          onclick={attach.onclick}
-          {...(attach.attributes ?? {})}
+          aria-label="Attach a file"
+          data-review-attach
+          disabled={disabled || attachmentDisabled}
+          onclick={() => fileInput?.click()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         </button>
@@ -325,8 +405,13 @@
     {...inputAttributes}
   ></textarea>
 
-  {#if attachments}
-    <div class="composer-field-attachments">{@render attachments()}</div>
+  {#if hasAttachments}
+    <div class="composer-field-attachments">
+      {#if images.length || files.length}<AttachmentChips bind:images bind:files disabled={disabled || attachmentDisabled} />{/if}
+      <ComposerAttachments attachments={uploadTiles} inputDisabled={disabled || attachmentDisabled}
+        onChooseAgain={() => fileInput?.click()} onRetry={(attachment) => void attachmentTransfersFor(registryKey, videoUploadAdapter).start(attachment)}
+        onRemove={(attachment) => { if (attachment.kind === "video") removeUpload(attachment.value); }} videoProgress={uploadProgress} />
+    </div>
   {/if}
 
   {#if hasTrailing}
@@ -366,7 +451,7 @@
             class:on={send.ready}
             aria-label={send.label}
             aria-busy={send.sending}
-            disabled={send.disabled}
+            disabled={send.disabled || (intakeBusy && !send.checkingReceipt)}
             onclick={send.onclick}
             {...(send.attributes ?? {})}
           >
@@ -381,8 +466,13 @@
     </div>
   {/if}
 </div>
+{#if intakeError}<p class="composer-attachment-note is-error" role="alert" data-composer-attachment-error>{intakeError}</p>{/if}
+{#if attachmentUnavailable}<p class="composer-attachment-note" data-composer-attachment-unavailable>{attachmentUnavailable}</p>{/if}
 
 <style>
+  .composer-field.drag { outline: var(--focus-width) dashed var(--focus-ring); outline-offset: 2px; }
+  .composer-attachment-note { margin: var(--space-1) 0 0; font-size: var(--type-sm); color: var(--tone-secondary); }
+  .composer-attachment-note.is-error { color: var(--text-danger, inherit); }
   /* The reply strip: the ask's shell is its frame, so the field draws none of its own.
      One 48px row: the words at the ask's inset in the body face, the controls at the right. */
   .composer-field.is-reply-strip {

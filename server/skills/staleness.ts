@@ -1,27 +1,19 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { is_record } from '../core/records.ts';
+import type { Command } from 'commander';
 import type { ReadSql } from '../core/database/contracts.ts';
+import { create_commands } from '../cli/commands.ts';
+import { TICKET_CREATE_KEYS } from '../tickets/logic/body_keys.ts';
 import type { CommandNode, StaleReference } from './contracts.ts';
 import { PACKAGED_SKILLS_ROOT, read_all_skill_sources } from './data.ts';
 import { RETIRED_PANELS_SKILL_NAMES } from './sources.ts';
-const CREATE_KEYS = new Set([
-  'worker_type',
-  'workflow',
-  'employee_backend',
-  'employee_launch_model',
-  'employee_launch_reasoning_effort',
-  'locale',
-  'title',
-  'brief',
-  'deadline',
-  'project',
-  'project_id',
-  'manager',
-  'blocked_by_ticket_ids',
-  'ceiling',
-  'ceiling_holder',
-]);
+const CREATE_KEYS = new Set<string>(TICKET_CREATE_KEYS);
+/** The names this build's CLI declares, hidden commands included. A leaf is null. */
+function command_tree(command: Command): CommandNode | null {
+  if (!command.commands.length) return null;
+  return Object.fromEntries(command.commands.map((child) => [child.name(), command_tree(child)]));
+}
 function command_resolves(words: string[], root: CommandNode): boolean {
   let node: CommandNode | null = root;
   for (const word of words) {
@@ -85,9 +77,7 @@ function validPrincipal(value: unknown, manager: boolean): boolean {
   return !manager || p.kind === 'manager' || p.kind === 'chief';
 }
 export function stale_references(sql: ReadSql): StaleReference[] {
-  const commands = JSON.parse(
-    readFileSync(new URL('./cli_commands.json', import.meta.url), 'utf8'),
-  ) as CommandNode;
+  const commands = command_tree(create_commands())!;
   const ids = new Set<string>(),
     stageNames = new Set<string>(),
     terminal = new Set<string>();

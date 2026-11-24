@@ -41,6 +41,39 @@
 }
 
 :root {
+  --setup-column-width: 560px;
+  --setup-bar-height: 76px;
+  --setup-top-max: 72px;
+  --setup-button-min-width: 96px;
+  --setup-icon-size: var(--desktop-icon-size);
+  --setup-icon-radius: var(--desktop-icon-radius);
+  --setup-icon-shadow: var(--desktop-icon-ring), var(--desktop-icon-shadow);
+  --setup-tile-height: 156px;
+  --setup-glyph-size: 28px;
+  --setup-tick-size: 18px;
+  --setup-tick-glyph-size: 11px;
+  --setup-problem-height: 20px;
+  --setup-field-focus-width: 1.5px;
+  --setup-command-pad: 84px;
+  --setup-copy-inset: 6px;
+  --setup-guide-height: 340px;
+  --setup-inset-shadow: inset 0 1px 3px rgb(0 0 0 / 45%);
+  --setup-flash-duration: 1.6s;
+
+  /* Desktop assistant and shell update page, from the approved desktop design. */
+  --desktop-icon-size: 64px;
+  --desktop-icon-radius: 14px;
+  --desktop-icon-ring: inset 0 0 0 1px rgb(255 255 255 / 8%);
+  --desktop-icon-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+  --desktop-update-width: 480px;
+  --desktop-update-top: clamp(40px, 14cqh, 120px);
+  --desktop-update-state-height: 120px;
+  --desktop-update-track-height: 3px;
+  --desktop-update-track-duration: 1.4s;
+  --desktop-dialog-width: 400px;
+  --desktop-status-dot-size: 7px;
+  --desktop-status-dot-ring: 2px;
+
   /* Machine identity colors stay separate from action and attention. */
   --machine-jade: #83b7a7;
   --machine-orchid: #bd99bf;
@@ -478,6 +511,22 @@
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
+  /* The desktop window's top row: no fill, no divider, a drag region. The traffic lights sit
+   * centred on it, the app name starts after them, and each page's top row is pinned on it. */
+  --window-top-row: 52px;
+  /* Where the sidebar button starts: where a native toolbar's first control starts. Measured on
+   * macOS 27 (Finder, Safari, System Settings): the lights are 14px with 9px between them and
+   * run from x 19 to 79, and the first control starts at x 96, a clear gap after them. */
+  --window-controls-left: 96px;
+  /* A native toolbar button: a 36px round control with an 18x14 glyph. */
+  --window-control-size: 36px;
+  --window-control-glyph-width: 18px;
+  --window-control-glyph-height: 14px;
+  /* The fade under the top row, always on, in the page colour: the rail's bottom fade's depth. */
+  --window-scroll-fade: var(--rail-list-fade);
+  /* The first card and the page title start this far under the top row (y 68), so nothing
+   * sits under the fade at rest. */
+  --window-content-top: var(--window-scroll-fade);
   /* The space before a section head (from the header, or the section above), and from a head
    * to its content. A page of blocks without heads (the goal page) keeps 32px between them. */
   --page-section-gap: 40px;

@@ -110,3 +110,139 @@ test('video adoption publishes bytes and accepted retries preserve their convers
   expect(service.status(upload_id).state).toBe('linked');
   expect(existsSync(source)).toBe(false);
 });
+
+// Gap: the video-only path could reject other file types or expose active MIME at the app origin.
+test('one streamed upload path accepts unrestricted files under the shared cap with safe MIME', async () => {
+  const { MAX_ATTACHMENT_BYTES } =
+    await import('../../web/src/lib/conversation/attachmentPolicy.ts');
+  const database = fixture();
+  const service = new VideoUploadService(database, fixture_path(database), {
+    disk_free_bytes: () => 20 * 1024 ** 3,
+    probe_video: async () => {
+      throw new Error('ffprobe missing or failed');
+    },
+  });
+  const destination = { kind: 'chief' as const, id: 'chief', expected_conversation_id: null };
+  for (const filename of ['proof.bin', 'page.html', 'icon.svg', 'invalid.mp4']) {
+    const bytes = Buffer.from('<script>arbitrary bytes</script>');
+    const upload = service.reserve({ destination, filename, byte_count: bytes.length });
+    const status = await service.transfer(
+      upload.upload_id,
+      (async function* () {
+        yield bytes;
+      })(),
+    );
+    expect(status).toMatchObject({ state: 'ready', media_type: 'application/octet-stream' });
+    const checked = service.preflight(upload.upload_id, destination, 'any-' + filename);
+    const kept = service.adopt(checked, 'all_files');
+    expect(readFileSync(kept.absolute_path)).toEqual(bytes);
+    service.finish(checked, 'accepted');
+  }
+  const empty = service.reserve({ destination, filename: 'empty.bin', byte_count: 0 });
+  expect((await service.transfer(empty.upload_id, (async function* () {})())).state).toBe('ready');
+  expect(
+    service.reserve({ destination, filename: 'limit.bin', byte_count: MAX_ATTACHMENT_BYTES }).state,
+  ).toBe('reserved');
+  expect(() =>
+    service.reserve({
+      destination,
+      filename: 'too-large.bin',
+      byte_count: MAX_ATTACHMENT_BYTES + 1,
+    }),
+  ).toThrow('250 MiB');
+});
+
+// Gap: multiple ready images must stay accepted even when their total exceeds native image budgets.
+test('multiple streamed rasters keep a bounded native image and readable excess file references', async () => {
+  const { MessageImage } = await import('../conversation/message_content.ts');
+  const database = fixture();
+  const db_path = fixture_path(database);
+  const service = new VideoUploadService(database, db_path, {
+    disk_free_bytes: () => 20 * 1024 ** 3,
+  });
+  const destination = { kind: 'ticket' as const, id: 't_images', expected_conversation_id: null };
+  const bytes = Buffer.alloc(2 * 1024 ** 2);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+  const refs: { piece: 'attachment_upload'; upload_id: string }[] = [];
+  for (const filename of ['first.png', 'second.png']) {
+    const upload = service.reserve({ destination, filename, byte_count: bytes.length });
+    // Transfer is proved above. This admission case starts from completed sparse-image metadata.
+    writeFileSync(join(service.root, upload.upload_id), bytes);
+    database.write((tx) =>
+      tx.run(
+        "UPDATE conversation_video_uploads SET state='ready',received_bytes=?,media_type='image/png' WHERE upload_id=?",
+        [bytes.length, upload.upload_id],
+      ),
+    );
+    refs.push({ piece: 'attachment_upload', upload_id: upload.upload_id });
+  }
+  const files = new ConversationMessageFiles(db_path);
+  const admission = video_send_admission(
+    database,
+    db_path,
+    files,
+    [
+      {
+        piece: 'image',
+        data: bytes.toString('base64'),
+        media_type: 'image/png',
+        file_name: 'legacy.png',
+      },
+      ...refs,
+    ],
+    'image-pair',
+    destination,
+    OWNER,
+    OWNER,
+  )!;
+  await admission.preflight(null);
+  const content = await admission.content('image_pair');
+  expect(content[0]).toBeInstanceOf(MessageImage);
+  expect(content[1]).toBeInstanceOf(MessageFile);
+  expect(content[2]).toBeInstanceOf(MessageFile);
+  for (const piece of content)
+    if ('stored_file_id' in piece)
+      expect(Buffer.from(await files.read('image_pair', piece.stored_file_id)).equals(bytes)).toBe(
+        true,
+      );
+  admission.finish(new PromptDeliveryStarted());
+});
+
+// A definite refusal permits an edited answer to reuse its retained upload, while acceptance stays pinned.
+test('a retained upload can follow edited answer text after definite refusal only', async () => {
+  const database = fixture();
+  const service = new VideoUploadService(database, fixture_path(database), {
+    disk_free_bytes: () => 20 * 1024 ** 3,
+  });
+  const destination = {
+    kind: 'conversation' as const,
+    id: 'answer',
+    expected_conversation_id: 'answer',
+  };
+  const bytes = Buffer.from('same answer file');
+  const upload = service.reserve({ destination, filename: 'proof.bin', byte_count: bytes.length });
+  await service.transfer(
+    upload.upload_id,
+    (async function* () {
+      yield bytes;
+    })(),
+  );
+  const original = service.preflight(
+    upload.upload_id,
+    destination,
+    JSON.stringify(['answer', 'q', 'original text']),
+  );
+  service.adopt(original, 'answer');
+  service.finish(original, 'refused');
+  const edited = service.preflight(
+    upload.upload_id,
+    destination,
+    JSON.stringify(['answer', 'q', 'edited text']),
+  );
+  const kept = service.adopt(edited, 'answer');
+  expect(readFileSync(kept.absolute_path)).toEqual(bytes);
+  service.finish(edited, 'accepted');
+  expect(() => service.preflight(upload.upload_id, destination, 'unrelated-answer')).toThrow(
+    'another message',
+  );
+});

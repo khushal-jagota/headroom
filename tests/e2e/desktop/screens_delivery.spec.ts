@@ -70,7 +70,10 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
   try {
     desktop = await launchDesktopApp({ localServerAddress: `http://127.0.0.1:${port}` });
     const page = desktop.window;
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.fill('#address', `http://127.0.0.1:${port}`);
     await page.click('#connect');
     await expect(page.locator('h1')).toHaveText('Screen A', { timeout: 30_000 });

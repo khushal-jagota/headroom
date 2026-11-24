@@ -897,8 +897,8 @@ function machineOfflineRefusalFrom(value: unknown): MachineOfflineRefusal {
 function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
   if (value === null || typeof value !== "object") return null;
   const piece = value as Record<string, unknown>;
-  if (piece.piece === "video_upload" && typeof piece.upload_id === "string" && piece.upload_id !== "") {
-    return { piece: "video_upload", upload_id: piece.upload_id };
+  if ((piece.piece === "video_upload" || piece.piece === "attachment_upload") && typeof piece.upload_id === "string" && piece.upload_id !== "") {
+    return { piece: piece.piece, upload_id: piece.upload_id };
   }
   if (piece.piece === "text") {
     return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;

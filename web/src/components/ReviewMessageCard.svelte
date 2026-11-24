@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from "./Button.svelte";
+  import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import type { ReviewMessageItem } from '../lib/types';
@@ -53,7 +54,10 @@
   const chief = createQuery(() => ({ ...queries.chiefSettings(), enabled: item.owner_kind === 'chief' }));
   const recapBody = selectedRecap(() => item.recap_reference, () => true);
   let recap = $derived(item.owner_kind === 'chief' ? chief.data?.recap ?? '' : recapBody.body ?? item.recap);
-  $effect(() => { onBusy?.(busy || intakeBusy || voiceActive, conversationId); });
+  $effect(() => {
+    const active = busy || intakeBusy || voiceActive;
+    untrack(() => onBusy?.(active, conversationId));
+  });
   $effect(() => {
     const settled = composer.accepted?.through ?? (events.length === 0 ? ownerReadThrough : null);
     if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && composer.attempts.length === 0) resolve(settled);
@@ -106,12 +110,14 @@
   {/snippet}
   {#if !embedded}
   <!-- Skip and Open conversation stand in the page's top band at the right, as staging. -->
+  <WindowPageRow>
   <div class="review-eyebrow review-eyebrow--decisions">
-    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
       <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
     </div>
   </div>
+  </WindowPageRow>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
@@ -124,8 +130,9 @@
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>{/if}
         <ReviewOutgoingReplies {composer} busy={voiceActive || markingRead} onEdit={() => reply?.focus()} />
-        <ReviewReplyInput bind:this={reply} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
-          bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={intakeBusy || !composer.ready}
+        <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
+          bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
+          bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || composer.submitting}
           sendDisabled={busy || !composer.ready || !through} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
         <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error || composer.error}<ErrorLine error={error ?? composer.error}/>{/if}

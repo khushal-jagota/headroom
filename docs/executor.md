@@ -85,8 +85,8 @@ Machine code on the local executor link works in the server's own folders, not i
 
 Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and the Ticket's `artifacts/` folder. It does not transfer the private worktree, its dependencies, or any other file in the Ticket folder. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
 
-Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
-from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
+Agents can send a proposal back with `panels ticket send-back TICKET_ID` and guidance
+on stdin, from `--message TEXT`, or from `--body-file PATH`. The executor
 checks Home support before it saves the submission. An older Home returns an update
 request without queued work. An older executor still refuses the command locally.
 

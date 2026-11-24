@@ -23,12 +23,12 @@
   import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
   import { mintOutgoingMessage, reserveOutgoingMessageImages, reserveOutgoingMessageFiles, releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../../lib/conversation/outgoing";
-  import { VideoTransfers } from "../../lib/conversation/videoUploads/uploads";
-  import { isVideoFile, VIDEO_ACCEPT } from "../../lib/conversation/videoUploads/config";
+  import { AttachmentTransfers, pendingUploadsAsPieces, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
   import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
+  import { attachmentSurface } from "./composer/attachmentSurface";
   import ComposerAttachments from "./composer/ComposerAttachments.svelte";
   import ComposerAddMenu from "./composer/ComposerAddMenu.svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
@@ -64,6 +64,7 @@
   } from "../../lib/conversation/runControls/contracts";
   import type { RunValues } from "../../lib/conversation/composer";
   import { askShape } from "../../lib/conversation/composer";
+  import { pendingAnswerAttachments, userInputUploadDraftKey } from "../../lib/conversation/userInput";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
@@ -75,16 +76,11 @@
     type VoiceCaptureState
   } from "../../lib/conversation/voiceCapture";
   import {
-    createPendingConversationImages,
-    pendingConversationImageBytes,
-    restoredPendingImages,
     releasePendingImages,
+    restoredPendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import {
-    CONVERSATION_FILE_ACCEPT,
-    createPendingConversationFiles,
-    pendingConversationFileBytes,
     restoredPendingFiles,
     type PendingConversationFile
   } from "../../lib/conversation/pendingFiles";
@@ -97,6 +93,7 @@
     PromptDeliveryMode,
     SentMessagePiece,
     UserInputAnswers,
+    UserInputAttachment,
     UserInputQuestion
   } from "../../lib/conversation/wire";
 
@@ -217,7 +214,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
-    onSubmitUserInput?: (answers: UserInputAnswers) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
     onCancelTurn?: () => void;
     onDiscardHeldPrompt?: (heldPromptId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
@@ -274,23 +271,27 @@
   let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
   let pendingFiles = $state<PendingConversationFile[]>([]);
-  let pendingVideos = $state.raw<PendingVideo[]>([]);
+  let pendingVideos = $state.raw<PendingVideo[]>(untrack(() => recallDraftVideo(draftKey)));
   let localSends = $state.raw<PendingComposerSend[]>([]);
   let restoredSendContext: ComposerSendContext | null = null;
-  let nextVideoId = 1;
+  let nextVideoId = untrack(() => Math.max(1, ...pendingVideos.map((attachment) => attachment.id + 1)));
   let localStorageKey = untrack(() => draftKey);
-  const transfers = new VideoTransfers(videoUploadAdapter, videoChanged);
+  const transfers = new AttachmentTransfers(videoUploadAdapter, videoChanged);
   const makeSendQueue = () => new LocalComposerSends(async (entry, content) => {
     if (destroyed) return false;
     return onSend(content, entry.mode, entry.attempt.carriedRunValues, entry.context);
   }, videoChanged);
   let sendQueue = makeSendQueue();
+  function rememberCurrentUploadDraft(): void {
+    const key = userInput && activeQuestionId ? userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", userInput.requestId, activeQuestionId) : localStorageKey;
+    rememberDraftVideo(key, pendingVideos);
+  }
   function videoChanged(): void {
     if (destroyed) return;
     const previousEntries = localSends;
     pendingVideos = [...pendingVideos];
     localSends = [...sendQueue.entries];
-    rememberDraftVideo(localStorageKey, pendingVideos);
+    rememberCurrentUploadDraft();
     rememberLocalSends(localStorageKey, localSends);
     releaseRemovedLocalSends(previousEntries, localSends);
     void sendQueue.pump();
@@ -298,7 +299,7 @@
   async function restoreLocalState(): Promise<void> {
     const restoringKey = localStorageKey;
     const restoringQueue = sendQueue;
-    pendingVideos = recallDraftVideo(localStorageKey);
+    if (userInput === null) pendingVideos = recallDraftVideo(localStorageKey);
     nextVideoId = Math.max(1, ...pendingVideos.map(video => video.id + 1));
     attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
     sendQueue.entries = recallLocalSends(localStorageKey);
@@ -324,7 +325,6 @@
 
   let attachmentOrder = $state<ComposerAttachmentReference[]>([]);
   let attachments = $derived(orderedComposerAttachments(attachmentOrder, pendingImages, pendingFiles, pendingVideos));
-  let imageInput = $state<HTMLInputElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
   $effect(() => {
     const key = draftKey;
@@ -341,7 +341,6 @@
   });
   let nextImageId = 1;
   let nextFileId = 1;
-  let dragDepth = 0;
   let draggingAttachments = $state(false);
   let intakeError = $state<string | null>(null);
   let intakeTail: Promise<void> = Promise.resolve();
@@ -366,18 +365,53 @@
   // v6: no waiting line above an ask: the ask card's own label is the one waiting label.
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
-  let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
+  let questionPanel = $state<{ answerWith: (words: string, attached?: UserInputAttachment[]) => boolean; commit: () => void } | null>(null);
   /** v10 (4): asks have no confirm pill: each option row is the action. The free-text well
    *  keeps its own round send. Only a question that takes several answers waits for that
    *  send to go on once something is chosen (questionCommitReady). */
   let questionCommitReady = $state(false);
   let questionTakesOwnAnswer = $state(false);
-  /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
-   *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
+  let activeQuestionId = $state<string | null>(null);
+  $effect(() => { userInput?.requestId; activeQuestionId; pendingVideos; untrack(() => { if (userInput && activeQuestionId) rememberCurrentUploadDraft(); }); });
+  let questionAttachments = $derived(pendingAnswerAttachments(pendingImages, pendingFiles, pendingVideos));
+  let questionUploadBusy = $derived(userInput !== null && pendingVideos.some((attachment) => attachment.phase !== "ready"));
+  let questionForbidsAttachments = $derived(userInput !== null && !questionTakesOwnAnswer);
+
+  function clearQuestionDraft(requestId: string, questionIds: string[]): void {
+    if (userInput !== null && userInput.requestId !== requestId) return;
+    releasePendingImages(pendingImages);
+    for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    pendingImages = []; pendingFiles = []; pendingVideos = []; attachmentOrder = [];
+    rememberDraftVideo(localStorageKey, []);
+    for (const questionId of questionIds) rememberDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", requestId, questionId), []);
+    text = ""; cursorAt = 0;
+    recordDraftChange();
+  }
+
+  function restoreQuestionDraft(questionId: string, words: string, attached: UserInputAttachment[], preservePendingUploads = false): void {
+    activeQuestionId = questionId;
+    releasePendingImages(pendingImages);
+    const images = restoredPendingImages(attached, nextImageId);
+    const files = restoredPendingFiles(attached, nextFileId);
+    nextImageId = images.nextId; nextFileId = files.nextId;
+    pendingImages = images.images; pendingFiles = files.files;
+    if (!preservePendingUploads) for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    const destination = uploadDestination ?? { kind: "conversation" as const, id: conversationId ?? "", expected_conversation_id: conversationId };
+    const interrupted = preservePendingUploads && userInput ? recallDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", userInput.requestId, questionId)).filter((attachment) => attachment.destination.kind === destination.kind && attachment.destination.id === destination.id && attachment.destination.expected_conversation_id === destination.expected_conversation_id) : [];
+    pendingVideos = restoredPendingUploads(attached, destination, interrupted);
+    nextVideoId = Math.max(1, ...pendingVideos.map((attachment) => attachment.id + 1));
+    attachmentOrder = [...pendingImages.map((image) => ({ kind: "image" as const, id: image.id })), ...pendingFiles.map((file) => ({ kind: "file" as const, id: file.id })), ...pendingVideos.map((attachment) => ({ kind: "video" as const, id: attachment.id }))];
+    for (const attachment of pendingVideos) if (attachment.phase === "validating") void transfers.validate(attachment);
+    videoChanged();
+    text = words; cursorAt = words.length;
+    recordDraftChange();
+  }
+  /** A free-text question uses this draft, including files, as its answer. Other asks keep
+   *  their own actions. */
   let askWaiting = $derived<"answers" | "holds" | null>(
     !panelTakesTheBox
       ? null
-      : userInput !== null && questionTakesOwnAnswer && attachments.length === 0
+      : userInput !== null && questionTakesOwnAnswer
         ? "answers"
         : "holds"
   );
@@ -397,7 +431,6 @@
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
   let addMenuElement = $state<HTMLDivElement | null>(null);
-  let cameraInput = $state<HTMLInputElement | null>(null);
 
   /** Escape shuts this menu before it means anything else.
    *
@@ -436,7 +469,7 @@
     effortOptions,
     startsOnModel,
     startsOnReasoningEffort,
-    inputDisabled,
+    inputDisabled: inputDisabled || questionUploadBusy,
     hasSendableContent: sendAvailable && (text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0),
     sendsInFlight,
     deliveryMode,
@@ -497,11 +530,7 @@
     activeCatalogEntryIndex = 0;
   });
 
-  $effect(() => {
-    if (!inputDisabled) return;
-    dragDepth = 0;
-    draggingAttachments = false;
-  });
+
 
   // Catalog changes may make a pending pick meaningless. That is reconciliation, not
   // something the person composed, so applying it never advances the draft revision.
@@ -587,20 +616,15 @@
 
   async function send(): Promise<void> {
     await intakeTail;
-    // v10 (4): a question that takes several answers goes on from the well's send once
-    // something is chosen and nothing is written.
-    if (userInput !== null && questionPanel !== null && questionCommitReady && text.trim() === "" && attachments.length === 0) {
-      questionPanel.commit();
-      return;
-    }
-    // Words written under a question that takes an own answer are that answer: they go to
-    // the question, not into the turn, and leave the box once taken.
-    if (askWaiting === "answers" && questionPanel !== null && text.trim() !== "") {
-      if (questionPanel.answerWith(text.trim())) {
-        text = "";
-        cursorAt = 0;
+    if (questionUploadBusy) return;
+    if (userInput !== null && questionPanel !== null) {
+      if (questionTakesOwnAnswer && (text.trim() || questionAttachments.length)) {
+        questionPanel.answerWith(text, questionAttachments);
         return;
       }
+      if (questionCommitReady) { questionPanel.commit(); return; }
+      // A pending question keeps this send on the answer path.
+      return;
     }
     if (!sendAvailable) return;
     const trimmed = text.trim();
@@ -618,7 +642,6 @@
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
     releasePendingImages(attempt.draftBeforeSend.pendingImages);
-    if (imageInput) imageInput.value = "";
     intakeError = null;
     if ((attempt.draftBeforeSend.pendingVideos?.length ?? 0) > 0 || sendQueue.entries.length > 0) {
       const messageId = capturedRetryContext?.messageId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -691,93 +714,21 @@
     files: Iterable<File> | ArrayLike<File> | null | undefined
   ): Promise<void> {
     if (disabled) return Promise.resolve();
-    const chosen: File[] = [];
+    intakeError = null;
+    const destination = uploadDestination ?? (conversationId ? { kind: "conversation" as const, id: conversationId, expected_conversation_id: conversationId } : null);
+    if (!destination) { intakeError = "File upload is unavailable until this conversation has a destination."; return Promise.resolve(); }
     for (const file of Array.from(files ?? [])) {
-      if (!isVideoFile(file.name)) { chosen.push(file); continue; }
-      if (!uploadDestination) { intakeError = "Video upload is unavailable for this conversation."; continue; }
-      if (pendingVideos[0]?.phase === "interrupted" || (pendingVideos[0]?.phase === "failed" && !pendingVideos[0]?.file)) removeVideo(pendingVideos[0]);
-      if (pendingVideos.length) { intakeError = "Attach one video per message."; continue; }
       try {
-        const video = transfers.create(file, nextVideoId++, uploadDestination);
-        pendingVideos = [video];
-        attachmentOrder = [...attachmentOrder, {kind: "video", id: video.id}];
+        for (const previous of pendingVideos.filter((entry) => entry.fileName === file.name && (entry.phase === "interrupted" || (entry.phase === "failed" && !entry.file)))) removeVideo(previous);
+        const attachment = transfers.create(file, nextVideoId++, destination);
+        pendingVideos = [...pendingVideos, attachment];
+        attachmentOrder = [...attachmentOrder, { kind: "video", id: attachment.id }];
         recordDraftChange();
-        void transfers.start(video);
-      } catch (error) { intakeError = error instanceof Error ? error.message : "The video could not be attached."; }
+        void transfers.start(attachment);
+      } catch (error) { intakeError = error instanceof Error ? error.message : "The file could not be attached."; }
     }
-    if (!chosen.length) {
-      if (fileInput) fileInput.value = "";
-      if (imageInput) imageInput.value = "";
-      return Promise.resolve();
-    }
-    intakeTail = intakeTail.then(() => intakeChosenFiles(chosen));
-    return intakeTail;
-  }
-
-  async function intakeChosenFiles(files: readonly File[]): Promise<void> {
-    // The box is disabled while files are read, and a disabled box drops focus to the page.
-    const focusWasInComposer = boxElement?.contains(document.activeElement) ?? false;
-    attachmentIntakesInFlight += 1;
-    try {
-      const acceptedImages: PendingConversationImage[] = [];
-      const acceptedFiles: PendingConversationFile[] = [];
-      const acceptedOrder: ComposerAttachmentReference[] = [];
-      let rejected = false;
-      let published = false;
-      // Intake follows the FileList, rather than grouping it by kind. Both adapters still
-      // own their validation and aggregate byte limits.
-      try {
-        for (const file of files) {
-          if (file.type.toLowerCase().startsWith("image/")) {
-            const intake = await createPendingConversationImages(
-              [file], nextImageId, pendingConversationImageBytes([...pendingImages, ...acceptedImages])
-            );
-            nextImageId = intake.nextId;
-            rejected ||= intake.rejected.length > 0;
-            acceptedImages.push(...intake.accepted);
-            acceptedOrder.push(...intake.accepted.map((image) => ({ kind: "image" as const, id: image.id })));
-          } else {
-            const intake = await createPendingConversationFiles(
-              [file], nextFileId, pendingConversationFileBytes([...pendingFiles, ...acceptedFiles])
-            );
-            nextFileId = intake.nextId;
-            rejected ||= intake.rejected.length > 0;
-            acceptedFiles.push(...intake.accepted);
-            acceptedOrder.push(...intake.accepted.map((document) => ({ kind: "file" as const, id: document.id })));
-          }
-        }
-        if (destroyed) return;
-        if (acceptedOrder.length > 0) {
-          recordDraftChange();
-          pendingImages = [...pendingImages, ...acceptedImages];
-          pendingFiles = [...pendingFiles, ...acceptedFiles];
-          attachmentOrder = [...attachmentOrder, ...acceptedOrder];
-        }
-        published = true;
-        intakeError = rejected
-          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, log, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
-          : null;
-      } finally {
-        // Until published these URLs belong to this intake, including a later read failure.
-        if (!published) {
-          releasePendingImages(acceptedImages);
-        }
-      }
-    } catch (error) {
-      if (!destroyed) {
-        intakeError = error instanceof Error ? error.message : "The attachment could not be read.";
-      }
-    } finally {
-      if (!destroyed) {
-        attachmentIntakesInFlight -= 1;
-        if (imageInput) imageInput.value = "";
-        if (fileInput) fileInput.value = "";
-        // A camera hands back the same filename every time, so an unreset input is a
-        // second capture that changes nothing and never fires.
-        if (cameraInput) cameraInput.value = "";
-        if (focusWasInComposer) void tick().then(() => { if (!destroyed && !inputDisabled) returnFocusToTheField(); });
-      }
-    }
+    if (fileInput) fileInput.value = "";
+    return Promise.resolve();
   }
 
   function removeVideo(video: PendingVideo): void {
@@ -804,7 +755,7 @@
     if (removeVideo) {
       for (const video of entry.attempt.draftBeforeSend.pendingVideos ?? []) transfers.remove(video);
       entry.attempt = {...entry.attempt,
-        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload"),
+        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload"),
         draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingVideos: [], attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind !== "video")}};
     }
     const restoration = restoreRefusedComposerSend(currentComposerDraft(), entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight);
@@ -825,9 +776,9 @@
     videoChanged();
   }
   function videoProgress(video: PendingVideo): string {
-    return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
-      : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
-      : video.error || "Select the video again.";
+    return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / Math.max(1, video.byteCount) * 100)}%`
+      : video.phase === "validating" ? "Checking file…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
+      : video.error || "Select the file again.";
   }
 
   function removeImage(image: PendingConversationImage): void {
@@ -841,46 +792,6 @@
     recordDraftChange();
     pendingFiles = pendingFiles.filter((candidate) => candidate.id !== file.id);
     attachmentOrder = attachmentOrder.filter((reference) => reference.kind !== "file" || reference.id !== file.id);
-  }
-
-  function hasAttachmentTransfer(event: DragEvent): boolean {
-    return Array.from(event.dataTransfer?.items ?? []).some((item) =>
-      item.kind === "file"
-    );
-  }
-
-  function onDragEnter(event: DragEvent): void {
-    if (inputDisabled || !hasAttachmentTransfer(event)) return;
-    event.preventDefault();
-    dragDepth += 1;
-    draggingAttachments = true;
-  }
-
-  function onDragOver(event: DragEvent): void {
-    if (inputDisabled || !hasAttachmentTransfer(event)) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-    draggingAttachments = true;
-  }
-
-  function onDragLeave(): void {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) draggingAttachments = false;
-  }
-
-  function onDrop(event: DragEvent): void {
-    if (inputDisabled) return;
-    event.preventDefault();
-    dragDepth = 0;
-    draggingAttachments = false;
-    void intakeFiles(event.dataTransfer?.files);
-  }
-
-  function onPaste(event: ClipboardEvent): void {
-    const files = event.clipboardData?.files;
-    if (inputDisabled || !files || files.length === 0) return;
-    event.preventDefault();
-    void intakeFiles(files);
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -1112,7 +1023,7 @@
   });
   export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
     if (text !== "" || attachmentIntakesInFlight > 0 || attachments.length > 0 || voiceState.phase !== "idle") return false;
-    if (content.some(piece => piece.piece === "video_upload")) return false;
+    if (content.some(piece => piece.piece === "video_upload" || piece.piece === "attachment_upload")) return false;
     const images = restoredPendingImages(content, nextImageId);
     const files = restoredPendingFiles(content, nextFileId);
     let imageIndex = 0;
@@ -1322,15 +1233,13 @@
       class:is-voice={voiceState.phase !== "idle"}
       class:is-compact={compact}
       class:has-ask={panelTakesTheBox}
+      class:question-forbids-attachments={questionForbidsAttachments}
       class:has-key-request={credentialInTheBox}
       data-conversation-box
       data-conversation-box-shape={compact ? "line" : "grown"}
       role="group"
       aria-label="Conversation composer"
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      use:attachmentSurface={{ disabled: inputDisabled || questionForbidsAttachments, onFiles: (chosen) => void intakeFiles(chosen), onDragChange: (active) => draggingAttachments = active }}
       onmousedown={keepTheFieldFocused}
       onclick={focusTheFieldFromTheBox}
     >
@@ -1343,14 +1252,18 @@
           <UserInputQuestionPanel
             bind:this={questionPanel}
             bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            bind:activeQuestionId
             bind:commitReady={questionCommitReady}
             framed={false}
-            ownAnswer={attachments.length === 0 ? text : ""}
-            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
+            ownAnswer={text}
+            ownAttachments={questionAttachments}
+            onQuestionDraftChange={restoreQuestionDraft}
+            onOwnAnswerUsed={clearQuestionDraft}
             onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
             onStop={undefined}
-            busy={disabled}
+            busy={inputDisabled || questionUploadBusy}
+            uploadDestination={uploadDestination ?? { kind: "conversation", id: conversationId ?? "", expected_conversation_id: conversationId }}
             answerAvailable={userInputAvailable}
             note={userInputNote}
             onSubmit={(answers) => onSubmitUserInput?.(answers)}
@@ -1415,7 +1328,6 @@
         onclick={fieldPressed}
         onfocus={fieldFocused}
         onblur={() => { theCursorIsInTheBox = false; keyboardFocus = false; }}
-        onpaste={onPaste}
       ></textarea>
 
       <div class="chat-foot">
@@ -1472,41 +1384,14 @@
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
-          <!-- v14 (2): an ask has no Stop of its own. Its bottom row is the answer well only (pen,
-               draft, microphone, send); while a turn is open the header's "..." menu leads
-               with "Stop the agent". -->
+          <!-- An ask has no Stop of its own. Its bottom row shares the draft and attachment
+               controls; while a turn is open the header's "..." menu leads with
+               "Stop the agent". -->
           <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
-            disabled={inputDisabled} imageCount={pendingImages.length} fileCount={pendingFiles.length}
-            onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
-            onCommand={() => void startWritingACommand()}
+            disabled={inputDisabled || questionForbidsAttachments} fileCount={pendingFiles.length + pendingVideos.length + pendingImages.length}
+            onFile={() => fileInput?.click()} onCommand={() => void startWritingACommand()}
           />
-          <input
-            bind:this={cameraInput}
-            class="chat-image-input"
-            data-conversation-camera-input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onchange={() => void intakeFiles(cameraInput?.files)}
-          />
-          <input
-            bind:this={imageInput}
-            class="chat-image-input"
-            data-conversation-image-input
-            type="file"
-            accept="image/*"
-            multiple
-            onchange={() => void intakeFiles(imageInput?.files)}
-          />
-          <input
-            bind:this={fileInput}
-            class="chat-image-input"
-            data-conversation-file-input
-            type="file"
-            accept={`${CONVERSATION_FILE_ACCEPT},${VIDEO_ACCEPT}`}
-            multiple
-            onchange={() => void intakeFiles(fileInput?.files)}
-          />
+          <input bind:this={fileInput} class="chat-image-input" data-conversation-file-input type="file" multiple onchange={() => void intakeFiles(fileInput?.files)} />
 
           {#snippet microphone()}
             {#if voiceAvailable}
@@ -1737,14 +1622,22 @@
 
   /* An ask is the composer while it waits: the same object, grown upward. The ask's header,
      question and tiles stand in the frame on a 16px inset, and the composer's own line is its
-     last row: a pen, the draft, the microphone and the ask's send in the send slot. No add, no
-     model, no mode chip and no Stop under it. */
+     last row: the draft, microphone and the ask's send. Add follows the same attachment
+     capability as drop and paste. Model and mode controls stay hidden under asks. */
   .chat-box.has-ask, .chat-box.has-ask.is-compact { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
   .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
-  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
+  /* The ask fills a row only in the compact, wrapping layout. In the grown column its
+     natural height leaves room for attachments, the measured draft and the send row. */
+  .chat-box > .chat-ask { flex: none; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
+  .chat-box.is-compact > .chat-ask { flex: 1 0 100%; }
+  /* The enclosing composer owns overflow. Its column must not squeeze measured controls
+     or attachment tiles to fit beside a tall question. */
+  .chat-box:not(.is-compact) > :is(.chat-ta, .chat-foot),
+  .chat-box:not(.is-compact) > :global(.chat-attachments) { flex-shrink: 0; }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
-  .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
+  .chat-box.has-ask > .chat-foot :global([data-conversation-model-picker]) { display: none; }
+  .chat-box.question-forbids-attachments > .chat-foot :global(.chat-add) { display: none; }
   /* The ask's own-answer line is one well (#141414, radius 20, at least 40 high) that reads as
      an input: the draft, the microphone and the round send share its fill, joined edge to
      edge, each drawing its share of the well's 1px edge and the last piece closing it. The send

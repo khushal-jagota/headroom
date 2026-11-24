@@ -23,7 +23,6 @@ const fixed_paths = [
   'server/package.json',
   'server/package-lock.json',
   'server/core/database/application_schema.json',
-  'server/skills/cli_commands.json',
   'server/environments/release/migration_graph.json',
   'server/goals/cli/guidance.json',
   'server/managers/page_cli/guidance.json',

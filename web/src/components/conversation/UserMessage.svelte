@@ -38,7 +38,7 @@
   let editFailed = $state(false);
   const offersResend = $derived(row?.kind === 'prompt_refused' && resendRecorded !== undefined && resendRecorded.available() && refusalOffersResend(row.reason) && recordedContentCanBeResent(row.content));
   const localFailed = $derived(!row && (local?.knownFate === 'not_sent' || local?.knownFate === 'machine_offline'));
-  const localVideo = $derived(local?.content.some(piece => piece.piece === 'video_upload') ?? false);
+  const localUpload = $derived(local?.content.some(piece => piece.piece === 'video_upload' || piece.piece === 'attachment_upload') ?? false);
   const offersEdit = $derived(!edited && !resent && resendRecorded?.available() && (
     row?.kind === 'prompt_refused' && resendRecorded.edit && recordedContentCanBeEdited(row.content)
     || localFailed && resendRecorded.editLocal
@@ -112,7 +112,7 @@
       {#if (offersResend && !resent) || localFailed || offersEdit || undelivered.action === 'choose-model' || undelivered.detail}
         <div class="c2-undelivered-actions">
           {#if offersResend && !resent && !edited}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Try again." : "Send this message again"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
-          {#if localFailed && !edited && !localVideo && onSendAgain}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
+          {#if localFailed && !edited && !localUpload && onSendAgain}<button type="button" class="c2-undelivered-resend" data-conversation-held-send-again={local?.messageId} title="Send this message again" disabled={busy} onclick={()=>void resend()}>{busy ? "Sending…" : "Try Again"}</button>{/if}
           {#if offersEdit}<button type="button" data-conversation-edit-unsent disabled={busy} onclick={() => void edit()}>Edit</button>{/if}
           {#if undelivered.action === 'choose-model'}<button type="button" data-conversation-status-choose-model onclick={() => openComposerModelPicker(root)}>Choose another model</button>{/if}
           {#if undelivered.detail}<button type="button" aria-expanded={detailsOpen} aria-controls={detailsId} data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>Details<DetailsChevron open={detailsOpen}/></button>{/if}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
 import UserMessage from "../src/components/conversation/UserMessage.svelte";
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
@@ -90,6 +90,23 @@ describe("a turn's status line", () => {
     expect(running).toContain('data-conversation-system-mark="spinner"');
     expect(running).toContain('data-conversation-alive-word="">Working</span>');
   });
+
+  // The spinner follows the server's word that the turn runs, not the rhythm of live frames:
+  // a quiet tool run sends none for far longer than the 2 s it used to be allowed.
+  afterEach(() => vi.useRealTimers());
+  it("a running turn with no update for 30 s still turns; a turn that is no longer running draws no spinner", () => {
+    vi.useFakeTimers();
+    const props = { settled: false, startedAtUnixMilliseconds: Date.now() };
+    const first = render(TurnAnchor, { props }).body;
+    vi.advanceTimersByTime(30_000);
+    const quiet = render(TurnAnchor, { props }).body;
+    for (const html of [first, quiet]) {
+      expect(html).toContain("is-turning");
+      expect(html).not.toContain("data-conversation-alive-fresh");
+    }
+    expect(render(TurnAnchor, { props: { ...props, activityUncertain: true } }).body).not.toContain("is-turning");
+    expect(render(TurnAnchor, { props: { settled: true, durationSeconds: 30 } }).body).not.toContain("is-turning");
+  });
 });
 
 describe("a message's system lines", () => {
@@ -167,7 +184,7 @@ describe("the room under a message for its hover row", () => {
       status: { turn_key: null, pending_permission: null, pending_user_input: null, ...status }, discardedBodies: 0, openTools: new SvelteSet<string>(),
       isExpanded: () => false, expand: async () => {}, load: async () => {}, textBodyReady: () => {}, failTextRestoration: () => {}, body: async () => "", receipts: async () => ({ receipts: [] })
     } as unknown as ConversationViewReader;
-    const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner", livenessPulse: 0 } }).body;
+    const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner" } }).body;
     return { html, gaps: [...html.matchAll(/data-conversation-view-key="([^"]+)"[^>]*data-rhythm="([^"]+)"/g)].map(([, key, rhythm]) => `${key}:${rhythm}`) };
   }
   it("puts a turn's gap after every message, also between two agent messages", () => {

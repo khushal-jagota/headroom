@@ -19,7 +19,7 @@ const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & ManagerW
 } as BoardCard & ManagerWorkspaceTicket);
 const item = (id: string, values: Partial<BoardManager> = {}): BoardManager => ({
   id, title: id, recap: "",recap_preview: "", created_at: 1, updated_at:1, tickets: [], conversation_id: null,
-  ticket_rollup: quiet, ...quiet, ...values
+  ...quiet, ...values
 });
 
 describe("manager rail projection", () => {
@@ -406,7 +406,7 @@ describe("manager rail projection", () => {
       item("settled-old", {settled:true,created_at:100,updated_at:1}),
       item("settled-new", {settled:true,created_at:1,updated_at:30}),
       item("settled-tie", {settled:true,created_at:0,updated_at:30}),
-      item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
+      item("children-message", {})
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);
     expect(rail.settledItems.map(row=>[row.id,row.updatedAt])).toEqual([["settled-new",30],["settled-tie",30],["settled-old",1]]);

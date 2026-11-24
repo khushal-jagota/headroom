@@ -13,12 +13,7 @@ import type { MessageDeliveryResult } from './contracts.ts';
 import { send_message } from './service.ts';
 
 export const RECAP_REQUEST_MESSAGE =
-  'File a short, top-level recap with your recap tool. ' +
-  'Do not send the user a message. ' +
-  'Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. ' +
-  'Chief: pipe one JSON object `{"recap":"your short recap"}` into ' +
-  '`panels api PUT /api/workers/chief-of-staff/recap --input-json -`. ' +
-  'The command sends your conversation credential automatically.';
+  'File a short, top-level recap with `panels recap`. Do not send the user a message.';
 
 export async function request_recap(
   conversations: ConversationSystem,

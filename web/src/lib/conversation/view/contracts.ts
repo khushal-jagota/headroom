@@ -108,6 +108,7 @@ export interface UserInputQuestion {
 export interface UserInputAnswer {
   question_id: string;
   answers: Array<string>;
+  attachments?: Array<ViewImagePiece | ViewFilePiece>;
 }
 
 export interface UserInputRowBody {

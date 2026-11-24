@@ -8,7 +8,7 @@ import { numeric_value } from '../../core/http/numeric_json.ts';
 import { read_ticket } from '../../tickets/data/index.ts';
 import { read_manager } from '../../managers/data.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
-import { mutable_conversation, unassociated_send } from '../routes.ts';
+import { mutable_conversation } from '../routes.ts';
 import type { ConversationHttpRuntime } from '../routes.ts';
 import { VideoUploadError } from './contracts.ts';
 import type { ReserveVideoUpload, UploadDestination } from './contracts.ts';
@@ -40,13 +40,13 @@ function reserve_body(value: unknown): ReserveVideoUpload {
   });
   const byte_count = count_fields.integer('byte_count');
   fields.issues.push(...count_fields.issues);
-  if (byte_count !== null && byte_count <= 0)
+  if (byte_count !== null && byte_count < 0)
     fields.issue(
-      'greater_than',
+      'greater_than_equal',
       ['byte_count'],
-      'Input should be greater than 0',
+      'Input should be greater than or equal to 0',
       fields.body.byte_count,
-      { gt: 0 },
+      { ge: 0 },
     );
   fields.extras(['destination', 'filename', 'byte_count']);
   fields.finish();
@@ -77,7 +77,6 @@ export function createVideoUploadRoutes(
       } else {
         if (runtime === null) throw new HttpError(503, 'conversation system is unavailable');
         mutable_conversation(runtime, destination.id);
-        unassociated_send(runtime, destination.id);
         if (runtime.record.store.read_conversation(destination.id) === null)
           throw new HttpError(404, 'no such conversation');
       }

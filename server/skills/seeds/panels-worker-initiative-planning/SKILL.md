@@ -98,7 +98,7 @@ If outlining exposes a consequential question that should have been answered ear
 
 ### needs\_consequences — create the approved Tickets
 
-Create exactly the approved outlines and nothing broader. Use the outlined Worker type, title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the shared creation model; the approved outlines remain the authority for what may be created. When the planning Ticket belongs to a Manager, create the new Tickets under that same item. Otherwise preserve the planning Ticket's project and sprint context without inventing a new container. When creating a Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
+Create exactly the approved outlines and nothing broader. Use the outlined Worker type, title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the shared creation model; the approved outlines remain the authority for what may be created. When the planning Ticket belongs to a Manager, create the new Tickets under that same item. Otherwise preserve the planning Ticket's project and sprint context without inventing a new container. When creating a Ticket that relies on existing Tickets being complete, list each prerequisite Ticket id in `blocked_by_ticket_ids` in the create object, or add it later with `panels ticket block <ticket-id> --by <prerequisite-id>`.
 
 Encode shared context proportionately: each created Ticket should understand its own boundary without receiving the entire initiative record. Update the Manager only when approved shared information naturally belongs there; do not create mandatory duplicate storage.
 

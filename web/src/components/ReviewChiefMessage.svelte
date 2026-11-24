@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
   import ReviewOutgoingReplies from './ReviewOutgoingReplies.svelte';
   import ErrorLine from './ErrorLine.svelte';
@@ -21,7 +21,10 @@
   const note = $derived(composer.accepted?.fate === 'queued' ? 'Queued for Chief'
     : composer.accepted?.fate === 'injected' ? 'Sent to Chief’s current turn'
     : composer.accepted?.fate === 'started' ? 'Sent to Chief' : '');
-  $effect(() => onBusy?.(composer.submitting || composer.intakeBusy || voiceActive));
+  $effect(() => {
+    const active = composer.submitting || composer.intakeBusy || voiceActive;
+    untrack(() => onBusy?.(active));
+  });
   onMount(() => {
     const unmount = composer.mount();
     return () => { unmount(); onBusy?.(false); };
@@ -30,8 +33,9 @@
 
 <div data-review-chief-composer>
   <ReviewOutgoingReplies {composer} busy={voiceActive} onEdit={() => reply?.focus()} />
-  <ReviewReplyInput bind:this={reply} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
-    bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={composer.intakeBusy || !composer.ready}
+  <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
+          bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
+    bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || composer.submitting}
     sendDisabled={composer.submitting || !composer.ready} preserveHeight
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
     onSend={() => composer.send()} onError={problem => composer.error = problem} />

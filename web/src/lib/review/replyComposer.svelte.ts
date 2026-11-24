@@ -5,6 +5,8 @@ import { mintOutgoingMessage, theServerRefusedTheSend } from '../conversation/ou
 import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from '../conversation/ownerSend';
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES, pendingConversationFileBytes, pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../conversation/pendingFiles';
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES, pendingConversationImageBytes, pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from '../conversation/pendingImages';
+import { clearAttachmentDraft, openAttachmentDraft, pendingUploadsAsPieces, publishAttachmentDraft, restoredPendingUploads } from '../conversation/videoUploads/uploads';
+import type { PendingAttachment, UploadDestination } from '../conversation/videoUploads/contracts';
 import { messageContentText, type DeliveredMessage, type SentMessagePiece } from '../conversation/wire';
 import { readReviewDraft, saveReviewDraft } from './messages';
 import { recallReviewAttempts, rememberReviewAttempts, type ReviewReplyAttempt } from './sendAttempts';
@@ -50,6 +52,9 @@ export class ReviewReplyComposer {
   #text = $state('');
   #files = $state.raw<PendingConversationFile[]>([]);
   #images = $state.raw<PendingConversationImage[]>([]);
+  #uploads = $state.raw<PendingAttachment[]>([]);
+  uploadDestination: UploadDestination = $state({ kind: 'chief', id: 'chief', expected_conversation_id: null });
+  attachmentReady = $state(false);
   #attachmentWrite = Promise.resolve(true);
   #attemptWrite = Promise.resolve(true);
   #nextAttachmentId = 0;
@@ -64,8 +69,10 @@ export class ReviewReplyComposer {
     this.#options = options;
     this.#key = options.draftKey;
     this.#text = readComposerDraft(this.#key);
+    this.uploadDestination = { ...options.owner, expected_conversation_id: options.legacyConversationId ?? null };
   }
 
+  get draftKey() { return this.#key; }
   get text() { return this.#text; }
   set text(value: string) {
     this.#text = value;
@@ -81,7 +88,13 @@ export class ReviewReplyComposer {
     this.#images = value;
     void this.#saveAttachments();
   }
-  get hasDraft() { return Boolean(this.text.trim() || this.files.length || this.images.length); }
+  get uploads() { return this.#uploads; }
+  set uploads(value: PendingAttachment[]) {
+    if (this.#uploads === value) return;
+    this.#uploads = value;
+    if (this.ready) void this.#saveAttachments();
+  }
+  get hasDraft() { return Boolean(this.text.trim() || this.files.length || this.images.length || this.uploads.length); }
 
   mount(): () => void {
     const entry = mounted.get(this.#key)!;
@@ -109,7 +122,7 @@ export class ReviewReplyComposer {
   }
 
   #attachments() {
-    return [...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files)];
+    return [...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files), ...pendingUploadsAsPieces(this.uploads)];
   }
 
   #content(): SentMessagePiece[] {
@@ -139,12 +152,20 @@ export class ReviewReplyComposer {
   async #restore(signal: AbortSignal): Promise<void> {
     try {
       const openedText = this.text;
-      const [attachments, attempts] = await Promise.allSettled([
+      const [attachments, attempts, destination] = await Promise.allSettled([
         readReviewDraft(this.#options.attachmentDraftId),
-        recallReviewAttempts(this.#options.attemptKey, this.#options.attemptMetadataKey, this.#options.legacyConversationId)
+        recallReviewAttempts(this.#options.attemptKey, this.#options.attemptMetadataKey, this.#options.legacyConversationId),
+        this.#options.destination()
       ]);
       if (signal.aborted) return;
-      if (attachments.status === 'fulfilled') this.#restoreAttachments(attachments.value);
+      if (destination.status === 'fulfilled') {
+        this.uploadDestination = { ...this.#options.owner, expected_conversation_id: destination.value };
+        this.attachmentReady = true;
+      } else this.error = destination.reason;
+      if (attachments.status === 'fulfilled') {
+        this.#restoreAttachments(attachments.value);
+        this.#setUploads(restoredPendingUploads(attachments.value, this.uploadDestination, openAttachmentDraft(this.draftKey)));
+      }
       else this.error = attachments.reason;
       if (attempts.status === 'rejected') throw attempts.reason;
       this.attempts = attempts.value.map(attempt => ({
@@ -166,11 +187,18 @@ export class ReviewReplyComposer {
     await this.reconcile(signal);
   }
 
+  #setUploads(uploads: PendingAttachment[]) {
+    this.#uploads = uploads;
+    publishAttachmentDraft(this.draftKey, uploads);
+  }
+
   #clearDraft() {
     this.text = '';
     releasePendingImages(this.#images);
     this.#images = [];
     this.#files = [];
+    clearAttachmentDraft(this.draftKey);
+    this.#uploads = [];
     void this.#saveAttachments();
   }
 
@@ -196,6 +224,7 @@ export class ReviewReplyComposer {
     const id = attempt.message.messageId;
     if (delivery.fate === 'started' || delivery.fate === 'injected' || delivery.fate === 'queued') {
       this.accepted = { through: attempt.message.ownerReadThroughSequence, fate: delivery.fate };
+      if (!this.legacyDestination && !this.uploads.length) this.#updateUploadDestination(delivery.conversation_id);
       await this.#remove(id);
       return;
     }
@@ -262,6 +291,13 @@ export class ReviewReplyComposer {
     }
   }
 
+  get legacyDestination() { return this.#options.legacyConversationId; }
+
+  #updateUploadDestination(conversationId: string | null) {
+    this.uploadDestination = { ...this.#options.owner, expected_conversation_id: conversationId };
+    this.attachmentReady = true;
+  }
+
   async send(through?: number): Promise<void> {
     if (this.submitting || this.intakeBusy || !this.ready || !this.hasDraft) return;
     this.submitting = true;
@@ -270,9 +306,11 @@ export class ReviewReplyComposer {
     const text = this.text;
     const images = this.images;
     const files = this.files;
+    const uploads = this.uploads;
     const content = this.#content();
     try {
-      const conversationId = await this.#options.destination();
+      const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : await this.#options.destination();
+      if (!uploads.length) this.#updateUploadDestination(conversationId);
       const message = mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' });
       if (through !== undefined) message.ownerReadThroughSequence = through;
       const entry: ReviewOutgoingReply = { conversationId, message, status: 'sending', note: null };
@@ -281,7 +319,7 @@ export class ReviewReplyComposer {
         await this.#remove(message.messageId);
         throw new Error('The reply could not be saved in this browser. Your draft is kept.');
       }
-      if (this.text === text && this.images === images && this.files === files) {
+      if (this.text === text && this.images === images && this.files === files && this.uploads === uploads) {
         this.#clearDraft();
       }
       await this.#post(entry);
@@ -340,6 +378,8 @@ export class ReviewReplyComposer {
       this.#images = images;
       this.#files = files;
       this.#nextAttachmentId = restoredFiles.nextId;
+      const attemptDestination: UploadDestination = { ...this.#options.owner, expected_conversation_id: attempt.conversationId };
+      this.#setUploads(restoredPendingUploads(attempt.message.content, attemptDestination, this.uploads));
       if (!await this.#saveAttachments()) return false;
       await this.#remove(attempt.message.messageId);
       return true;
