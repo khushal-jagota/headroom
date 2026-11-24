@@ -166,7 +166,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.match(expectedBuild, /^[a-f0-9]{64}$/);
     const rolledBackAttempt = rolledBack.attempt.attempt_id;
     await page.goto(url);
-    const card = page.locator('[data-shell-status]');
+    const card = page.locator('[data-shell-status]:visible');
     const headline = card.locator('.status-base');
     await headline.getByText("Update didn't install", { exact: true }).waitFor();
     await page.screenshot({ path: join(o.base, 'evidence/update-rolled-back.png') });
