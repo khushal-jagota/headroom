@@ -5,7 +5,7 @@ import { claude_selection_transition } from '../models.ts';
 
 const session_capabilities = {
   sessions: { supportsModelSwitchInSession: false },
-  turns: { supportsActiveSteering: true },
+  turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: true },
 };
 const current: BackendSelection = { model: 'haiku', reasoning_effort: 'low' };
 it.each<[string, BackendSelection, BackendSelection, string]>([

@@ -646,7 +646,12 @@ function prompt_fact(token: TurnToken, status: LifecycleFact['status']): Lifecyc
   };
 }
 
-function new_running_turn(reservation: ReservedTurn): RunningTurn {
+export function new_running_turn(
+  reservation: Pick<
+    ReservedTurn,
+    'token' | 'automatic_compaction' | 'automatic_notice' | 'memory_notice_only'
+  >,
+): RunningTurn {
   return {
     token: reservation.token,
     automatic_compaction: reservation.automatic_compaction,

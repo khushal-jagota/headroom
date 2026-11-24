@@ -16,7 +16,7 @@ import type { DriverStatus } from '../core/status.ts';
 export interface ScriptedInstanceControls {
   readonly capabilities: {
     readonly sessions: { supportsModelSwitchInSession: boolean };
-    readonly turns: { supportsActiveSteering: boolean };
+    readonly turns: { supportsActiveSteering: boolean; wakesOnBackgroundCompletion: boolean };
   };
   plan_selection_transition: DriverInstance['plan_selection_transition'];
 }
@@ -30,7 +30,7 @@ function scripted_instance(
   const controls: ScriptedInstanceControls = {
     capabilities: {
       sessions: { supportsModelSwitchInSession: true },
-      turns: { supportsActiveSteering: true },
+      turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: true },
     },
     plan_selection_transition: turn_scoped_selection_transition,
   };
@@ -107,7 +107,7 @@ function scripted_driver(
     manifest: scripted_manifest(key),
     capabilities: {
       sessions: { supportsModelSwitchInSession: true },
-      turns: { supportsActiveSteering: true },
+      turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: true },
     },
     plan_selection_transition: turn_scoped_selection_transition,
     config: NO_DRIVER_CONFIG,

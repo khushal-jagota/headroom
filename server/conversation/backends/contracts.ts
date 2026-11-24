@@ -8,8 +8,9 @@
  * Event rules every child keeps:
  * 1. Every in-turn event carries its `TurnToken`. Only `VendorSessionCursorRebound`,
  *    `ComposerCatalogReported`, `BackgroundTaskStarted`, `BackgroundTaskEnded` and
- *    `BackendStreamEnded` carry null.
- * 2. Every accepted `write_prompt` produces exactly one `TurnEnded` for its token.
+ *    `AgentTurnStarted` and `BackendStreamEnded` carry null.
+ * 2. Every accepted `write_prompt` and agent-started turn produces exactly one `TurnEnded` for its token.
+ *    `start_agent_turn` returns a core-owned token, or null when another turn owns the conversation.
  * 3. Live deltas (`AgentMessageDelta`, `ModelThinkingHappened`, `ToolCallProgress`) are never
  *    stored. Facts are stored.
  * 4. `TurnEnded.child_disposition` says whether the child can take another prompt. A driver says
@@ -320,6 +321,12 @@ export class ComposerCatalogReported {
     this.composer_catalog = values.composer_catalog;
   }
 }
+export class AgentTurnStarted {
+  readonly reason: string;
+  constructor(values: { reason: string }) {
+    this.reason = values.reason;
+  }
+}
 export class BackgroundTaskStarted {
   readonly task_id: string;
   readonly task_description: string;
@@ -359,10 +366,12 @@ export type BackendEventValue =
   | TurnEnded
   | VendorSessionCursorRebound
   | ComposerCatalogReported
+  | AgentTurnStarted
   | BackgroundTaskStarted
   | BackgroundTaskEnded
   | BackendStreamEnded;
 export interface BackendEventSink {
+  start_agent_turn?(reason: string): Promise<TurnToken | null>;
   report(turn: TurnToken | null, event: BackendEventValue): Promise<void>;
   record_local_child_supervision?(path: string): Promise<void>;
   record_local_child_custody?(identity: LocalChildIdentity): Promise<void>;

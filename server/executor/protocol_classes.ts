@@ -31,6 +31,7 @@ export const wire_classes = {
   TurnEnded: Backend.TurnEnded,
   VendorSessionCursorRebound: Backend.VendorSessionCursorRebound,
   ComposerCatalogReported: Backend.ComposerCatalogReported,
+  AgentTurnStarted: Backend.AgentTurnStarted,
   BackgroundTaskStarted: Backend.BackgroundTaskStarted,
   BackgroundTaskEnded: Backend.BackgroundTaskEnded,
   BackendStreamEnded: Backend.BackendStreamEnded,
