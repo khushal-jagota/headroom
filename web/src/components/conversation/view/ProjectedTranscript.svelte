@@ -155,7 +155,7 @@
           if (item !== null && before.has(item.key)) previous = null;
           if (item !== null && item.kind === 'turn' && !presentation.has(item.key)) { turnOpens = true; result.set(slot.key, 'none'); continue; }
           let beat: Beat | null;
-          if (slot.local !== null || item !== null && isMessageRow(item)) beat = 'prompt';
+          if (slot.local !== null || item !== null && (isMessageRow(item) || item.kind === 'row' && item.row_kind === 'agent_turn_started')) beat = 'prompt';
           else if (item === null || !presentation.has(item.key)) beat = null;
           else if (item.kind === 'turn') beat = 'head';
           else if (item.kind === 'work_group' || item.row_kind === 'tool_call') beat = 'work';
