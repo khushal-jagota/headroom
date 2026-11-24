@@ -237,18 +237,21 @@ export async function detach_children(
 }
 
 /** One scanner retains deferred notices and their admission identities. */
-export class LostBackgroundTaskNotices {
+export class BackgroundTaskNotices {
   readonly #host: SqliteProcessConversationSystem;
-  readonly #pending = new Map<string, { state: ConversationState; description: string }>();
+  readonly #pending = new Map<
+    string,
+    { state: ConversationState; description: string; completed: boolean }
+  >();
   #drain_task: Promise<void> | null = null;
   constructor(host: SqliteProcessConversationSystem) {
     this.#host = host;
   }
-  enqueue(state: ConversationState, descriptions: readonly string[]): void {
+  enqueue(state: ConversationState, descriptions: readonly string[], completed = false): void {
     if (this.#host.shutting_down) return;
     for (const description of descriptions) {
-      const identity = `lost-background:${state.record.conversation_id}:${randomUUID().replaceAll('-', '')}`;
-      this.#pending.set(identity, { state, description });
+      const identity = `${completed ? 'completed' : 'lost'}-background:${state.record.conversation_id}:${randomUUID().replaceAll('-', '')}`;
+      this.#pending.set(identity, { state, description, completed });
     }
     if (this.#pending.size && this.#drain_task === null) this.#start(state);
   }
@@ -281,7 +284,7 @@ export class LostBackgroundTaskNotices {
   async #drain(): Promise<void> {
     const host = this.#host;
     while (this.#pending.size) {
-      for (const [identity, { state, description }] of [...this.#pending]) {
+      for (const [identity, { state, description, completed }] of [...this.#pending]) {
         if (state.being_killed || host.shutting_down) {
           this.#pending.delete(identity);
           host.start_admission.finish_unbound(identity);
@@ -295,11 +298,15 @@ export class LostBackgroundTaskNotices {
           const fate = await host.send(
             conversation_id,
             text_message_content(
-              `Your background task "${description}" stopped because your session ended. ` +
-                'It did not finish. Read its output, then start it again or report what happened.',
+              completed
+                ? `Your background task "${description}" finished. Read its result.`
+                : `Your background task "${description}" stopped because your session ended. ` +
+                    'It did not finish. Read its output, then start it again or report what happened.',
             ),
             {
-              sender_label: LOST_BACKGROUND_TASK_SENDER_LABEL,
+              sender_label: completed
+                ? 'Background task completed'
+                : LOST_BACKGROUND_TASK_SENDER_LABEL,
               mode: PromptDeliveryMode.queue,
               sender_message_id: identity,
             },
@@ -359,7 +366,7 @@ export function tell_agent_about_lost_background_tasks(
   state: ConversationState,
   descriptions: readonly string[],
 ): void {
-  host.lost_task_notices.enqueue(state, descriptions);
+  host.background_task_notices.enqueue(state, descriptions);
 }
 
 export async function background_tasks_ended_with_child(

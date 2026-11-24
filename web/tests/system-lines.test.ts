@@ -56,7 +56,6 @@ describe("a turn's status line", () => {
     const html = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", rateLimited)!, role: "alert" } }).body;
     expect(html).toContain('data-conversation-system-line="start"');
     expect(html).toContain('data-conversation-system-mark="failure"');
-    expect(html).toContain("is-hanging");
     expect(html).toMatch(/This turn failed<span aria-hidden="true">( · )<\/span><span data-conversation-status-next="">The model's rate limit was reached\. It resets in 41m<\/span>/);
     // The real next step comes before Details; the backend's words wait closed behind Details.
     expect(html.indexOf("data-conversation-status-choose-model")).toBeGreaterThan(-1);

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { parse_backend_instance_id } from '../../core/identity.ts';
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
@@ -14,6 +15,7 @@ import {
   SessionLoadFailed,
   TokenUsageReported,
   TurnEnded,
+  ToolCallStarted,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
@@ -185,6 +187,8 @@ async function live_child(
   options: {
     vendor_session_cursor?: string | null;
     client?: Partial<ClaudeSdkClient>;
+    start_agent_turn?: import('../../../conversation/backends/contracts.ts').BackendEventSink['start_agent_turn'];
+    report?: import('../../../conversation/backends/contracts.ts').BackendEventSink['report'];
     message_files?: import('../../../conversation/message_files.ts').ConversationMessageFiles;
   } = {},
 ) {
@@ -247,8 +251,10 @@ async function live_child(
       return client;
     },
     event_sink: {
-      report: async (_turn, event) => {
+      start_agent_turn: options.start_agent_turn,
+      report: async (turn, event) => {
         reported.push(event);
+        await options.report?.(turn, event);
         if (event instanceof TurnEnded) turn_endings.push(event);
         if (event instanceof BackendStreamEnded) stream_ended.resolve();
       },
@@ -530,6 +536,61 @@ it('starts a full-access conversation in auto permission mode', async () => {
   expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
 });
 
+// Risk: a root task hand-back after the prompted turn ends previously lost every event.
+// Recorded through the real driver capture tee with Claude 2.1.322 / Haiku on 2026-11-24.
+// The nested Bash task also finishes first. It must not start a parent turn.
+it('replays a recorded background hand-back as a new turn with tools, text, and usage', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  const names = new Map(
+    frames
+      .filter((frame) => frame.type === 'result')
+      .map((frame) => [String(frame.uuid), frame.user_message_uuids as string[]]),
+  );
+  let prompt_uuid = '';
+  const start_agent_turn = vi.fn(async () => ({
+    conversation_id: 'background-handback',
+    turn_number: 2,
+  }));
+  const { child, prompt, deliver, reported, turn_endings } = await live_child(
+    'background-handback',
+    {
+      start_agent_turn,
+      client: {
+        watch_user_message: (uuid) => {
+          prompt_uuid = uuid;
+        },
+        user_message_uuids_for_result: (uuid) =>
+          new Set(
+            (names.get(uuid ?? '') ?? []).map((name) => (name === '<prompt>' ? prompt_uuid : name)),
+          ),
+      },
+    },
+  );
+  try {
+    await prompt(1, 'low');
+    for (const frame of frames) deliver({ value: frame, done: false });
+    await vi.waitFor(() => expect(turn_endings).toHaveLength(2));
+    expect(start_agent_turn).toHaveBeenCalledExactlyOnceWith(
+      'Background task "Background sleep and report" completed',
+      expect.any(AbortSignal),
+    );
+    expect(turn_endings.map((event) => event.ending)).toEqual(['completed', 'completed']);
+    const after_first_end = reported.slice(reported.indexOf(turn_endings[0]!) + 1);
+    expect(
+      after_first_end.some((event) => event instanceof ToolCallStarted && event.title === 'Bash'),
+    ).toBe(true);
+    expect(after_first_end.some((event) => event instanceof AgentMessageCompleted)).toBe(true);
+    expect(after_first_end.some((event) => event instanceof TokenUsageReported)).toBe(true);
+  } finally {
+    await child.stop();
+  }
+});
+
 // Gap: AskUserQuestion answer callbacks never carried a managed file reference to readable bytes.
 it('Claude receives a readable managed image reference with its structured answer', async () => {
   const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
@@ -591,3 +652,394 @@ it('Claude receives a readable managed image reference with its structured answe
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Gap: cancellation arrived after the home accepted a turn but before its receipt reached
+// the driver. Reuse the existing client and recorded task frames, with no connected host.
+it('waits for autonomous activation before cancellation and then accepts the next prompt', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  const notice = frames.findLast((frame) => frame.subtype === 'task_notification')!;
+  const snapshot = frames.find((frame) => frame.subtype === 'background_tasks_changed')!;
+  const gate = new Deferred<
+    import('../../../conversation/backends/contracts.ts').TurnToken | null
+  >();
+  const start_agent_turn = vi.fn(() => gate.promise);
+  const interrupt = vi.fn(async () => [new Set<string>(), new Set<string>()] as const);
+  const state = await live_child('pending-cancel', {
+    start_agent_turn,
+    client: { interrupt_and_cancel_queued: interrupt },
+  });
+  try {
+    state.deliver({ value: snapshot, done: false });
+    state.deliver({ value: notice, done: false });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    let cancelled = false;
+    const cancellation = state.child.cancel_running_turn().then(() => {
+      cancelled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cancelled).toBe(false);
+    expect(interrupt).not.toHaveBeenCalled();
+    gate.resolve({ conversation_id: 'pending-cancel', turn_number: 2 });
+    await vi.waitFor(() => expect(interrupt).toHaveBeenCalledOnce());
+    const result = frames.findLast((frame) => frame.type === 'result')!;
+    state.deliver({ value: result, done: false });
+    await cancellation;
+    expect(state.turn_endings).toMatchObject([{ ending: 'interrupted' }]);
+    await state.prompt(3, 'low');
+  } finally {
+    gate.resolve(null);
+    await state.child.stop();
+  }
+});
+
+// Gap: an unavailable home must not keep the SDK reader alive during native shutdown.
+it('aborts a pending autonomous receipt when the Claude child stops', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  let signal: AbortSignal | undefined;
+  const start_agent_turn = vi.fn((_reason: string, cancel?: AbortSignal) => {
+    signal = cancel;
+    return new Promise<null>((resolve) =>
+      cancel!.addEventListener('abort', () => resolve(null), { once: true }),
+    );
+  });
+  const state = await live_child('pending-shutdown', { start_agent_turn });
+  try {
+    state.deliver({
+      value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+      done: false,
+    });
+    state.deliver({
+      value: frames.findLast((frame) => frame.subtype === 'task_notification')!,
+      done: false,
+    });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    await state.child.stop();
+    expect(signal?.aborted).toBe(true);
+    expect(state.turn_endings).toHaveLength(0);
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Prior driver-only cases miss the core settlement barrier that must release a stale steer.
+it('a stale local steer releases the prior ending and autonomous activation', async () => {
+  const { setup } = await import('../../../tests/conversation_core_fixture.ts');
+  const { observe_promise } = await import('../../../core/promise_observer.ts');
+  const { PromptDeliveryQueued } = await import('../../../conversation/contracts.ts');
+  const f = setup();
+  await f.start();
+  await f.send();
+  const core_state = f.core.conversations.get('core')!;
+  const sink = core_state.child_event_sink!;
+  const start_agent_turn = vi.fn((reason: string, signal?: AbortSignal) =>
+    sink!.start_agent_turn!(reason, signal),
+  );
+  const native = await live_child('core', { start_agent_turn });
+  core_state.child = native.child;
+  const gate = new Deferred<void>();
+  const entered = new Deferred<void>();
+  const original = f.core.begin_attempt.bind(f.core);
+  const spy = vi.spyOn(f.core, 'begin_attempt').mockImplementation(async (...args) => {
+    if (args[2] === 'steer') {
+      entered.resolve();
+      await gate.promise;
+    }
+    return original(...args);
+  });
+  let steering: Promise<unknown> | undefined;
+  try {
+    steering = f.core.send('core', text_message_content('steer'), {
+      sender_label: 'Owner',
+      sender_message_id: 'review-steer',
+      mode: 'steer',
+    });
+    await entered.promise;
+    // The driver ended its old turn. Its durable end waits behind the admitted steer.
+    await sink.report(core_state.running_turn!.token, new TurnEnded({ ending: 'completed' }));
+    const frames = JSON.parse(
+      readFileSync(
+        new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+        'utf8',
+      ),
+    ) as ClaudeSdkMessage[];
+    native.deliver({
+      value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+      done: false,
+    });
+    native.deliver({
+      value: frames.findLast((frame) => frame.subtype === 'task_notification')!,
+      done: false,
+    });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    gate.resolve();
+    const observed = await observe_promise(steering, 1000);
+    expect(observed.completed).toBe(true);
+    if (observed.completed) expect(observed.value).toBeInstanceOf(PromptDeliveryQueued);
+    expect(core_state.steer_settlements.size).toBe(0);
+    const activation = start_agent_turn.mock.results[0]!.value;
+    expect((await observe_promise(activation, 1000)).completed).toBe(true);
+  } finally {
+    gate.resolve();
+    spy.mockRestore();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+    await steering?.catch(() => {});
+    await native.child.stop();
+  }
+});
+
+// Gap: Stop must interrupt SDK work even when core admission declines its new turn.
+it('interrupts a refused autonomous activation and keeps a fresh prompt separate', async () => {
+  const { setup } = await import('../../../tests/conversation_core_fixture.ts');
+  const { observe_promise } = await import('../../../core/promise_observer.ts');
+  const f = setup();
+  await f.start();
+  await f.send();
+  const core_state = f.core.conversations.get('core')!;
+  const sink = core_state.child_event_sink!;
+  const start_agent_turn = vi.fn((reason: string, signal?: AbortSignal) =>
+    sink!.start_agent_turn!(reason, signal),
+  );
+  const interrupt_native = vi.fn(async () => [new Set<string>(), new Set<string>()] as const);
+  let fresh_uuid = '';
+  const native = await live_child('core', {
+    start_agent_turn,
+    report: (turn, event) => sink.report(turn, event),
+    client: {
+      interrupt_and_cancel_queued: interrupt_native,
+      watch_user_message: (uuid) => {
+        fresh_uuid = uuid;
+      },
+      user_message_uuids_for_result: (uuid) => new Set(uuid === 'fresh-result' ? [fresh_uuid] : []),
+    },
+  });
+  core_state.child = native.child;
+  const gate = new Deferred<void>();
+  const entered = new Deferred<void>();
+  const original = f.core.begin_attempt.bind(f.core);
+  const spy = vi.spyOn(f.core, 'begin_attempt').mockImplementation(async (...args) => {
+    if (args[2] === 'cancel') {
+      entered.resolve();
+      await gate.promise;
+    }
+    return original(...args);
+  });
+  let steering: Promise<unknown> | undefined;
+  try {
+    steering = f.core.interrupt('core');
+    await entered.promise;
+    // The driver ended its old turn. The core owns cancellation of the prior turn.
+    await sink.report(core_state.running_turn!.token, new TurnEnded({ ending: 'completed' }));
+    const frames = JSON.parse(
+      readFileSync(
+        new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+        'utf8',
+      ),
+    ) as ClaudeSdkMessage[];
+    native.deliver({
+      value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+      done: false,
+    });
+    native.deliver({
+      value: frames.findLast((frame) => frame.subtype === 'task_notification')!,
+      done: false,
+    });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    gate.resolve();
+    const observed = await observe_promise(steering, 1000);
+    expect(observed.completed).toBe(true);
+    expect(core_state.running_turn).toBeNull();
+    expect(interrupt_native).toHaveBeenCalledOnce();
+    expect(
+      f.store.read_events_after('core', 0).some((row) => row.kind === 'agent_turn_started'),
+    ).toBe(false);
+    await f.core.send('core', text_message_content('Fresh prompt'), {
+      sender_label: 'Owner',
+      sender_message_id: 'fresh-prompt',
+    });
+    const fresh_turn = core_state.running_turn!.token;
+    const old_result = frames.findLast((frame) => frame.type === 'result')!;
+    native.deliver({ value: old_result, done: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(native.turn_endings).toHaveLength(0);
+    expect(core_state.running_turn?.token).toEqual(fresh_turn);
+    native.deliver({
+      value: { ...old_result, uuid: 'fresh-result', origin: { kind: 'human' } },
+      done: false,
+    });
+    await vi.waitFor(() => expect(native.turn_endings).toHaveLength(1));
+    await f.core.wait_until_quiescent();
+    expect(core_state.running_turn).toBeNull();
+  } finally {
+    gate.resolve();
+    spy.mockRestore();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+    await steering?.catch(() => {});
+    await native.child.stop();
+  }
+});
+
+// Gap: native dispatch joins its receipt before it calls the real driver, so an adapter-only
+// in-flight cancellation probe misses refused SDK work whose receipt already settled.
+// Reuse the injected SDK client and actual native dispatcher, without a backend or listener.
+it.each(['owned-first', 'background-first'] as const)(
+  'native cancellation reaches refused SDK work and preserves catalog results (%s)',
+  async (order) => {
+    const { MacRunnerEvents } = await import('../../../executor/mac/runner/events.ts');
+    const { MacSourceWork } = await import('../../../executor/mac/runner/source_work.ts');
+    const { MacChildState } = await import('../../../executor/mac/runner/state.ts');
+    const { dispatch_command } = await import('../../../executor/mac/runner/commands.ts');
+    const { FifoLock } = await import('../../../conversation/runtime/state.ts');
+    const frames = JSON.parse(
+      readFileSync(
+        new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+        'utf8',
+      ),
+    ) as ClaudeSdkMessage[];
+    const receipt = new Deferred<
+      import('../../../executor/wire.generated.ts').AcceptanceReceipt | null
+    >();
+    const confirm = vi.fn(() => receipt.promise);
+    let sink: import('../../../conversation/backends/contracts.ts').BackendEventSink | undefined;
+    const start_agent_turn = vi.fn((reason: string, signal?: AbortSignal) =>
+      sink!.start_agent_turn!(reason, signal),
+    );
+    const interrupt = vi.fn(async () => [new Set<string>(), new Set<string>()] as const);
+    const native = await live_child('native-refused', {
+      start_agent_turn,
+      // Startup catalog/session news precedes this native dispatcher fixture.
+      report: async (turn, event) => {
+        await sink?.report(turn, event);
+      },
+      client: { interrupt_and_cancel_queued: interrupt },
+    });
+    const reference = {
+      executor_incarnation: 'inc',
+      child_id: 'child',
+      conversation_id: 'native-refused',
+    };
+    const child = {
+      reference,
+      native: native.child,
+      active_turn: null,
+      pending_agent_turn: null,
+      lock: new FifoLock(),
+      open_tool_calls: new Set(),
+      background_task_ids: new Set(),
+    } as unknown as import('../../../executor/mac/runner/contracts.ts').MacRunningChild;
+    const state = new MacChildState();
+    const sources = new MacSourceWork(state, () => false);
+    const children = { get: () => child, is_retiring: () => false };
+    sink = new MacRunnerEvents({
+      state,
+      sources,
+      native_children:
+        children as unknown as import('../../../executor/mac/runner/contracts.ts').MacNativeChildrenContract,
+      publication: { add: async () => {} },
+      live: null,
+      supports_agent_turns: () => true,
+      confirm_agent_turn: confirm,
+    }).event_sink(reference);
+    const dependencies = {
+      incarnation: 'inc',
+      state,
+      native_children: children,
+    } as unknown as import('../../../executor/mac/runner/command_contracts.ts').MacCommandDependencies;
+    const dispatch = (command: import('../../../executor/wire.generated.ts').ChildCommand) =>
+      dispatch_command(
+        dependencies,
+        command,
+        new Map(),
+        {} as import('../../../executor/mac/runner/command_contracts.ts').MacCommandWork,
+        () => {},
+      );
+    try {
+      native.deliver({
+        value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+        done: false,
+      });
+      const notice = frames.findLast((frame) => frame.subtype === 'task_notification')!;
+      native.deliver({ value: notice, done: false });
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+      const cancellation = dispatch({
+        command_id: 'cancel',
+        child: reference,
+        turn: { conversation_id: 'native-refused', turn_number: 2 },
+        operation: 'cancel_running_turn',
+        arguments: { kind: 'cancel_running_turn' },
+      });
+      receipt.resolve({
+        result: { applied: false, turn: null },
+      } as unknown as import('../../../executor/wire.generated.ts').AcceptanceReceipt);
+      await cancellation;
+      expect(interrupt).toHaveBeenCalledOnce();
+      expect(native.turn_endings).toHaveLength(0);
+      await dispatch({
+        command_id: 'compact',
+        child: reference,
+        turn: { conversation_id: 'native-refused', turn_number: 3 },
+        operation: 'write_prompt',
+        arguments: {
+          kind: 'write_prompt',
+          content: [{ text: '/compact' }],
+          sender_content: [{ text: '/compact' }],
+          sender_label: 'Owner',
+          sender_message_count: 1,
+          mode: 'queue',
+          model_change: null,
+          reasoning_effort_change: null,
+          automatic_compaction: true,
+        },
+      });
+      const recorded = frames.findLast((frame) => frame.type === 'result')!;
+      const background =
+        order === 'owned-first' ? recorded : { ...recorded, origin: { kind: 'task-notification' } };
+      const own = {
+        ...recorded,
+        uuid: 'compact-result',
+        origin: order === 'owned-first' ? undefined : { kind: 'human' },
+      };
+      if (order === 'owned-first') {
+        native.deliver({ value: own, done: false });
+        await vi.waitFor(() => expect(native.turn_endings).toHaveLength(1));
+        // The old activity still exists. Another notice must not reopen a turn yet.
+        native.deliver({ value: notice, done: false });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(start_agent_turn).toHaveBeenCalledOnce();
+        native.deliver({ value: background, done: false });
+      } else {
+        native.deliver({ value: background, done: false });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(native.turn_endings).toHaveLength(0);
+        native.deliver({ value: own, done: false });
+      }
+      await vi.waitFor(() => expect(native.turn_endings).toHaveLength(1));
+      // A distinct next task proves that clearing the old marker does not suppress future wakes.
+      native.deliver({
+        value: {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [{ task_id: 'next', description: 'Next background task' }],
+        },
+        done: false,
+      });
+      native.deliver({ value: { ...notice, task_id: 'next', run_id: 'next-run' }, done: false });
+      await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledTimes(2));
+      expect(native.turn_endings).toMatchObject([{ ending: 'completed' }]);
+      expect(child.active_turn).toBeNull();
+      await sources.finish();
+    } finally {
+      receipt.resolve(null);
+      await native.child.stop();
+    }
+  },
+);

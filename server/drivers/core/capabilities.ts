@@ -7,6 +7,7 @@ export interface BackendCapabilities {
   readonly turns: {
     /** A prompt can steer the active turn. */
     readonly supportsActiveSteering: boolean;
+    readonly wakesOnBackgroundCompletion: boolean;
   };
 }
 
@@ -17,5 +18,5 @@ export interface BackendCapabilities {
  */
 export const ACP_CHILD_CAPABILITIES: BackendCapabilities = {
   sessions: { supportsModelSwitchInSession: true },
-  turns: { supportsActiveSteering: false },
+  turns: { supportsActiveSteering: false, wakesOnBackgroundCompletion: false },
 };

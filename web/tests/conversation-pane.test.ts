@@ -125,15 +125,21 @@ describe("queued messages in the pane", () => {
     expect(body).not.toContain("data-anchor-end");
   });
 
-  it("follow the running turn’s Working line in their own box", () => {
+  it("places the held box below an agent-started turn and its Working line", () => {
     const turn: ConversationViewItem = {
       kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
       settled: false, stopped: false, started_at_unix_milliseconds: 100_000, ending: null,
       duration_seconds: null, tool_call_count: 0, folded_message_count: 0, latest_message_key: null, is_latest: true
     };
+    const header: ConversationViewItem = {
+      kind: "row", key: "e1", row_kind: "agent_turn_started", order: { sequence: 1, slot: 0 },
+      source_sequence: 1, sender_message_id: null, changed_through_sequence: 1, created_at: 100,
+      turn_key: null, work_group_key: null, fold_rule: "never",
+      body: { kind: "inline", value: { kind: "agent_turn_started", reason: "Sub-agent 'Check tests' finished" } }
+    };
     const reader = {
       id: "c-1", lens: "focus", coverage: 5, entryPhase: "ready",
-      pages: [{ conversation_id: "c-1", protocol_version: 1, projection_version: 1, lens: "focus", scope: { kind: "timeline", key: null }, items: [turn], older: null, newer: null, body_bytes: 0 }],
+      pages: [{ conversation_id: "c-1", protocol_version: 1, projection_version: 1, lens: "focus", scope: { kind: "timeline", key: null }, items: [header, turn], older: null, newer: null, body_bytes: 0 }],
       status: {
         turn_key: "turn:e1", turn_running: true, pending_permission: null, pending_user_input: null, stopped_without_ending: false, background_tasks: [],
         rest: { latest_happened: null, latest_turn: null, latest_tool: null, permission_title_excerpt: null, latest_owner_message_preview: null, latest_owner_message_sequence: 0, last_boundary_failed: false,
@@ -146,6 +152,11 @@ describe("queued messages in the pane", () => {
       props: { ...base, conversationState: "opened", running: true, reader, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const edge = body.indexOf("data-conversation-live-edge");
+    expect(body).toContain("Sub-agent 'Check tests' finished");
+    expect(body).toContain('data-conversation-row="agent_turn_started"');
+    expect(body).toContain('data-conversation-system-mark="spinner"');
+    expect(body).toContain("Working");
+    expect(body.indexOf('data-conversation-row="agent_turn_started"')).toBeLessThan(edge);
     expect(edge).toBeGreaterThan(-1);
     expect(body.indexOf("data-conversation-held-stack")).toBeGreaterThan(edge);
     expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));

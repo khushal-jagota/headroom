@@ -503,7 +503,7 @@
              with a spinner, "Machine offline" with a still dot, the dock's words (A4). -->
         <span class="cv-state" data-conversation-head-status={headStatus.state}
           role="status" title={headStatus.text}>
-          <SystemLine mark={headStatus.mark === "spinner" ? "spinner" : headStatus.mark === null ? null : "dot"} hangMark={false}>{headStatus.text}</SystemLine>
+          <SystemLine mark={headStatus.mark === "spinner" ? "spinner" : headStatus.mark === null ? null : "dot"}>{headStatus.text}</SystemLine>
         </span>
       {/if}
       {#if connectionTrouble}

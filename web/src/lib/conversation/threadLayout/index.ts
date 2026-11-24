@@ -229,13 +229,13 @@ export function threadItems(
       turn.messageIndexes = [...turn.messageIndexes, rowIndex];
     }
 
-    if (row.kind === "prompt" && row.mode !== "steer" && turn.startedAt === null) {
+    if ((row.kind === "agent_turn_started" || (row.kind === "prompt" && row.mode !== "steer")) && turn.startedAt === null) {
       // An ordinary prompt starts a turn. A steer receipt joins an existing turn, so it
       // cannot reset that turn or open a new head when its provider answer arrives late.
       turn = {
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
+        startedAtUnixMilliseconds: row.kind === "prompt" ? row.sentAtUnixMilliseconds : row.createdAt * 1000,
         anchorIndex: items.length,
         groupIndexes: [],
         openGroupIndex: null,
@@ -248,7 +248,7 @@ export function threadItems(
         turnKey: `turn:${row.key}`,
         settled: false,
         stopped: false,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
+        startedAtUnixMilliseconds: row.kind === "prompt" ? row.sentAtUnixMilliseconds : row.createdAt * 1000,
         ending: null,
         isLatest: false,
         durationSeconds: null,

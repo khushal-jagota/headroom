@@ -41,7 +41,7 @@ function scripted_driver(
     manifest: scripted_manifest(kind),
     capabilities: {
       sessions: { supportsModelSwitchInSession: true },
-      turns: { supportsActiveSteering: true },
+      turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: false },
     },
     plan_selection_transition: turn_scoped_selection_transition,
     config: NO_DRIVER_CONFIG,
@@ -54,7 +54,7 @@ function scripted_driver(
         driver_kind,
         capabilities: {
           sessions: { supportsModelSwitchInSession: true },
-          turns: { supportsActiveSteering: true },
+          turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: false },
         },
         plan_selection_transition: turn_scoped_selection_transition,
         child_factory: factory,

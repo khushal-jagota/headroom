@@ -58,7 +58,7 @@ export const claude_models: DriverModelRules = {
 
 export const CLAUDE_CAPABILITIES: BackendCapabilities = {
   sessions: { supportsModelSwitchInSession: false },
-  turns: { supportsActiveSteering: true },
+  turns: { supportsActiveSteering: true, wakesOnBackgroundCompletion: true },
 };
 
 // A level the SDK no longer names fails to compile. A new SDK level still restarts.

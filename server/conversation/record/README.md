@@ -5,6 +5,8 @@ lifecycle facts, projection, and synchronous participants through one write door
 The caller publishes the returned rows to the tail only after the method returns.
 Transient frames never enter the durable event record.
 
+The prior-delivery check uses the conversation index to search only that conversation's events.
+
 A turn reservation also writes its automatic-start bindings in the same transaction.
 The shared admission engine borrows the store's read/write capability and owns no
 connection. Positive acceptance or exact source retirement settles those bindings.

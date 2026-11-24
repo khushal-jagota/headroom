@@ -27,6 +27,7 @@ export interface EventArgumentPayloads {
   turn_ended: Wire.TurnEnded;
   vendor_session_cursor_rebound: Wire.VendorSessionCursorRebound;
   composer_catalog_reported: Wire.ComposerCatalogReported;
+  agent_turn_started: Wire.AgentTurnStarted;
   background_task_started: Wire.BackgroundTaskStarted;
   background_task_ended: Wire.BackgroundTaskEnded;
   backend_stream_ended: Wire.BackendStreamEnded;

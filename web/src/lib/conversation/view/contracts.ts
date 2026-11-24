@@ -1,10 +1,10 @@
 // Maintained by hand. It mirrors server/conversation/views/contracts.ts.
 export const VIEW_PROTOCOL_VERSION = 1;
-export const VIEW_PROJECTION_VERSION = 5;
+export const VIEW_PROJECTION_VERSION = 6;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "command_reply" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "agent_turn_started" | "background_task_started" | "background_task_ended" | "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "command_reply" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -31,6 +31,24 @@ export interface ViewFilePiece {
 export type ViewMessagePiece = ViewTextPiece | ViewImagePiece | ViewFilePiece;
 
 export type PromptDeliveryMode = "queue" | "send_now" | "steer";
+
+export interface AgentTurnStartedRowBody {
+  kind: "agent_turn_started";
+  reason: string;
+}
+
+export interface BackgroundTaskStartedRowBody {
+  kind: "background_task_started";
+  task_id: string;
+  task_description: string;
+}
+
+export interface BackgroundTaskEndedRowBody {
+  kind: "background_task_ended";
+  task_id: string;
+  task_description: string;
+  task_status: string;
+}
 
 export interface PromptRowBody {
   kind: "prompt";
@@ -200,7 +218,7 @@ export interface CredentialRequestRowBody {
   delivery: RequestDelivery | null;
 }
 
-export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody | CommandReplyRowBody;
+export type ViewRowBody = AgentTurnStartedRowBody | BackgroundTaskStartedRowBody | BackgroundTaskEndedRowBody | CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody | CommandReplyRowBody;
 
 export interface ViewBodyReference {
   body_id: string;
@@ -314,7 +332,7 @@ export interface ViewLiveOutput {
 }
 
 export interface ViewRestText {
-  kind: "prompt" | "agent_message" | "streaming_agent_message";
+  kind: "prompt" | "agent_turn_started" | "agent_message" | "streaming_agent_message";
   sender_label: string | null;
   excerpt: string;
 }
