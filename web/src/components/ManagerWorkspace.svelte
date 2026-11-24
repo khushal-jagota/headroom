@@ -6,7 +6,6 @@
   import { onMount, onDestroy } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
   import HolderDocument from "./pageKit/HolderDocument.svelte";
   import GoalHeader from "./goals/GoalHeader.svelte";
@@ -228,21 +227,20 @@
           </div>
 
           {#snippet tickets()}
-            {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+            <section class="manager-workers" aria-label="Workers">
               <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
                 onHover={(element, id, immediate) => {
                   const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                   if (ticket) hoverRow(element, ticket, immediate);
                 }} onLeave={() => hover.leave()} />
-            </section>{/if}
+            </section>
           {/snippet}
-          <!-- A Manager exists for its goals, so they lead its page; its tickets follow. -->
-          {#if soleGoal}<GoalContent goal={soleGoal} textEditable={false}/>
+          {@render tickets()}
+          {#if soleGoal}<div class="manager-content"><GoalContent goal={soleGoal} textEditable={false}/></div>
           {:else}
             {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
-            {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
+            {#if holderPage.data?.page}<div class="manager-content"><HolderDocument holder={{kind:"manager",id:itemId}}/></div>{/if}
           {/if}
-          {@render tickets()}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
@@ -290,7 +288,7 @@
   /* Settle shows while the pointer is on the page or focus is on it, as staging. */
   :global(.page-settle.button) { opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   :global(.manager-doc:hover .page-settle.button), :global(.page-settle.button:focus-visible) { opacity:1; }
-  .manager-workers { margin-top:var(--page-section-gap); }
+  .manager-workers, .manager-content { margin-top:var(--page-section-gap); }
   .manager-bands { margin-top:var(--page-section-gap); }
   .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
   .goal-chevron { font-size:var(--type-body); line-height:1; }

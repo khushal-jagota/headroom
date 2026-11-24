@@ -2,8 +2,8 @@
 import type { SchemaStep } from './contracts.ts';
 
 export const empty_attachments_step: SchemaStep = {
-  revision: 'ts_0011_empty_attachments',
-  previous_revision: 'ts_0010_answer_receipt_index',
+  revision: 'ts_0012_empty_attachments',
+  previous_revision: 'ts_0011_remove_tickets_blocks',
   apply(tx) {
     tx.run(
       'CREATE TABLE conversation_video_uploads_next (upload_id TEXT PRIMARY KEY,destination_json TEXT NOT NULL,filename TEXT NOT NULL,byte_count INTEGER NOT NULL CHECK(byte_count >= 0),received_bytes INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL,media_type TEXT,expires_at INTEGER NOT NULL,error TEXT,sender_message_id TEXT,conversation_id TEXT,stored_file_id TEXT NOT NULL,outcome TEXT)',
