@@ -11,7 +11,7 @@
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
   import { conversationHeight } from '../../lib/conversation/surfaceMotion';
   import { refusalOffersResend } from '../../lib/conversation/transcript';
-  import { recordedContentCanBeEdited, recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
+  import { recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
   import { getContext } from 'svelte';
   let { presentationRowKey = null, row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
     presentationRowKey?: string | null;
@@ -40,7 +40,7 @@
   const localFailed = $derived(!row && (local?.knownFate === 'not_sent' || local?.knownFate === 'machine_offline'));
   const localUpload = $derived(local?.content.some(piece => piece.piece === 'video_upload' || piece.piece === 'attachment_upload') ?? false);
   const offersEdit = $derived(!edited && !resent && resendRecorded?.available() && (
-    row?.kind === 'prompt_refused' && resendRecorded.edit && recordedContentCanBeEdited(row.content)
+    row?.kind === 'prompt_refused' && resendRecorded.edit && row.content.length > 0
     || localFailed && resendRecorded.editLocal
   ));
   // What became of the message, said under it in the thread's status voice, never inside

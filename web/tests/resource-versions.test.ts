@@ -151,6 +151,62 @@ describe('resource version reconciliation', () => {
     stop(); coordinator.stop();
   });
 
+  // Risk: a round waited for each body that it read, so one body with no answer stopped
+  // every later round, and live updates stopped for the whole page.
+  it('keeps other bodies current while one body never answers, and reads that body once', async () => {
+    const qc = client(); const stuck = deferred<Response>(); let a = '1'; let b = '1'; let readsOfA = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const url = new URL(input, 'http://panels');
+      if (url.pathname === '/api/resource-versions') return response({ epoch: 'e', resources: [
+        { key: '/api/a', revision: a }, { key: '/api/b', revision: b }] });
+      const key = url.searchParams.get('key');
+      if (key === '/api/b') return response({ epoch: 'e', key, revision: b, body: b });
+      readsOfA++;
+      if (readsOfA === 2) return stuck.promise;
+      return response({ epoch: 'e', key, revision: a, body: a });
+    }));
+    const first = new QueryObserver(qc, resourceQuery<string>(['a'], '/api/a', true));
+    const second = new QueryObserver(qc, resourceQuery<string>(['b'], '/api/b', true));
+    const stops = [first.subscribe(() => {}), second.subscribe(() => {})];
+    await Promise.all([first.refetch(), second.refetch()]);
+    const coordinator = createResourceCoordinator(qc);
+    a = '2'; void coordinator.refresh();
+    await vi.waitFor(() => expect(readsOfA).toBe(2));
+    a = '3'; b = '2'; void coordinator.refresh();
+    await vi.waitFor(() => expect(second.getCurrentResult().data).toBe('2'));
+    // The later round left the read in flight alone.
+    expect(readsOfA).toBe(2);
+    // That read lands with a body older than the later round saw, so one more read follows.
+    stuck.resolve(response({ epoch: 'e', key: '/api/a', revision: '2', body: '2' }));
+    await vi.waitFor(() => expect(first.getCurrentResult().data).toBe('3'));
+    expect(readsOfA).toBe(3);
+    stops.forEach(stop => stop()); coordinator.stop();
+  });
+
+  // Risk: a read that a round left in flight is read once more when it lands. If that
+  // follow-up could start a round, three bodies with no revision would read without end.
+  it('reads each body at most once more after a round found it in flight', async () => {
+    const qc = client(); let reads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      reads++;
+      await new Promise(done => setTimeout(done, 5 + 5 * Number(input.at(-1))));
+      return response({ legacy: true });
+    }));
+    const observers = [1, 2, 3].map(n => new QueryObserver(qc, resourceQuery(['legacy', n], `/api/legacy/${n}`)));
+    const stops = observers.map(observer => observer.subscribe(() => {}));
+    await Promise.all(observers.map(observer => observer.refetch()));
+    const coordinator = createResourceCoordinator(qc);
+    void coordinator.refresh();
+    await vi.waitFor(() => expect(reads).toBe(6));
+    // A second round arrives while all three reads are in flight.
+    const second = coordinator.refresh();
+    await second;
+    expect(reads).toBe(9);
+    await new Promise(done => setTimeout(done, 150));
+    expect(reads).toBe(9);
+    stops.forEach(stop => stop()); coordinator.stop();
+  });
+
   it('never promotes a probe version onto an older body admitted during the request', async () => {
     const qc = client(); const probe = deferred<Response>(); let revision = '1';
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {

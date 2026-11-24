@@ -1,5 +1,5 @@
 import { fetchJson, PlannerFetchError } from '../api';
-import { queryClient } from '../queryClient';
+import { refreshScreen } from '../resourceVersions/refresh';
 import type { ManualMeasureState, ManualWriteBody, ManualWriteResult } from './contracts';
 import type { ManualWriteCommand, RequestSession } from './requestSessions';
 
@@ -29,8 +29,8 @@ export function manualMeasurementHttp(measureId: string): ManualMeasurementAdapt
     read: date => fetchJson<ManualMeasureState>(`${path}/manual-state${date ? `?date=${encodeURIComponent(date)}` : ''}`),
     async write(body) {
       const result = await fetchJson<ManualWriteResult>(`${path}/manual-writes`, { method: 'POST', body });
-      // A failed refresh cannot turn an accepted write into a failed write.
-      void queryClient.invalidateQueries().catch(() => {});
+      // The refresh is started and not waited for, so it cannot fail an accepted write.
+      void refreshScreen();
       return result;
     },
   };

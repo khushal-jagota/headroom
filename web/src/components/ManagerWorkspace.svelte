@@ -5,7 +5,7 @@
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import PageTickets from "./pageKit/PageTickets.svelte";
   import HolderDocument from "./pageKit/HolderDocument.svelte";
@@ -168,7 +168,7 @@
     settleBusy = true;
     settleError = "";
     try {
-      await mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
+      await mutateJsonAndWaitForScreen(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The manager could not be updated.";
     } finally {

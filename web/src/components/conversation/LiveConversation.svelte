@@ -29,7 +29,7 @@
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
-  import { ATTACHMENT_NOT_READ_BACK, isRecordedVideo, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
+  import { ATTACHMENT_NOT_READ_BACK, editablePiecesFromRecorded, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
   import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
   import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from "../../lib/conversation/ownerSend";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
@@ -45,6 +45,8 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { refreshScreen } from "../../lib/resourceVersions/refresh";
+  import { withinScreenWait } from "../../lib/mutate";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import SystemLine from "./SystemLine.svelte";
@@ -222,11 +224,12 @@
   let fateNoteMessageId = $state<string | null>(null);
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
-  /** A send from the dock that the machine turned away: its words stay in the composer, and
-   *  this reason stands under it, because the bubble that says so is in the closed
-   *  transcript. Cleared by the next send and by opening the conversation. */
   let askNote = $state<string | null>(null);
   let askNoteKey = $state<string | null>(null);
+  /** The asks that the server took an answer for. A card stays until the tail says that
+   *  its ask is over, and a second press in that moment must not send a second answer. */
+  let answeredPermissionAsk: string | null = null;
+  let answeredUserInput: string | null = null;
   let busy = $state(false);
   let outgoingReady = $state(false);
   let opening = $state(false);
@@ -277,6 +280,9 @@
     const pending=view?.pending_user_input;
     return pending&&pending.request_id===askStatus?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
+  // An ask that is over can come again under the same id, so its answer is forgotten.
+  $effect(() => { if (ask === null) answeredPermissionAsk = null; });
+  $effect(() => { if (userInput === null) answeredUserInput = null; });
   let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
     askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
@@ -308,9 +314,8 @@
     available: () => !readOnly,
     edit: async (recordedIn, content) => {
       if (readOnly || recordedIn !== openedId) return false;
-      const editable = content.filter(piece => !isRecordedVideo(piece));
-      const pieces = editable.length ? await sentPiecesFromRecorded(recordedIn, editable) : [];
-      return !readOnly && recordedIn === openedId && editUnsentMessage(pieces, editable.length !== content.length);
+      const {pieces, needsReattachment} = await editablePiecesFromRecorded(recordedIn, content);
+      return !readOnly && recordedIn === openedId && editUnsentMessage(pieces, needsReattachment);
     },
     editLocal: async messageId => {
       const candidate = sentMessages.find(message => message.messageId === messageId);
@@ -342,7 +347,7 @@
   function editUnsentMessage(content: readonly SentMessagePiece[], reattachFile: boolean): boolean {
     const edited = pane?.takeBackUnsentMessage(content) ?? false;
     if (!edited) errorNote = "Finish your current draft before editing this message.";
-    else errorNote = reattachFile ? "Attach the file again before sending." : null;
+    else errorNote = reattachFile ? "Attach any missing files again before sending." : null;
     return edited;
   }
 
@@ -388,9 +393,9 @@
           );
           if (latestOwnerMessage > previouslyReadThrough && latestOwnerMessage <= advanced) {
             refreshedReadThrough.set(reading.conversation_id, advanced);
-            // The server accepted this read. Ask mounted queries for current truth,
+            // The server accepted this read. Start the ordinary refresh for current truth,
             // even if the owner switched conversations while the request was pending.
-            void queryClient.invalidateQueries();
+            void refreshScreen();
           }
           if (view?.conversation_id === reading.conversation_id) {
             view = {
@@ -736,7 +741,7 @@
       ...(reconcilesSequence === undefined ? {} : {reconcilesSequence}) };
     const body = sendBodyFor({
       message, current, picked,
-      conversationId: sendContext ? sendContext.expectedConversationId : openedId ?? conversationId
+      conversationId: sendContext ? sendContext.expectedConversationId : sendOwner ? openedId ?? conversationId : started ? openedId : null
     });
     if (sendOwner) {
       const { conversation_id, backend_key, model, reasoning_effort } = body;
@@ -959,7 +964,7 @@
     if (readOnly || openedId === null) return;
     try {
       await interruptConversation(openedId);
-      await refreshView();
+      void refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -972,19 +977,27 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(heldPromptId: string, forEdit = false): Promise<void> {
-    if (readOnly || openedId === null) return;
+  async function discard(heldPromptId: string, forEdit = false): Promise<boolean> {
+    if (readOnly || openedId === null) return false;
     errorNote = null;
+    const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
+    let discarded: boolean;
     try {
-      const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
-      await discardHeldPrompt(openedId, heldPromptId, forEdit);
-      // Taken back to edit: the record keeps no row for it, so nothing else takes this
-      // tab's copy off the screen. Its words are in the composer now.
-      if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
-      await refreshView();
+      ({ discarded } = await discardHeldPrompt(openedId, heldPromptId, forEdit));
     } catch (error) {
       errorNote = sentenceFor(error);
+      // No answer is not a refusal: the server can still discard the message. Only the
+      // record says what happened, so this one case waits for it.
+      await refreshView();
+      return !(view?.held_prompts ?? []).some((held) => held.held_prompt_id === heldPromptId);
     }
+    // Taken back to edit: the record keeps no row for it, so nothing else takes this
+    // tab's copy off the screen. Its words are in the composer now.
+    if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
+    // The write is answered. The row leaves when the record is read again, and the
+    // caller waits for that only a short, limited time.
+    await withinScreenWait(refreshView());
+    return discarded;
   }
 
   async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
@@ -1003,7 +1016,7 @@
         fateNoteIsTerminal = true;
         fateNoteMessageId = promotedMessageId;
       }
-      await refreshView();
+      await withinScreenWait(refreshView());
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -1012,6 +1025,7 @@
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
     if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    if (answeredPermissionAsk === askId) return;
     askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
@@ -1020,6 +1034,7 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take that answer. Cancelling the turn always works.";
+      if (fate !== "refused") answeredPermissionAsk = askId;
       void refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
@@ -1031,6 +1046,7 @@
   async function submitUserInput(answers: UserInputAnswers): Promise<boolean> {
     const requestId = userInput?.requestId;
     if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return false;
+    if (answeredUserInput === requestId) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
@@ -1039,6 +1055,7 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take those answers. You can try again or stop the turn.";
+      if (fate !== "refused") answeredUserInput = requestId;
       void refreshView();
       return fate !== "refused";
     } catch (error) {

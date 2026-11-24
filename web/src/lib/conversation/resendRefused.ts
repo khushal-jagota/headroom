@@ -10,17 +10,19 @@
  * offered for sending again rather than being sent without it.
  */
 import { conversationFileHref, type MessagePiece, type SentMessagePiece } from "./wire";
+import { clientFetch } from "../clientIdentity";
+import { ATTACHMENT_READ_LIMIT_MS } from "../requestLimit/config";
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES } from "./pendingFiles";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 
 /** Whether every piece of this recorded message can go out again as it went the first time. */
+function recordedPieceCanBeResent(piece: MessagePiece): boolean {
+  return piece.piece !== "file"
+    || (!/^(video|audio)\//.test(piece.media_type) && piece.byte_count <= MAX_CONVERSATION_MESSAGE_FILE_BYTES);
+}
+
 export function recordedContentCanBeResent(content: readonly MessagePiece[]): boolean {
-  if (content.length === 0) return false;
-  return content.every((piece) => {
-    if (piece.piece === "text") return true;
-    if (piece.piece === "image") return true;
-    return !/^(video|audio)\//.test(piece.media_type) && piece.byte_count <= MAX_CONVERSATION_MESSAGE_FILE_BYTES;
-  });
+  return content.length > 0 && content.every(recordedPieceCanBeResent);
 }
 
 function bytesAsBase64(bytes: Uint8Array): string {
@@ -32,15 +34,6 @@ function bytesAsBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function isRecordedVideo(piece: MessagePiece): boolean {
-  return piece.piece === "file" && piece.media_type.startsWith("video/");
-}
-
-export function recordedContentCanBeEdited(content: readonly MessagePiece[]): boolean {
-  const editable = content.filter(piece => !isRecordedVideo(piece));
-  return recordedContentCanBeResent(editable) || editable.length === 0 && content.some(isRecordedVideo);
-}
-
 export const ATTACHMENT_NOT_READ_BACK = "An attachment could not be read back from the conversation, so nothing was sent.";
 
 /** The recorded message as pieces to send: its words as they were, and each kept file
@@ -49,7 +42,7 @@ export const ATTACHMENT_NOT_READ_BACK = "An attachment could not be read back fr
 export async function sentPiecesFromRecorded(
   conversationId: string,
   content: readonly MessagePiece[],
-  read: typeof fetch = fetch
+  read: (href: string, init?: RequestInit) => Promise<Response> = (href, init) => clientFetch(href, init, ATTACHMENT_READ_LIMIT_MS)
 ): Promise<SentMessagePiece[]> {
   if (!recordedContentCanBeResent(content)) throw new Error(ATTACHMENT_NOT_READ_BACK);
   const pieces: SentMessagePiece[] = [];
@@ -71,6 +64,24 @@ export async function sentPiecesFromRecorded(
     }
   }
   return pieces;
+}
+
+/** Restore everything still available. The failed row keeps any piece that needs reattachment. */
+export async function editablePiecesFromRecorded(
+  conversationId: string,
+  content: readonly MessagePiece[],
+  read?: Parameters<typeof sentPiecesFromRecorded>[2]
+): Promise<{pieces: SentMessagePiece[]; needsReattachment: boolean}> {
+  const pieces: SentMessagePiece[] = [];
+  for (const piece of content) {
+    if (!recordedPieceCanBeResent(piece)) continue;
+    try {
+      pieces.push(...await sentPiecesFromRecorded(conversationId, [piece], read));
+    } catch {
+      // Edit can still recover the other pieces. A send requires every piece.
+    }
+  }
+  return {pieces, needsReattachment: pieces.length !== content.length};
 }
 
 /** Given by the live conversation to the messages in it. `available` says whether this

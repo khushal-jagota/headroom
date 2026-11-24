@@ -1,5 +1,6 @@
 /** A phone resend of a first message, whose response was lost, to each conversation owner. */
 import { dirname, join, resolve } from 'node:path';
+import { MINIMUM_SUPPORTED_BUILD } from '../ios_compatibility/policy.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { startServer } from '../core/start.ts';
 import type { StartedServer } from '../core/start.ts';
@@ -105,10 +106,19 @@ test('a repeated first message reaches each owner once and the repeat is answere
         },
       });
     server = await start();
-    const call = async (method: 'GET' | 'POST', route: string, body?: string) => {
+    const call = async (
+      method: 'GET' | 'POST',
+      route: string,
+      body?: string,
+      iosBuild?: number,
+    ) => {
       const response = await fetch(server!.address + '/api' + route, {
         method,
-        ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body }),
+        headers: {
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(iosBuild === undefined ? {} : { 'x-panels-ios-build': String(iosBuild) }),
+        },
+        ...(body === undefined ? {} : { body }),
       });
       return { status: response.status, body: (await response.json()) as Record<string, any> };
     };
@@ -202,6 +212,61 @@ test('a repeated first message reaches each owner once and the repeat is answere
       ]);
       const children = await registry.inspect(id);
       expect(children, owner.kind).toHaveLength(1);
+    }
+    // Native builds use these same routes without a sender ID. Reuse the three linked owners
+    // and the same private host so the compatibility check exercises actual HTTP and queue output.
+    for (const owner of owners) {
+      const conversation_id = owner.link()!;
+      const body = JSON.stringify({
+        conversation_id,
+        content: [{ piece: 'text', text: 'reply without a sender ID' }],
+        sender_label: 'You',
+        mode: 'queue',
+      });
+      const send = owner.base + '/send';
+      if (owner.kind === 'manager') {
+        expect(await call('POST', send, body, MINIMUM_SUPPORTED_BUILD - 1)).toMatchObject({
+          status: 426,
+          body: { error: { code: 'ios_update_required' } },
+        });
+      }
+      expect(await call('POST', send, body, MINIMUM_SUPPORTED_BUILD)).toEqual({
+        status: 200,
+        body: { conversation_id, fate: 'queued', queue_position: 1 },
+      });
+      const lookup = '/conversation/conversations/' + conversation_id;
+      expect(await call('GET', lookup, undefined, MINIMUM_SUPPORTED_BUILD)).toMatchObject({
+        status: 200,
+        body: { conversation_id, held_prompts: [{ sender_label: 'owner' }] },
+      });
+    }
+    const manager_view =
+      '/api/conversation/conversations/' +
+      owners[2].link() +
+      '/view/tail?lens=full&transcript=true';
+    for (const reconnect of [false, true]) {
+      const response = await fetch(server!.address + manager_view, {
+        headers: {
+          accept: 'text/event-stream',
+          'x-panels-ios-build': String(MINIMUM_SUPPORTED_BUILD),
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      expect(response.status, reconnect ? 'reconnect' : 'initial connection').toBe(200);
+      const reader = response.body!.getReader();
+      try {
+        const decoder = new TextDecoder();
+        let stream = '';
+        while (!stream.includes('\n\n')) {
+          const { done, value } = await reader.read();
+          expect(done).toBe(false);
+          stream += decoder.decode(value, { stream: true });
+        }
+        expect(stream).toContain('event: snapshot');
+        expect(stream).toContain('hello manager');
+      } finally {
+        await reader.cancel();
+      }
     }
     // A missing HTTP response before reset must neither create nor send to a second Chief.
     const chief = owners[0];

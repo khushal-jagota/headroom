@@ -230,7 +230,8 @@
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     /** ``forEdit``: Edit took the message back to the composer (no "Discarded" row). */
-    onDiscardHeldPrompt?: (messageId: string, forEdit?: boolean) => Promise<void> | void;
+    /** Resolves with false when the server did not discard the message. */
+    onDiscardHeldPrompt?: (messageId: string, forEdit?: boolean) => Promise<boolean | void> | void;
     onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
@@ -347,8 +348,9 @@
   }
   async function editHeldPrompt(heldPromptId: string, words: string): Promise<void> {
     if (!onDiscardHeldPrompt || composerHandle === null) return;
-    await onDiscardHeldPrompt(heldPromptId, true);
-    if (heldPromptRows.some((row) => row.heldPromptId === heldPromptId)) return;
+    // The write's own answer says whether the message left the queue. A message that
+    // already ran keeps its words in the thread, so they do not come back here.
+    if (await onDiscardHeldPrompt(heldPromptId, true) === false) return;
     composerHandle.takeBackQueuedWords(words);
   }
   let composerErrorNote = $derived(activityUncertain && errorNote !== null && errorNote === readError ? null : errorNote);

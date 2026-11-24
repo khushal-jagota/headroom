@@ -7,6 +7,7 @@
 
 import { ConversationWireError, type ConversationEvent, type OwnerSendBody, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
 import { PlannerFetchError } from "../api";
+import { SEND_REQUEST_LIMIT_MS } from "../requestLimit/config";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 import {
   MAX_CONVERSATION_MESSAGE_FILE_BYTES,
@@ -287,6 +288,19 @@ export function outgoingMessagesTheRecordHasNot(
  * a frightening sentence on a message that is about to turn out fine.
  */
 export const SEND_DEADLINE_MILLISECONDS = 3 * 60 * 1000;
+
+/** How long one send request waits for the server's answer.
+ *
+ * Words alone reach the server at once, so the request has the ordinary send limit. A
+ * message that carries pictures or files can spend most of the long deadline above on
+ * its upload, so it keeps that deadline. At the limit the request ends, and the message
+ * says that the answer never came back.
+ */
+export function sendRequestLimitMs(content: readonly SentMessagePiece[]): number {
+  return content.some((piece) => piece.piece === "image" || piece.piece === "file")
+    ? SEND_DEADLINE_MILLISECONDS
+    : SEND_REQUEST_LIMIT_MS;
+}
 
 function theWaitIsOver(message: OutgoingMessage, nowUnixMilliseconds: number): boolean {
   return !message.accepted && message.knownFate === "nothing_yet"

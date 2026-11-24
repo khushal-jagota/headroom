@@ -125,9 +125,9 @@ export class ReviewReplyComposer {
     return [...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files), ...pendingUploadsAsPieces(this.uploads)];
   }
 
-  #content(): SentMessagePiece[] {
+  #content(attachments = this.#attachments()): SentMessagePiece[] {
     const text = this.text.trim();
-    return [...(text ? [{ piece: 'text' as const, text }] : []), ...this.#attachments()];
+    return [...(text ? [{ piece: 'text' as const, text }] : []), ...attachments];
   }
 
   #saveAttachments(): Promise<boolean> {
@@ -175,8 +175,11 @@ export class ReviewReplyComposer {
       }));
       // Older Review stored the very same text and attachments as both draft and send.
       // Preserve anything that differs, including a draft typed on this mount.
-      if (openedText === this.text && attempts.value.some(attempt => JSON.stringify(attempt.message.content) === JSON.stringify(this.#content()))) {
-        this.#clearDraft();
+      const savedDraft = attachments.status === 'fulfilled' ? this.#content(attachments.value) : null;
+      if (savedDraft && openedText === this.text
+        && attempts.value.some(attempt => JSON.stringify(attempt.message.content) === JSON.stringify(savedDraft))) {
+        this.text = '';
+        this.#clearAttachments();
         await this.#attachmentWrite;
       }
     } catch (problem) {
@@ -192,8 +195,7 @@ export class ReviewReplyComposer {
     publishAttachmentDraft(this.draftKey, uploads);
   }
 
-  #clearDraft() {
-    this.text = '';
+  #clearAttachments() {
     releasePendingImages(this.#images);
     this.#images = [];
     this.#files = [];
@@ -224,7 +226,7 @@ export class ReviewReplyComposer {
     const id = attempt.message.messageId;
     if (delivery.fate === 'started' || delivery.fate === 'injected' || delivery.fate === 'queued') {
       this.accepted = { through: attempt.message.ownerReadThroughSequence, fate: delivery.fate };
-      if (!this.legacyDestination && !this.uploads.length) this.#updateUploadDestination(delivery.conversation_id);
+      if (this.#options.legacyConversationId === undefined && !this.uploads.length) this.#updateUploadDestination(delivery.conversation_id);
       await this.#remove(id);
       return;
     }
@@ -291,8 +293,6 @@ export class ReviewReplyComposer {
     }
   }
 
-  get legacyDestination() { return this.#options.legacyConversationId; }
-
   #updateUploadDestination(conversationId: string | null) {
     this.uploadDestination = { ...this.#options.owner, expected_conversation_id: conversationId };
     this.attachmentReady = true;
@@ -319,9 +319,8 @@ export class ReviewReplyComposer {
         await this.#remove(message.messageId);
         throw new Error('The reply could not be saved in this browser. Your draft is kept.');
       }
-      if (this.text === text && this.images === images && this.files === files && this.uploads === uploads) {
-        this.#clearDraft();
-      }
+      if (this.text === text) this.text = '';
+      if (this.images === images && this.files === files && this.uploads === uploads) this.#clearAttachments();
       await this.#post(entry);
     } catch (problem) {
       this.error = problem;

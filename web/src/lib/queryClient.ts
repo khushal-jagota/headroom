@@ -10,7 +10,8 @@ export const queryClient = new QueryClient({
       // Only the parts of a response that actually changed become new objects,
       // so an unchanged card does not re-render after a refetch.
       structuralSharing: true,
-      refetchOnWindowFocus: true,
+      // A tab return runs the revision check (changeStream.ts), which reads what changed.
+      refetchOnWindowFocus: false,
       refetchOnReconnect: true,
       // Server state is never assumed fresh: an invalidation always refetches.
       staleTime: 0,

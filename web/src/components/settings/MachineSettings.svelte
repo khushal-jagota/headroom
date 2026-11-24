@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import { createQuery, createQueries } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
-  import { mutateJson } from "../../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../../lib/mutate";
   import { MACHINE_ICONS, MACHINE_COLORS, type Machine, type MachineIcon, type MachineColor } from "../../lib/machines/contracts";
   import MacStatus from "../machines/MacStatus.svelte";
   import MachineSymbol from "../machines/MachineSymbol.svelte";
@@ -95,7 +95,7 @@
   async function save() {
     saving = true; error = null;
     try {
-      await mutateJson(`/api/machines/${encodeURIComponent(editing!)}`, {method: "PATCH", body: {name, icon, color}});
+      await mutateJsonAndWaitForScreen(`/api/machines/${encodeURIComponent(editing!)}`, {method: "PATCH", body: {name, icon, color}});
       editing = null;
     } catch (cause) { error = String(cause); }
     finally { saving = false; }

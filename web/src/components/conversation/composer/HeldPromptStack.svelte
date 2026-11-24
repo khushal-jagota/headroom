@@ -25,7 +25,7 @@
     conversationId?: string | null;
     supportsSteer?: boolean;
     running?: boolean;
-    onDiscard?: (heldPromptId: string) => Promise<void> | void;
+    onDiscard?: (heldPromptId: string) => Promise<unknown> | void;
     onPromote?: (heldPromptId: string, mode: "send_now" | "steer") => Promise<void> | void;
     /** Stop drawing a copy only this browser has. There is no held prompt to discard. */
     onStopDrawing?: (senderMessageId: string) => Promise<void> | void;
@@ -115,7 +115,7 @@
    *  its place among the messages waiting their turn. */
   let heldKeys = $derived(displayedRows.filter(row => row.state === "held").map(row => row.key));
 
-  async function act(key: string, action: () => Promise<void> | void): Promise<void> {
+  async function act(key: string, action: () => Promise<unknown> | void): Promise<void> {
     if (actionInFlight !== null) return;
     actionInFlight = key;
     try {

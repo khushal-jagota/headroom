@@ -9,7 +9,7 @@
   import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
@@ -265,12 +265,12 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
       method: "PATCH", body: { field_values: { [field]: body } }});
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}/complete/${field}`, {
       method: "POST", body: { body }});
   }
 
@@ -401,7 +401,7 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}`, {
+                  mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
                     method: "PATCH", body: { recap: raw }
                   })}
               />

@@ -5,6 +5,7 @@ import { promptOutcomeStatus, refusalOffersResend, type TranscriptRow } from "..
 import {
   ATTACHMENT_NOT_READ_BACK,
   RESEND_RECORDED_MESSAGE,
+  editablePiecesFromRecorded,
   recordedContentCanBeResent,
   sentPiecesFromRecorded,
   type ResendRecordedMessage
@@ -45,6 +46,13 @@ describe("sending again a message that was not delivered", () => {
   it("sends nothing when a kept file cannot be read back", async () => {
     const read = vi.fn(async () => new Response("gone", { status: 404 }));
     await expect(sentPiecesFromRecorded("c1", withFiles, read as unknown as typeof fetch)).rejects.toThrow(ATTACHMENT_NOT_READ_BACK);
+    const largeFile: MessagePiece = {piece: "file", stored_file_id: "large", media_type: "application/pdf", file_name: "large.pdf", byte_count: 20 * 1024 * 1024};
+    read.mockClear();
+    expect(await editablePiecesFromRecorded("c1", [...withFiles, largeFile], read)).toEqual({
+      pieces: [withFiles[0]],
+      needsReattachment: true
+    });
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
   it("is not offered for a video, which travels by upload rather than with the message", () => {
