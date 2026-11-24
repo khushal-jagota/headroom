@@ -12,6 +12,7 @@ import {
   ModelThinkingHappened,
   ToolCallProgress,
   TurnEnded,
+  BackendPromptAccepted,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { OutboxStore } from '../storage/outbox.ts';
@@ -23,6 +24,9 @@ import { create_mac_output_publication } from './publication.ts';
 import { MacSourceWork } from './source_work.ts';
 import { MacChildState } from './state.ts';
 import { MacPresence } from '../transport/presence.ts';
+import { dispatch_command } from './commands.ts';
+import type { MacCommandDependencies, MacCommandWork } from './command_contracts.ts';
+import { FifoLock } from '../../../conversation/runtime/state.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 
 test('offline event publication preserves every delta and its order with completed output', async () => {
@@ -117,11 +121,22 @@ test('agent turn start waits for its durable receipt and installs the allocated 
   const { GatewayOutbox } = await import('../ipc/outbox.ts');
   const gateway = new GatewayOutbox(store);
   const reference = { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'one' };
-  const token = { conversation_id: 'one', turn_number: 7 };
+  const token = { conversation_id: 'one', turn_number: 2 };
+  const cancelled_tokens: unknown[] = [];
+  const cancel = vi.fn(async () => {
+    cancelled_tokens.push(child.active_turn);
+  });
+  const write_prompt = vi.fn(
+    async () => new BackendPromptAccepted({ composed_content_delivered: true }),
+  );
   const child = {
     reference,
     active_turn: null,
+    pending_agent_turn: null,
+    lock: new FifoLock(),
+    native: { cancel_running_turn: cancel, write_prompt },
     background_task_ids: new Set(),
+    open_tool_calls: new Set(),
   } as unknown as MacRunningChild;
   const state = new MacChildState();
   const sources = new MacSourceWork(state, () => false);
@@ -164,6 +179,54 @@ test('agent turn start waits for its durable receipt and installs the allocated 
       method: 'agent_turn_started',
       arguments: { reason: 'Sub-agent finished' },
     });
+    // An actual cancel followed by send-now replacement cannot overtake activation.
+    const dependencies = {
+      incarnation: 'inc',
+      state,
+      native_children: { get: () => child, is_retiring: () => false },
+    } as unknown as MacCommandDependencies;
+    const cancel_command = {
+      command_id: 'cancel',
+      child: reference,
+      turn: token,
+      operation: 'cancel_running_turn',
+      arguments: { kind: 'cancel_running_turn' },
+    } as const;
+    const cancellation = dispatch_command(
+      dependencies,
+      cancel_command,
+      new Map(),
+      {} as MacCommandWork,
+      () => {},
+    );
+    const replacement = cancellation.then(() =>
+      dispatch_command(
+        dependencies,
+        {
+          command_id: 'replacement',
+          child: reference,
+          turn: { conversation_id: 'one', turn_number: 3 },
+          operation: 'write_prompt',
+          arguments: {
+            kind: 'write_prompt',
+            content: [{ text: 'Send now' }],
+            sender_content: [{ text: 'Send now' }],
+            sender_label: 'Owner',
+            sender_message_count: 1,
+            mode: 'queue',
+            model_change: null,
+            reasoning_effort_change: null,
+          },
+        },
+        new Map(),
+        {} as MacCommandWork,
+        () => {},
+      ),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cancel).not.toHaveBeenCalled();
+    expect(write_prompt).not.toHaveBeenCalled();
+    expect(child.lock.locked).toBe(false);
     const receipt = {
       sender_id: store.sender_id,
       submission_id: row.submission_id,
@@ -178,8 +241,14 @@ test('agent turn start waits for its durable receipt and installs the allocated 
       () => gateway.notify_confirmed(receipt),
     );
     expect(await started).toEqual(token);
-    expect(child.active_turn).toEqual(token);
-    expect(store.pending_count()).toBe(0);
+    await replacement;
+    expect(cancelled_tokens).toEqual([token]);
+    expect(child.active_turn).toEqual({ conversation_id: 'one', turn_number: 3 });
+    await sink.report(child.active_turn!, new TurnEnded({ ending: 'completed' }));
+    expect(child.active_turn).toBeNull();
+    expect(store.pending().map((row) => row_envelope(store.sender_id, row).payload.method)).toEqual(
+      ['turn_ended'],
+    );
     presence.accepted();
     expect(await sink.start_agent_turn!('Server changed')).toBeNull();
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -197,8 +266,16 @@ test('agent turn start waits for its durable receipt and installs the allocated 
       new BackgroundTaskStarted({ task_id: 'legacy', task_description: 'Legacy task' }),
     );
     expect(store.pending().map((row) => row_envelope(store.sender_id, row).payload.method)).toEqual(
-      ['agent_message_completed', 'background_task_started'],
+      ['turn_ended', 'agent_message_completed', 'background_task_started'],
     );
+    // A pending network receipt releases source custody when native shutdown aborts it.
+    presence.accepted(true);
+    const shutdown = new AbortController();
+    const offline = sink.start_agent_turn!('During shutdown', shutdown.signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    shutdown.abort();
+    expect(await offline).toBeNull();
+    expect(child.active_turn).toBeNull();
     await sources.finish();
   } finally {
     await store.stop(stop_options());

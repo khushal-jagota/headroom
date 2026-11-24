@@ -224,14 +224,25 @@ export async function dispatch_command(
     }
     if (!same_reference(child.reference, command.child))
       return outcome(command, 'uncertain', { reason: 'child_gone' });
-    result = await child.lock.run(async () => {
-      if (
-        dependencies.state.is_retiring(command.child.child_id) ||
-        dependencies.native_children.is_retiring(command.child.child_id)
-      )
-        throw new MacChildAdmissionRefused('source child identity is retiring');
-      return invoke(dependencies, child, command, invoking);
-    });
+    for (;;) {
+      if (child.pending_agent_turn != null) await child.pending_agent_turn.promise;
+      const release = await child.lock.acquire();
+      if (child.pending_agent_turn != null) {
+        release();
+        continue;
+      }
+      try {
+        if (
+          dependencies.state.is_retiring(command.child.child_id) ||
+          dependencies.native_children.is_retiring(command.child.child_id)
+        )
+          throw new MacChildAdmissionRefused('source child identity is retiring');
+        result = await invoke(dependencies, child, command, invoking);
+        break;
+      } finally {
+        release();
+      }
+    }
   }
   return outcome(command, result.kind === 'steer_uncertain' ? 'uncertain' : 'succeeded', result);
 }

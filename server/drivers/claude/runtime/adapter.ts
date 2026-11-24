@@ -115,6 +115,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private session_model: string | null = null;
   private session_reasoning_effort: string | null = null;
   private turn: TurnInFlight | null = null;
+  private pending_agent_turn: Promise<void> | null = null;
   private last_ended_turn: TurnInFlight | null = null;
   private reader: Promise<void> | null = null;
   private stopping: Promise<void> | null = null;
@@ -374,6 +375,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
+    if (this.pending_agent_turn !== null) await this.pending_agent_turn;
     const reasoning_effort = this.effort_to_apply(options);
     const client = this.connected_client();
     this.require_live_wire();
@@ -441,6 +443,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: { sender_content?: MessageContent | null; sender_label: string },
   ): Promise<B.BackendSteerOutcome> {
+    if (this.pending_agent_turn !== null) await this.pending_agent_turn;
     const sender_content = options.sender_content ?? content;
     const turn = this.turn;
     const refused = (reason: R, detail: string | null = null) =>
@@ -503,6 +506,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     return new B.BackendSteerUncertain({ composed_content_delivered: !native_command });
   }
   async cancel_running_turn(): Promise<void> {
+    if (this.pending_agent_turn !== null) await this.pending_agent_turn;
     const turn = this.turn;
     if (!turn) return;
     turn.cancel_requested = true;
@@ -684,9 +688,17 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     if (this.wire_broken) return;
     const wake_reason = this.events.agent_turn_reason(message);
     if (this.turn === null && wake_reason !== null) {
-      const token = await this.sink.start_agent_turn?.(wake_reason);
-      if (token !== null && token !== undefined && this.turn === null)
-        this.turn = new TurnInFlight(token);
+      const pending = (async () => {
+        const token = await this.sink.start_agent_turn?.(wake_reason, this.reader_cancel?.signal);
+        if (token !== null && token !== undefined && !this.wire_broken && this.turn === null)
+          this.turn = new TurnInFlight(token);
+      })();
+      this.pending_agent_turn = pending;
+      try {
+        await pending;
+      } finally {
+        if (this.pending_agent_turn === pending) this.pending_agent_turn = null;
+      }
     }
     if (await this.events.take_background(message)) return;
     const turn = this.turn;

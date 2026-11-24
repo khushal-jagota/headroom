@@ -187,9 +187,7 @@ async function live_child(
   options: {
     vendor_session_cursor?: string | null;
     client?: Partial<ClaudeSdkClient>;
-    start_agent_turn?: (
-      reason: string,
-    ) => Promise<import('../../../conversation/backends/contracts.ts').TurnToken | null>;
+    start_agent_turn?: import('../../../conversation/backends/contracts.ts').BackendEventSink['start_agent_turn'];
     message_files?: import('../../../conversation/message_files.ts').ConversationMessageFiles;
   } = {},
 ) {
@@ -577,6 +575,7 @@ it('replays a recorded background hand-back as a new turn with tools, text, and 
     await vi.waitFor(() => expect(turn_endings).toHaveLength(2));
     expect(start_agent_turn).toHaveBeenCalledExactlyOnceWith(
       'Background task "Background sleep and report" completed',
+      expect.any(AbortSignal),
     );
     expect(turn_endings.map((event) => event.ending)).toEqual(['completed', 'completed']);
     const after_first_end = reported.slice(reported.indexOf(turn_endings[0]!) + 1);
@@ -649,5 +648,83 @@ it('Claude receives a readable managed image reference with its structured answe
   } finally {
     await state.child.stop();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: cancellation arrived after the home accepted a turn but before its receipt reached
+// the driver. Reuse the existing client and recorded task frames, with no connected host.
+it('waits for autonomous activation before cancellation and then accepts the next prompt', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  const notice = frames.findLast((frame) => frame.subtype === 'task_notification')!;
+  const snapshot = frames.find((frame) => frame.subtype === 'background_tasks_changed')!;
+  const gate = new Deferred<
+    import('../../../conversation/backends/contracts.ts').TurnToken | null
+  >();
+  const start_agent_turn = vi.fn(() => gate.promise);
+  const interrupt = vi.fn(async () => [new Set<string>(), new Set<string>()] as const);
+  const state = await live_child('pending-cancel', {
+    start_agent_turn,
+    client: { interrupt_and_cancel_queued: interrupt },
+  });
+  try {
+    state.deliver({ value: snapshot, done: false });
+    state.deliver({ value: notice, done: false });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    let cancelled = false;
+    const cancellation = state.child.cancel_running_turn().then(() => {
+      cancelled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cancelled).toBe(false);
+    expect(interrupt).not.toHaveBeenCalled();
+    gate.resolve({ conversation_id: 'pending-cancel', turn_number: 2 });
+    await vi.waitFor(() => expect(interrupt).toHaveBeenCalledOnce());
+    const result = frames.findLast((frame) => frame.type === 'result')!;
+    state.deliver({ value: result, done: false });
+    await cancellation;
+    expect(state.turn_endings).toMatchObject([{ ending: 'interrupted' }]);
+    await state.prompt(3, 'low');
+  } finally {
+    gate.resolve(null);
+    await state.child.stop();
+  }
+});
+
+// Gap: an unavailable home must not keep the SDK reader alive during native shutdown.
+it('aborts a pending autonomous receipt when the Claude child stops', async () => {
+  const frames = JSON.parse(
+    readFileSync(
+      new URL('../testing/fixtures/background-handback.recorded.json', import.meta.url),
+      'utf8',
+    ),
+  ) as ClaudeSdkMessage[];
+  let signal: AbortSignal | undefined;
+  const start_agent_turn = vi.fn((_reason: string, cancel?: AbortSignal) => {
+    signal = cancel;
+    return new Promise<null>((resolve) =>
+      cancel!.addEventListener('abort', () => resolve(null), { once: true }),
+    );
+  });
+  const state = await live_child('pending-shutdown', { start_agent_turn });
+  try {
+    state.deliver({
+      value: frames.find((frame) => frame.subtype === 'background_tasks_changed')!,
+      done: false,
+    });
+    state.deliver({
+      value: frames.findLast((frame) => frame.subtype === 'task_notification')!,
+      done: false,
+    });
+    await vi.waitFor(() => expect(start_agent_turn).toHaveBeenCalledOnce());
+    await state.child.stop();
+    expect(signal?.aborted).toBe(true);
+    expect(state.turn_endings).toHaveLength(0);
+  } finally {
+    await state.child.stop();
   }
 });

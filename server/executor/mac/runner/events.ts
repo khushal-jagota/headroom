@@ -44,16 +44,23 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
   }
   event_sink(reference: ChildReference): BackendEventSink {
     return {
-      start_agent_turn: async (reason) => {
+      start_agent_turn: async (reason, signal) => {
         // Older homes cannot decode this event. Keep their native reader unblocked.
         if (this.dependencies.supports_agent_turns?.() !== true) return null;
         const confirm = this.dependencies.confirm_agent_turn;
         if (confirm === undefined)
           throw new ExecutorValidationError('agent turn receipt channel is unavailable');
-        return this.dependencies.sources.source_work(reference, async () => {
+        const child = this.dependencies.native_children.get(reference.child_id);
+        if (child === null || !same_reference(child.reference, reference)) return null;
+        if (child.pending_agent_turn != null) return child.pending_agent_turn.promise;
+        const cancelled = new AbortController();
+        const abort = () => cancelled.abort();
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) cancelled.abort();
+        const promise = this.dependencies.sources.source_work(reference, async () => {
+          if (cancelled.signal.aborted) return null;
           const submission_id = randomUUID();
           // Register before publication: ordinary event receipts leave no spool row.
-          const cancelled = new AbortController();
           const receipt = confirm(submission_id, cancelled.signal);
           // Publication can fail before the waiter settles. Retain its rejection now.
           void receipt.catch(() => {});
@@ -70,14 +77,15 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
             });
             const accepted = await receipt;
             if (
+              cancelled.signal.aborted ||
               accepted === null ||
               accepted.result.applied !== true ||
               accepted.result.turn == null
             )
               return null;
             const token = decode_value(accepted.result.turn, 'TurnToken');
-            const child = this.dependencies.native_children.get(reference.child_id);
-            if (child === null || !same_reference(child.reference, reference)) return null;
+            const current = this.dependencies.native_children.get(reference.child_id);
+            if (current !== child || !same_reference(current.reference, reference)) return null;
             child.active_turn = token;
             return token;
           } finally {
@@ -85,6 +93,14 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
             await receipt.catch(() => {});
           }
         });
+        const pending = { promise, cancelled };
+        child.pending_agent_turn = pending;
+        try {
+          return await promise;
+        } finally {
+          signal?.removeEventListener('abort', abort);
+          if (child.pending_agent_turn === pending) child.pending_agent_turn = null;
+        }
       },
       report: async (turn, input) => {
         const event = bounded_event(input);

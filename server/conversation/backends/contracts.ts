@@ -371,7 +371,8 @@ export type BackendEventValue =
   | BackgroundTaskEnded
   | BackendStreamEnded;
 export interface BackendEventSink {
-  start_agent_turn?(reason: string): Promise<TurnToken | null>;
+  /** Retain activation until its token is installed. Child shutdown cancels the receipt wait. */
+  start_agent_turn?(reason: string, signal?: AbortSignal): Promise<TurnToken | null>;
   report(turn: TurnToken | null, event: BackendEventValue): Promise<void>;
   record_local_child_supervision?(path: string): Promise<void>;
   record_local_child_custody?(identity: LocalChildIdentity): Promise<void>;
