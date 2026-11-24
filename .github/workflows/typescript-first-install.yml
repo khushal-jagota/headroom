@@ -184,7 +184,7 @@ jobs:
           # Reuse this runner and its prepared production inputs for the existing
           # sealed A-to-B update and failed-candidate rollback proof. Each phase
           # records elapsed time. No extra browser, machine or native host is added.
-          scripts/dev npm --prefix server run test -- installation/home.native.test.ts \
+          scripts/dev npm --prefix server run test -- installation/home.native.test.ts executor/command_input_reader.test.ts \
             --reporter=junit --outputFile "$NATIVE_EVIDENCE/update.xml"
       - name: Preserve only proof evidence and build receipts
         if: always()

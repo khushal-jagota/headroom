@@ -219,7 +219,7 @@ jobs:
           # Reuse this host for native process/socket and provider directory/lock evidence.
           scripts/dev npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts \
-            previews/darwin.native.test.ts skills/account.test.ts executor/command_input_reader.test.ts \
+            previews/darwin.native.test.ts skills/account.test.ts \
             tests/preview_transport.test.ts tests/machine_backend_cards.test.ts \
             previews/machine.test.ts tests/remote_preview_retention.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
