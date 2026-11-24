@@ -1,5 +1,6 @@
 /** Reconcile decision feedback already offered to a conversation. */
 import type { Database } from '../core/database/contracts.ts';
+import type { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { automatic_ticket_admitted } from './automatic_work.ts';
 import {
   known_conversation_backend_key,
@@ -24,6 +25,7 @@ export async function deliver_ticket_decision_messages(
     now: () => number;
     signal?: AbortSignal;
     automatic_tickets_created_after?: number;
+    upload_service?: VideoUploadService;
   },
 ): Promise<PromptDeliveryFate | null> {
   const database = options.connect_database();

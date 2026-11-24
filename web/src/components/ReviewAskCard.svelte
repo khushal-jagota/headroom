@@ -9,11 +9,16 @@
    */
   import { onMount, untrack, type Snippet } from "svelte";
   import Button from "./Button.svelte";
+  import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ClampedText from "./ClampedText.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
+  import { releasePendingImages, type PendingConversationImage } from "../lib/conversation/pendingImages";
+  import type { PendingAttachment } from "../lib/conversation/videoUploads/contracts";
+  import { clearAttachmentDraft } from "../lib/conversation/videoUploads/uploads";
+  import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ReviewAskItem } from "../lib/types";
@@ -31,6 +36,7 @@
   import { readableConversationDetail } from "../lib/conversation/conversationDetail";
   import {
     completeUserInputAnswers,
+    pendingAnswerAttachments,
     emptyUserInputDraft,
     toggleUserInputChoice,
     userInputAnswerFor,
@@ -55,7 +61,16 @@
   let busy = $state(false);
   let note = $state<string | null>(null);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
-  let draftRequestId = "";
+  let draftRequestId = $state("");
+  let attachmentDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>({});
+  let attachmentReadBusy = $derived(Object.values(attachmentDrafts).some((value) => value.busy));
+  function releaseAttachments(): void {
+    for (const [questionId, entry] of Object.entries(attachmentDrafts)) {
+      releasePendingImages(entry.images);
+      clearAttachmentDraft(`answer:${conversationId}:${draftRequestId}:${questionId}`);
+    }
+    attachmentDrafts = {};
+  }
   let destroyed = false;
 
   const chief = createQuery(() => ({ ...queries.chiefSettings(), enabled: item.owner_kind === "chief" && !embedded }));
@@ -72,22 +87,27 @@
         ? executorAnswerAvailable(view, "user_input", userInput.request_id)
         : false
   );
-  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions) : null);
+  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions, Object.fromEntries(Object.entries(attachmentDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files, entry.uploads)]))) : null);
   let detail = $derived(readableConversationDetail(permission?.detail));
-  $effect(() => { onBusy?.(busy, conversationId); });
-  // A new question starts with an empty draft.
   $effect(() => {
-    const id = userInput?.request_id ?? "";
-    if (id !== draftRequestId) {
-      draftRequestId = id;
-      draft = emptyUserInputDraft();
-    }
+    const active = busy || attachmentReadBusy;
+    untrack(() => onBusy?.(active, conversationId));
   });
+  function prepareQuestionDraft(next: ConversationView): void {
+    const id = next.pending_user_input?.request_id ?? "";
+    if (id === draftRequestId) return;
+    releaseAttachments();
+    draftRequestId = id;
+    draft = emptyUserInputDraft();
+    attachmentDrafts = Object.fromEntries((next.pending_user_input?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], uploads: [], busy: false }]));
+  }
 
   async function load(): Promise<void> {
     try {
       const read = await readConversation(conversationId);
       if (destroyed) return;
+      // Install each entry before its field can publish default upload/read state.
+      prepareQuestionDraft(read);
       view = read;
       error = null;
       loaded = true;
@@ -99,7 +119,7 @@
   }
   onMount(() => {
     void load();
-    return () => { destroyed = true; };
+    return () => { destroyed = true; for (const entry of Object.values(attachmentDrafts)) releasePendingImages(entry.images); };
   });
 
   function sentence(fate: "applied" | "saved" | "refused", refused: string): string | null {
@@ -122,12 +142,13 @@
   }
   async function submitUserInput(): Promise<void> {
     const request = userInput;
-    if (!request || !answers || busy || !available) return;
+    if (!request || !answers || busy || attachmentReadBusy || !available) return;
     busy = true;
     note = null;
     try {
       const { fate } = await answerUserInput(conversationId, request.request_id, answers);
       note = sentence(fate, "The backend did not take those answers. You can try again.");
+      if (fate !== "refused") releaseAttachments();
       await load();
     } catch (problem) {
       error = problem;
@@ -139,12 +160,15 @@
 
 <div data-review-ask-card data-review-item-type="ask" data-conversation-id={conversationId}>
   {#if !embedded}
+    <!-- In the desktop window the front card's row is pinned on the window's top row. -->
+    <WindowPageRow>
     <div class="review-eyebrow review-eyebrow--decisions">
-      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
         <Button variant="ghost" data-open-conversation href={reviewAskHref(item)}>Open conversation</Button>
         <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>
     </div>
+    </WindowPageRow>
     <h1 class="review-ticket-title">{item.title}</h1>
     {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap} /></ClampedText>{/if}
     <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id} /></div>
@@ -180,8 +204,17 @@
                 </div>
               {/if}
               {#if question.allow_other || question.options.length === 0}
+                {@const attachmentDraft = attachmentDrafts[question.question_id]}
+                {#if attachmentDraft}
                 <div class="ask-own-words">
                   <ComposerField
+                    draftKey={`answer:${conversationId}:${draftRequestId}:${question.question_id}`}
+                    uploadDestination={{ kind: "conversation", id: conversationId, expected_conversation_id: conversationId }}
+                    bind:uploads={attachmentDraft.uploads}
+                    bind:images={attachmentDraft.images}
+                    bind:files={attachmentDraft.files}
+                    bind:intakeBusy={attachmentDraft.busy}
+                    onError={(problem) => { error = problem; }}
                     bind:value={
                       () => draft.other[question.question_id] ?? "",
                       (text) => {
@@ -196,11 +229,14 @@
                     disabled={busy || !available}
                     inputAttributes={{ "data-review-ask-own-words": question.question_id }} />
                 </div>
+                {/if}
+              {:else}
+                <p class="ask-note" data-composer-attachment-unavailable>This question only accepts the listed choices. Answer with a listed choice, then attach files in a message.</p>
               {/if}
             </div>
           {/each}
           <div class="ask-actions">
-            <Button variant="secondary" data-review-ask-send disabled={busy || !available || !answers} onclick={() => void submitUserInput()}>Send answer</Button>
+            <Button variant="secondary" data-review-ask-send disabled={busy || attachmentReadBusy || !available || !answers} onclick={() => void submitUserInput()}>Send answer</Button>
           </div>
         {/if}
         {#if note}<p class="ask-note" data-review-ask-note>{note}</p>{/if}

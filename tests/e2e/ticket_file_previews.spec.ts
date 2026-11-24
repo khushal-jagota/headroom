@@ -27,6 +27,34 @@ type TestWindow = Window & {
   __artifactCompromised?: boolean;
 };
 
+/** A field edit can still resize the dock after its open/close transition finishes. */
+async function settleArtifactDock(page: Page): Promise<void> {
+  await page.locator('[data-conversation-box]').evaluate(async (box, timeout) => {
+    const deadline = performance.now() + timeout;
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    let previous = '';
+    let stableFrames = 0;
+    while (performance.now() < deadline) {
+      // Only the box's own finite height morphs: child status shimmers can run forever.
+      const animations = box.getAnimations().filter((animation) =>
+        Number.isFinite(animation.effect?.getComputedTiming().endTime) && animation.playState !== 'finished');
+      await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      await frame();
+      const geometry = JSON.stringify([
+        box, box.closest('[data-conversation-dock-state]'), document.querySelector('[data-ticket-artifact]'),
+        document.querySelector('iframe[data-file-preview-html]'),
+      ].map((node) => {
+        const rect = node?.getBoundingClientRect();
+        return rect ? [rect.x, rect.y, rect.width, rect.height] : null;
+      }));
+      stableFrames = animations.length === 0 && geometry === previous ? stableFrames + 1 : 0;
+      previous = geometry;
+      if (stableFrames >= 2) return;
+    }
+    throw new Error('The composer and artifact dock did not settle before the retention check.');
+  }, WAIT_MS);
+}
+
 /** Production hosts retain page state while conversation covers it. */
 async function proveDockArtifactRetention(page: Page, label: string, evidence: string | undefined): Promise<void> {
   const artifact = page.locator('[data-ticket-artifact]');
@@ -47,6 +75,7 @@ async function proveDockArtifactRetention(page: Page, label: string, evidence: s
     await page.locator('[data-conversation-collapse]').click({ timeout: WAIT_MS });
   await expect(pane).toHaveAttribute('data-conversation-state', 'rest');
   await expect(settledDock).toHaveCount(1, { timeout: WAIT_MS });
+  await settleArtifactDock(page);
   await frame.locator('[data-retained-form]').fill('Keep this artifact value');
   await frame.locator('[data-bottom-control]').click({ timeout: WAIT_MS });
   await expect(frame.locator('[data-bottom-control]')).toHaveText('Bottom control works');
@@ -79,6 +108,7 @@ async function proveDockArtifactRetention(page: Page, label: string, evidence: s
   await page.locator('[data-conversation-collapse]').click({ timeout: WAIT_MS });
   await expect(pane).toHaveAttribute('data-conversation-state', 'rest', { timeout: WAIT_MS });
   await expect(settledDock).toHaveCount(1, { timeout: WAIT_MS });
+  await settleArtifactDock(page);
   await expect(draft).toHaveValue('Keep this draft through full conversation');
   expect(
     await iframe.evaluate((node) => node === (window as unknown as TestWindow).__retainedArtifactFrame),
@@ -377,17 +407,23 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
   expect(await standalone.locator('iframe').getAttribute('sandbox')).toBeNull();
 
   await page.goto(`${server.base}/#/review`);
-  await page.locator('[data-screen="review"] [data-deck-item]:not([data-deck-leaving]) [data-review-empty]').waitFor({ timeout: WAIT_MS });
+  const review = page.locator('section[data-screen="review"]');
+  const currentFinal = review.locator('[data-deck-item]:not([data-deck-leaving]) [data-review-empty][data-review-final-count="0"]');
+  await expect(currentFinal).toHaveCount(1, { timeout: WAIT_MS });
+  // The outgoing final screen remains mounted during the deck transition.
+  await expect(review.locator('[data-deck-item]')).toHaveCount(1, { timeout: WAIT_MS });
+  await expect(currentFinal).toBeVisible({ timeout: WAIT_MS });
   for (const retiredText of ['Everything', 'Newsreader'])
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-review-ui.png'), fullPage: true });
 
-  // An empty Chief thread uses its first-message prompt. The lower-level default
-  // agent placeholder is checked in the executed production module above.
+  // An empty Chief thread uses the same canonical placeholder as every empty composer.
+  // The role-named caller base does not override that product choice, even before first Send.
   await page.goto(`${server.base}/#/workspace/chief-of-staff`);
-  await expect(page.getByPlaceholder('Send the first message to start it...', { exact: true })).toBeVisible({
+  await expect(page.getByPlaceholder('Write a message', { exact: true })).toBeVisible({
     timeout: WAIT_MS,
   });
+  expect((await api.get(server, '/api/chief/conversation')).conversation_id).toBeNull();
   for (const retiredText of ['Steer the work', 'Everything', 'Newsreader'])
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-chief-ui.png'), fullPage: true });

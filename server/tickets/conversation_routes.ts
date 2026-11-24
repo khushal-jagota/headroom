@@ -13,6 +13,7 @@ import {
   delivery_fate_json,
 } from '../conversation/http.ts';
 import type { OwnerSendBody } from '../conversation/http.ts';
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { video_send_admission } from '../conversation/video_send_admission.ts';
 import { ConversationMessageFiles as FileConversationMessageFiles } from '../conversation/record/message_files.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
@@ -155,6 +156,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
             worker_type_registry: configured_worker_type_registry(),
             now: () => services.clock.nowUnix(),
             message_files: files,
+            upload_service: new VideoUploadService(services.database, services.config.db_path),
           }),
       },
     );

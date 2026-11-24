@@ -9,6 +9,7 @@
   import { selectedRecap } from '../lib/navigation/views/recap.svelte';
   import RequestRecapAction from './RequestRecapAction.svelte';
   import Button from './Button.svelte';
+  import WindowPageRow from './desktopWindow/WindowPageRow.svelte';
   import InlineEdit from './InlineEdit.svelte';
   import ClampedText from './ClampedText.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -26,17 +27,22 @@
   {#if inlineDecision}
     <!-- Skip and Open ticket stand in the page's top band at the right, as staging (owner's
          choice); the band keeps every page's height, so the title starts on every page's line. -->
+    <!-- In the desktop window the front card's row is pinned on the window's top row. -->
+    <WindowPageRow>
     <div class="review-eyebrow review-eyebrow--decisions">
-      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
         <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
         <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>
     </div>
+    </WindowPageRow>
   {:else}
-  <div class="review-ticket-decision-line">
+  <WindowPageRow>
+  <div class="review-ticket-decision-line" data-window-row-actions>
     <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
     <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
   </div>
+  </WindowPageRow>
   {/if}
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">
     <div class="review-ticket-title"><InlineEdit value={item.title} placeholder="Untitled" onSave={saveTitle}/></div>

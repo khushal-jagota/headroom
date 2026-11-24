@@ -6,6 +6,7 @@
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import RecapSlot from "./RecapSlot.svelte";
+  import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
 
   // ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
   // recap passes one; a header shown without a live agent behind it passes nothing.
@@ -30,13 +31,16 @@
   <!-- The top band is the same height on every page, so titles share one line: where the
        page lives on the left (nothing is invented where there is no such place), and the
        page's own utilities on the right, quiet and always visible. -->
+  <!-- In the desktop window the band is pinned on the window's top row. -->
+  <WindowPageRow>
   <div class="page-band">
-    <div class="page-band-place">{#if eyebrow}{@render eyebrow()}{/if}</div>
-    {#if recapTarget !== null || actions}<div class="page-band-actions">
+    <div class="page-band-place" data-window-row-context>{#if eyebrow}{@render eyebrow()}{/if}</div>
+    {#if recapTarget !== null || actions}<div class="page-band-actions" data-window-row-actions>
       {@render actions?.()}
       {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} bind:note={recapNote} noteInline={false} />{/if}
     </div>{/if}
   </div>
+  </WindowPageRow>
   <h1 class="manager-workspace-title">
     {@render title()}
     <!-- The title shows the unread dot, never the working spinner: the status line says Working. -->

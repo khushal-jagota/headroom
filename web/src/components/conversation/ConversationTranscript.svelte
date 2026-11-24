@@ -254,7 +254,10 @@
             {#each item.row.questions as question (question.question_id)}
               <div>
                 <span class="c2-ask-question">{question.header || question.question}</span>
-                <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
+                {#if item.row.answers[question.question_id]?.answers.length}<span> · {item.row.answers[question.question_id]?.answers.join(", ")}</span>{/if}
+                {#if item.row.answers[question.question_id]?.attachments?.length}
+                  <MessagePieces content={item.row.answers[question.question_id]?.attachments ?? []} {conversationId} />
+                {/if}
               </div>
             {/each}
           </div>

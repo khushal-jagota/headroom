@@ -225,7 +225,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
-    onSubmitUserInput?: (answers: UserInputAnswers) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     /** ``forEdit``: Edit took the message back to the composer (no "Discarded" row). */

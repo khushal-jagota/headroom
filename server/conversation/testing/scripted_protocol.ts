@@ -3,6 +3,7 @@ import * as backend from '../backends/contracts.ts';
 import type { BackendEventValue, TurnToken } from '../backends/contracts.ts';
 import { ComposerCatalogEntry } from '../contracts.ts';
 import { PermissionAskOption, PlanEntry, UserInputOption, UserInputQuestion } from '../events.ts';
+import type { UserInputAnswer } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import { message_content_from_stored, message_content_json_entries } from '../message_content.ts';
 
@@ -30,7 +31,7 @@ export interface ScriptedSnapshot {
   readonly token: TurnToken | null;
   readonly calls: readonly ScriptedCall[];
   readonly delivered_text: readonly string[];
-  readonly answers: Readonly<Record<string, readonly { question_id: string; answers: string[] }[]>>;
+  readonly answers: Readonly<Record<string, readonly UserInputAnswer[]>>;
   readonly barriers: readonly string[];
 }
 export interface ScriptedFailure {

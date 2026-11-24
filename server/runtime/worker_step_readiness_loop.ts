@@ -22,8 +22,16 @@ import {
   type ConversationSystem,
 } from '../conversation/contracts.ts';
 import { text_message_content, type MessagePiece } from '../conversation/message_content.ts';
-import { conversation_message_content, type SentPiece } from '../conversation/http.ts';
+import { MAX_CONVERSATION_IMAGE_BYTES } from '../conversation/file_validation.ts';
+import type { CheckedVideoUpload } from '../conversation/video_uploads/contracts.ts';
+import { decision_attachment_admission } from './decision_attachment_admission.ts';
+import {
+  conversation_message_content,
+  inline_image_budget,
+  type SentPiece,
+} from '../conversation/http.ts';
 import type { ConversationMessageFiles } from '../conversation/message_files.ts';
+import type { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
 import * as tickets_data from '../tickets/data/index.ts';
 import * as decision_messages from '../tickets/decision_messages.ts';
@@ -73,6 +81,8 @@ export interface WorkerStepStartOptions {
   now: () => number;
   /** Keeps the pictures and files that travel with a decision. */
   message_files?: ConversationMessageFiles;
+  /** The existing upload owner pins and adopts files from accepted decisions. */
+  upload_service?: VideoUploadService;
 }
 /** The pictures and files a saved decision command carries. */
 function decision_attachments(command_json: string | null): SentPiece[] {
@@ -205,6 +215,8 @@ async function _admitted_start_ready_worker_step(
       let fate: PromptDeliveryFate;
       let feedback_started = false;
       const feedback_identity_prefix = `${sender_message_id}|decision|`;
+      const upload_checks: CheckedVideoUpload[] = [];
+      const inline_budget = { remaining: MAX_CONVERSATION_IMAGE_BYTES };
       try {
         const prompt = database.read((sql) => {
           const current_ticket = tickets_data.read_ticket(sql, ticket_id);
@@ -239,6 +251,9 @@ async function _admitted_start_ready_worker_step(
               return rows;
             });
             feedback_started = feedback.length > 0;
+            inline_budget.remaining = inline_image_budget(
+              feedback.flatMap((row) => decision_attachments(row.command_json)),
+            ).remaining;
             const text = text_message_content(
               [...feedback.map((row) => row.model_text), prompt.model_text].join('\n\n'),
             );
@@ -252,6 +267,14 @@ async function _admitted_start_ready_worker_step(
               attachments.push(
                 ...(await conversation_message_content(options.message_files, sending_into, sent, {
                   sender_message_id: feedback_identity_prefix + row.decision_id,
+                  video_admission: decision_attachment_admission(
+                    options.upload_service,
+                    ticket_id,
+                    row.decision_id,
+                    sent,
+                    upload_checks,
+                    inline_budget,
+                  ),
                 })),
               );
             }
@@ -272,6 +295,15 @@ async function _admitted_start_ready_worker_step(
         );
         conversation_id = delivered.conversation_id;
         fate = delivered.fate;
+        for (const checked of upload_checks) {
+          if (fate instanceof PromptDeliveryRefused || fate instanceof PromptDeliverySuppressed)
+            options.upload_service!.retain_for_retry(checked);
+          else
+            options.upload_service!.finish(
+              checked,
+              fate instanceof PromptDeliveryUncertain ? 'uncertain' : 'accepted',
+            );
+        }
         automatic_sent = true;
         if (feedback_started) {
           const status =
@@ -292,6 +324,7 @@ async function _admitted_start_ready_worker_step(
           );
         }
       } catch (error) {
+        for (const checked of upload_checks) options.upload_service!.finish(checked, 'uncertain');
         if (error instanceof ConversationStartAborted) throw error;
         console.error(
           `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,

@@ -20,6 +20,7 @@ import {
 } from '../../../conversation/contracts.ts';
 import { ConversationTurnEnding } from '../../../conversation/events.ts';
 import type { UserInputAnswer } from '../../../conversation/events.ts';
+import { answer_file_references } from '../../../conversation/user_input_attachments.ts';
 import {
   ComposedMessageDoesNotContainSenderContent,
   MessageText,
@@ -538,7 +539,10 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     request_id: string,
     answers: readonly UserInputAnswer[],
   ): Promise<AnswerFate> {
-    return this.asks.answer_user_input(request_id, answers);
+    return this.asks.answer_user_input(
+      request_id,
+      answer_file_references(answers, this.message_files, this.resolved_start.conversation_id),
+    );
   }
   async withdraw_delivery(): Promise<boolean> {
     return true;

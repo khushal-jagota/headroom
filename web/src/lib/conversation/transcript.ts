@@ -19,7 +19,7 @@ import type {
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
-  UserInputAnswers,
+  RecordedUserInputAnswers,
   UserInputQuestion
 } from "./wire";
 import { messageContentOf } from "./wire";
@@ -138,7 +138,7 @@ export type TranscriptRow =
       questions: readonly UserInputQuestion[];
       state: UserInputState;
       deadReason: PermissionAskDeadReason | null;
-      answers: UserInputAnswers | null;
+      answers: RecordedUserInputAnswers | null;
       failureDetail: string | null;
       answerFate?: "saved" | "applied" | "unconfirmed";
     }

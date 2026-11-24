@@ -80,7 +80,13 @@ export function browserConversationControls(
             Object.entries(latest.answers).map(([request_id, answers]) => [
               request_id,
               Object.fromEntries(
-                answers.map((answer) => [answer.question_id, { answers: answer.answers }]),
+                answers.map((answer) => [
+                  answer.question_id,
+                  {
+                    answers: answer.answers,
+                    ...(answer.attachments?.length ? { attachments: answer.attachments } : {}),
+                  },
+                ]),
               ),
             ]),
           );

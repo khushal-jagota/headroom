@@ -69,6 +69,7 @@ test('test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers',
   expect(submitted.postDataJSON()).toEqual({
     request_id: '1:user_input:input-1',
     answers: expectedAnswers,
+    operation_id: expect.stringMatching(/^answer-[a-f0-9]{64}$/),
   });
   expect(await answered.json()).toEqual({ fate: 'applied' });
   const receipts = await fetch(server.base + `/api/test/signals/${conversationId}/answers`);
@@ -78,7 +79,11 @@ test('test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers',
   const events = (await getJson(server, `/api/conversation/conversations/${conversationId}/events`)).events;
   expect(
     events.filter((event: JsonObject) => event.kind === 'user_input_answered').map((event: JsonObject) => event.payload),
-  ).toEqual([{ request_id: '1:user_input:input-1', answers: expectedAnswers }]);
+  ).toEqual([{
+    request_id: '1:user_input:input-1',
+    answers: expectedAnswers,
+    operation_id: submitted.postDataJSON().operation_id,
+  }]);
   await page.waitForSelector('[data-conversation-user-input-state="answered"]', { timeout: WAIT_MS });
   expect(await page.locator('[data-conversation-user-input-answers]').innerText()).toContain(
     'Recorded event replay',

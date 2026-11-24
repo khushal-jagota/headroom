@@ -161,3 +161,147 @@ test('a repeat with a saved receipt gets its fate after the Ticket moved to a ne
     await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });
+
+// Gap: text-only receipts never prove uploaded bytes, per-question association, or a changed-file retry.
+// Reuse the real record/core and in-process HTTP fixture. No new host or provider connection.
+test('answer uploads retain readable files and their identity across retries and stored replay', async () => {
+  const { f, child, answer_rows } = await with_asks();
+  await child.request_questions();
+  await f.core.wait_until_quiescent();
+  const [request_id] = f.core.runtime_turn('core')!.pending_user_input_questions.keys();
+  const app = await createApp(
+    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: f.database_path }),
+    {
+      database: f.database,
+      areas: [
+        {
+          prefix: '/api/conversation',
+          routes: createConversationRoutes({
+            core: f.core,
+            record: { database: f.database, store: f.store } as unknown as ConversationViewRuntime,
+            writes: new ConversationHttpWriteScope(),
+          }),
+        },
+      ],
+    },
+  );
+  const send = (bytes = 'attachment evidence', reverse = false) => {
+    const proof = {
+      answers: [],
+      attachments: [
+        {
+          piece: 'file',
+          file_name: 'proof.txt',
+          media_type: 'text/plain',
+          data: Buffer.from(bytes).toString('base64'),
+        },
+      ],
+    };
+    const scope = { answers: ['Composer'] };
+    return app.inject({
+      method: 'POST',
+      url: '/api/conversation/conversations/core/user-input-answers',
+      payload: {
+        request_id,
+        operation_id: 'upload-answer',
+        answers: reverse ? { proof, scope } : { scope, proof },
+      },
+    });
+  };
+  try {
+    // Missing streamed files keep their client error and do not consume the pending ask.
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/conversation/conversations/core/user-input-answers',
+      payload: {
+        request_id,
+        operation_id: 'missing-upload',
+        answers: {
+          scope: { answers: ['Composer'] },
+          proof: {
+            answers: [],
+            attachments: [{ piece: 'attachment_upload', upload_id: 'missing' }],
+          },
+        },
+      },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect((await send()).json()).toEqual({ fate: 'applied' });
+    expect((await send('attachment evidence', true)).json()).toEqual({ fate: 'applied' });
+    const rows = answer_rows();
+    expect(rows).toHaveLength(1);
+    const payload = rows[0]
+      .payload as import('../conversation/events.ts').UserInputAnsweredEventPayload;
+    const attachment = payload.answers.find((answer) => answer.question_id === 'proof')!
+      .attachments![0];
+    expect(
+      Buffer.from(
+        await f.core.options.message_files.read('core', attachment.stored_file_id),
+      ).toString(),
+    ).toBe('attachment evidence');
+    const { row_body } = await import('../conversation/views/logic/bodies.ts');
+    const source = f.store
+      .read_events_after('core', 0)
+      .find((row) => row.kind === 'user_input_requested')!.payload;
+    const projected = row_body(source, {
+      created_at: 100,
+      settlement: payload,
+    }) as import('../conversation/views/contracts.ts').UserInputRowBody;
+    expect(
+      projected.answers!.find((answer) => answer.question_id === 'proof')!.attachments,
+    ).toEqual([
+      {
+        piece: 'file',
+        stored_file_id: attachment.stored_file_id,
+        media_type: 'text/plain',
+        file_name: 'proof.txt',
+        byte_count: 19,
+      },
+    ]);
+    const received = (await child.inspect()).answers['input-1'];
+    expect(
+      received.find((answer) => answer.question_id === 'proof')!.attachments![0].stored_file_id,
+    ).toBe(attachment.stored_file_id);
+    expect((await send('changed bytes')).statusCode).toBe(422);
+    expect(
+      (await child.inspect()).calls.filter((call) => call.command === 'answer_user_input'),
+    ).toHaveLength(1);
+  } finally {
+    await app.close();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+  }
+});
+
+// Gap: attachment-only free text and exact-choice questions need different admission rules.
+test('an attachment-only free-text answer is valid, while a closed-choice answer cannot carry files', async () => {
+  const { ordered_user_input_answers } = await import('../conversation/logic/user_input.ts');
+  const { UserInputQuestion, UserInputOption } = await import('../conversation/events.ts');
+  const { MessageFile } = await import('../conversation/message_content.ts');
+  const question = new UserInputQuestion({
+    question_id: 'proof',
+    header: 'Proof',
+    question: 'Which proof?',
+    options: [new UserInputOption({ label: 'Browser', description: 'Browser proof' })],
+    multi_select: false,
+    allow_other: true,
+  });
+  const attachment = new MessageFile({
+    stored_file_id: 'f_proof',
+    file_name: 'proof.txt',
+    media_type: 'text/plain',
+    byte_count: 3,
+  });
+  const answer = new UserInputAnswer({
+    question_id: 'proof',
+    answers: [],
+    attachments: [attachment],
+  });
+  expect(ordered_user_input_answers([question], [answer])).toEqual([answer]);
+  const closed = new UserInputQuestion({ ...question, allow_other: false });
+  expect(
+    ordered_user_input_answers(
+      [closed],
+      [new UserInputAnswer({ ...answer, answers: ['Browser'] })],
+    ),
+  ).toBeNull();
+});

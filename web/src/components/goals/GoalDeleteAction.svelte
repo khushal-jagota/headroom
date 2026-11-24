@@ -13,7 +13,7 @@
   }catch(failure){error=failure;}finally{deleting=false;}
  }
 </script>
-<div class="delete-action">
+<div class="delete-action" data-window-row-actions>
  <button onclick={()=>void remove()} disabled={deleting}>{deleting?'Deleting…':'Delete goal'}</button>
  {#if error}<ErrorLine {error}/>{/if}
 </div>

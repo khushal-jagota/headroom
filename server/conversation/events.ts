@@ -1,7 +1,7 @@
 /** Stored event payloads and transient frames. The backend seam shares these value types. */
 import type { Principal } from '../core/contracts.ts';
 import type { CredentialRequestRowBody } from '../../web/src/lib/conversation/view/contracts.ts';
-import type { MessageContent } from './message_content.ts';
+import type { MessageContent, MessageImage, MessageFile } from './message_content.ts';
 import {
   AnswerFate,
   PromptDeliveryMode,
@@ -117,9 +117,15 @@ export class UserInputQuestion {
 export class UserInputAnswer {
   readonly question_id: string;
   readonly answers: readonly string[];
-  constructor(values: { question_id: string; answers: readonly string[] }) {
+  readonly attachments?: readonly (MessageImage | MessageFile)[];
+  constructor(values: {
+    question_id: string;
+    answers: readonly string[];
+    attachments?: readonly (MessageImage | MessageFile)[];
+  }) {
     this.question_id = values.question_id;
     this.answers = values.answers;
+    if (values.attachments?.length) this.attachments = values.attachments;
   }
 }
 

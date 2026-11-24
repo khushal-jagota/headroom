@@ -48,7 +48,6 @@ test('shutdown waits for upload settlement and a disconnect records Python inter
     now: () => 100,
     signal: controller.signal,
     disk_free_bytes: () => 1024,
-    require_probe: () => '/recorded/ffprobe',
     probe_video: async () => {
       throw new Error('An incomplete transfer must not reach the video probe');
     },

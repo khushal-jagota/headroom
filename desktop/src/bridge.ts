@@ -25,6 +25,15 @@ export interface PanelsBridge {
   useServerAddress(address: string): Promise<ServerAddressResult>;
 }
 
+/** The native window's state, which the main process sends to the page as it changes. */
+export interface DesktopWindowState {
+  focused: boolean;
+  fullScreen: boolean;
+}
+
+/** The channel that carries `DesktopWindowState` from the main process to the page. */
+export const WINDOW_STATE_CHANNEL = 'panels:window-state';
+
 /** Each call travels on the channel `panels:<method name>`. */
 export function bridgeChannel(method: keyof PanelsBridge): string {
   return `panels:${method}`;

@@ -2,7 +2,7 @@
 // Required nullable fields stay required. Defaults are optional on the wire.
 import wire_schema from './wire.schema.json' with { type: 'json' };
 export const WIRE_SCHEMA = wire_schema;
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 export const SPOOL_FORMAT_VERSION = 5;
 export const COMMAND_JOURNAL_FORMAT_VERSION = 1;
 export type AcceptanceReceipt = {
@@ -500,7 +500,11 @@ export type UnconfirmedCliResult = {
   submission_id: string;
 };
 export type UpdateMode = 'now' | 'idle';
-export type UserInputAnswer = { answers: string[]; question_id: string };
+export type UserInputAnswer = {
+  answers: string[];
+  attachments?: (MessageImage | MessageFile)[];
+  question_id: string;
+};
 export type UserInputFailed = { detail: string; request_id: string };
 export type UserInputOption = { description: string; label: string };
 export type UserInputQuestion = {
