@@ -39,6 +39,9 @@ export function project_rest_event(
 ): ViewRestEvent | null {
   const row = _row_record(sql, conversation_id, sequence);
   const body = _body(sql, conversation_id, row);
+  if (body.kind === 'agent_turn_started') {
+    return { kind: body.kind, sender_label: null, excerpt: excerpt(body.reason) };
+  }
   if (body.kind === 'prompt' || body.kind === 'agent_message') {
     const source = _payload(sql, conversation_id, sequence);
     if (
@@ -244,7 +247,7 @@ export function read_status(
     row_kind: string;
     sequence: number;
   }>(
-    "SELECT row_kind,sequence FROM conversation_view_rows WHERE conversation_id=? AND row_kind IN ('prompt','turn_ended') AND removed=0 ORDER BY sequence DESC LIMIT 1",
+    "SELECT row_kind,sequence FROM conversation_view_rows WHERE conversation_id=? AND row_kind IN ('prompt','agent_turn_started','turn_ended') AND removed=0 ORDER BY sequence DESC LIMIT 1",
     [conversation_id],
   );
   let failed = false;

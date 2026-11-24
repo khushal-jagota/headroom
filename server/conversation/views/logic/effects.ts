@@ -28,6 +28,11 @@ export function event_effect(payload: ConversationEventPayload): EventEffect {
         lookup_id: payload.request.request_id,
         settlement: true,
       });
+    case 'agent_turn_started':
+      return effect('agent_turn_started', true, { opens_turn: true });
+    case 'background_task_started':
+    case 'background_task_ended':
+      return effect(payload.kind, false);
     case 'prompt':
       return effect('prompt', visible, {
         opens_turn: payload.mode !== 'steer',

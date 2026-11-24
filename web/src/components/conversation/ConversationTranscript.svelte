@@ -198,6 +198,12 @@
       />
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
+    {:else if item.row.kind === "agent_turn_started"}
+      <SystemLine mark="dot" data-conversation-row="agent_turn_started">{item.row.reason}</SystemLine>
+    {:else if item.row.kind === "background_task_started"}
+      <SystemLine data-conversation-row="background_task_started">Background task started · {item.row.taskDescription}</SystemLine>
+    {:else if item.row.kind === "background_task_ended"}
+      <SystemLine data-conversation-row="background_task_ended">Background task {item.row.taskStatus} · {item.row.taskDescription}</SystemLine>
     {:else if item.row.kind === "agent_message"}
       {@const isNarration = lens === "full" && (narration ?? !item.row.toOwner)}
       <!-- In Full the agent's own narration sits beside what it said to the person. The

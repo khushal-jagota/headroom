@@ -33,6 +33,8 @@ export function owner_message_preview(text: string): string | null {
 }
 export function event_has_rest_text(payload: ConversationEventPayload): boolean {
   switch (payload.kind) {
+    case 'agent_turn_started':
+      return Boolean(excerpt(payload.reason));
     case 'prompt':
     case 'agent_message':
     case 'message_to_owner':

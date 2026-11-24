@@ -36,6 +36,9 @@ export type UserInputState = "live" | "answered" | "failed" | "dead";
 export type PermissionAskDeadReason = "turn_ended" | "no_ending_recorded";
 
 export type TranscriptRow =
+  | { key: string; kind: "agent_turn_started"; sequence: number; createdAt: number; reason: string }
+  | { key: string; kind: "background_task_started"; sequence: number; createdAt: number; taskDescription: string }
+  | { key: string; kind: "background_task_ended"; sequence: number; createdAt: number; taskDescription: string; taskStatus: string }
   | { key: string; kind: 'credential_request'; sequence: number; createdAt: number; request: CredentialRequestRowBody }
   | {
       key: string;
@@ -474,6 +477,15 @@ export function transcriptRows(
         }
         break;
       }
+      case "agent_turn_started":
+        rows.push({ key: `e${sequence}`, kind: event.kind, sequence, createdAt, reason: event.payload.reason });
+        break;
+      case "background_task_started":
+        rows.push({ key: `e${sequence}`, kind: event.kind, sequence, createdAt, taskDescription: event.payload.task_description });
+        break;
+      case "background_task_ended":
+        rows.push({ key: `e${sequence}`, kind: event.kind, sequence, createdAt, taskDescription: event.payload.task_description, taskStatus: event.payload.task_status });
+        break;
       case "prompt":
         rows.push({
           key: `e${sequence}`,

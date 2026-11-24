@@ -414,7 +414,11 @@ function layout_row(
       ],
     );
   }
-  if (payload.kind === 'prompt' && event_effect(payload).opens_turn && turn_key === null) {
+  if (
+    (payload.kind === 'prompt' || payload.kind === 'agent_turn_started') &&
+    event_effect(payload).opens_turn &&
+    turn_key === null
+  ) {
     turn_key = `turn:e${sequence}`;
     tx.run(
       'INSERT INTO conversation_view_turns(conversation_id,turn_key,source_sequence,created_at,started_at_milliseconds,focus_head,changed_sequence) VALUES (?,?,?,?,?,?,?)',
@@ -423,7 +427,7 @@ function layout_row(
         turn_key,
         sequence,
         created_at,
-        sent_at_milliseconds(payload, created_at),
+        payload.kind === 'prompt' ? sent_at_milliseconds(payload, created_at) : created_at * 1000,
         1,
         changed_sequence,
       ],
