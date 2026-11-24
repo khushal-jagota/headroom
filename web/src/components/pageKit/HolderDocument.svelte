@@ -3,7 +3,7 @@
  import {createQuery} from '@tanstack/svelte-query';
  import type {GoalReadingsResponse} from '../../lib/goals/contracts';
  import type {ManagerPrincipal} from '../../lib/types';
- import {PAGE_HOLDER,PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
+ import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
  import {holderPageQuery,holderPagePath,createHolderEditor} from '../../lib/pageKit/holderEditing';
  import {jsonQuery} from '../../lib/queryCatalogue';
  import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
@@ -19,7 +19,6 @@
  let ownerId=$derived(`holder:${holder.kind}:${holder.id}`);
  let editor=$derived(createHolderEditor(holder));
  const sessions=createGoalRequestSessions();
- setContext(PAGE_HOLDER,()=>holder);
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>ownerId,

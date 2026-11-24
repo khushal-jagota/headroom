@@ -38,6 +38,8 @@
   import { cachedImport } from "../lib/lazyViews";
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
+  import WindowPageRowSlot from "../components/desktopWindow/WindowPageRowSlot.svelte";
+  import { isDesktopWindow, windowSidebar } from "../lib/desktopWindow/windowState.svelte";
 
   import type { Snippet } from "svelte";
   // While Settings is open, `settingsRail` takes the rail's content. The column keeps its
@@ -190,6 +192,22 @@
   let railWidth = $state<number | null>(null);
   let measuredRailWidth = $state(272);
   let resizing = $state(false);
+  // The desktop window can hide the sidebar (its top row's button, ⌃⌘S). The grid track
+  // animates only while it hides or shows, so a resize from the grip stays immediate.
+  const desktopWindow = isDesktopWindow();
+  const railHidden = $derived(desktopWindow && windowSidebar.hidden);
+  let railMoving = $state(false);
+  let railHiddenBefore: boolean | null = null;
+  $effect(() => {
+    const hidden = railHidden;
+    untrack(() => {
+      if (railHiddenBefore !== null && hidden !== railHiddenBefore && !matchMedia("(prefers-reduced-motion: reduce)").matches) railMoving = true;
+      railHiddenBefore = hidden;
+    });
+  });
+  function railMoved(event: TransitionEvent): void {
+    if (event.target === shellElement && event.propertyName === "grid-template-columns") railMoving = false;
+  }
   let busyItem = $state<string | null>(null);
   let settleError = $state("");
   let hoverVisible = $state(false);
@@ -387,7 +405,7 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={(Boolean(externalPane) || opening.markedUtility !== null) && !(settingsRail && !settingsInSection)} class:board-workspace-shell--settings={Boolean(settingsRail)} class:board-workspace-shell--settings-list={Boolean(settingsRail) && !settingsInSection} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={(Boolean(externalPane) || opening.markedUtility !== null) && !(settingsRail && !settingsInSection)} class:board-workspace-shell--settings={Boolean(settingsRail)} class:board-workspace-shell--settings-list={Boolean(settingsRail) && !settingsInSection} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} class:board-workspace-shell--rail-hidden={railHidden} class:board-workspace-shell--rail-moving={railMoving} ontransitionend={railMoved} ontransitioncancel={railMoved} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           {#if settingsRail}{@render settingsRail()}{:else}
@@ -510,6 +528,7 @@
               <span>Select a manager or Worker to inspect it.</span>
             </div>
           {/if}
+          {#if desktopWindow}<WindowPageRowSlot />{/if}
         </section>
       </div>
     </div>
@@ -599,8 +618,32 @@
   .reopen { opacity:0; margin-left:auto; color:var(--rail-tone-label); font-size:var(--type-small); }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+  /* The desktop window (desktop/src/preload.ts marks the root; a browser never matches these).
+     The sidebar starts under the window's top row, its first card --window-content-top under
+     it (y 68), with a fade of the same depth under the row; the grip starts under the row too,
+     so the row stays a drag region. */
+  :global(:root[data-desktop-window]) .approved-rail { padding-top:var(--window-top-row); }
+  :global(:root[data-desktop-window]) .active-work-scroll { padding-top:var(--window-content-top); scroll-padding-block:var(--window-scroll-fade) var(--rail-list-fade); }
+  :global(:root[data-desktop-window]) .rail-work .rail-work::before { height:var(--window-scroll-fade); }
+  :global(:root[data-desktop-window]) .workspace-rail :global(.settings-rail) { padding-top:var(--window-content-top); }
+  :global(:root[data-desktop-window]) .rail-grip { top:var(--window-top-row); }
+  /* Hidden, the sidebar slides out and fades while the page moves with it: the rail keeps its
+     width and slides by it as its track closes, so the cards never re-wrap. At rest it has no
+     transform, which would capture its fixed goal preview. The reading column then keeps clear
+     of the top row's sidebar button: these insets narrow its left side where it would come
+     closer, and keep its right edge where it was. */
+  :global(:root[data-desktop-window]) .workspace-rail { width:var(--rail-width); transition:transform var(--motion-slow) var(--motion-ease), opacity var(--motion-slow) var(--motion-ease); }
+  :global(:root[data-desktop-window]) .board-workspace-shell--rail-hidden {
+    grid-template-columns:0px minmax(0,1fr);
+    --window-column-inset-end:calc(max(var(--space-5), (100% - var(--page-measure)) / 2) - var(--space-5));
+    --window-column-inset-start:calc(max(var(--space-5), (100% - var(--page-measure)) / 2, var(--window-controls-clear, 0px)) - var(--space-5));
+  }
+  :global(:root[data-desktop-window]) .board-workspace-shell--rail-moving { transition:grid-template-columns var(--motion-slow) var(--motion-ease); }
+  :global(:root[data-desktop-window]) .board-workspace-shell--rail-hidden .workspace-rail { transform:translateX(-100%); opacity:0; visibility:hidden; pointer-events:none; transition:transform var(--motion-slow) var(--motion-ease), opacity var(--motion-slow) var(--motion-ease), visibility 0s linear var(--motion-slow); }
+  :global(:root[data-desktop-window]) .board-workspace-shell--rail-hidden .rail-grip { display:none; }
   @media(prefers-reduced-motion:reduce) {
     .rail-grip::after { transition:none; }
+    :global(:root[data-desktop-window]) .workspace-rail, :global(:root[data-desktop-window]) .board-workspace-shell--rail-hidden .workspace-rail { transition:none; }
   }
   @media(max-width:720px) {
     /* Phone shows the card above the bottom bar instead. */

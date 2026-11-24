@@ -31,6 +31,7 @@
   // VPS lives in Settings (owner): the dock and the More sheet no longer list it; #/vps still opens it.
   const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
+  import WindowTopRow from "./components/desktopWindow/WindowTopRow.svelte";
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
@@ -174,6 +175,8 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
+  <!-- The desktop window's top row; nothing in a browser. -->
+  <WindowTopRow {reviewCount} />
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
     <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus}
       settingsRail={route.name === "settings" ? settingsRail : undefined} settingsInSection={route.params.chosen === "true"} />

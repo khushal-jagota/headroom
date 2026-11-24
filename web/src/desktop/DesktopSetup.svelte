@@ -43,6 +43,8 @@
 </script>
 
 <main class="setup" data-desktop-setup>
+  <!-- The window has no title bar. This row holds the traffic lights and drags the window. -->
+  <div class="window-top-row" aria-hidden="true"></div>
   <div class="identity">Panels <span>/ {stored ? "Change server" : "First setup"}</span></div>
   <section class="setup-content">
     <div class="step">01 — THE SERVER</div>
@@ -80,6 +82,9 @@
 
 <style>
   .setup { min-height: 100dvh; background: var(--surface-1); color: var(--text-strong); padding: var(--space-6); overflow: auto; }
+  .window-top-row { display: none; }
+  :global(:root[data-desktop-window]) .setup { padding-top: var(--window-top-row); }
+  :global(:root[data-desktop-window]) .window-top-row { display: block; position: fixed; z-index: 1; inset: 0 0 auto; height: var(--window-top-row); -webkit-app-region: drag; }
   .identity { font-weight: 600; font-size: var(--type-body); }
   .identity span { color: var(--text-muted); font-weight: 400; margin-left: var(--space-2); }
   .setup-content { max-width: 720px; margin: var(--space-6) auto; padding-block: var(--space-6); }

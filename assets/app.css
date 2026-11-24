@@ -4834,3 +4834,72 @@ details:not([open]) > summary > .manager-workspace-chevron {
   position: static;
   max-width: 100%;
 }
+
+/* === The desktop window ====================================================================
+ * Only inside the desktop app: its preload marks the root `data-desktop-window`, and
+ * `data-window-inactive` / `data-window-full-screen` as the window changes. A browser matches
+ * none of these rules. The window has one 52px top row (--window-top-row): the traffic lights,
+ * the app name and the sidebar button (WindowTopRow), and each page's own row pinned on the
+ * same line (WindowPageRowSlot, which also draws the fade under it). Everything else starts
+ * under the row; the open conversation alone runs to the window's top, its header the page row.
+ * BoardRoute holds the sidebar's part. */
+
+/* Every page header starts --window-content-top under the top row (y 68), level with the
+ * sidebar's first card: the pages that have their own top padding take the row's height. */
+:root[data-desktop-window] { --page-top: var(--window-content-top); }
+/* A Ticket's or a Manager's reading area starts under the row, so its open conversation can still
+ * reach the top; anything else in the pane (a destination, a loading or failed page) starts under it. */
+:root[data-desktop-window] :is(.ticket-reading, .manager-reading) { margin-top: var(--window-top-row); }
+:root[data-desktop-window] .board-workspace-right:not(:has(.ticket-reading, .manager-reading)) { padding-top: var(--window-top-row); }
+:root[data-desktop-window] .destination-pane--document { padding-top: 0; }
+/* The row above each title has moved onto the top row, so the title is the page's first line. */
+:root[data-desktop-window] :is(.page-title, .ticket-head > .ticket-title-row, .manager-workspace-head .manager-workspace-title, .goal-heading > h1, .review-screen .review-ticket-title),
+:root[data-desktop-window] .manager-page .manager-column .manager-workspace-head .manager-workspace-title { margin-top: 0; }
+:root[data-desktop-window] .settings-page .settings-page-eyebrow { margin-top: 0; }
+
+/* An artifact's or a file's own bar stands directly under the top row, so nothing fades over it. */
+:root[data-desktop-window] .board-workspace-right:has(.ticket-artifact, [data-review-artifact], [data-file-preview-route]) > .window-page-row-slot::after { display: none; }
+/* An open Review artifact makes the card inert. The card's lifted row goes with it, so its
+ * actions cannot act behind the artifact. */
+:root[data-desktop-window] .board-workspace-right:has([data-review-artifact]) > .window-page-row-slot .window-page-row { visibility: hidden; }
+
+/* With the sidebar hidden, every reading column keeps clear of the sidebar button: the page's
+ * scroll areas and the conversation take the insets BoardRoute sets, so their scrollbars stay
+ * at the window's edge while the column moves in. */
+:root[data-desktop-window] :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer, .destination-pane--document) {
+  transition: padding-left var(--motion-slow) var(--motion-ease), padding-right var(--motion-slow) var(--motion-ease);
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer) {
+  padding-inline: var(--window-column-inset-start) var(--window-column-inset-end);
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden .destination-pane--document {
+  padding-inline: calc(var(--page-gutter) + var(--window-column-inset-start)) calc(var(--page-gutter) + var(--window-column-inset-end));
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden :is(.manager-page, .ticket-page) > .conversation-layer::after {
+  left: var(--window-column-inset-start);
+  right: var(--window-column-inset-end);
+  width: min(var(--page-measure), calc(100% - var(--window-column-inset-start) - var(--window-column-inset-end) - 2 * var(--space-5)));
+  margin-inline: auto;
+  transform: none;
+}
+
+/* The open conversation's own header is the page row: on the window-control line, its divider
+ * at the foot of the top row, in the reading column. */
+:root[data-desktop-window] [data-conversation-dock-state="opened"] > .conversation-layer { padding-top: 0; }
+:root[data-desktop-window] [data-conversation-dock-state="opened"] .chat-head {
+  height: var(--window-top-row);
+  box-shadow: 0 var(--border-hairline) 0 var(--border-color);
+}
+:root[data-desktop-window] :is(.chat-head, .chat-overflow-menu) :is(button, a, input, select, summary, label, [tabindex]) { -webkit-app-region: no-drag; }
+:root[data-desktop-window] .chat-overflow-menu { -webkit-app-region: no-drag; }
+:root[data-desktop-window][data-window-inactive] .chat-head :is(.chat-head-title, .cv-state, .cv-segment, .chat-head-collapse) { color: var(--tone-faint); }
+:root[data-desktop-window][data-window-inactive] .chat-head .cv-icon-button { color: var(--tone-tertiary); }
+
+/* Full-window layers keep their own controls out of the top row's drag region: the media
+ * viewer's bar starts under the row, and a dialog's controls take their own clicks. */
+:root[data-desktop-window] .media-viewer-bar { margin-top: var(--window-top-row); }
+:root[data-desktop-window] :is(dialog, [role="dialog"], .machine-scrim, .goal-preview, .window-page-row-menu) :is(button, a, input, select, textarea, summary, label) { -webkit-app-region: no-drag; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-desktop-window] :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer, .destination-pane--document) { transition: none; }
+}
