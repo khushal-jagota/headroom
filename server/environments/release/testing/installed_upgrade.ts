@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { chromium } from 'playwright';
+import { published_mac_home_fault } from './mac_home_machine_fault.ts';
 import { healthy } from '../../updates/installer/health.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
@@ -73,21 +74,23 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     async () => (await read_status())?.available?.app_sha === candidate,
     'waiting for predecessor discovery',
   );
+  const readJournal = async () =>
+    JSON.parse(await readFile(join(o.base, 'installed/data/update-attempt.json'), 'utf8'));
   const browser = await chromium.launch();
   let phase = 'installing and rolling back';
   try {
     const page = await browser.newPage();
     await page.goto(url);
-    // Occupy this disposable home's port immediately after the old listener stops.
-    // The verified candidate bytes are intact; its actual native service fails to bind.
+    const missingMachine = await published_mac_home_fault(o.base, o.service, o.predecessor);
+    // Other journeys make the real candidate fail to bind on this disposable port.
     const fault = createServer((_request, response) => {
       response.writeHead(503, { Connection: 'close' });
       response.end();
     });
-    const readJournal = async () =>
-      JSON.parse(await readFile(join(o.base, 'installed/data/update-attempt.json'), 'utf8'));
     let failedAttemptId: string;
+    let refusedHealth: { ready: false; error: string } | undefined;
     try {
+      await missingMachine?.stop();
       const started = page.waitForResponse(
         (response) =>
           response.request().method() === 'POST' &&
@@ -111,30 +114,62 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       assert.equal(firstAttempt.to_sha, candidate);
       failedAttemptId = firstAttempt.attempt_id;
       assert.ok(failedAttemptId);
-      await wait_for(
-        () =>
-          new Promise<boolean>((done, reject) => {
-            const listening = () => {
-              fault.off('error', busy);
-              done(true);
-            };
-            const busy = (error: NodeJS.ErrnoException) => {
-              fault.off('listening', listening);
-              if (error.code === 'EADDRINUSE') done(false);
-              else reject(error);
-            };
-            fault.once('error', busy);
-            fault.once('listening', listening);
-            fault.listen(o.port, '127.0.0.1');
-          }),
-        'injecting failure on candidate bind',
-        20,
-      );
+      const activeFaultAttempt = async () => {
+        const attempt = await readJournal();
+        assert.equal(attempt.attempt_id, failedAttemptId);
+        assert.equal(attempt.to_sha, candidate);
+        assert.ok(
+          attempt.state !== 'failed' && attempt.state !== 'done' && !attempt.steps?.rollback_failed,
+          'Installer ended during fault injection: ' +
+            (recorded_failure_detail(attempt.detail) ?? attempt.state),
+        );
+        return attempt;
+      };
+      if (missingMachine) {
+        await wait_for(async () => {
+          const attempt = await activeFaultAttempt();
+          if (!attempt.steps?.app_swapped) return false;
+          const response = await fetch(url + '/api/health?expected_sha=' + candidate, {
+            signal: AbortSignal.timeout(1_000),
+          }).catch(() => null);
+          if (!response) return false;
+          const health = await response.json();
+          assert.ok(!response.ok, 'Candidate reported ready without its enrolled home machine');
+          if (
+            response.status !== 503 ||
+            health.ready !== false ||
+            health.error !== 'Waiting for the enrolled home machine'
+          )
+            return false;
+          refusedHealth = { ready: false, error: health.error };
+          return true;
+        }, 'waiting for the candidate to report its missing enrolled home machine');
+      } else
+        await wait_for(
+          async () => {
+            await activeFaultAttempt();
+            return new Promise<boolean>((done, reject) => {
+              const listening = () => {
+                fault.off('error', busy);
+                done(true);
+              };
+              const busy = (error: NodeJS.ErrnoException) => {
+                fault.off('listening', listening);
+                if (error.code === 'EADDRINUSE') done(false);
+                else reject(error);
+              };
+              fault.once('error', busy);
+              fault.once('listening', listening);
+              fault.listen(o.port, '127.0.0.1');
+            });
+          },
+          'injecting failure on candidate bind',
+          20,
+        );
       await wait_for(
         async () => {
-          const attempt = await readJournal();
-          if (attempt.to_sha !== candidate || !attempt.steps?.rollback_service_stopped)
-            return false;
+          const attempt = await activeFaultAttempt();
+          if (!attempt.steps?.rollback_service_stopped) return false;
           assert.ok(
             attempt.steps.app_swapped,
             'The failing transaction must have selected the candidate',
@@ -145,6 +180,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         20,
       );
     } finally {
+      await missingMachine?.restore();
       if (fault.listening) await new Promise<void>((done) => fault.close(() => done()));
     }
     const rollbackEvidence = join(o.base, 'evidence/rollback.json');
@@ -161,6 +197,10 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           rollbackEvidence,
           JSON.stringify(
             {
+              fault: missingMachine ? 'home machine offline' : 'candidate port occupied',
+              app_swapped: attempt.steps?.app_swapped ?? null,
+              rollback_app_restored: attempt.steps?.rollback_app_restored ?? null,
+              candidate_health_503: refusedHealth,
               runtime: status?.app_sha ?? null,
               attempt_id: failedAttemptId,
               outcome: attempt.state,
@@ -179,7 +219,9 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           ),
         );
         assert.ok(
-          !attempt.steps?.rollback_failed && attempt.steps?.rollback_healthy,
+          !attempt.steps?.rollback_failed &&
+            attempt.steps?.rollback_app_restored &&
+            attempt.steps?.rollback_healthy,
           'Installer did not recover the predecessor: ' + detail,
         );
         assert.ok(!attempt.snapshot_required || backup_present, 'Required snapshot missing');
@@ -191,6 +233,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       }
       return false;
     }, 'waiting for the terminal rollback journal and restored predecessor');
+    if (missingMachine)
+      await wait_for(missingMachine.reconnected, 'waiting for the restored home machine lease');
     await o.verify_rollback?.();
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
     const preserved = { ...before, model: 'TEST' };
@@ -221,9 +265,14 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     phase = 'checking the release feed, home and enrolled machines';
     const enrolled = [HOME_MACHINE_ID, o.machine_id];
     await wait_for(async () => {
+      const journal = await readJournal();
+      if (journal.attempt_id === rolledBackAttempt) return false;
+      if (journal.state === 'failed' || journal.steps?.rollback_failed)
+        throw new Error('Installer retry failed: ' + recorded_failure_detail(journal.detail));
       const status = await read_status();
-      if (status?.attempt?.attempt_id === rolledBackAttempt) return false;
-      if (status?.attempt?.state === 'failed') throw new Error(status.attempt.detail);
+      if (status?.attempt?.attempt_id !== journal.attempt_id) return false;
+      if (status?.attempt?.state === 'failed')
+        throw new Error(recorded_failure_detail(status.attempt.detail) ?? 'Installer retry failed');
       return (
         status?.app_sha === candidate &&
         status.attempt?.state === 'done' &&
@@ -293,6 +342,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           reported_build: expectedBuild,
           conversations: [before.conversation_id, after.conversation_id],
           rollback_sha: o.predecessor,
+          restored_home_machine: missingMachine?.label,
           recovered_conversation: recovered.conversation_id,
           original_linux_start: originalStart,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
@@ -308,8 +358,17 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       ?.locator('[data-shell-status]:visible')
       .allInnerTexts()
       .catch(() => []);
+    const journal = await readJournal().catch(() => null);
     const evidence = {
       phase,
+      journal: journal && {
+        attempt_id: journal.attempt_id,
+        from_sha: journal.from_sha,
+        to_sha: journal.to_sha,
+        state: journal.state,
+        steps: Object.keys(journal.steps ?? {}),
+        detail: recorded_failure_detail(journal.detail),
+      },
       card_text: cards?.map(recorded_failure_detail),
       app_sha: status?.app_sha,
       state: status?.state,
