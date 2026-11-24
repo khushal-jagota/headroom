@@ -278,6 +278,16 @@ test.skipIf(!admitted)(
             if (system === 'darwin') {
               const job = JSON.parse(plan.files[0]!.content);
               expect(job.EnvironmentVariables.PATH.split(':')[0]).toBe(join(account, '.local/bin'));
+              if (fault === 'none') {
+                // The native mini home restarts a crash but stays loaded without a PID after a
+                // clean exit. This holds the failed candidate in that state until rollback.
+                const [home, ...other] = plan.files;
+                job.KeepAlive = { SuccessfulExit: false };
+                plan = {
+                  ...plan,
+                  files: [{ ...home!, content: JSON.stringify(job) + '\n' }, ...other],
+                };
+              }
             }
             return plan;
           },

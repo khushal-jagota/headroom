@@ -15,7 +15,10 @@ import { admit_runtime } from '../../environments/release/admission.ts';
 import { release_path } from '../../environments/updates/installer/selection.ts';
 import { create_darwin_home_io } from '../../environments/updates/darwin/service.ts';
 import { read_home_job } from '../../environments/updates/darwin/jobs.ts';
-import { authenticate_loaded_job } from '../../environments/updates/darwin/logic/launchd.ts';
+import {
+  authenticate_loaded_job,
+  launchd_field,
+} from '../../environments/updates/darwin/logic/launchd.ts';
 import { healthy } from '../../environments/updates/installer/health.ts';
 import { DarwinProcessInspector } from '../../previews/darwin.ts';
 import type { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
@@ -70,7 +73,7 @@ const server=createServer(async(req,res)=>{
    const release={publication_run_id:1,artifact_id:1,proof_artifact_id:2,manifest:input.manifest,archive_sha256:input.archive_sha256,schema_floor:seed.alembicRevision,expires_at:'2099-01-01T00:00:00+00:00',mac:null};
    new FileUpdateAttemptStore(join(data,'update-attempt.json'),()=>{}).create({attempt_id:input.attempt_id,from_sha:revision,to_sha:input.manifest.app_sha,mode:'now',confirm_activity:false,state:'installing',created_at:now,updated_at:now,release,detail:null,deadline_at:null,backup:null,snapshot_required:true,steps:{},mac_attempt_id:null,extra:{}});
    new UpdateBarrier(join(data,'update-barrier.json')).freeze(input.attempt_id);
-   const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:8});
+   const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:input.attempt_id==='native-rollback'?30:8});
    writeFileSync(join(data,'probe-launch-'+input.attempt_id+'.json'),JSON.stringify({command,app_pid:process.pid,supervisor_pid:process.ppid}));
    res.end(JSON.stringify({prepared:true}));
    void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(root,'logs/probe-launch-error-'+input.attempt_id+'.log'),String(error.stack||error)));
@@ -376,7 +379,29 @@ export async function native_retained_updates(options: {
         });
       }
       record.update_observation = 'candidate process';
-      if (name === 'rollback') trial_birth = (await identity()).app;
+      if (name === 'rollback') {
+        trial_birth = (await identity()).app;
+        const target = `${domain}/${label}`,
+          path = join(root, 'agents', label + '.plist');
+        const job = await read_home_job(path, io, execution());
+        assert.deepEqual(job.KeepAlive, { SuccessfulExit: false });
+        await control(['kill', 'SIGTERM', target]);
+        // launchd keeps this idle job registered. Only the installer can remove it.
+        await wait(async () => {
+          const observed = await control(['print', target]);
+          const pid = authenticate_loaded_job(
+            observed.stdout,
+            path,
+            job,
+            ['PLAN_DB_PATH', 'PLAN_CONFIG_PATH'],
+            realpathSync,
+          );
+          return pid === null && launchd_field(observed.stdout, 'last exit code') === '0'
+            ? true
+            : undefined;
+        });
+        record.failed_candidate_job = 'registered without a PID after clean supervisor exit';
+      }
       record.update_observation = 'terminal attempt';
       const state = await wait(async () => {
         const value = await json(attempt_path);
@@ -393,7 +418,13 @@ export async function native_retained_updates(options: {
           },
         ),
       );
-      assert(name === 'success' ? state.steps.healthy : state.steps.rollback_database_restored);
+      if (name === 'success') assert(state.steps.healthy);
+      else
+        assert(
+          state.steps.rollback_service_stopped &&
+            state.steps.rollback_database_restored &&
+            state.steps.rollback_healthy,
+        );
       await wait(async () =>
         (await primitives.is_absent(old.app, performance.now() / 1000 + 5)) ? true : undefined,
       );
