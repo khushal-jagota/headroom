@@ -17,7 +17,8 @@ struct TicketPresentation {
         else if ticket.assigned == true || currentStage?.ownershipMode == "user" { prefix = "Your step:" }
         else if ticket.stage == "needs_brief" { prefix = "Waiting for" }
         else if ticket.agentState == "setting_up" { prefix = "Setting up for" }
-        else if ticket.ticketStatus == "agent" || ticket.agentState == "working" { prefix = "Currently working on" }
+        else if ticket.agentState == "working" { prefix = "Currently working on" }
+        else if ticket.ticketStatus == "agent" { prefix = "At" }
         else if currentField == "consequences" { prefix = "At" }
         else { prefix = "Waiting at" }
         return "\(prefix) \(label)"

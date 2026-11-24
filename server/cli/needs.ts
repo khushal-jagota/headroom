@@ -1,4 +1,5 @@
 /** The display form of the need word. This is the only place the CLI words a need. */
+import { WORKER_STATUS_LABEL } from '../../web/src/lib/ticketStatusPresentation.ts';
 import { numeric_value } from '../core/http/numeric_json.ts';
 import { TICKET_NEEDS, type TicketNeed } from '../tickets/contracts.ts';
 
@@ -17,6 +18,8 @@ export function need_display(need: unknown, holder_kind?: unknown): string {
       : holder_kind === 'manager'
         ? 'Manager: approve'
         : 'agent: approve';
+  // The wire need 'working' includes an idle Worker whose step is still out.
+  if (word === 'working') return WORKER_STATUS_LABEL;
   return OWNER_NEEDS[word as TicketNeed] ?? word;
 }
 const SETTLED: readonly string[] = ['backlog', 'done'];

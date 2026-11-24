@@ -50,6 +50,20 @@ describe('Ticket section presentation',()=>{
       expect(ticketSectionFacts(section,{...lost,conversations:new Map()}).conversation_signal).toEqual({});
     } finally {adapter.destroy();}
   });
+  it('describes a held Worker step as active only when its live state is working',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const section=ticketSection({...detail,ticket_status:'agent',pending_proposal:null},configuration)!;
+      const held={...record,value:{...record.value,ticket_status:'agent',proposal_field:null}};
+      const idle=conversation('conversation',0,false,false);
+      idle.value.attention.current!.signal.working=false;
+      adapter.publishSnapshot(currentSnapshot({...continuity,records:[held,idle]}),'held-idle');
+      expect(ticketSectionHeading(section,knowledge.accept(adapter.getPublication()!))).toBe('At');
+      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'1',records:[held,conversation('conversation',0,false,false)]}),'held-working');
+      expect(ticketSectionHeading(section,knowledge.accept(adapter.getPublication()!))).toBe('Currently working on');
+      expect(ticketSectionHeading(section,null)).toBe('At');
+    } finally {adapter.destroy();}
+  });
   it('keeps a parked proposal actionable while another Ticket blocks subsequent work',()=>{
     for (const ceiling_holder of [{kind:'owner',id:'owner'}, {kind:'chief',id:'chief'}] as const) {
       const userConfiguration={...configuration,stages:configuration.stages.map(stage=>stage.id==='needs_plan' ? {...stage,ownership_mode:'user' as const} : stage)};

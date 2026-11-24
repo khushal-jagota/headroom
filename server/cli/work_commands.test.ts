@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { run } from './main.ts';
 import * as http from './http.ts';
+import { WORKER_STATUS_LABEL } from '../../web/src/lib/ticketStatusPresentation.ts';
 
 const SERVER = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
 const complete_page = (count: number) => ({
@@ -20,7 +21,13 @@ const complete_page = (count: number) => ({
 test('ticket list sends scope, needs, and Manager kind and says what it did not show', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-07-04T12:00:02Z'));
-  const base = { id: 't_recap', stage: 'needs_implementation', title: 'Recap' };
+  const base = {
+    id: 't_recap',
+    stage: 'needs_implementation',
+    title: 'Recap',
+    ticket_status: 'agent',
+    agent_state: 'idle',
+  };
   const request = vi.spyOn(http, 'send').mockResolvedValue({
     tickets: [
       {
@@ -56,9 +63,12 @@ test('ticket list sends scope, needs, and Manager kind and says what it did not 
         },
       },
     ]);
-    expect(output.stdout.split('\n').slice(0, 2)).toEqual([
-      'ID       NEEDS             STAGE                 TITLE',
-      't_recap  Chief: approve    needs_implementation  Recap',
+    expect(output.stdout.split('\n').slice(0, 5)).toEqual([
+      'Recap',
+      '  Current recap (recap 0s old, stage changed since)',
+      `  status: ${WORKER_STATUS_LABEL} | Worker: idle`,
+      '  stage: needs_implementation | needs: Chief: approve',
+      '  id: t_recap',
     ]);
     expect(output.stdout).toContain('Current recap (recap 0s old, stage changed since)');
     expect(output.stdout).toContain('Older recap (recap age unknown)');
@@ -101,6 +111,7 @@ test('CLI validates missing native values and skips an absent optional page cont
     const names = ['__proto__', 'constructor', 'toString'];
     request.mockResolvedValue({
       id: 't_own_keys',
+      recap: '',
       needs: 'ready',
       workflow: { fields: names.map((id) => ({ id })) },
       field_values: {},
@@ -109,6 +120,27 @@ test('CLI validates missing native values and skips an absent optional page cont
     const record = await run(['ticket', 'show', 't_own_keys'], SERVER);
     expect(record).toMatchObject({ exit_code: 0, stderr: '' });
     for (const name of names) expect(record.stdout).toContain(`  ${name}:\n    character_count: 0`);
+    request.mockResolvedValue({
+      id: 't_held',
+      title: 'Held step',
+      recap: 'Awaiting work',
+      ticket_status: 'agent',
+      agent_state: 'idle',
+      stage: 'needs_implementation',
+      needs: 'working',
+      workflow: { fields: [] },
+      field_values: {},
+    });
+    const held = await run(['ticket', 'show', 't_held', 'recap'], SERVER);
+    expect(held.stdout).toContain(
+      `  status: ${WORKER_STATUS_LABEL}\n  worker: idle\n  stage: needs_implementation`,
+    );
+    expect(held.stdout.indexOf('title: Held step')).toBeLessThan(held.stdout.indexOf('status:'));
+    const wire = await run(['ticket', 'show', 't_held', '--json'], SERVER);
+    expect(JSON.parse(wire.stdout).header).toMatchObject({
+      ticket_status: 'agent',
+      agent_state: 'idle',
+    });
   } finally {
     request.mockRestore();
   }
@@ -337,7 +369,9 @@ test('manager show defaults to the caller and names the visible page', async () 
     expect(request.mock.lastCall?.[3]).toEqual({ params: { detail: 'full', id: 'si_me' } });
     expect(own.stdout).toContain('  visible_page: held goal Grow (goal_1)\n');
     expect(own.stdout).toContain('  page_edit: panels goal edit goal_1\n');
-    expect(own.stdout).toContain('  tickets: 1 Khushal: approve, 2 working; 4 done\n');
+    expect(own.stdout).toContain(
+      `  tickets: 1 Khushal: approve, 2 ${WORKER_STATUS_LABEL}; 4 done\n`,
+    );
     expect(own.stdout).toContain('parts:\n  recap:\n    value: Recap');
     const page = await run(['manager', 'show', 'si_me', 'page'], SERVER);
     expect(page.stderr).toContain('Use: panels page show --manager MANAGER_ID');
