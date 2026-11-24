@@ -330,15 +330,16 @@ export async function smoke_file_turn(
     (event) => event.kind === 'prompt' && event.payload.sender_message_id === 'smoke-send',
   );
   assert.ok(uploaded);
-  const pieces = uploaded.payload.content as Json[];
-  assert.ok(pieces.some((piece) => piece.piece === 'text' && piece.text === prompt));
   if (artifact) {
-    assert.equal(pieces.length, 1);
+    assert.equal(uploaded.payload.text, prompt);
+    assert.equal(uploaded.payload.content, undefined);
     const file_url = `/files/tickets/t_update_qualification/artifacts/${artifact}.txt`;
     await verify_smoke_file(base, file_url);
     step('06 Worker-written artifact bytes round trip', { file_url });
     return { conversation_id, file_url, stored_file_id: null, events };
   }
+  const pieces = uploaded.payload.content as Json[];
+  assert.ok(pieces.some((piece) => piece.piece === 'text' && piece.text === prompt));
   const file = pieces.find((piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt');
   assert.ok(file && typeof file.stored_file_id === 'string');
   const stored_file_id = file.stored_file_id;
