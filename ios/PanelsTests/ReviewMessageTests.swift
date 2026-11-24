@@ -196,7 +196,7 @@ import XCTest
         let ask = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
         // An earlier read on this phone, such as the read-ahead before the connection dropped.
         await ReviewMessageDecision().load(item: item(), api: api)
-        await ReviewAskDecision().load(item: ask, api: api)
+        await ReviewAskDecision().load(item: ask, api: api, viewFreshAt: Date())
         await LocalStore.shared.flushCache()
         ReviewMessageProtocol.state.offline = true
         let message = ReviewMessageDecision()
@@ -206,7 +206,7 @@ import XCTest
         let marked = await message.markRead()
         XCTAssertTrue(marked)
         let answer = ReviewAskDecision()
-        await answer.load(item: ask, api: api)
+        await answer.load(item: ask, api: api, viewFreshAt: Date())
         XCTAssertTrue(answer.available)
         let question = try XCTUnwrap(answer.userInput?.questions.first)
         answer.toggle("Blue", in: question)
@@ -247,7 +247,7 @@ import XCTest
         ask.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-1", title: "Run ls", detail: "ls", options: [
             .init(optionId: "allow", label: "Allow", optionKind: "allow_once"), .init(optionId: "reject", label: "Reject", optionKind: "reject_once")]), pendingUserInput: nil)
         let answer = ReviewAskDecision()
-        await answer.load(item: ask, api: api)
+        await answer.load(item: ask, api: api, viewFreshAt: Date())
         XCTAssertTrue(answer.available)
         XCTAssertTrue(answer.answerPermission(try XCTUnwrap(answer.approveOption), item: ask, api: api))
         ReviewMessageProtocol.state.offline = false
@@ -285,20 +285,45 @@ import XCTest
         let stale = ask(raisedAt: Date().timeIntervalSince1970 - 3600)
         // A live read after the view's ask was raised wins, online and offline after it.
         let live = ReviewAskDecision()
-        await live.load(item: stale, api: api)
+        await live.load(item: stale, api: api, viewFreshAt: Date())
         XCTAssertEqual(live.userInput?.requestId, "request-1")
         await LocalStore.shared.flushCache()
         ReviewMessageProtocol.state.offline = true
-        await live.load(item: stale, api: api)
+        await live.load(item: stale, api: api, viewFreshAt: Date())
         XCTAssertEqual(live.userInput?.requestId, "request-1")
         // A saved read newer than the view's ask wins too.
         let saved = ReviewAskDecision()
-        await saved.load(item: stale, api: api)
+        await saved.load(item: stale, api: api, viewFreshAt: Date())
         XCTAssertEqual(saved.userInput?.requestId, "request-1")
         // An ask raised after the saved read replaces it.
         let newer = ReviewAskDecision()
-        await newer.load(item: ask(raisedAt: Date().timeIntervalSince1970 + 60), api: api)
+        await newer.load(item: ask(raisedAt: Date().timeIntervalSince1970 + 60), api: api, viewFreshAt: Date())
         XCTAssertEqual(newer.permission?.askId, "ask-window")
+    }
+    /// Risk: a view kept for hours offline, in memory or saved, still offers its ask after
+    /// the turn moved on. The view's ask stands in only while its last fresh snapshot is
+    /// under an hour old, both when the card takes it and when it is answered later.
+    func testWindowAskWaitsOnceTheViewIsAnHourOld() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        ReviewMessageProtocol.state.offline = true
+        defer { clean(api) }
+        var item = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+        item.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-window", title: "Run ls", detail: nil, options: [
+            .init(optionId: "allow", label: "Allow", optionKind: "allow_once")]), pendingUserInput: nil)
+        let now = Date()
+        let old = ReviewAskDecision()
+        await old.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-2 * 60 * 60), now: now)
+        XCTAssertNil(old.permission)
+        XCTAssertFalse(old.available)
+        let recent = ReviewAskDecision()
+        await recent.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-10 * 60), now: now)
+        XCTAssertEqual(recent.permission?.askId, "ask-window")
+        XCTAssertTrue(recent.available)
+        // The same card shown again two hours later, with no fresh view since.
+        await recent.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-10 * 60), now: now.addingTimeInterval(2 * 60 * 60))
+        XCTAssertNil(recent.permission)
+        XCTAssertFalse(recent.loaded)
     }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()

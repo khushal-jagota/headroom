@@ -30,7 +30,16 @@ extension APIClient {
     var permission: ReviewAskState.Permission? { state?.pendingPermissionAsk }
     var userInput: ReviewAskState.UserInput? { state?.pendingUserInput }
     /// The executor still stops on this ask, as the web's executorAnswerAvailable reads it.
-    var available: Bool { state?.isRunning == true && state?.waiting == true }
+    /// An ask taken from the view counts only while that view is recent.
+    var available: Bool {
+        state?.isRunning == true && state?.waiting == true && windowFreshAt.map { Self.windowAskCurrent(viewFreshAt: $0, now: .now) } ?? true
+    }
+    /// The view's ask stands in for a read only while the view's last fresh snapshot is recent.
+    static func windowAskCurrent(viewFreshAt: Date?, now: Date) -> Bool {
+        viewFreshAt.map { now.timeIntervalSince($0) <= DisplayCacheConfiguration.pendingAskMaximumAge } ?? false
+    }
+    /// When the view behind the shown ask was fresh; nil when the ask came from a read.
+    private var windowFreshAt: Date?
 
     /// The approving and declining options of a permission ask, once each.
     var approveOption: ReviewAskState.PermissionOption? { option(prefix: "allow") }
@@ -43,16 +52,22 @@ extension APIClient {
     /// The question the composer's words answer.
     var wordsQuestion: ReviewAskState.Question? { userInput?.questions.first { $0.takesWords } }
 
-    func load(item: ReviewItem, api: APIClient) async {
+    /// `viewFreshAt` is when the view that carries `item` was last fresh from the server.
+    func load(item: ReviewItem, api: APIClient, viewFreshAt: Date?, now: Date = .now) async {
         guard let id = item.conversationId, !loading else { return }
+        // An ask taken from a view that has since grown old waits for the connection.
+        if let windowFreshAt, !Self.windowAskCurrent(viewFreshAt: windowFreshAt, now: now) {
+            state = nil; stateKnownAt = nil; self.windowFreshAt = nil; loaded = false
+        }
         if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
         if state == nil, let saved = api.savedReviewAsk(id) { accept(saved.value, knownAt: saved.saved) }
         // The view's ask stands in only for a read that predates it: with no read, or a read
         // made before the ask was raised. A later read already knows whether it still waits.
-        if let windowAsk = item.pendingAsk, windowAsk.askIdentity != state?.askIdentity {
+        if let windowAsk = item.pendingAsk, windowAsk.askIdentity != state?.askIdentity,
+           Self.windowAskCurrent(viewFreshAt: viewFreshAt, now: now) {
             // An ask with no raised time is never newer than a read.
             let raised = item.waitingSince == ReviewItem.unknownAskTime ? .distantPast : Date(timeIntervalSince1970: item.waitingSince)
-            if stateKnownAt.map({ $0 < raised }) ?? true { accept(windowAsk, knownAt: raised) }
+            if stateKnownAt.map({ $0 < raised }) ?? true { accept(windowAsk, knownAt: raised); windowFreshAt = viewFreshAt }
         }
         loading = true; defer { loading = false }
         do {
@@ -74,6 +89,7 @@ extension APIClient {
         if read.pendingUserInput?.requestId != state?.pendingUserInput?.requestId { selected = [:] }
         state = read
         stateKnownAt = knownAt
+        windowFreshAt = nil
         loaded = true
     }
 

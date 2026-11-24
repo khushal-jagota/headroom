@@ -101,7 +101,8 @@ struct ReviewView: View {
                 if !decision.isCurrent(for: item) { loads.append { await decision.load(item: item, api: api) } }
             case "ask":
                 let decision = session.askDecisions.decision(for: item)
-                if !decision.loaded { loads.append { await decision.load(item: item, api: api) } }
+                let viewFreshAt = store.viewFreshAt
+                if !decision.loaded { loads.append { await decision.load(item: item, api: api, viewFreshAt: viewFreshAt) } }
             default:
                 let decision = session.decisions.decision(for: item)
                 let stamp = store.ticketStamp(item.ticketId)

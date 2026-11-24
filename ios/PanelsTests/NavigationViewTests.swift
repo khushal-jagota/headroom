@@ -281,15 +281,6 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertNil(try conversationValue("a-conversation").latestOwnerMessageSequence)
         XCTAssertNil(try conversationValue("a-conversation").pendingAsk)
 
-        // At launch a saved ask lasts an hour after the save; the read bound always stays.
-        let now = Date()
-        let recent = saved.restoredDisplay(savedAt: now.addingTimeInterval(-10 * 60), now: now)
-        XCTAssertNotNil(NavigationPresentation(recent.content.records).reviewQueue(in: recent).items[1].pendingAsk)
-        let old = saved.restoredDisplay(savedAt: now.addingTimeInterval(-2 * 60 * 60), now: now)
-        let oldItems = NavigationPresentation(old.content.records).reviewQueue(in: old).items
-        XCTAssertEqual(oldItems.map(\.id), ["message:a-conversation:1.0", "ask:chief-conversation:4.0"])
-        XCTAssertNil(oldItems[1].pendingAsk, "A dead ask is never offered after an offline relaunch")
-        XCTAssertEqual(oldItems[0].latestOwnerMessageSequence, 7)
     }
 
     // MARK: Request (owner.ts refreshDemand, read.py request)

@@ -130,8 +130,16 @@ export function readContent(sql: ReadSql, value: ViewRequest): [Continuity, View
         existing !== undefined &&
         (item[0] !== 'manager' || !full || 'recap_reference' in existing.value) &&
         (item[0] !== 'conversation' || !review || 'pending_ask' in existing.value)
-      )
+      ) {
+        // A Review member admitted earlier, such as the selected Ticket, still reaches its
+        // conversation, so that conversation carries the waiting ask.
+        if (review && item[0] !== 'conversation') {
+          const conversation = record(sql, item)?.conversation_id;
+          if (item[0] !== 'goal' && conversation)
+            pending.push({ key: ['conversation', conversation], full: true });
+        }
         continue;
+      }
       const raw = record(sql, item);
       if (raw === null) throw new NavigationUnavailable('navigation view dependency is absent');
       const row = project(

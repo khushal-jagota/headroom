@@ -351,18 +351,6 @@ extension ViewSnapshot {
             contentVersion: contentVersion, mode: "saved", authority: authority, content: snapshot.content)
     }
 
-    /// A saved view as launch restores it. Its asks last only `pendingAskMaximumAge` after
-    /// the save; the read bounds stay, because a later message is never marked by them.
-    func restoredDisplay(savedAt: Date, now: Date = .now) -> ViewSnapshot {
-        var snapshot = savedDisplay
-        guard now.timeIntervalSince(savedAt) > DisplayCacheConfiguration.pendingAskMaximumAge else { return snapshot }
-        snapshot.content.records = snapshot.content.records.map { record in
-            guard case .conversation(let id, var value) = record else { return record }
-            value.pendingAsk = nil
-            return .conversation(id, value)
-        }
-        return snapshot
-    }
 }
 
 struct ViewPatch: Codable, Sendable {

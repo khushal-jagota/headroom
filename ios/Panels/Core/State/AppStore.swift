@@ -33,6 +33,9 @@ import SwiftUI
     var chief: ChiefDetail? { chiefResource.value }
     var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
+    /// When the view shown last came fresh from the server: now for a stream frame, the save
+    /// time for a view restored at launch.
+    private(set) var viewFreshAt: Date?
     var counts: ViewCounts?
     /// The last admitted view; screens read window paging facts from it.
     private(set) var view: ViewSnapshot?
@@ -121,7 +124,7 @@ import SwiftUI
         resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
-        presentation = nil; recordStamps = [:]
+        presentation = nil; recordStamps = [:]; viewFreshAt = nil
         errors = [:]
         // Review's history names one server's Tickets and conversations.
         reviewHistory = ReviewHistory()
@@ -148,7 +151,8 @@ import SwiftUI
                   let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: record.payload),
                   snapshot.wireVersion == NavigationViewVersion.wire,
                   snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
-            admit(snapshot.restoredDisplay(savedAt: record.updated), persist: false)
+            admit(snapshot.savedDisplay, persist: false)
+            viewFreshAt = record.updated
         }
     }
 
@@ -303,7 +307,7 @@ import SwiftUI
         if stamps != recordStamps { recordStamps = stamps }
         self.presentation = presentation
         view = snapshot
-        if persist { checkpointNavigation(snapshot) }
+        if persist { viewFreshAt = .now; checkpointNavigation(snapshot) }
     }
 
     /// Outer nil means that this view does not carry the owner. Inner nil is a

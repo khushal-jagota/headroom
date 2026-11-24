@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
-import { fixture } from './ticket_fixture.ts';
+import { create, fixture } from './ticket_fixture.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import { createSignalNavigationRuntime } from '../navigation/index.ts';
 import { registerArea } from '../core/authority/register.ts';
@@ -26,7 +26,11 @@ const view = encodeURIComponent(
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
 const streamPath = `/api/navigation/view/events?view=${view}`;
 
-async function setup(asking = false, events: Array<[number, string, object]> = []) {
+async function setup(
+  asking = false,
+  events: Array<[number, string, object]> = [],
+  ticketEvents: Array<[number, string, object]> | null = null,
+) {
   let producer: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let attached = false;
@@ -51,6 +55,22 @@ async function setup(asking = false, events: Array<[number, string, object]> = [
         [sequence, kind, JSON.stringify(payload)],
       );
   });
+  // A Ticket whose own conversation waits on an ask, for the Review member keyed by the Ticket.
+  let ticketId: string | null = null;
+  if (ticketEvents) {
+    ticketId = create(database).id;
+    database.write((tx) => {
+      tx.run(`INSERT INTO conversations
+        (conversation_id,backend_key,model,workspace_folder,access,created_at)
+        VALUES('ticket-conversation','codex','fixture','/synthetic','full',0)`);
+      tx.run("UPDATE tickets SET conversation_id='ticket-conversation' WHERE id=?", [ticketId]);
+      for (const [sequence, kind, payload] of ticketEvents)
+        tx.run(
+          "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES('ticket-conversation',?,?,?,0)",
+          [sequence, kind, JSON.stringify(payload)],
+        );
+    });
+  }
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
   producer.bind_runtime(() =>
     asking
@@ -86,6 +106,7 @@ async function setup(asking = false, events: Array<[number, string, object]> = [
   return {
     app,
     database,
+    ticketId,
     producer,
     navigation,
     revokeSnapshot: () => {
@@ -291,5 +312,71 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
       await f.app.close();
       f.navigation.close();
     }
+  }
+});
+
+// Distinct gap: a Ticket's Review member is the Ticket. When an earlier admission already
+// holds the Ticket (it is selected, or another window lists it first), Review must still
+// reach its conversation, or the never-read Ask card has nothing to answer offline.
+test('a Ticket admitted before Review still carries its waiting ask', async () => {
+  const ask = {
+    request_id: 'request-1',
+    questions: [
+      {
+        question_id: 'colour',
+        header: 'Colour',
+        question: 'Which colour?',
+        options: [{ label: 'Blue', description: 'Calm' }],
+        multi_select: false,
+        allow_other: false,
+      },
+    ],
+  };
+  const f = await setup(true, [], [[1, 'user_input_requested', ask]]);
+  const window = (section: string, owner: object | null) => ({
+    section,
+    owner,
+    group: 'all',
+    child_filter: 'all',
+    anchor: null,
+    direction: 'after',
+    limit: 30,
+  });
+  const pendingAsk = async (selected: object | null, windows: object[]) => {
+    const request = encodeURIComponent(
+      JSON.stringify({
+        projection_version: 7,
+        scope_generation: 1,
+        locale: 'en-US',
+        selected,
+        selected_conversation_id: null,
+        review_conversation_ids: [],
+        review_skipped_keys: [],
+        review_priority_keys: [],
+        windows,
+      }),
+    );
+    const response = await f.app.inject(`/api/navigation/view/snapshot?view=${request}`);
+    expect(response.statusCode).toBe(200);
+    const snapshot = response.json() as CurrentViewSnapshot;
+    // Every window, the earlier one included, lists the Ticket.
+    for (const listed of snapshot.content.windows)
+      expect(listed.members).toContainEqual({ kind: 'ticket', id: f.ticketId });
+    return (
+      snapshot.content.records.find(
+        (record) => record.kind === 'conversation' && record.id === 'ticket-conversation',
+      )?.value as { pending_ask?: unknown } | undefined
+    )?.pending_ask;
+  };
+  try {
+    const review = window('review', null);
+    const expected = { kind: 'user_input', ...ask };
+    expect(await pendingAsk(null, [review])).toEqual(expected);
+    expect(await pendingAsk({ kind: 'ticket', id: f.ticketId }, [review])).toEqual(expected);
+    const rail = window('rail_tickets', { kind: 'chief', id: 'chief' });
+    expect(await pendingAsk(null, [rail, review])).toEqual(expected);
+  } finally {
+    await f.app.close();
+    f.navigation.close();
   }
 });
