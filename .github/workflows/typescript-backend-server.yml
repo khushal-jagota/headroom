@@ -34,6 +34,10 @@ jobs:
           cache-dependency-path: |
             server/package-lock.json
             web/package-lock.json
+      - name: Install the video fixture dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - run: scripts/dev npm --prefix server ci
       - name: Check new native-style violations
         if: matrix.node == '22'

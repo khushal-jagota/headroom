@@ -232,8 +232,10 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
       `remote object verification failed for ${checkout}`,
     );
     unavailable.mockRestore();
+    // Git maintenance can pack refs. Delete through Git instead of assuming loose files.
+    await command(remote, ['pack-refs', '--all', '--prune']);
     for (let index = 0; index < 80; index++)
-      rmSync(join(remote, 'refs', 'heads', `advertised-${index}`));
+      await command(remote, ['update-ref', '-d', `refs/heads/advertised-${index}`]);
     await command(remote, ['update-ref', '-d', 'refs/heads/published']);
     // An annotated tag alone still proves the published commit.
     expect(await reason_to_keep(path, undefined, undefined, options)).toBeNull();
