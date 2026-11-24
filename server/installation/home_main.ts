@@ -40,18 +40,22 @@ export async function home_main(): Promise<number> {
     });
     const address = await install_home(request, deps);
     console.log(`Installed Panels at ${request.root}. Open ${address} on this machine.`);
-    // Either spelling of the account home counts: the resolved one and the shell's HOME.
-    const directories = [deps.account_home, deps.environment.HOME ?? deps.account_home].map(
-      (home) => dirname(join(home, HOME_COMMAND)),
-    );
-    if (
-      !(deps.environment.PATH ?? '')
-        .split(':')
-        .some((entry) => entry && directories.includes(resolve(entry)))
-    )
-      console.log(
-        `To run panels, add ${directories[0]} to your PATH: export PATH="${directories[0]}:$PATH"`,
+    if (request.skip_command_link) {
+      console.log(`Use this home's command: ${join(request.root, 'app/bin/panels')}`);
+    } else {
+      // Either spelling of the account home counts: the resolved one and the shell's HOME.
+      const directories = [deps.account_home, deps.environment.HOME ?? deps.account_home].map(
+        (home) => dirname(join(home, HOME_COMMAND)),
       );
+      if (
+        !(deps.environment.PATH ?? '')
+          .split(':')
+          .some((entry) => entry && directories.includes(resolve(entry)))
+      )
+        console.log(
+          `To run panels, add ${directories[0]} to your PATH: export PATH="${directories[0]}:$PATH"`,
+        );
+    }
     console.log('Next steps: see ops/mac-home/installation.md, After the install.');
     return 0;
   } catch (error) {

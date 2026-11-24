@@ -69,7 +69,7 @@ def preflight(args: argparse.Namespace, target: str) -> None:
         raise ValueError("Use a --port from 1 through 65535.")
     if args.command == "home":
         command_link = Path.home() / ".local/bin/panels"
-        if command_link.exists() or command_link.is_symlink():
+        if not getattr(args, "skip_command_link", False) and (command_link.exists() or command_link.is_symlink()):
             raise ValueError(
                 f"The panels command already exists: {command_link}. It will not be replaced."
             )
@@ -518,6 +518,10 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--port", type=int, default=8767)
     result.add_argument("--isolated-providers", action="store_true")
+    result.add_argument(
+        "--skip-command-link", action="store_true",
+        help="Home only: leave ~/.local/bin/panels untouched and use ROOT/app/bin/panels.",
+    )
     result.add_argument("--home")
     result.add_argument("--machine-id")
     return result
@@ -571,6 +575,8 @@ def main() -> None:
     args = parser().parse_args()
     try:
         target = host_target()
+        if args.command == "join" and args.skip_command_link:
+            raise ValueError("--skip-command-link is a home installation option.")
         if args.command == "join" and args.service is not None:
             raise ValueError("A join uses its fixed machine service. Omit --service.")
         if args.command == "join" and target == "darwin" and args.root is not None:
@@ -632,6 +638,7 @@ def main() -> None:
                     "service": args.service,
                     "port": args.port,
                     "isolated_providers": args.isolated_providers,
+                    "skip_command_link": args.skip_command_link,
                     "archive": str(archive),
                     "archive_sha256": receipt["archive_sha256"],
                     "revision": receipt["revision"],

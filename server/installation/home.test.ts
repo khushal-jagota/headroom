@@ -422,6 +422,44 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
   }
 });
 
+test('a test home preserves the account command on success and first-machine rollback', async () => {
+  // Normal install coverage refuses a shared command. It does not prove the explicit
+  // opt-out leaves that command outside successful installation and failed cleanup.
+  for (const machine_failure of [false, true]) {
+    const f = await fixture();
+    try {
+      const command = join(f.account, '.local/bin/panels');
+      mkdirSync(dirname(command), { recursive: true });
+      writeFileSync(command, 'existing live command\n', { mode: 0o755 });
+      const before = statSync(command);
+      const install = install_home(
+        { ...f.request, skip_command_link: true },
+        {
+          ...f.deps,
+          healthy: async () => true,
+          machine_healthy: async () => {
+            if (machine_failure) throw new Error('test machine refused');
+          },
+        },
+      );
+      if (machine_failure) {
+        await assert.rejects(install, /test machine refused/);
+        assert(!existsSync(f.request.root));
+      } else {
+        assert.equal(await install, `http://127.0.0.1:${f.request.port}`);
+        assert(existsSync(f.request.root));
+      }
+      assert.equal(readFileSync(command, 'utf8'), 'existing live command\n');
+      const after = statSync(command);
+      assert.equal(after.ino, before.ino);
+      assert.equal(after.mode, before.mode);
+      assert.equal(after.mtimeMs, before.mtimeMs);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
 test('a refused first-machine connection rolls back the complete new installation', async () => {
   const f = await fixture();
   try {
