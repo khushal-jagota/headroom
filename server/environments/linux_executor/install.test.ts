@@ -1,5 +1,5 @@
 /** Admission and exclusive publication protect private state and foreign files. */
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -106,7 +106,8 @@ test('late unit collision preserves foreign files, restores empty data, and perm
   try {
     await mkdir(config.installation);
     await writeFile(join(config.installation, 'keep'), 'foreign installation');
-    await mkdir(config.data, { mode: 0o755 });
+    await mkdir(config.data);
+    await chmod(config.data, 0o755);
     await mkdir(value.request.unit_directory);
     const unit = join(value.request.unit_directory, LINUX_EXECUTOR_SERVICE_NAME);
     const extract = vi.mocked(extract_runtime).getMockImplementation()!;
