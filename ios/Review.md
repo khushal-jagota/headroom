@@ -93,8 +93,9 @@ stays unread. This is a deliberate exception to "Mark read acknowledges only the
 displayed run": the card shows the run as the window last saw it. A run the card did
 read always bounds Mark read. Reply waits for the run. An ask card shows the window's
 ask and answers it through the outbox, but only in place of no read or a read made
-before that ask was raised. The view's ask counts only while the view's last fresh
-snapshot is under an hour old. A card in a view saved or kept offline longer than that
+before that ask was raised. The view's ask counts only while the view was last
+confirmed by the stream, a snapshot, patch or checkpoint, under an hour ago. A tap after
+that puts the card back to waiting. A card in a view saved or kept offline longer than that
 waits for the connection, as does a card whose ask is larger than 4 KB.
 The server sends the ask only with the review window.
 

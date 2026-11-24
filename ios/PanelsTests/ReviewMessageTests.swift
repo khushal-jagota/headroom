@@ -324,6 +324,14 @@ import XCTest
         await recent.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-10 * 60), now: now.addingTimeInterval(2 * 60 * 60))
         XCTAssertNil(recent.permission)
         XCTAssertFalse(recent.loaded)
+        // A tap past the hour on a card still showing the view's ask puts it back to waiting.
+        let shown = ReviewAskDecision()
+        await shown.load(item: item, api: api, viewFreshAt: now, now: now)
+        let allow = try XCTUnwrap(shown.approveOption)
+        XCTAssertFalse(shown.answerPermission(allow, item: item, api: api, now: now.addingTimeInterval(2 * 60 * 60)))
+        XCTAssertNil(shown.permission)
+        XCTAssertFalse(shown.loaded)
+        XCTAssertTrue(Outbox.shared.entries(LocalStore.server(api.baseURL), conversationID: "c").isEmpty, "Nothing was saved to send")
     }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()

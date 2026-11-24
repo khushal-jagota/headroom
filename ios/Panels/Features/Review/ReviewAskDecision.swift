@@ -55,10 +55,7 @@ extension APIClient {
     /// `viewFreshAt` is when the view that carries `item` was last fresh from the server.
     func load(item: ReviewItem, api: APIClient, viewFreshAt: Date?, now: Date = .now) async {
         guard let id = item.conversationId, !loading else { return }
-        // An ask taken from a view that has since grown old waits for the connection.
-        if let windowFreshAt, !Self.windowAskCurrent(viewFreshAt: windowFreshAt, now: now) {
-            state = nil; stateKnownAt = nil; self.windowFreshAt = nil; loaded = false
-        }
+        dropStaleWindowAsk(now: now)
         if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
         if state == nil, let saved = api.savedReviewAsk(id) { accept(saved.value, knownAt: saved.saved) }
         // The view's ask stands in only for a read that predates it: with no read, or a read
@@ -84,6 +81,12 @@ extension APIClient {
     }
     /// When the shown ask was known to wait: a read's time, or the view's ask's raised time.
     private var stateKnownAt: Date?
+    /// An ask taken from a view that has since grown old waits for the connection.
+    @discardableResult private func dropStaleWindowAsk(now: Date) -> Bool {
+        guard let windowFreshAt, !Self.windowAskCurrent(viewFreshAt: windowFreshAt, now: now) else { return false }
+        state = nil; stateKnownAt = nil; self.windowFreshAt = nil; loaded = false
+        return true
+    }
     private func accept(_ read: ReviewAskState, knownAt: Date) {
         // A new question starts with nothing chosen.
         if read.pendingUserInput?.requestId != state?.pendingUserInput?.requestId { selected = [:] }
@@ -123,8 +126,9 @@ extension APIClient {
     }
 
     /// Saves the answer to a question. Returns false when it cannot be saved; the card stays.
-    func sendAnswer(item: ReviewItem, api: APIClient) -> Bool {
-        guard available, complete, let input = userInput, let id = item.conversationId, let owner = item.owner else { return false }
+    func sendAnswer(item: ReviewItem, api: APIClient, now: Date = .now) -> Bool {
+        // A tap after the view's ask grew old puts the card back to waiting.
+        guard !dropStaleWindowAsk(now: now), available, complete, let input = userInput, let id = item.conversationId, let owner = item.owner else { return false }
         let questions = input.questions.map { question in
             AskAnswer.Question(id: question.questionId, prompt: question.question, answers: answers(for: question), labels: answers(for: question))
         }
@@ -133,8 +137,8 @@ extension APIClient {
         return true
     }
     /// Saves a permission answer with one of the ask's own options.
-    func answerPermission(_ option: ReviewAskState.PermissionOption, item: ReviewItem, api: APIClient) -> Bool {
-        guard available, let ask = permission, let id = item.conversationId, let owner = item.owner else { return false }
+    func answerPermission(_ option: ReviewAskState.PermissionOption, item: ReviewItem, api: APIClient, now: Date = .now) -> Bool {
+        guard !dropStaleWindowAsk(now: now), available, let ask = permission, let id = item.conversationId, let owner = item.owner else { return false }
         let question = AskAnswer.Question(id: ask.askId, prompt: ask.title, answers: [option.optionId], labels: [option.label])
         return enqueue(AskAnswer(conversationID: id, request: .permission(askID: ask.askId, optionID: option.optionId), questions: [question]), owner: owner, api: api)
     }

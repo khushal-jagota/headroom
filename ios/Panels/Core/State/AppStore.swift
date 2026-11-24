@@ -454,7 +454,12 @@ import SwiftUI
                 if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
                 guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
                 current = next
-                if case .checkpoint = frame { continue } // Coverage only; the content is unchanged.
+                if case .checkpoint = frame {
+                    // Coverage only; the content is unchanged. The active stream still confirmed
+                    // the view just now, so a quiet view stays fresh for the asks it carries.
+                    if activeStream?.id == stream { viewFreshAt = .now }
+                    continue
+                }
                 if case .snapshot = frame, let pending = pendingStream, pending.id == stream {
                     // The replacement's snapshot landed: it takes over, and the stream it replaces closes now.
                     let replaced = activeStream
