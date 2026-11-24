@@ -439,7 +439,9 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           ['exclude_ticket_status', exclude_ticket_status],
         ] as const)
           for (const value of values ?? [])
-            if (!['empty', 'blocked', 'agent', 'awaiting_approval', 'errored'].includes(value))
+            if (
+              !['empty', 'blocked', 'agent_owned', 'awaiting_approval', 'errored'].includes(value)
+            )
               throw new PlannerError('validation', `invalid ${name}`, { [name]: value });
         const result = list_ticket_summaries_by_flags(
           sql,

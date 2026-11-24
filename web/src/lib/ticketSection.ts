@@ -65,7 +65,7 @@ export function ticketSectionFieldState(section:TicketSection,view:EffectiveNavi
   const row=section.record.value,lc=section.lifecycle;
   const facts=ticketSectionFacts(section,view);
   const status=row.ticket_status==='awaiting_approval' ? 'awaiting_approval' : facts.assigned ? 'assigned'
-    : facts.agent_state==='errored' ? 'errored' : agentHoldsTicket(facts) ? 'agent' : row.ticket_status;
+    : facts.agent_state==='errored' ? 'errored' : agentHoldsTicket(facts) ? 'agent_owned' : row.ticket_status;
   return ticketStageVisualStateFor(lc,{ticketStage:row.stage,ticketStatus:status,fieldName:field,
     fieldHasProposal:row.proposal_field===field});
 }

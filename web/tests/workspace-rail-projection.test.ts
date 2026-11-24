@@ -15,7 +15,7 @@ const quiet = {
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & ManagerWorkspaceTicket => ({
   id, title: id, recap:"", recap_preview:"", is_backlogged:false, activity_at: 0, stage: "needs_implementation",
-  ticket_status: "agent", worker_type: "coding", manager_id: null,
+  ticket_status: "agent_owned", worker_type: "coding", manager_id: null,
   ...quiet, ...values
 } as BoardCard & ManagerWorkspaceTicket);
 const item = (id: string, values: Partial<BoardManager> = {}): BoardManager => ({
@@ -77,7 +77,7 @@ describe("manager rail projection", () => {
       card("blocked-status", {ticket_status:"blocked", agent_state:"working", awaiting_approval:true}),
       ...["done", "backlog", "blocked"].map((id) => card(id, {
         awaiting_approval:true, stage:id === "done" ? "done" : "needs_plan",
-        is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:"agent"
+        is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:"agent_owned"
       }))];
     const dependencies = [card("dependent-idle", {blocked:true, agent_state:"idle"}),
       card("dependent-working", {blocked:true, agent_state:"working", awaiting_reply:true}),
@@ -438,7 +438,7 @@ describe("manager rail projection", () => {
   });
 
   it("states only saved stage labels and facts that prove work", () => {
-    const reviewing = card("reviewing", {stage:"review", stage_label:"Review", ticket_status:"agent"});
+    const reviewing = card("reviewing", {stage:"review", stage_label:"Review", ticket_status:"agent_owned"});
     expect(workspaceWorkerStageSentence(reviewing)).toBe("At Review.");
     expect(workspaceWorkerStageSentence({...reviewing, conversation_signal:{working:true,message_for_owner:false}})).toBe("Currently doing Review.");
     expect(workspaceWorkerStageSentence({...reviewing, awaiting_approval:true, conversation_signal:{working:true,message_for_owner:false}})).toBe("Awaiting your approval at Review.");

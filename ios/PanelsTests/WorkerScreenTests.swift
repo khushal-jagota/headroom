@@ -21,9 +21,18 @@ final class WorkerScreenTests: XCTestCase {
         XCTAssertEqual(WorkerGroup.classify(try worker(["awaiting_approval": true, "awaiting_answer": true, "assigned": true])), .approval)
         XCTAssertEqual(WorkerGroup.classify(try worker(["awaiting_answer": true, "assigned": true])), .answer)
         XCTAssertEqual(WorkerGroup.classify(try worker(["assigned": true])), .yours)
-        XCTAssertEqual(WorkerGroup.classify(try worker(["agent_state": "idle", "awaiting_reply": true])), .agent, "Durable worker ownership survives an idle turn and an unread reply")
+        XCTAssertEqual(WorkerGroup.classify(try worker(["ticket_status": "agent", "agent_state": "idle", "awaiting_reply": true])), .agent, "Durable worker ownership survives an idle turn and an unread reply")
         XCTAssertEqual(WorkerGroup.classify(try worker(["agent_state": "idle", "ticket_status": "blocked"])), .blocked)
         XCTAssertEqual(WorkerGroup.classify(try worker(["agent_state": "idle", "ticket_status": "empty", "awaiting_agent_approval": true])), .agentApproval)
+    }
+
+    // The canonical wire name must retain ownership when no live turn supplies it.
+    // The existing priority cases do not pin the status independently of the fixture.
+    func testAgentOwnedStatusKeepsAnIdleWorkerInItsGroup() throws {
+        let idle = try worker(["ticket_status": "agent_owned", "agent_state": "idle",
+                               "awaiting_approval": false, "awaiting_answer": false, "assigned": false,
+                               "awaiting_agent_approval": false])
+        XCTAssertEqual(WorkerGroup.classify(idle), .agent)
     }
 
     func testWorkerOrderUsesActivityBeforeTitleAndPreservesSignal() throws {

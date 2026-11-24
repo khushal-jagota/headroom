@@ -53,7 +53,7 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
           ? 0
           : rows.filter(
               (row) =>
-                row.ticket_status === 'agent' ||
+                row.ticket_status === 'agent_owned' ||
                 row.agent_state === 'working' ||
                 row.agent_state === 'setting_up',
             ).length,

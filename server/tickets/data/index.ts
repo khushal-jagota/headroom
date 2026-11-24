@@ -170,7 +170,7 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     : r.worker_step_claim === 'errored'
       ? 'errored'
       : r.worker_step_claim === 'out'
-        ? 'agent'
+        ? 'agent_owned'
         : r.has_live_blocker
           ? 'blocked'
           : 'empty';

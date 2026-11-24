@@ -19,7 +19,7 @@ async function setup() {
   database.write((tx) => tx.run("UPDATE managers SET settled=1 WHERE title='Settled work'"));
   const facts: Record<string, Record<string, unknown>> = {
     approve: { ticket_status: 'awaiting_approval', updated_at: 100 },
-    working: { ticket_status: 'agent', updated_at: 300 },
+    working: { ticket_status: 'agent_owned', updated_at: 300 },
     ready_old: { ticket_status: 'empty', updated_at: 200 },
     ready_new: { ticket_status: 'empty', updated_at: 400 },
     backlog: { ticket_status: 'awaiting_approval', is_backlogged: true, updated_at: 500 },
@@ -84,9 +84,13 @@ test('the live list orders by need, pages after need filtering, and counts what 
       tx.run("UPDATE tickets SET worker_step_claim='out' WHERE id=?", [f.ids.working!]),
     );
     const self = await f.get(`/tickets/${f.ids.working}/worker-self`);
-    expect(self).toMatchObject({ ticket_status: 'agent', agent_state: 'idle', needs: 'working' });
+    expect(self).toMatchObject({
+      ticket_status: 'agent_owned',
+      agent_state: 'idle',
+      needs: 'working',
+    });
     expect(live.tickets.find((row: { id: string }) => row.id === f.ids.working)).toMatchObject({
-      ticket_status: 'agent',
+      ticket_status: 'agent_owned',
       agent_state: 'idle',
     });
 
@@ -156,7 +160,7 @@ test('the iPhone and older CLI list requests without scope or needs keep the fla
       'approve:owner_approval',
       'backlog:backlog',
     ]);
-    expect(f.names(await f.get(`${base}&exclude_ticket_status=agent`))).toEqual([
+    expect(f.names(await f.get(`${base}&exclude_ticket_status=agent_owned`))).toEqual([
       'approve:owner_approval',
       'ready_old:ready',
       'ready_new:ready',

@@ -9,7 +9,7 @@ import type { ClientCompatibility, ClientIdentity } from './contracts.ts';
 
 export const CLIENT_COMPATIBILITY: ClientCompatibility = {
   ios: { minimum_build: MINIMUM_SUPPORTED_BUILD },
-  desktop_shell: { minimum_bridge_version: 1 },
+  desktop_shell: { minimum_bridge_version: 2 },
   machine: {
     minimum_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
     maximum_protocol_version: MAX_SUPPORTED_PROTOCOL_VERSION,

@@ -18,7 +18,7 @@ struct TicketPresentation {
         else if ticket.stage == "needs_brief" { prefix = "Waiting for" }
         else if ticket.agentState == "setting_up" { prefix = "Setting up for" }
         else if ticket.agentState == "working" { prefix = "Currently working on" }
-        else if ticket.ticketStatus == "agent" { prefix = "At" }
+        else if TicketStatusPresentation.agentOwns(ticket.ticketStatus) { prefix = "At" }
         else if currentField == "consequences" { prefix = "At" }
         else { prefix = "Waiting at" }
         return "\(prefix) \(label)"

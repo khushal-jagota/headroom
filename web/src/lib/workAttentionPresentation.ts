@@ -1,3 +1,4 @@
+import { isAgentOwnedStatus } from "../../../server/tickets/logic/status_presentation";
 import type { AgentState } from "./types";
 
 export type WorkAttentionFacts = {
@@ -35,7 +36,7 @@ export type AgentHoldFacts = {
 };
 
 // Whether a worker has this Ticket. Two facts answer it, and the durable one leads.
-// `ticket_status` is `agent` from the moment the wakeup system sends a worker its step
+// `ticket_status` is `agent_owned` from the moment the wakeup system sends a worker its step
 // until the step comes back, and a worker that ends its turn to wait on a long job still
 // holds it. A live turn can add the state; it must never be the only thing carrying it,
 // or every screen reading it empties the moment the process stops.
@@ -44,5 +45,5 @@ export type AgentHoldFacts = {
 // the Workspace rail still leads with a broken worker, and approval still outranks
 // assignment wherever both are true.
 export function agentHoldsTicket(facts: AgentHoldFacts): boolean {
-  return facts.ticket_status === "agent" || facts.agent_state === "working" || facts.agent_state === "setting_up";
+  return isAgentOwnedStatus(facts.ticket_status) || facts.agent_state === "working" || facts.agent_state === "setting_up";
 }

@@ -53,8 +53,8 @@ describe('Ticket section presentation',()=>{
   it('describes a held Worker step as active only when its live state is working',()=>{
     const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
     try {
-      const section=ticketSection({...detail,ticket_status:'agent',pending_proposal:null},configuration)!;
-      const held={...record,value:{...record.value,ticket_status:'agent',proposal_field:null}};
+      const section=ticketSection({...detail,ticket_status:'agent_owned',pending_proposal:null},configuration)!;
+      const held={...record,value:{...record.value,ticket_status:'agent_owned',proposal_field:null}};
       const idle=conversation('conversation',0,false,false);
       idle.value.attention.current!.signal.working=false;
       adapter.publishSnapshot(currentSnapshot({...continuity,records:[held,idle]}),'held-idle');

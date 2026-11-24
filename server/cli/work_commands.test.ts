@@ -25,7 +25,7 @@ test('ticket list sends scope, needs, and Manager kind and says what it did not 
     id: 't_recap',
     stage: 'needs_implementation',
     title: 'Recap',
-    ticket_status: 'agent',
+    ticket_status: 'agent_owned',
     agent_state: 'idle',
   };
   const request = vi.spyOn(http, 'send').mockResolvedValue({
@@ -124,7 +124,7 @@ test('CLI validates missing native values and skips an absent optional page cont
       id: 't_held',
       title: 'Held step',
       recap: 'Awaiting work',
-      ticket_status: 'agent',
+      ticket_status: 'agent_owned',
       agent_state: 'idle',
       stage: 'needs_implementation',
       needs: 'working',
@@ -138,7 +138,7 @@ test('CLI validates missing native values and skips an absent optional page cont
     expect(held.stdout.indexOf('title: Held step')).toBeLessThan(held.stdout.indexOf('status:'));
     const wire = await run(['ticket', 'show', 't_held', '--json'], SERVER);
     expect(JSON.parse(wire.stdout).header).toMatchObject({
-      ticket_status: 'agent',
+      ticket_status: 'agent_owned',
       agent_state: 'idle',
     });
   } finally {

@@ -1,4 +1,4 @@
-import { WORKER_STATUS_LABEL } from "../../server/tickets/logic/status_presentation";
+import { WORKER_STATUS_LABEL, ticketStatusLabel } from "../../server/tickets/logic/status_presentation";
 import { describe, expect, it } from "vitest";
 import {
   managerHeading,
@@ -10,14 +10,21 @@ import {
 // Whether a worker has a Ticket has one answer, `agentHoldsTicket`: the durable claim,
 // or a turn running now. These tests hold every screen to that one answer.
 describe("a worker that holds the claim but is between turns", () => {
-  // The wakeup system writes `agent` when it sends a worker its step, and the claim
+  // The wakeup system writes `agent_owned` when it sends a worker its step, and the claim
   // stands until the step comes back. A worker that ends its turn to wait on a long job
   // is in exactly this state, which happens constantly.
-  const held = ticketFacts({ ticket_status: "agent", agent_state: "idle" });
+  const held = ticketFacts({ ticket_status: "agent_owned", agent_state: "idle" });
 
   it("still reads as the agent's on every screen", () => {
     expect(workspaceHeading(held)).toBe(WORKER_STATUS_LABEL);
     expect(managerHeading(held)).toBe(WORKER_STATUS_LABEL);
+    expect(ticketStatusLabel(held.ticket_status)).toBe(WORKER_STATUS_LABEL);
+    // New clients can reach an old server during rollout and read old receipt snapshots.
+    const legacy = ticketFacts({ ticket_status: "agent", agent_state: "idle" });
+    expect(workspaceHeading(legacy)).toBe(WORKER_STATUS_LABEL);
+    expect(managerHeading(legacy)).toBe(WORKER_STATUS_LABEL);
+    expect(ticketPageMark(legacy)).toBe("current-running");
+    expect(ticketStatusLabel(legacy.ticket_status)).toBe(WORKER_STATUS_LABEL);
   });
 
   it("does not read as an untouched Stage on its own page", () => {
@@ -46,7 +53,7 @@ describe("a Ticket no worker has", () => {
 describe("a broken worker", () => {
   // Errored outranks the claim everywhere, so the reader is told the worker stopped
   // rather than that it is still going.
-  const broken = ticketFacts({ ticket_status: "agent", agent_state: "errored" });
+  const broken = ticketFacts({ ticket_status: "agent_owned", agent_state: "errored" });
 
   it("is named before the work it holds", () => {
     expect(workspaceHeading(broken)).toBe("Errored");
