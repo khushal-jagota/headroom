@@ -2,7 +2,7 @@ name: Publish TypeScript server release
 
 on:
   push:
-    branches: [main]
+    branches: [staging, main]
   pull_request:
     branches: [staging, main, feature/server-and-machine-code, feature/update-rework]
   workflow_dispatch:

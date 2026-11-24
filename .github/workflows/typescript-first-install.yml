@@ -21,7 +21,7 @@ on:
       - ".github/workflows/typescript-first-install.yml"
 
 concurrency:
-  group: first-install-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: first-install-${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
   cancel-in-progress: true
 
 permissions:
