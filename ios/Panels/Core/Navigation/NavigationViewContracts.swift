@@ -183,8 +183,7 @@ struct ViewPendingAsk: Codable, Equatable, Sendable {
     init(permission: ReviewAskState.Permission? = nil, userInput: ReviewAskState.UserInput? = nil) {
         self.permission = permission; self.userInput = userInput
     }
-    /// An ask this build cannot read leaves its card waiting for the conversation read, as
-    /// before; it never makes the whole view unreadable.
+    /// An ask this build cannot read never makes the whole view unreadable.
     init(from decoder: Decoder) throws {
         let kind = try? decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .kind)
         permission = kind == "permission" ? try? ReviewAskState.Permission(from: decoder) : nil
@@ -195,8 +194,12 @@ struct ViewPendingAsk: Codable, Equatable, Sendable {
         if let permission { try container.encode("permission", forKey: .kind); try permission.encode(to: encoder) }
         else if let userInput { try container.encode("user_input", forKey: .kind); try userInput.encode(to: encoder) }
     }
-    /// The view only carries an ask while its turn waits on it.
-    var state: ReviewAskState { ReviewAskState(isRunning: true, pendingPermissionAsk: permission, pendingUserInput: userInput) }
+    /// The view only carries an ask while its turn waits on it. Nil when this build could not
+    /// read it, so the card falls back to the conversation read and its saved copy.
+    var state: ReviewAskState? {
+        guard permission != nil || userInput != nil else { return nil }
+        return ReviewAskState(isRunning: true, pendingPermissionAsk: permission, pendingUserInput: userInput)
+    }
 }
 
 struct ViewAddressValue: Codable, Sendable {

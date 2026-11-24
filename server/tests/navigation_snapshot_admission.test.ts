@@ -239,6 +239,11 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
   const answerable = await setup(true, events('ls'));
   const answered = await setup(false, events('ls'));
   const oversized = await setup(true, events('x'.repeat(4096)));
+  // A key request keeps the conversation waiting after its permission ask was answered.
+  const superseded = await setup(true, [
+    ...events('ls'),
+    [4, 'permission_answered', { ask_id: 'ask', option_id: 'allow' }],
+  ]);
   try {
     // Distinct risk: an unloaded Review card offline has only the window. Its conversation record
     // must carry the read bound (the newest owner message, not the newest event) and the waiting
@@ -252,6 +257,7 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
       pending_ask: null,
     });
     expect(await conversation(oversized)).toMatchObject({ pending_ask: null });
+    expect(await conversation(superseded)).toMatchObject({ pending_ask: null });
     expect(await members(asking, 'review')).toHaveLength(1);
     expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
     expect(await members(asking, 'unread')).toEqual([]);
@@ -272,7 +278,7 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     asking.navigation.close();
     await quiet.app.close();
     quiet.navigation.close();
-    for (const f of [answerable, answered, oversized]) {
+    for (const f of [answerable, answered, oversized, superseded]) {
       await f.app.close();
       f.navigation.close();
     }

@@ -27,6 +27,8 @@ struct ReviewAskState: Decodable, Equatable, Sendable {
     let pendingPermissionAsk: Permission?
     let pendingUserInput: UserInput?
     var waiting: Bool { pendingPermissionAsk != nil || pendingUserInput != nil }
+    /// Which ask this is: its permission ask ID or its question's request ID.
+    var askIdentity: String? { pendingPermissionAsk?.askId ?? pendingUserInput?.requestId }
 }
 
 extension APIClient {
@@ -74,8 +76,9 @@ extension APIClient {
     func load(item: ReviewItem, api: APIClient) async {
         guard let id = item.conversationId, !loading else { return }
         if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
-        // The ask the view carried is newer than a saved read that predates it, so it comes first.
-        if state == nil, let saved = item.pendingAsk ?? api.savedReviewAsk(id) { accept(saved) }
+        // The ask the view carries comes before an earlier read of another ask, which it replaced.
+        if let windowAsk = item.pendingAsk, windowAsk.askIdentity != state?.askIdentity { accept(windowAsk) }
+        else if state == nil, let saved = api.savedReviewAsk(id) { accept(saved) }
         loading = true; defer { loading = false }
         do {
             let read = try await api.reviewAsk(id)

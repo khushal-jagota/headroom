@@ -175,15 +175,27 @@ export function currentAttention(sql: ReadSql, id: string): CurrentAttentionKnow
 /**
  * The ask a conversation's running turn waits on, in the conversation route's shape, so a
  * Review card can answer it from the window alone. The newest ask is the one waiting, as
- * `latest_ask_at` reads it. Null when it is larger than the record carries.
+ * `latest_ask_at` reads it. Null when it is larger than the record carries, or when it is
+ * no longer open: its turn ended or it was answered. A key request also awaits an answer and
+ * outlives its turn, so the waiting attention alone does not say that this ask still waits.
  */
 export function pendingAsk(sql: ReadSql, id: string): Row | null {
-  const event = sql.get<{ kind: string; payload: string }>(
-    "SELECT kind,payload FROM conversation_events WHERE conversation_id=? AND kind IN ('permission_asked','user_input_requested') ORDER BY sequence DESC LIMIT 1",
+  const event = sql.get<{ sequence: number; kind: string; payload: string }>(
+    "SELECT sequence,kind,payload FROM conversation_events WHERE conversation_id=? AND kind IN ('permission_asked','user_input_requested') ORDER BY sequence DESC LIMIT 1",
     [id],
   );
   if (!event) return null;
   const stored = JSON.parse(event.payload);
+  const [answered, identity, value] =
+    event.kind === 'permission_asked'
+      ? ['permission_answered', '$.ask_id', stored.ask_id]
+      : ['user_input_answered', '$.request_id', stored.request_id];
+  // A refused answer leaves the ask waiting; an answer with no fate is an applied one.
+  const closed = sql.get(
+    "SELECT 1 FROM conversation_events WHERE conversation_id=? AND sequence>? AND (kind='turn_ended' OR (kind=? AND json_extract(payload,?)=? AND COALESCE(json_extract(payload,'$.fate'),'applied')<>'refused')) LIMIT 1",
+    [id, event.sequence, answered, identity, value],
+  );
+  if (closed) return null;
   const ask =
     event.kind === 'permission_asked'
       ? {
