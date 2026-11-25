@@ -52,6 +52,12 @@ import XCTest
     func testCompletedInstallAndLatestCheckRemainSeparate() throws {
         let attempt = ["attempt_id": "saved", "state": "done", "to_sha": "running-sha"]
         let values: [String: Any] = ["state": "check_unavailable", "attempt": attempt, "machines": []]
+        let unchecked = try status(["state": "not_checked", "attempt": NSNull(), "machines": []])
+        XCTAssertEqual(unchecked.title, "Not checked for updates")
+        XCTAssertFalse(unchecked.needsAttention)
+        let recent = try status(["state": "not_checked", "attempt": attempt, "machines": []])
+        XCTAssertEqual(recent.title, "Update installed")
+        XCTAssertNil(recent.cardDetail)
         let installed = try status(values)
         XCTAssertEqual(installed.title, "Update installed")
         XCTAssertEqual(installed.cardDetail, "Couldn’t confirm the latest version.")

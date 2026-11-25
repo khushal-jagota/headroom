@@ -107,12 +107,12 @@ struct PanelsUpdateStatus: Decodable, Sendable {
         return result
     }
     var needsAttention: Bool {
-        state == "failed" || state == "mac_failed" || state == "mac_unreachable" || machines.contains { ["failed", "unavailable"].contains($0.state) }
+        state == "failed" || machines.contains { ["failed", "unavailable"].contains($0.state) }
     }
     private var installedWithoutLatestCheck: Bool {
-        state == "check_unavailable" && !appSha.isEmpty && attempt?.state == "done" && attempt?.toSha == appSha
+        (state == "check_unavailable" || state == "not_checked") && !appSha.isEmpty && attempt?.state == "done" && attempt?.toSha == appSha
     }
-    var cardDetail: String? { installedWithoutLatestCheck ? "Couldn’t confirm the latest version." : detail }
+    var cardDetail: String? { state == "check_unavailable" && installedWithoutLatestCheck ? "Couldn’t confirm the latest version." : detail }
     var title: String {
         switch state {
         case "available": return "Update available"
@@ -123,7 +123,8 @@ struct PanelsUpdateStatus: Decodable, Sendable {
             if needsAttention { return "Machine update needs attention" }
             if machines.contains(where: { $0.state == "updating" }) { return "Updating machines…" }
             if machines.contains(where: { $0.state == "waiting" }) { return "Machine updates" }
-            return installedWithoutLatestCheck ? "Update installed" : "Up to date"
+            if installedWithoutLatestCheck { return "Update installed" }
+            return state == "not_checked" ? "Not checked for updates" : "Up to date"
         }
     }
     func expectedRestart(now: Date, starting: Bool = false) -> Bool {
