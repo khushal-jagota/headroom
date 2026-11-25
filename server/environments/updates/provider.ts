@@ -1,11 +1,10 @@
 /** Repository-scoped external reads. Credentials stay outside records and errors. */
-import { readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { ArtifactSource, PublishedUpdate, UpdateProvider } from './contracts.ts';
 import { is_object, parse_release } from './codec.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
-import { TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
+import { release_request_headers, TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
 
 /** Logs a failed body cancel. An abort is expected here because the request controller aborts first. */
 function cancel_failed(error: unknown): void {
@@ -41,11 +40,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
     this.fetch = options.fetch ?? globalThis.fetch;
     this.target = options.target ?? LINUX_HOME;
   }
-  private headers(): Record<string, string> {
-    const token = this.token_file === null ? '' : readFileSync(this.token_file, 'utf8').trim();
-    if (!token) throw new Error('The repository update credential is unavailable.');
-    return { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
-  }
   private async request(
     path: string,
     parameters: Record<string, string> = {},
@@ -53,8 +47,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     accept?: string,
   ): Promise<Response> {
     signal?.throwIfAborted();
-    const headers = this.headers();
-    if (accept !== undefined) headers.Accept = accept;
+    const headers = release_request_headers(this.token_file, accept);
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     let response: Response;
@@ -240,8 +233,10 @@ export class GitHubUpdateProvider implements UpdateProvider {
       signal?.throwIfAborted();
       if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
     }
-    const headers = this.headers();
-    if (source === 'github-release') headers.Accept = 'application/octet-stream';
+    const headers = release_request_headers(
+      this.token_file,
+      source === 'github-release' ? 'application/octet-stream' : undefined,
+    );
     const controller = new AbortController();
     const request_signal = signal
       ? AbortSignal.any([controller.signal, signal])
