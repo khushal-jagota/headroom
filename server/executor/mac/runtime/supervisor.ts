@@ -1,7 +1,7 @@
 /** An installed service starts its selected runtime and owns its lease trial. */
 import { randomUUID } from 'node:crypto';
 import { constants as os_constants, homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { copy_environment } from '../../../core/environment.ts';
@@ -81,7 +81,8 @@ export async function supervise(
   const service_trial = await read_record(files, join(root, MACHINE_SERVICE_TRIAL_FILE));
   const trial_selection = service_trial?.pending as MacRuntimeSelection | undefined;
   const owns_service_trial =
-    service_trial?.started === true && trial_selection?.runtime_path === options.baseline_root;
+    service_trial?.started === true &&
+    trial_selection?.runtime_path === resolve(options.baseline_root);
   const starts_service_trial =
     owns_service_trial && selected?.request_id !== trial_selection?.request_id;
   if (starts_service_trial && initial_pending?.request_id !== trial_selection?.request_id) return 1;

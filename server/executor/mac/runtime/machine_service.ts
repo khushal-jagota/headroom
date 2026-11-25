@@ -170,9 +170,16 @@ export async function stop_machine_service(service: MachineService) {
     const birth = pid > 0 ? darwin_worker_process_birth(pid) : null;
     await machine_service_command([mac_control, 'bootout', target]);
     const deadline = performance.now() + MAC_RUNTIME_READY_TIMEOUT_SECONDS * 1000;
-    while (birth !== null && darwin_worker_process_birth(pid) === birth) {
+    for (;;) {
+      const label_state = await machine_service_command([mac_control, 'print', target], true);
+      if (
+        label_state.code !== 0 &&
+        /Could not find service/i.test(label_state.stderr) &&
+        (birth === null || darwin_worker_process_birth(pid) !== birth)
+      )
+        return;
       if (performance.now() >= deadline)
-        throw new Error('The previous Mac machine process did not exit.');
+        throw new Error('The previous Mac machine job did not stop.');
       await delay(100);
     }
   }
