@@ -10,6 +10,9 @@ import UniformTypeIdentifiers
         self.imageWorkStarted = imageWorkStarted
     }
     var machineLocale: String?
+    var machineId: String?
+    var conversationMachineId: String?
+    var presentedMachineId: String? { conversationMachineId ?? machineId }
     var conversationID: String? { didSet { if oldValue != conversationID { invalidateReader() } } }
     private var composerRevision = 0
     private var composerConfigurationGeneration = 0
@@ -77,6 +80,7 @@ import UniformTypeIdentifiers
         guard conversationID != id else { return }
         saveDisplay(force: true)
         conversationID = id
+        conversationMachineId = nil
         items = []; expandedBodies = [:]; status = nil; older = nil
         loadedConversationID = nil; loadedLens = nil; pageProjectionVersion = nil
         visibleRows = []; rowOrder = []; liveRow = nil; liveReference = nil; liveTurnKey = nil
@@ -502,6 +506,7 @@ import UniformTypeIdentifiers
         return heldPrompts.filter { received.contains($0.senderMessageId ?? $0.heldPromptId) }.count
     }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
+        conversationMachineId = configuration.machineId
         heldPrompts = configuration.heldPrompts
         if readPositionConversationID != conversationID {
             readPositionConversationID = conversationID

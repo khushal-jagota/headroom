@@ -44,6 +44,7 @@
     models,
     ownSenderLabel,
     activityUncertain = false,
+    destinationName,
     conversationState,
     emptyState,
     afterTranscript,
@@ -68,6 +69,7 @@
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
     activityUncertain?: boolean;
+    destinationName?: string;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
     afterTranscript?: Snippet;
@@ -1238,7 +1240,7 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
+      <ProjectedTranscript {activityUncertain} {destinationName} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -1247,6 +1249,7 @@
       {models}
       {ownSenderLabel}
       {activityUncertain}
+      {destinationName}
       {conversationId}
       {outgoingMessages}
       {acknowledgedMessageIds}

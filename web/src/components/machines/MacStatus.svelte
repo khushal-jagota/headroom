@@ -2,13 +2,13 @@
   import { createQueries, createQuery } from "@tanstack/svelte-query";
   import { queryClient } from "../../lib/queryClient";
   import { queries } from "../../lib/queryCatalogue";
-  import { measuredContact, macPresenceLabel, macTicketActivityLabel, macVersionDescription, type MacStatus, type MacTicketFacts } from "../../lib/ticketMachines";
+  import { machineName, measuredContact, macPresenceLabel, macTicketActivityLabel, macVersionDescription, type MacStatus, type MacTicketFacts } from "../../lib/ticketMachines";
   import { workspaceAddress } from "../../lib/workspaceAddress";
   import { macUpdateLabel, macUpdateNeedsAttention } from "../../lib/machines/macUpdateStatus";
   // Show what the Ticket is doing while its machine is away.
   let { health, ticket, machineId }: { health?: MacStatus; ticket?: MacTicketFacts; machineId?: string } = $props();
   const machines = createQuery(() => queries.machines(), () => queryClient);
-  const name = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "Machine");
+  const name = $derived(machineName(ticket?.locale, machineId, machines.data?.machines));
   const refusal = $derived(health?.presence === "refused" ? health.refusal ?? null : null);
   const presenceLabel = $derived(macPresenceLabel(health, undefined, undefined, name));
   const ticketLabel = $derived(ticket ? macTicketActivityLabel(health, ticket, name) : null);
@@ -21,7 +21,7 @@
 {#if update || refusal || presenceLabel || cleanup.length || legacyCleanup}
   <div class="mac-status" class:needs-attention={Boolean(refusal) || cleanup.length > 0 || Boolean(legacyCleanup) || macUpdateNeedsAttention(update)} data-mac-status={refusal ? "refused" : update?.phase ?? health?.presence} role="status">
     {#if update}
-      <span class="mac-status-title">{macUpdateLabel(update)}</span>
+      <span class="mac-status-title">{macUpdateLabel(update, name)}</span>
       <span class="mac-version">Target {update.target_revision.slice(0, 12)}</span>
       {#if update.detail}<span class="mac-contact">{update.detail}</span>{/if}
     {/if}

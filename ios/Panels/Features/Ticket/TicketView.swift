@@ -113,7 +113,7 @@ struct TicketView: View {
                 .foregroundStyle(PanelsTheme.Web.strong)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-            TicketMachineLabel(locale: detail.locale)
+            TicketMachineLabel(locale: detail.locale, machineId: detail.machineId)
             if !detail.recap.isEmpty { TicketRecapText(text: detail.recap) }
             if let blockers = detail.blockerSummary?.blockedBy, !blockers.isEmpty {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {

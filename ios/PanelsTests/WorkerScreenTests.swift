@@ -16,6 +16,7 @@ final class WorkerScreenTests: XCTestCase {
     }
 
     func testPageSectionsAndAttentionPriorityMatchWeb() throws {
+        XCTAssertEqual(try worker(["machine_id": "mac-exact"]).machineId, "mac-exact", "Manager rows preserve the machine ID for the shared label")
         XCTAssertEqual(WorkerGroup.classify(try worker(["stage": "done", "is_backlogged": true, "awaiting_approval": true])), .done)
         XCTAssertEqual(WorkerGroup.classify(try worker(["is_backlogged": true, "awaiting_approval": true])), .backlogged)
         XCTAssertEqual(WorkerGroup.classify(try worker(["awaiting_approval": true, "awaiting_answer": true, "assigned": true])), .approval)

@@ -29,7 +29,7 @@ struct TicketWorkerSetup: View {
                 }) { dismiss() }
             }
         }) {
-            TicketMachineLabel(locale: ticket.locale)
+            TicketMachineLabel(locale: ticket.locale, machineId: ticket.machineId)
             if backends.isEmpty && loadError == nil { RingSpinner("Loading models…") }
             Picker("Backend", selection: $backend) {
                 ForEach(backends) { item in Text(store.backendLabel(item.id)).tag(item.id).disabled(!item.installed) }

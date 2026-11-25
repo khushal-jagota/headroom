@@ -824,7 +824,7 @@ Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility
 
-Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. An unknown or missing machine identity cannot authorize a working mark. Worker rows on Manager pages
+Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. Ticket and conversation labels use the stored machine name from the shared machines read. A rename reaches open screens through the ordinary resource refresh. Missing names retain the legacy locale label. Historical conversations use their own machine identity before the Ticket's current destination. An unknown or missing machine identity cannot authorize a working mark. Worker rows on Manager pages
 use the machine catalogue for identity and scoped health for current activity. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full
 conversation and Settings show the last measured contact, rather than treating a

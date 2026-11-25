@@ -117,6 +117,21 @@ final class NavigationViewTests: XCTestCase {
         let summary = presented.summary
         XCTAssertEqual(summary.locale, "macos")
         XCTAssertEqual(summary.machineId, decoded.machineId, "The rail keeps the exact machine identity from its view record")
+        // Risk: locale or a same-kind machine wins over exact identity, and a rename
+        // leaves stale visible or VoiceOver text. Existing activity checks only gate marks.
+        let machines = [MachineCatalog.Machine(machineId: "other", name: "Mac 2"),
+                        MachineCatalog.Machine(machineId: decoded.machineId, name: "Mac 1")]
+        XCTAssertEqual(TicketMachine.name(summary.locale, machineId: summary.machineId, machines: machines), "Mac 1")
+        XCTAssertEqual(TicketMachine.name("vps", machineId: summary.machineId, machines: machines), "Mac 1", "Identity takes priority over locale")
+        XCTAssertEqual(TicketMachine.unknownActivityText(summary.locale, machineId: summary.machineId, machines: machines), "Current activity on Mac 1 is unknown.")
+        XCTAssertEqual(TicketMachine.accessibilityLabel("Worker", locale: summary.locale, machineId: summary.machineId, machines: machines, health: nil), "Worker, runs on Mac 1, current activity on Mac 1 is unknown")
+        for id in [nil, "missing"] as [String?] {
+            XCTAssertEqual(TicketMachine.name("macos", machineId: id, machines: machines), "Remote machine")
+            XCTAssertEqual(TicketMachine.name("vps", machineId: id, machines: machines), "Home")
+            XCTAssertEqual(TicketMachine.name(nil, machineId: id, machines: machines), "Machine")
+            XCTAssertEqual(TicketMachine.unknownActivityText(nil, machineId: id, machines: machines), "Current activity is unknown.")
+        }
+
         let unavailable = try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: nil))
         XCTAssertFalse(unavailable.working)
         XCTAssertTrue(unavailable.messageForOwner)

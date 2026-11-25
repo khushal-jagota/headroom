@@ -28,6 +28,7 @@ extension APIClient {
 }
 
 enum ChiefResources {
+    static let machines = ResourceRegistration<MachineCatalog>(key: "/api/machines", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let roster = ResourceRegistration<ChiefRoster>(key: "/api/workers", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let settings = ResourceRegistration<ChiefDetail>(key: "/api/workers/chief-of-staff/settings")
     static let deployment = ResourceRegistration<DeploymentStatus>(key: "/api/deployment-status")

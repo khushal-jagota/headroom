@@ -25,6 +25,8 @@ import SwiftUI
     var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
     private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    private var machinesResource: ResourceHandle<MachineCatalog> { resources.handle(ChiefResources.machines) }
+    var machines: [MachineCatalog.Machine] { machinesResource.value?.machines ?? [] }
     private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
     /// The server's driver list; nil until it arrives, or when the server has none.
     var drivers: DriverCatalog? { driversResource.value }
@@ -371,8 +373,8 @@ import SwiftUI
         runGeneration += 1
         let generation = runGeneration
         running = true
-        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource
-        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
+        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource, machines = machinesResource
+        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire(); machines.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
@@ -384,7 +386,7 @@ import SwiftUI
         hasRun = true
         defer {
             updateReads.cancel()
-            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release()
+            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release(); machines.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 resources.stop(); running = false; closeStreams(); connection = "Connecting"
@@ -549,7 +551,8 @@ import SwiftUI
             async let deployment: Void = deploymentResource.refresh()
             async let health: Void = healthResource.refresh()
             async let updates: Void = updateResource.refresh()
-            _ = await (chief, deployment, health, updates)
+            async let machines: Void = machinesResource.refresh()
+            _ = await (chief, deployment, health, updates, machines)
         }
     }
 
