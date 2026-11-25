@@ -21,7 +21,8 @@
   import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
   import { mintOutgoingMessage, reserveOutgoingMessageImages, reserveOutgoingMessageFiles, releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../../lib/conversation/outgoing";
-  import { AttachmentTransfers, pendingUploadsAsPieces, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
+  import { AttachmentTransfers, pendingUploadsAsPieces, releaseLocalPreview, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
+  import { rememberSentAttachments } from "../../lib/conversation/localSentMedia";
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
@@ -390,7 +391,7 @@
   function clearQuestionDraft(requestId: string, questionIds: string[]): void {
     if (userInput !== null && userInput.requestId !== requestId) return;
     releasePendingImages(pendingImages);
-    for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    for (const attachment of pendingVideos) releaseLocalPreview(attachment);
     pendingImages = []; pendingFiles = []; pendingVideos = []; attachmentOrder = [];
     rememberDraftVideo(localStorageKey, []);
     for (const questionId of questionIds) rememberDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", requestId, questionId), []);
@@ -405,7 +406,7 @@
     const files = restoredPendingFiles(attached, nextFileId);
     nextImageId = images.nextId; nextFileId = files.nextId;
     pendingImages = images.images; pendingFiles = files.files;
-    if (!preservePendingUploads) for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    if (!preservePendingUploads) for (const attachment of pendingVideos) releaseLocalPreview(attachment);
     const destination = uploadDestination ?? { kind: "conversation" as const, id: conversationId ?? "", expected_conversation_id: conversationId };
     const interrupted = preservePendingUploads && userInput ? recallDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", userInput.requestId, questionId)).filter((attachment) => attachment.destination.kind === destination.kind && attachment.destination.id === destination.id && attachment.destination.expected_conversation_id === destination.expected_conversation_id) : [];
     pendingVideos = restoredPendingUploads(attached, destination, interrupted);
@@ -660,6 +661,7 @@
         sentAtUnixMilliseconds
       };
       if (!reserveLocalSend(pending)) return;
+      rememberSentAttachments(pending.context.messageId, attempt.draftBeforeSend.pendingVideos ?? []);
     }
     restoredSendContext = null;
     applyComposerDraft(attempt.draftAfterSend);
@@ -749,6 +751,7 @@
         attachmentOrder = [...attachmentOrder, { kind: "video", id: attachment.id }];
         recordDraftChange();
         void transfers.start(attachment);
+        void transfers.measure(attachment);
       } catch (error) { intakeError = error instanceof Error ? error.message : "The file could not be attached."; }
     }
     if (fileInput) fileInput.value = "";

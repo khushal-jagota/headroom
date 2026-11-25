@@ -10,6 +10,7 @@
   import MessagePieces from './conversation/MessagePieces.svelte';
   import TranscriptStatusRow from './conversation/TranscriptStatusRow.svelte';
   import { attachmentByteLabel } from './conversation/composer/attachments';
+  import { localMediaOf } from '../lib/conversation/localSentMedia';
   import type { PendingAttachment } from '../lib/conversation/videoUploads/contracts';
   import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
@@ -79,11 +80,14 @@
   {@const editAllowed = attempt.status === 'failed' || attempt.status === 'upload-failed'}
   {@const retryAllowed = composer.canRetry(attempt)}
   {@const uploads = attempt.pendingUploads ?? attempt.postedUploads ?? []}
+  {@const media = uploads.map(localMediaOf)}
   {@const content = uploads.length === 0 ? attempt.message.content
-    : attempt.message.content.filter(piece => piece.piece !== 'attachment_upload' && piece.piece !== 'video_upload')}
+    : [...media.filter(piece => piece !== null),
+      ...attempt.message.content.filter(piece => piece.piece !== 'attachment_upload' && piece.piece !== 'video_upload')]}
+  {@const statusLines = uploads.filter((upload, index) => media[index] === null || upload.phase === 'failed' || upload.phase === 'interrupted')}
   <article class="chat-u review-outgoing-reply" data-review-outgoing={attempt.message.messageId} data-conversation-outgoing={attempt.message.messageId}>
     {#snippet fileStatus()}
-      {#each uploads as upload (upload.id)}
+      {#each statusLines as upload (upload.id)}
         <div class="review-outgoing-attachment">{upload.fileName} <span>· {uploadProgress(upload)}</span></div>
       {/each}
     {/snippet}
@@ -96,7 +100,7 @@
       {/if}
     {/snippet}
     <MessagePieces {content} conversationId={attempt.conversationId ?? ''} bubble
-      failed={status.tone === 'error'} footer={uploads.length > 0 ? fileStatus : undefined} />
+      failed={status.tone === 'error'} footer={statusLines.length > 0 ? fileStatus : undefined} />
     <TranscriptStatusRow {status} align="end" role={status.tone === 'error' ? 'alert' : 'status'}
       actions={editAllowed || retryAllowed ? actions : undefined} />
   </article>

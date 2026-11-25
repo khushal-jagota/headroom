@@ -67,13 +67,16 @@ export type PromptDeliveryRefusalReason =
  */
 export type MessagePiece =
   | { piece: "text"; text: string }
-  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string }
+  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string; width?: number; height?: number }
   | {
       piece: "file";
       stored_file_id: string;
       media_type: string;
       file_name: string;
       byte_count: number;
+      /** A picture's or video's size as the sender's browser showed it, when measured. */
+      width?: number;
+      height?: number;
     };
 
 export type MessageContent = MessagePiece[];
@@ -495,8 +498,8 @@ export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
   | { piece: "file"; data: string; media_type: string; file_name: string }
-  | { piece: "video_upload"; upload_id: string }
-  | { piece: "attachment_upload"; upload_id: string };
+  | { piece: "video_upload"; upload_id: string; width?: number; height?: number }
+  | { piece: "attachment_upload"; upload_id: string; width?: number; height?: number };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];

@@ -1,9 +1,14 @@
 import type { UserInputAttachment } from "../wire";
 import type { PendingAttachment, UploadDestination } from "./contracts";
+import { mediaSizeOf } from "../../mediaFrame";
 
 export function pendingUploadsAsPieces(uploads: readonly PendingAttachment[]): UserInputAttachment[] {
-  return uploads.filter((upload) => upload.phase === "ready" && upload.uploadId)
-    .map((upload) => ({ piece: "attachment_upload", upload_id: upload.uploadId! }));
+  return uploads.filter((upload) => upload.phase === "ready" && upload.uploadId).map(uploadPiece);
+}
+
+/** One uploaded file as a message piece. A picture or video carries its measured size. */
+export function uploadPiece(upload: PendingAttachment): { piece: "attachment_upload"; upload_id: string; width?: number; height?: number } {
+  return { piece: "attachment_upload", upload_id: upload.uploadId!, ...(mediaSizeOf(upload) ?? {}) };
 }
 
 /** A restored token is checked before a send. The service supplies its original name and size. */

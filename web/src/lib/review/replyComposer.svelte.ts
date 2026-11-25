@@ -3,6 +3,7 @@ import { connectionStatus } from '../changeStream';
 import { fateSentence } from '../conversation/composer';
 import { readComposerDraft, writeComposerDraft } from '../conversation/composerDraft';
 import { mintOutgoingMessage, theServerRefusedTheSend } from '../conversation/outgoing';
+import { rememberSentAttachments } from '../conversation/localSentMedia';
 import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from '../conversation/ownerSend';
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES, pendingConversationFileBytes, pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../conversation/pendingFiles';
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES, pendingConversationImageBytes, pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from '../conversation/pendingImages';
@@ -495,6 +496,7 @@ export class ReviewReplyComposer {
     };
     if (through !== undefined) message.ownerReadThroughSequence = through;
     const entry: ReviewOutgoingReply = { conversationId, message, pendingUploads: uploads, status: 'preparing', note: null };
+    rememberSentAttachments(message.messageId, uploads);
 
     this.attempts = [...this.attempts, entry];
     // Empty the field now. Keep its stored words until the outgoing snapshot has

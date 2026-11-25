@@ -2,6 +2,7 @@ import { isSafeConversationFileName } from "../pendingFiles";
 import { SvelteMap } from "svelte/reactivity";
 import { recallDraftVideo, rememberDraftVideo } from "./localSends";
 import { MAX_ATTACHMENT_BYTES } from "../attachmentPolicy";
+import { measureLocalMedia } from "../../mediaFrame";
 import type { PendingAttachment, UploadDestination, AttachmentUploadAdapter } from "./contracts";
 
 /** Owns live transfers only. Completion updates the attachment; it never submits a draft. */
@@ -12,8 +13,21 @@ export class AttachmentTransfers {
   create(file: File, id: number, destination: UploadDestination): PendingAttachment {
     if (!isSafeConversationFileName(file.name) || file.size < 0 || file.size > MAX_ATTACHMENT_BYTES)
       throw new Error("Choose a file up to 250 MiB.");
-    return { id, fileName: file.name, byteCount: file.size, mediaType: file.type || "application/octet-stream", destination: {...destination}, phase: "uploading", receivedBytes: 0, file,
-      ...(/^image\/(png|jpeg|gif|webp)$/.test(file.type) ? { previewUrl: URL.createObjectURL(file) } : {}) };
+    const attachment: PendingAttachment = { id, fileName: file.name, byteCount: file.size, mediaType: file.type || "application/octet-stream", destination: {...destination}, phase: "uploading", receivedBytes: 0, file,
+      ...(/^image\/(png|jpeg|gif|webp)$/.test(file.type) ? { previewUrl: URL.createObjectURL(file) }
+        : /^video\//.test(file.type) || /\.(mp4|mov|webm)$/i.test(file.name) ? { localVideoUrl: URL.createObjectURL(file) } : {}) };
+    return attachment;
+  }
+  /** Read the picture's or video's size from the local file, before its upload ends. Pass the
+   *  attachment as the caller keeps it (its state proxy, if any), so the size is seen. */
+  async measure(attachment: PendingAttachment): Promise<void> {
+    const url = attachment.previewUrl ?? attachment.localVideoUrl;
+    if (!url) return;
+    const size = await measureLocalMedia(url, attachment.previewUrl ? "image" : "video");
+    if (!size) return;
+    attachment.width = size.width;
+    attachment.height = size.height;
+    this.changed();
   }
   async start(attachment: PendingAttachment): Promise<void> {
     if (!attachment.file) { attachment.phase = "interrupted"; attachment.error = "Select the file again, then press Send."; this.changed(); return; }
@@ -74,7 +88,7 @@ export class AttachmentTransfers {
   remove(attachment: PendingAttachment): void {
     this.active.get(attachment)?.abort(); this.active.delete(attachment);
     if (attachment.uploadId) void this.adapter.cancel(attachment.uploadId).catch(() => undefined);
-    if (attachment.previewUrl) { URL.revokeObjectURL(attachment.previewUrl); attachment.previewUrl = undefined; }
+    releaseLocalPreview(attachment);
   }
   dispose(): void { for (const abort of this.active.values()) abort.abort(); this.active.clear(); }
 }
@@ -97,8 +111,16 @@ export function openAttachmentDraft(key: string, initial: PendingAttachment[] = 
   if (restored.length) publishAttachmentDraft(key, restored);
   return restored;
 }
+/** Let go of the browser's local copy of a picture or video. A message that was sent keeps
+ *  its own reference (localSentMedia), so this runs only for an attachment taken away. */
+export function releaseLocalPreview(attachment: PendingAttachment): void {
+  if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  if (attachment.localVideoUrl) URL.revokeObjectURL(attachment.localVideoUrl);
+  attachment.previewUrl = undefined;
+  attachment.localVideoUrl = undefined;
+}
 export function clearAttachmentDraft(key: string): void {
-  for (const attachment of liveAttachmentDrafts.get(key) ?? []) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  for (const attachment of liveAttachmentDrafts.get(key) ?? []) releaseLocalPreview(attachment);
   publishAttachmentDraft(key, []);
 }
 const draftTransfers = new Map<string, AttachmentTransfers>();

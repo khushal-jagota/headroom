@@ -18,6 +18,9 @@ export interface ViewImagePiece {
   stored_file_id: string;
   media_type: string;
   file_name: string | null;
+  /** The picture's size as the sender saw it, when it was measured. */
+  width?: number;
+  height?: number;
 }
 
 export interface ViewFilePiece {
@@ -26,6 +29,9 @@ export interface ViewFilePiece {
   media_type: string;
   file_name: string;
   byte_count: number;
+  /** A video's or picture's size as the sender saw it, when it was measured. */
+  width?: number;
+  height?: number;
 }
 
 export type ViewMessagePiece = ViewTextPiece | ViewImagePiece | ViewFilePiece;
