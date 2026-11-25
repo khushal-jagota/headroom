@@ -51,7 +51,7 @@ A saved copy from another build of the screens is not used, because response sha
 
 ## Mac behavior
 
-The app uses the iPhone app’s blue bust on black, with macOS margins, rounded corners, and shadow. The signed bundle supplies the icon and the Panels name to macOS, including the Dock, Finder, About panel, and notifications.
+The app uses the iPhone app’s blue bust on black, with macOS margins, rounded corners, and shadow. The signed bundle supplies the icon and the Panels name to macOS, including the Dock, Finder, About panel, and notifications. The signed, notarized DMG offers the standard drag to Applications. An app outside Applications offers to move there before normal startup. The desktop app is separate from the machine launcher, Panels TypeScript.app.
 
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
 
@@ -63,7 +63,7 @@ The native side uses electron-updater to download the newest stable desktop rele
 
 The main process owns the restart dialog when new screens require a newer shell. New screens wait until the installed bridge meets their requirement. The dialog offers a restart only after a verified update meets that requirement. It adds no bridge action for artifact pages.
 
-Panels supports the publisher’s official desktop builds. The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
+Panels supports the publisher’s official desktop builds. The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its DMG, ZIP, and matching updater metadata on GitHub Releases. The ZIP remains the update package. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
 
 ## Notifications
 
@@ -79,4 +79,4 @@ Artifact HTML runs at the screens' own origin, so a script in an artifact can re
 
 `desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native updates), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), `web/src/desktop/` for setup, with the connection dialog in `web/src/components/ShellStatus.svelte`, and `web/src/components/desktopWindow/` with `web/src/lib/desktopWindow/` for the window's top row. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
-_Last verified: 2026-11-24._
+_Last verified: 2026-11-25._
