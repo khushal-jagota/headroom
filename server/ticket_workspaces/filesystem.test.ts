@@ -732,8 +732,10 @@ test.skipIf(process.platform !== 'darwin')(
   },
 );
 
-// Gap: cleanup tests do not prove moved work can recover a published branch or return to a stale checkout.
-test('a move refuses unpublished work and recovers its branch on a new and a previous machine', async () => {
+// Gap: cleanup coverage does not prove exact move recovery when a Ticket branch is absent
+// on origin or publication uses another ref. Reuse the real-Git fixture and both destinations.
+test('a move recovers untouched and published work but refuses unpublished work', async () => {
+  const case_started = performance.now();
   const remote = join(root, 'origin.git'),
     project = join(root, 'project');
   mkdirSync(remote);
@@ -751,6 +753,20 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   const repository = { repository_url: remote, default_branch: 'main' };
   const source = folder();
   const checkout = await prepare_workspace(source, ticket, repository, options);
+  const untouched = await inspect_work_move(source, true, options);
+  const current_branch = await command(checkout, ['symbolic-ref', '--short', 'HEAD']);
+  expect(untouched.published_branch).toBe(current_branch);
+  expect(await command(remote, ['for-each-ref', `refs/heads/${current_branch}`])).toBe('');
+  // Origin advances after verification. A fresh destination must retain the exact base.
+  writeFileSync(join(project, 'later.txt'), 'new default-branch work');
+  await command(project, ['add', '.']);
+  await command(project, ['commit', '-m', 'advance origin after source proof']);
+  await command(project, ['push', 'origin', 'main']);
+  const target = join(root, 'other-machine', ticket);
+  const moved = await prepare_workspace(target, ticket, { ...repository, ...untouched }, options);
+  expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(untouched.published_revision);
+  expect(await command(moved, ['symbolic-ref', '--short', 'HEAD'])).toBe(current_branch);
+  expect(existsSync(join(moved, 'later.txt'))).toBe(false);
   await command(checkout, ['config', 'user.email', 'proof@example.test']);
   await command(checkout, ['config', 'user.name', 'Move proof']);
   writeFileSync(join(checkout, 'work.txt'), 'work');
@@ -758,16 +774,7 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   await command(checkout, ['add', '.']);
   await command(checkout, ['commit', '-m', 'work']);
   await expect(inspect_work_move(source, true, options)).rejects.toThrow('unpushed work');
-  await command(checkout, ['push', 'origin', 'HEAD']);
-  // Risk: the cleanup proof accepts publication under any ref, but a move must recover
-  // the exact current branch. Reuse the real Git fixture to prove both boundaries.
-  const current_branch = await command(checkout, ['symbolic-ref', '--short', 'HEAD']);
   await command(checkout, ['push', 'origin', 'HEAD:refs/heads/published-elsewhere']);
-  await command(checkout, ['push', 'origin', '--delete', current_branch]);
-  await expect(inspect_work_move(source, true, options)).rejects.toThrow(
-    'Push the current Ticket branch before the move.',
-  );
-  await command(checkout, ['push', 'origin', 'HEAD']);
   const git_calls = vi.spyOn(workspace_git, 'git');
   const began = performance.now();
   const proof = await inspect_work_move(source, true, options);
@@ -777,8 +784,7 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   );
   git_calls.mockRestore();
   expect(remote_reads).toBe(1);
-  const target = join(root, 'other-machine', ticket);
-  const moved = await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
+  await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
   expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(proof.published_revision);
   expect(readFileSync(join(moved, 'work.txt'), 'utf8')).toBe('work');
   writeFileSync(join(moved, 'work.txt'), 'normal in-progress work');
@@ -798,9 +804,36 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   ).rejects.toThrow('uncommitted');
   expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('unpublished local work');
   await command(checkout, ['restore', 'work.txt']);
+  // A previous destination can contain other work that origin already holds.
+  // Recovery must not confuse that published divergence with unpushed work.
+  writeFileSync(join(checkout, 'elsewhere.txt'), 'published divergence');
+  await command(checkout, ['add', '.']);
+  await command(checkout, ['commit', '-m', 'published divergence at previous destination']);
+  await command(checkout, ['push', 'origin', 'HEAD:refs/heads/other-published']);
   await prepare_workspace(source, ticket, { ...repository, ...returning }, options);
   expect(await command(checkout, ['rev-parse', 'HEAD'])).toBe(returning.published_revision);
   expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('return');
+  // The captured HEAD must still be published if it changes after the safety proof.
+  const original_git = workspace_git.git;
+  let advance_head = true;
+  const raced_git = vi.spyOn(workspace_git, 'git').mockImplementation(async (...args) => {
+    if (advance_head && args[0] === checkout && args[1].join(' ') === 'rev-parse HEAD') {
+      advance_head = false;
+      writeFileSync(join(checkout, 'race.txt'), 'new unpublished commit');
+      await command(checkout, ['add', '.']);
+      await command(checkout, ['commit', '-m', 'commit after safety proof']);
+    }
+    return original_git(...args);
+  });
+  try {
+    await expect(inspect_work_move(source, true, options)).rejects.toThrow(
+      'Push the current Ticket branch before the move.',
+    );
+    expect(advance_head).toBe(false);
+  } finally {
+    raced_git.mockRestore();
+  }
+  console.info(`Exact move recovery fixture: ${(performance.now() - case_started).toFixed(1)} ms`);
 });
 
 // Risk: cat-file in a cold single-branch partial clone can fetch each advertised ref.
