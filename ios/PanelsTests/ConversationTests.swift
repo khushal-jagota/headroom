@@ -1273,7 +1273,8 @@ import UniformTypeIdentifiers
         let fixture = Self.structuredProjection()
         let service = ConversationStub(fate: "started")
         await service.setSnapshot(Self.snapshot(fixture.timeline))
-        try await service.setScope(.init(kind: "turn", key: "turn"), items: fixture.turn)
+        let turnScopeData = try JSONSerialization.data(withJSONObject: ["items": fixture.turn, "older": NSNull()])
+        try await service.setScope(.init(kind: "turn", key: "turn"), data: turnScopeData)
         let model = ConversationModel(); model.conversationID = "conv_1"
         await model.refresh(using: service, transcript: true)
         XCTAssertEqual(model.rows.map(\.id), ["turn", "latest"])
@@ -1289,8 +1290,10 @@ import UniformTypeIdentifiers
     func testFullScopeSurvivesReconnectAndReceivesScopedTailChanges() async throws {
         let fixture = Self.structuredProjection()
         let service = ConversationStub(fate: "started")
-        try await service.setScope(.init(kind: "turn", key: "turn"), items: fixture.turn)
-        try await service.setScope(.init(kind: "work_group", key: "group"), items: fixture.calls)
+        let turnScopeData = try JSONSerialization.data(withJSONObject: ["items": fixture.turn, "older": NSNull()])
+        try await service.setScope(.init(kind: "turn", key: "turn"), data: turnScopeData)
+        let workScopeData = try JSONSerialization.data(withJSONObject: ["items": fixture.calls, "older": NSNull()])
+        try await service.setScope(.init(kind: "work_group", key: "group"), data: workScopeData)
         let model = ConversationModel(); model.conversationID = "conv_1"
         await service.setSnapshot(Self.snapshot(fixture.timeline))
         await model.refresh(using: service, transcript: true)
@@ -1443,8 +1446,7 @@ private actor ConversationStub: ConversationServing {
     func setBody(_ value: ConversationBody) { body = value }
     func setPage(_ value: ConversationPage) { page = value }
     var scopes: [ConversationCursor.Scope: ConversationPage] = [:]
-    func setScope(_ scope: ConversationCursor.Scope, items: [[String: Any]]) throws {
-        let data = try JSONSerialization.data(withJSONObject: ["items": items, "older": NSNull()])
+    func setScope(_ scope: ConversationCursor.Scope, data: Data) throws {
         scopes[scope] = try APIClient.decoder().decode(ConversationPage.self, from: data)
     }
     func conversationScope(_ id: String, lens: ConversationLens, scope: ConversationCursor.Scope) async throws -> ConversationPage {
