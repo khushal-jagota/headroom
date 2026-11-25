@@ -1,6 +1,9 @@
 import { untrack } from 'svelte';
 import type { ReviewReplyComposer } from './replyComposer.svelte';
 
+/** How long the send button shows sent, refused or unsure before it returns to the arrow. */
+const OUTCOME_SHOWN_MS = 2000;
+
 /**
  * How a Review send ends, for the send button. It spins while the send goes, then shows a green
  * tick when it arrived, a red cross when it was refused, an amber question mark when it may not
@@ -55,6 +58,6 @@ export class ReviewSendOutcome {
     this.note = reason;
     clearTimeout(this.#timer);
     if (next === 'unsure') this.#unsureText = this.#composer.text;
-    this.#timer = setTimeout(() => { this.result = undefined; this.note = undefined; }, next === 'sent' ? 1500 : 4000);
+    this.#timer = setTimeout(() => { this.result = undefined; this.note = undefined; }, OUTCOME_SHOWN_MS);
   }
 }
