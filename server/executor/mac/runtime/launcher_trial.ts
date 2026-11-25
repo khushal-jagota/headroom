@@ -232,17 +232,29 @@ export async function supervise_launcher(
       const current = await pending();
       return current?.request_id === id && current.runtime_path === runtime;
     };
+    // A restart can find either journaled bundle installed.
+    async function select_launcher(record: RecordFields, target: 'old' | 'next') {
+      const installed = await digest_machine_build(app);
+      if (installed === record[target]) return;
+      const other = target === 'next' ? record.old : record.next;
+      if (installed !== other || (await digest_machine_build(t.staged)) !== record[target])
+        throw new Error(
+          target === 'next'
+            ? 'Mac launcher files changed during activation.'
+            : 'Cannot identify the previous signed Mac launcher for rollback.',
+        );
+      exchange_names(t.staged, app);
+      await fsync_path(dirname(app));
+    }
     let failure: string | undefined;
     if (await is_pending()) {
       try {
         if (!intent) {
-          await options.probe(next);
           // The archive admission already binds the entire directory to the release.
           if (!(await lstat(app)).isDirectory())
             throw new Error('Expected an installed Mac app directory.');
           await rm(t.staged, { recursive: true, force: true });
           const signing_requirement_changed = await options.stage(next, t.staged, app);
-          await options.probe(t.staged);
           const prepared = {
             request_id: id,
             signing_requirement_changed,
@@ -251,18 +263,11 @@ export async function supervise_launcher(
           };
           if ((await digest_machine_build(t.staged)) !== prepared.next)
             throw new Error('The staged launcher differs from its machine archive.');
+          await options.probe(t.staged);
           atomic_write_json(t.journal, prepared);
           intent = prepared;
         }
-        if ((await digest_machine_build(app)) !== intent.next) {
-          if (
-            (await digest_machine_build(app)) !== intent.old ||
-            (await digest_machine_build(t.staged)) !== intent.next
-          )
-            throw new Error('Mac launcher files changed during activation.');
-          exchange_names(t.staged, app);
-          await fsync_path(dirname(app));
-        }
+        await select_launcher(intent, 'next');
         await options.probe(app);
         atomic_write_json(t.receipt, {
           ready: true,
@@ -274,15 +279,7 @@ export async function supervise_launcher(
       }
     }
     if (intent && (failure || (await selected())?.request_id !== id)) {
-      if ((await digest_machine_build(app)) !== intent.old) {
-        if (
-          (await digest_machine_build(app)) !== intent.next ||
-          (await digest_machine_build(t.staged)) !== intent.old
-        )
-          throw new Error('Cannot identify the previous signed Mac launcher for rollback.');
-        exchange_names(t.staged, app);
-        await fsync_path(dirname(app));
-      }
+      await select_launcher(intent, 'old');
       failure ??= 'The Mac runtime trial reverted.';
     }
     if (failure) atomic_write_json(t.receipt, { error: failure });
