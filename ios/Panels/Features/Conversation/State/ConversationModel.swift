@@ -777,6 +777,13 @@ import UniformTypeIdentifiers
             _ = applyDelivery(ConversationDelivery(conversationId: nil, fate: fate, refusalReason: result.refusalReason, reason: result.reason), id: senderID)
         }
     }
+    // Cached or previous-lens heads may render before the first live snapshot.
+    // Their scope tasks must wait for this reader's transcript admission.
+    private var scopedTranscriptGeneration: Int?
+    var scopeReaderReady: Bool {
+        scopedTranscriptGeneration == readerGeneration && loadedConversationID == conversationID &&
+            loadedLens == lens && !replaceHistoryOnSnapshot
+    }
     private var loadedLens: ConversationLens?
     private var loadedConversationID: String?
 
@@ -994,6 +1001,7 @@ import UniformTypeIdentifiers
             admitHistoryScope(snapshot.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(snapshot.page.items.map(\.key)))
             retainDisplay()
             reconcileItems()
+            scopedTranscriptGeneration = generation
         }
         if transcript { applyLive(snapshot.status.liveOutput, text: liveText, id: id) }
         applyReceipts(receipts)
@@ -1077,7 +1085,7 @@ import UniformTypeIdentifiers
     }
     /// Full needs each visible head's bounded scope, not a copy of the whole history.
     func loadScope(_ item: ConversationItem, using service: any ConversationServing) async {
-        guard let scope = item.historyScope, scopeKeys[scope] == nil else { return }
+        guard scopeReaderReady, let scope = item.historyScope, scopeKeys[scope] == nil else { return }
         await readScope(scope, cursor: nil, using: service)
     }
     func loadEarlierScope(_ item: ConversationItem, using service: any ConversationServing) async {
@@ -1085,7 +1093,7 @@ import UniformTypeIdentifiers
         await readScope(scope, cursor: cursor, using: service)
     }
     private func readScope(_ scope: ConversationCursor.Scope, cursor: ConversationCursor?, notifyTail: Bool = true, using service: any ConversationServing) async {
-        guard let id = conversationID, !loadingScopes.contains(scope),
+        guard scopeReaderReady, let id = conversationID, !loadingScopes.contains(scope),
               lens == .full || scope.kind == "turn" else { return }
         let generation = readerGeneration, history = historyGeneration, requestedLens = lens
         let beforeRead = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })

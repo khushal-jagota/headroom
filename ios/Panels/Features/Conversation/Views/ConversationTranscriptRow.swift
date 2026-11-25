@@ -58,8 +58,8 @@ struct ConversationTranscriptRow: View {
                 }
             }
             .font(ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
-            .task(id: "\(item.key)|\(model.lens)") {
-                if model.lens == .full { await model.loadScope(item, using: store.client) }
+            .task(id: "\(item.key)|\(model.lens)|\(model.scopeReaderReady)") {
+                if model.lens == .full, model.scopeReaderReady { await model.loadScope(item, using: store.client) }
             }
             scopeFooter(item)
         }
@@ -68,7 +68,10 @@ struct ConversationTranscriptRow: View {
     @ViewBuilder private var workGroup: some View {
         if let item = row.item {
             if item.entryCount == 1 {
-                Color.clear.frame(height: 0).task { await model.loadScope(item, using: store.client) }
+                Color.clear.frame(height: 0)
+                    .task(id: "\(item.key)|\(model.lens)|\(model.scopeReaderReady)") {
+                        if model.scopeReaderReady { await model.loadScope(item, using: store.client) }
+                    }
             } else {
                 Button {
                     Task { await model.toggleScope(item, using: store.client) }

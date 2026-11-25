@@ -1271,11 +1271,22 @@ import UniformTypeIdentifiers
         let service = ConversationStub(fate: "started")
         try await service.setScope(.init(kind: "turn", key: "turn"), items: fixture.turn)
         try await service.setScope(.init(kind: "work_group", key: "group"), items: fixture.calls)
-        let model = ConversationModel(); model.conversationID = "conv_1"; model.lens = .full
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await service.setSnapshot(Self.snapshot(fixture.timeline))
+        await model.refresh(using: service, transcript: true)
+        let previousLensHead = try XCTUnwrap(model.items.first { $0.key == "turn" })
+        model.lens = .full
+        // SwiftUI can reuse the Focus head and demand its scope before Full's first
+        // snapshot. Admitting it now would cancel that snapshot and then erase it.
+        XCTAssertFalse(model.scopeReaderReady)
+        await model.loadScope(previousLensHead, using: service)
+        XCTAssertFalse(model.retainedRanges.contains { $0.scope.kind == "turn" })
+        XCTAssertFalse(model.items.contains { $0.key == "group" })
         var snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot(fixture.timeline).utf8))
         snapshot.coverage = .init(throughSequence: 8)
         let admitted = await model.applyTail(.snapshot(snapshot), using: service)
         XCTAssertTrue(admitted)
+        XCTAssertTrue(model.scopeReaderReady, "The visible head retries when the matching live snapshot is admitted")
         let head = try XCTUnwrap(model.items.first { $0.key == "turn" })
         XCTAssertEqual(head.durationSeconds, 168, "The renderer needs the settled head's real duration")
         await model.loadScope(head, using: service)
