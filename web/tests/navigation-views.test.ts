@@ -5,7 +5,7 @@ import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
 import type {CurrentViewSnapshot,ViewFrame,ViewRequest} from '../src/lib/navigation/contracts';
 import type {ViewTransport} from '../src/lib/navigation/views/transport';
-import {reviewReturnLabel} from '../src/lib/review/return';
+import {currentReviewSummary,remainingReviewSummary,reviewFinalStatus} from '../src/lib/review/return';
 import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
@@ -180,23 +180,23 @@ describe('bounded navigation owner',()=>{
       const started=owner.start();const initial=snapshot(connections[0].request);
       initial.content.counts.review=1;initial.content.review_summary={skipped:1,new:0};
       connections[0].send(initial);await started;
-      const label=()=>reviewReturnLabel(owner.getState().effective!,owner.getRequest(),history);
-      expect(label()).toBe('Back to skipped items');
-      expect(reviewReturnLabel(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}])).toBe('Back to review');
+      const summary=()=>currentReviewSummary(owner.getState().effective!,owner.getRequest(),history);
+      expect(summary()).toEqual({new:0,skipped:1});
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}])).toBeNull();
       owner.setDemand('review',{review_skipped_keys:history,review_priority_keys:history,windows:[viewWindow('review')]});
       await flush();expect(owner.getState().effective!.runtimeCurrent).toBe(true);
-      expect(label()).toBe('Back to review');
+      expect(summary()).toBeNull();
       const next=snapshot(connections[1].request,'1','next');next.content.counts.review=2;
       next.content.review_summary={skipped:1,new:1};connections[1].send(next);
-      expect(label()).toBe('Back to review');
+      expect(summary()).toEqual({new:1,skipped:1});
       const previous=owner.getState().publication!;
       connections[1].send({event:'patch',wire_version:3,projection_version:7,view_id:next.view_id,
         scope_generation:next.scope_generation,ordering_generation:next.ordering_generation,authority:next.authority,
         coverage:{...continuity,revision:'2'},previous_coverage:previous.continuity,
         content_version:'removed-new',previous_content_version:previous.view!.contentVersion,
         upserts:[],evictions:[],windows:[],review_context:[],review_summary:{skipped:1,new:0},counts:{...next.content.counts,review:1}});
-      expect(label()).toBe('Back to skipped items');
-      connections[1].error();expect(label()).toBe('Back to review');
+      expect(summary()).toEqual({new:0,skipped:1});
+      connections[1].error();expect(summary()).toBeNull();
     }finally{owner.dispose();}
   });
   it('keeps history hints outside hydrated demand and rejects excess request bytes without retaining the bad demand',()=>{
@@ -250,5 +250,21 @@ describe('bounded navigation owner',()=>{
       expect(owner.getRequest().windows.reduce((n,w)=>n+w.limit,0)).toBeLessThanOrEqual(256);
 
     }finally{owner.dispose();}
+  });
+});
+
+// The final page needs both counts: a total alone cannot distinguish new and skipped work.
+describe('final review summary',()=>{
+  it('distinguishes the five approved summary states',()=>{
+    expect(reviewFinalStatus({new:1,skipped:2})).toEqual(['3 to review.','1 new, 2 skipped.']);
+    expect(reviewFinalStatus({new:0,skipped:2})).toEqual(['2 skipped.','Nothing new.']);
+    expect(reviewFinalStatus({new:2,skipped:0})).toEqual(['2 new.','Ready to review.']);
+    expect(reviewFinalStatus({new:0,skipped:0})).toEqual(['All clear.','Nothing to review.']);
+    expect(reviewFinalStatus(null)).toEqual(['Unavailable.','Review can’t load right now.']);
+  });
+  it('removes completed cards from the correct cohort before the server refresh',()=>{
+    expect(remainingReviewSummary({new:2,skipped:2},1,2)).toEqual({new:1,skipped:0});
+    expect(remainingReviewSummary({new:1,skipped:0},1,0)).toEqual({new:0,skipped:0});
+    expect(remainingReviewSummary(null,1,0)).toBeNull();
   });
 });
