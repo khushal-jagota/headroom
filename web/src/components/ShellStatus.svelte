@@ -229,7 +229,7 @@
           <span class="status-base">
             <span class="status-mark" aria-hidden="true"></span>
             <span class="status-word swap" data-out={textOut ? "" : undefined}>{card.word}</span>
-            {#if card.action && !desktopUnreachable}
+            {#if card.action && !desktopUnreachable && !(desktop && card.action.does === "refresh")}
               <button type="button" class="swap status-action" data-out={textOut ? "" : undefined}
                 data-shell-refresh={card.action.does === "refresh" ? "" : undefined} onclick={activate}>{card.action.label}</button>
             {/if}

@@ -103,13 +103,55 @@ test('activation waits for the bridge and a window, binds the release, and never
   assert.equal(host.store.current.appSha, 'release-b');
   host.controller.failed();
   assert.equal(host.store.current.appSha, 'release-a');
+  assert.equal(host.controller.recovery, true);
+  assert.equal(host.presentations.at(-1).value.screenRecovery, true);
   const before = host.calls.length;
   await host.controller.check();
   assert.equal(host.calls.length, before);
   assert.equal(host.store.current.appSha, 'release-a');
   await host.controller.retry();
   assert.equal(host.store.current.appSha, 'release-b');
+  assert.equal(host.controller.recovery, false);
+  assert.equal(host.presentations.at(-1).value.screenRecovery, false);
   assert.equal(host.store.pending, true);
+});
+// The store rollback test does not prove that a new controller blocks rejected screens.
+// Reuse its native host and prove the persisted recovery state without an Electron host.
+test('startup rollback selects native recovery, and a failed handoff postpones activation', async t => {
+  let prepared = false;
+  let canceled = 0;
+  const first = controller(t, { prepareActivation: async () => prepared, cancelActivation: () => { canceled++; } });
+  first.allow();
+  await first.controller.connect();
+  assert.equal(first.store.current, null);
+  assert.equal(canceled, 1);
+  prepared = true;
+  await first.controller.check();
+  assert.equal(first.store.pending, true);
+  assert.equal(canceled, 1);
+  const presentations = [];
+  const restarted = new ScreenController(first.store, {
+    address: () => 'server-a', canActivate: () => true,
+    request: async () => new Response(JSON.stringify({ screens: { sha256: first.copy.digest }, app_sha: 'release-a' })),
+    requireBridgeVersion: async () => true,
+    present: (value) => presentations.push(value),
+  });
+  await restarted.connect();
+  assert.equal(first.store.rejected, first.copy.digest);
+  assert.equal(restarted.recovery, true);
+  assert.equal(presentations.at(-1).screenRecovery, true);
+  // A rollback or server change between handoff and confirmation must release the old renderer.
+  const changed = controller(t, {
+    prepareActivation: async () => { changed.sha('release-after-handoff'); return true; },
+    cancelActivation: () => { canceled++; },
+  });
+  changed.allow();
+  await changed.controller.connect();
+  assert.equal(changed.store.current, null);
+  assert.equal(canceled, 2);
+  await changed.controller.check();
+  assert.equal(changed.store.current.appSha, 'release-after-handoff');
+  assert.equal(canceled, 2);
 });
 // A late response after Change Server must not install or activate old-server code.
 test('a late network result cannot activate after a server change; offline first run uses baseline', async t => {

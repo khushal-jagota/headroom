@@ -372,6 +372,10 @@ export class UpdateService {
     if (interrupted.length)
       detail = `The update interrupts this work, and Panels resumes it afterwards: ${interrupted.join(', ')}.`;
     return {
+      writes_admitted:
+        !this.options.update_barrier?.frozen &&
+        !system?.workspace_admission?.closed &&
+        !system?.workspace_admission?.starts_closed,
       machines,
       available_machines,
       interruption,

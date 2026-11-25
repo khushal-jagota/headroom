@@ -5,7 +5,7 @@
   import LazyRegion from "./components/LazyRegion.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { recoverSavedReviewDecisions } from "./lib/review/decision";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
@@ -14,6 +14,10 @@
   import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
+  import UpdatePause from "./components/UpdatePause.svelte";
+  import { observeUpdateAdmission, updatePause } from "./lib/updates/writePause";
+  import { readBootAppSha, requestReleaseReload } from "./lib/releaseMonitor";
+  import { isUpdateScreenReplacement, startUpdateHandoff, recoverUpdateWrites } from "./lib/updates/handoff";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
   import { updateConfirmationUntil, updatePresentation } from "./lib/updates/logic/presentation";
@@ -32,22 +36,36 @@
   const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
   import WindowTopRow from "./components/desktopWindow/WindowTopRow.svelte";
+  // Install before descendants register global shortcuts. Inert does not stop window listeners.
+  const blockUpdateKeys = (event: KeyboardEvent): void => {
+    if (!$updatePause.blocked) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  window.addEventListener("keydown", blockUpdateKeys, true);
+  onDestroy(() => window.removeEventListener("keydown", blockUpdateKeys, true));
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let reviewCount = $derived(displayed ? navigation.presentationFor(displayed).globalCounts?.review ?? navigation.presentationFor(displayed).review.items.length : 0);
 
   const updates = createQuery(() => ({ ...queries.updates(),
-    refetchInterval: (query) => $connectionStatus !== "connected" || $updateStarting !== null || query.state.data?.body.state === "updating"
-      ? UPDATE_RECOVERY_POLL_MS : false,
+    // Another client can start an update without a database change signal.
+    refetchInterval: UPDATE_RECOVERY_POLL_MS,
     refetchIntervalInBackground: true, retry: false
   }));
   let updateClock = $state(Date.now());
   $effect(() => {
     const status = updates.data;
+    updates.dataUpdatedAt;
+    observeUpdateAdmission(status, readBootAppSha(document), $updateStarting !== null || isUpdateScreenReplacement());
     observeRunningAppSha(status?.app_sha ?? null);
     settleUpdateStarting(status);
     updateClock = Date.now();
+    if (status?.writes_admitted && status.attempt?.state !== "preparing" && status.attempt?.state !== "installing") {
+      if (status.app_sha !== readBootAppSha(document)) requestReleaseReload();
+      else void recoverUpdateWrites(status.app_sha);
+    }
   });
   // Advance either deadline even when no more changes arrive from the home.
   $effect(() => {
@@ -117,6 +135,7 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if ($updatePause.blocked) return;
     if (keyTogglesRailFocus(event)) {
       event.preventDefault();
       setRailFocus(!railFocus.on);
@@ -129,6 +148,7 @@
   }
 
   onMount(() => {
+    const stopHandoff = startUpdateHandoff();
     void recoverSavedReviewDecisions();
     const media = window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY);
     const syncCompact = () => {
@@ -164,6 +184,7 @@
     startChangeStream();
     startReleaseMonitor();
     return () => {
+      stopHandoff();
       media.removeEventListener("change", syncCompact);
       window.removeEventListener("hashchange", onHash);
       stopChangeStream();
@@ -174,7 +195,7 @@
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
-<div class="shell">
+<div class="shell" inert={$updatePause.blocked} aria-busy={$updatePause.blocked}>
   <!-- The desktop window's top row; nothing in a browser. -->
   <WindowTopRow {reviewCount} unreachable={update.state === "unreachable"} />
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
@@ -203,6 +224,8 @@
     </div>
   </nav>
 </div>
+
+<UpdatePause />
 
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>

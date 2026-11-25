@@ -75,4 +75,7 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 - `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
 
-_Last verified: 2026-11-24._
+
+An owner update pauses the whole app before the server closes send admission. The pause remains until the server admits writes and compatible screens open. A write that the server explicitly refuses before admission retains its input through screen replacement. A lost reply never triggers an automatic retry. Conversation drafts keep their own storage. Other edited text remains readable after replacement for review, rather than a synthetic edit that can trigger an unintended save. Desktop recovery belongs to the native shell, so failed screens cannot hide its retry action.
+
+_Last verified: 2026-11-25._

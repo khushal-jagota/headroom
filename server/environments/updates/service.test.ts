@@ -11,6 +11,8 @@ import type { MachineUpdateState, PublishedUpdate } from './contracts.ts';
 import { GitHubUpdateProvider } from './provider.ts';
 import { UpdateService } from './service.ts';
 import { attempt_body } from './routes.ts';
+import { WorkspaceAdmission } from '../../conversation/workspace_admission.ts';
+import { UpdateBarrier } from '../update_barrier.ts';
 
 test('a newer offer retains machine failure and recomputes interruption at the press', async () => {
   const root = mkdtempSync(join(tmpdir(), 'update-impact-'));
@@ -51,7 +53,10 @@ test('a newer offer retains machine failure and recomputes interruption at the p
     .spyOn(provider, 'available')
     .mockRejectedValueOnce(new Error('catalog unavailable'))
     .mockResolvedValue(null);
+  const admission = new WorkspaceAdmission();
+  const barrier = new UpdateBarrier(join(root, 'barrier'));
   const service = new UpdateService({
+    update_barrier: barrier,
     provider,
     now: () => now,
     attempts,
@@ -59,6 +64,7 @@ test('a newer offer retains machine failure and recomputes interruption at the p
       database: {} as Database,
       conversation: () =>
         ({
+          workspace_admission: admission,
           workspace_activity: () => 'busy',
           update_interrupted_work: interrupted,
         }) as unknown as ConversationSystem,
@@ -94,6 +100,18 @@ test('a newer offer retains machine failure and recomputes interruption at the p
   vi.spyOn(service as unknown as { launch(): void }, 'launch').mockImplementation(() => {});
   try {
     service.start();
+    // Distinct gap: terminal attempt state alone does not prove admission reopened.
+    expect(service.status().writes_admitted).toBe(true);
+    admission.close_starts();
+    expect(service.status().writes_admitted).toBe(false);
+    admission.reopen();
+    barrier.close();
+    expect(service.status().writes_admitted).toBe(false);
+    barrier.reopen();
+    admission.seal();
+    expect(service.status().writes_admitted).toBe(false);
+    admission.reopen();
+    expect(service.status().writes_admitted).toBe(true);
     expect(service.status()).toMatchObject({
       state: 'not_checked',
       activity: 'busy',

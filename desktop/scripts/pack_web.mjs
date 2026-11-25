@@ -16,3 +16,5 @@ cpSync(join(repository, 'web/dist'), join(packed, 'web/dist'), { recursive: true
 cpSync(join(repository, 'assets'), join(packed, 'assets'), { recursive: true });
 cpSync(join(repository, 'static'), join(packed, 'static'), { recursive: true });
 cpSync(join(desktop, 'server_update_page'), join(packed, 'server_update_page'), { recursive: true });
+
+cpSync(join(desktop, 'screen_recovery_page'), join(packed, 'screen_recovery_page'), { recursive: true });

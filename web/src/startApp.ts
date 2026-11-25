@@ -4,6 +4,7 @@ import { ensureDebug } from "./lib/debug";
 import { mount, tick } from "svelte";
 import { queries } from "./lib/queryCatalogue";
 import { queryClient } from "./lib/queryClient";
+import { restoreUpdateHandoff } from "./lib/updates/handoff";
 import { restoreSavedSession } from "./lib/savedSession";
 
 ensureDebug();
@@ -17,7 +18,7 @@ if ("serviceWorker" in navigator) {
 }
 
 // In the desktop app, the last session goes back into the cache before the first paint.
-void restoreSavedSession(queryClient).finally(async () => {
+void Promise.all([restoreSavedSession(queryClient), restoreUpdateHandoff()]).finally(async () => {
   mount(AppWithQueryClient, { target: document.getElementById("app") as HTMLElement });
   await tick();
   document.documentElement.dataset.panelsReady = "true";

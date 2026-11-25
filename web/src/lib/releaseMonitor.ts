@@ -1,5 +1,6 @@
 import { clientFetch, clientIdentityHeaders } from "./clientIdentity";
 import { writable } from "svelte/store";
+import { prepareUpdateScreenReplacement } from "./updates/handoff";
 
 export type ReleaseSnapshot = {
   updateAvailable: boolean;
@@ -52,7 +53,10 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
       snapshot.updateAvailable
     ) {
       reloadStarted = true;
-      reload();
+      void prepareUpdateScreenReplacement().then(reload).catch(() => {
+        // Keep the existing screens and their inputs if the handoff cannot be saved.
+        reloadStarted = false;
+      });
     }
   }
 
