@@ -14,12 +14,13 @@
   import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
 
-  let { composer, onEdit, busy = false, hideSent = false }: {
+  let { composer, onEdit, busy = false, quiet = false }: {
     composer: ReviewReplyComposer;
     onEdit: () => void;
     busy?: boolean;
-    /** The empty Review page shows a send only while it is in flight or needs him. */
-    hideSent?: boolean;
+    /** The empty Review page keeps a send out of view while it goes and after it arrives.
+     *  Its send button shows both. A send that waits, is queued or failed still shows. */
+    quiet?: boolean;
   } = $props();
 
   const view = $derived(composer.queueView);
@@ -28,7 +29,7 @@
   ), 'owner', new Set()));
   const heldIds = $derived(new Set(held.map(message => message.messageId)));
   const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)
-    && !(hideSent && attempt.status === 'sent')));
+    && !(quiet && (attempt.status === 'sent' || attempt.status === 'sending' || attempt.status === 'checking'))));
   const queue = $derived(held.filter(belongsInHeldQueue));
   const pendingQueue = $derived(attempts.filter(queueAttempt));
 
