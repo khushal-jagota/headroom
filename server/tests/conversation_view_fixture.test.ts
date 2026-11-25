@@ -8,7 +8,10 @@ import { text_message_content } from '../conversation/message_content.ts';
 import type { ConversationEventKind } from '../conversation/events.ts';
 import { ConversationAccess, ResolvedConversationStart } from '../conversation/contracts.ts';
 import { conversation_event_payload_from_canonical_json } from '../conversation/record/codec.ts';
-import { ConversationStore, ConversationStorePrimitives } from '../conversation/record/data/store.ts';
+import {
+  ConversationStore,
+  ConversationStorePrimitives,
+} from '../conversation/record/data/store.ts';
 import { append_projection } from '../conversation/views/data/writer.ts';
 import { read_page } from '../conversation/views/data/storage.ts';
 import {
