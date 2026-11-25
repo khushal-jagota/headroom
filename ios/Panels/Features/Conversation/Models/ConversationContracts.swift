@@ -25,13 +25,24 @@ struct ConversationPage: Codable, Sendable {
     let older: ConversationCursor?
     var projectionVersion: Int? = nil
     var scope: ConversationCursor.Scope? = nil
+    var newer: ConversationCursor? = nil
 }
 struct ConversationCursor: Codable, Sendable {
     let projectionVersion: Int
     let lens: String
     let scope: Scope
     let order: Order
-    struct Scope: Codable, Hashable, Sendable { let kind: String; let key: String? }
+    struct Scope: Codable, Hashable, Sendable {
+        let kind: String
+        let key: String?
+        private enum CodingKeys: String, CodingKey { case kind, key }
+        func encode(to encoder: any Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(kind, forKey: .kind)
+            if let key { try values.encode(key, forKey: .key) }
+            else { try values.encodeNil(forKey: .key) }
+        }
+    }
     struct Order: Codable, Equatable, Sendable { let sequence: Int; let slot: Int }
 }
 struct ConversationItem: Equatable, Codable, Identifiable, Sendable {
@@ -42,7 +53,25 @@ struct ConversationItem: Equatable, Codable, Identifiable, Sendable {
     let sourceSequence: Int?
     let body: ConversationDeliveredBody?
     var order: ConversationCursor.Order? = nil
+    var rowKind: String? = nil
+    var workGroupKey: String? = nil
+    var foldRule: String? = nil
+    var settled: Bool? = nil
+    var stopped: Bool? = nil
+    var startedAtUnixMilliseconds: Int64? = nil
+    var ending: String? = nil
+    var durationSeconds: Double? = nil
+    var toolCallCount: Int? = nil
+    var foldedMessageCount: Int? = nil
+    var latestMessageKey: String? = nil
+    var isLatest: Bool? = nil
+    var entryCount: Int? = nil
+    var latestEntryKey: String? = nil
     var id: String { senderMessageId ?? key }
+    var historyScope: ConversationCursor.Scope? {
+        guard kind == "turn" || kind == "work_group" else { return nil }
+        return .init(kind: kind, key: key)
+    }
 }
 struct ConversationDeliveredBody: Equatable, Codable, Sendable {
     let kind: String
@@ -72,6 +101,32 @@ struct ConversationBody: Equatable, Codable, Sendable {
     let questions: [Question]?
     var senderLabel: String? = nil
     var answerFate: String? = nil
+    var toOwner: Bool? = nil
+    var taskId: String? = nil
+    var taskDescription: String? = nil
+    var taskStatus: String? = nil
+    var model: String? = nil
+    var reasoningEffort: String? = nil
+    var replyText: String? = nil
+    var status: String? = nil
+    var toolCallId: String? = nil
+    var toolKind: String? = nil
+    var startedDetail: String? = nil
+    var cappedDetailSequence: Int? = nil
+    var automaticCompactionResult: String? = nil
+    var answeredOptionLabel: String? = nil
+    var answers: [Answer]? = nil
+    var failureDetail: String? = nil
+    var deadReason: String? = nil
+    var name: String? = nil
+    var provider: String? = nil
+    var use: String? = nil
+    var help: String? = nil
+    var helpUrl: String? = nil
+    var requestId: String? = nil
+    var delivery: RequestDelivery? = nil
+    struct Answer: Equatable, Codable, Sendable { let questionId: String; let answers: [String] }
+    struct RequestDelivery: Equatable, Codable, Sendable { let status: String; let refusalReason: String? }
     var answerSentence: String? {
         switch answerFate {
         case "saved": "The home saved your answer. Delivery to the worker machine is pending."
@@ -80,10 +135,36 @@ struct ConversationBody: Equatable, Codable, Sendable {
         default: nil
         }
     }
-    struct Piece: Equatable, Codable, Sendable { let piece: String; let text: String?; let fileName: String? }
+    struct Piece: Equatable, Codable, Sendable {
+        let piece: String
+        let text: String?
+        let fileName: String?
+        var storedFileId: String? = nil
+        var mediaType: String? = nil
+        var byteCount: Int? = nil
+        var width: Int? = nil
+        var height: Int? = nil
+        var isImage: Bool { piece == "image" || mediaType?.hasPrefix("image/") == true }
+        var isVideo: Bool { mediaType?.hasPrefix("video/") == true }
+    }
     struct Question: Equatable, Codable, Sendable { let question: String }
     var text: String {
-        if let content { return content.map { $0.text ?? "[\($0.fileName ?? $0.piece)]" }.joined(separator: "\n") }
+        if let content { return content.compactMap(\.text).joined(separator: "\n") }
+        switch kind {
+        case "agent_turn_started": return reason ?? ""
+        case "background_task_started": return "Background task started · " + (taskDescription ?? "Task")
+        case "background_task_ended": return "Background task " + (taskStatus ?? "ended") + " · " + (taskDescription ?? "Task")
+        case "model_changed": return [model, reasoningEffort].compactMap { $0 }.joined(separator: " · ")
+        case "context_compacted": return "Context compacted"
+        case "command_reply": return replyText ?? ""
+        case "turn_stopped": return "Stopped without a recorded ending"
+        case "turn_ended":
+            if ending == "failed" { return errorSummary ?? "The turn failed." }
+            if ending == "interrupted" { return "Stopped" }
+            return automaticCompactionResult == "not_compacted" ? "Automatic compaction did not complete." : ""
+        case "credential_request": return [name, provider, use, help].compactMap { $0 }.joined(separator: "\n")
+        default: break
+        }
         return title ?? questions?.map(\.question).joined(separator: "\n") ?? errorSummary ?? detail ?? (kind == "deferred" ? "Long message — open on the web to read in full" : "")
     }
     var isPrompt: Bool { kind.hasPrefix("prompt") }
@@ -100,6 +181,9 @@ struct ConversationStatus: Equatable, Codable, Sendable {
     var pendingPermission: RequestIdentity? = nil
     var pendingUserInput: RequestIdentity? = nil
     var backgroundTasks: [BackgroundTask]? = nil
+    var diagnosticsExpired: Bool? = nil
+    var liveToolKey: String? = nil
+    var liveToolProgress: ConversationBodyReference? = nil
 
     struct RequestIdentity: Equatable, Codable, Sendable {
         let kind: String
@@ -225,6 +309,7 @@ protocol ConversationServing: Sendable {
     func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt]
     func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage
+    func conversationScope(_ id: String, lens: ConversationLens, scope: ConversationCursor.Scope) async throws -> ConversationPage
     func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery
 }
@@ -274,9 +359,16 @@ struct ConversationRow: Identifiable, Equatable {
     let own: Bool
     let note: String?
     var senderLabel: String? = nil
-    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + (text.isEmpty ? attachments.compactMap(\.fileName).joined(separator: ", ") : text) }
+    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + (text.isEmpty ? (pieces.compactMap(\.fileName) + attachments.compactMap(\.fileName)).joined(separator: ", ") : text) }
     var retryID: String? = nil
     var item: ConversationItem? = nil
+    enum Presentation: Equatable { case message, narration, turn, workGroup, tool, system }
+    var body: ConversationBody? = nil
+    var pieces: [ConversationBody.Piece] = []
+    var presentation: Presentation = .message
+    var breakBefore = false
+    var scopeExpanded = false
+    var scopeLoading = false
     /// Attachments still on the phone, shown as previews until the server has the message.
     var attachments: [ConversationSend.Piece] = []
 }
@@ -285,7 +377,15 @@ struct ConversationReceipt: Decodable, Sendable {
     let senderMessageId: String
     let fate: String
 }
+struct ConversationRetainedRange: Encodable, Sendable {
+    let scope: ConversationCursor.Scope
+    let first: ConversationCursor.Order
+    let last: ConversationCursor.Order
+}
 extension ConversationServing {
+    func conversationScope(_ id: String, lens: ConversationLens, scope: ConversationCursor.Scope) async throws -> ConversationPage {
+        throw APIError(status: 501, message: "Conversation history is unavailable.")
+    }
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt] { [] }
 }
 

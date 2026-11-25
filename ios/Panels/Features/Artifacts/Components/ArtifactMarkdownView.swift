@@ -17,11 +17,11 @@ struct ArtifactMarkdownView: View {
 /// conversation rows. Code and tables scroll sideways without widening the page; text hugs its
 /// own width, so a short message keeps a short bubble.
 /// The size a caller reads Markdown at. Long documents read at the body size; Review cards,
-/// Ticket fields and conversation rows keep the compact size of the mockup.
+/// Ticket fields keep the compact size. Conversation prose uses its approved 15-point size.
 enum PanelsMarkdownTextSize {
-    case compact, reading
+    case compact, reading, conversation
     /// The paragraph size before Dynamic Type: `.reading` is the system body size.
-    var paragraph: CGFloat { self == .reading ? 17 : 14 }
+    var paragraph: CGFloat { switch self { case .compact: 14; case .reading: 17; case .conversation: 15 } }
 }
 
 struct PanelsMarkdown: View {
@@ -37,7 +37,7 @@ struct PanelsMarkdown: View {
     @State private var memo = PanelsMarkdownMemo()
     @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
     private var size: CGFloat { textSize.paragraph }
-    private var codeSize: CGFloat { (size - 1.5) * scale }
+    private var codeSize: CGFloat { (textSize == .conversation ? size : size - 1.5) * scale }
     @ScaledMetric(relativeTo: .body) private var bodyLineSpacing: CGFloat = 5
     @ScaledMetric(relativeTo: .body) private var firstParagraphLineSpacing: CGFloat = 4
 
@@ -63,7 +63,7 @@ struct PanelsMarkdown: View {
                     }.background(PanelsTheme.Web.code, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
                 }
             case .heading(let level):
-                text(document.inline[block.id]).panelsScaledFont(size: size + 1, weight: PanelsTheme.TypeScale.markdownHeadingWeight(level))
+                text(document.inline[block.id]).panelsScaledFont(size: textSize == .conversation ? 20 : size + 1, weight: PanelsTheme.TypeScale.markdownHeadingWeight(level))
                     .foregroundStyle(PanelsTheme.Web.strong).accessibilityAddTraits(.isHeader)
                     .padding(.top, block.id == 0 ? 0 : PanelsTheme.Space.sm)
             case .quote:

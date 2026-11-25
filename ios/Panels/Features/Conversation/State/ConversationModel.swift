@@ -106,6 +106,19 @@ import UniformTypeIdentifiers
     @ObservationIgnored private var pendingDisplayWrite: DisplayWrite?
     private var pageProjectionVersion: Int?
     private var currentRemoteKeys: Set<String> = []
+    private var scopeKeys: [ConversationCursor.Scope: Set<String>] = [:]
+    private var scopeOlder: [ConversationCursor.Scope: ConversationCursor] = [:]
+    private var expandedScopes: Set<ConversationCursor.Scope> = [] { didSet { if oldValue != expandedScopes { projectionRevision += 1 } } }
+    private var loadingScopes: Set<ConversationCursor.Scope> = [] { didSet { if oldValue != loadingScopes { projectionRevision += 1 } } }
+    private(set) var scopeRevision = 0
+    var retainedRanges: [ConversationRetainedRange] {
+        scopeKeys.compactMap { scope, keys in
+            let orders = items.filter { keys.contains($0.key) }.compactMap(\.order)
+                .sorted { ($0.sequence, $0.slot) < ($1.sequence, $1.slot) }
+            guard let first = orders.first, let last = orders.last else { return nil }
+            return ConversationRetainedRange(scope: scope, first: first, last: last)
+        }.sorted { ($0.scope.kind, $0.scope.key ?? "") < ($1.scope.kind, $1.scope.key ?? "") }
+    }
     private var visibleRows: Set<String> = []
     private var lastDisplaySave = Date.distantPast
     private var displayByteSizes: [String: (body: ConversationBody, count: Int)] = [:]
@@ -121,6 +134,7 @@ import UniformTypeIdentifiers
         pendingDisplayWrite = nil
         bodyErrors = [:]
         historyScopes = ConversationHistoryScopes()
+        scopeKeys = [:]; scopeOlder = [:]; expandedScopes = []; loadingScopes = []; scopeRevision += 1
         currentRemoteKeys = []; tailCoverage = nil; tailFirstOrder = nil
         if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
     }
@@ -144,8 +158,13 @@ import UniformTypeIdentifiers
         await refresh(using: service, transcript: true)
     }
     private func admitHistoryScope(_ scope: ConversationCursor.Scope, keys: Set<String>) {
+        scopeKeys[scope, default: []].formUnion(keys)
         let discarded = historyScopes.admit(scope, keys: keys, visibleKeys: visibleRows,
             active: .init(kind: "timeline", key: nil))
+        let retained = historyScopes.scopes
+        scopeKeys = scopeKeys.filter { retained.contains($0.key) }
+        scopeOlder = scopeOlder.filter { retained.contains($0.key) }
+        expandedScopes.formIntersection(retained)
         guard !discarded.isEmpty else { return }
         items.removeAll { discarded.contains($0.key) }
         expandedBodies = expandedBodies.filter { !discarded.contains($0.key) }
@@ -182,6 +201,14 @@ import UniformTypeIdentifiers
         currentRemoteKeys.formIntersection(keys)
         bodyErrors = bodyErrors.filter { keys.contains($0.key) }
         historyScopes.retain(keys)
+        for scope in scopeKeys.keys {
+            scopeKeys[scope]?.formIntersection(keys)
+            if scopeKeys[scope]?.isEmpty == true && !loadingScopes.contains(scope) {
+                scopeKeys[scope] = nil; scopeOlder[scope] = nil
+            }
+        }
+        let receivedIDs = Set(items.compactMap(\.senderMessageId))
+        outgoingAttachments = outgoingAttachments.filter { receivedIDs.contains($0.key) || Set(outgoing.map(\.id)).contains($0.key) }
         displayByteSizes = displayByteSizes.filter { key, _ in
             if key.hasPrefix("inline:") { return keys.contains(String(key.dropFirst(7))) }
             return retained.bodies[String(key.dropFirst(9))] != nil
@@ -294,7 +321,7 @@ import UniformTypeIdentifiers
         }.filter { !supersededIDs.contains($0.id) }
         rememberRows(outgoing.map { retryAliases[$0.id] ?? $0.id })
     }
-    var lens: ConversationLens = .focus { didSet { if oldValue != lens { invalidateReader() } } }
+    var lens: ConversationLens = .focus { didSet { if oldValue != lens { projectionRevision += 1; invalidateReader() } } }
     var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }
     var expandedBodies: [String: ConversationBody] = [:] { didSet { if oldValue != expandedBodies { projectionRevision += 1 } } }
     private(set) var bodyErrors: [String: String] = [:]
@@ -450,33 +477,84 @@ import UniformTypeIdentifiers
     }
     private func projectRows() -> [ConversationRow] {
         let received = Set(items.compactMap(\.senderMessageId))
+        let map = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
         let remote = items.compactMap { item -> ConversationRow? in
             guard !supersededIDs.contains(item.id) else { return nil }
-            guard let body = expandedBodies[item.key] ?? item.body?.value else {
+            let scope = item.historyScope
+            if item.kind == "turn" {
+                if lens == .focus && item.settled == true && item.ending == "interrupted" { return nil }
+                if item.settled == true && item.stopped == true && (item.toolCallCount ?? 0) == 0 && (item.foldedMessageCount ?? 0) == 0 { return nil }
+                return ConversationRow(id: item.id, text: "", own: false, note: nil, item: item,
+                    presentation: .turn, scopeExpanded: lens == .full || scope.map { expandedScopes.contains($0) } == true,
+                    scopeLoading: scope.map { loadingScopes.contains($0) } == true)
+            }
+            if item.kind == "work_group" {
+                guard lens == .full else { return nil }
+                return ConversationRow(id: item.id, text: "", own: false, note: nil, item: item,
+                    presentation: .workGroup, scopeExpanded: scope.map { expandedScopes.contains($0) } == true,
+                    scopeLoading: scope.map { loadingScopes.contains($0) } == true)
+            }
+            let body = expandedBodies[item.key] ?? item.body?.value
+            let kind = item.rowKind ?? body?.kind
+            if kind == "token_usage" { return nil }
+            if lens == .focus {
+                if ["tool_call", "model_changed", "context_compacted", "background_task_started", "background_task_ended"].contains(kind ?? "") { return nil }
+                if kind == "agent_message", body?.toOwner == false { return nil }
+                if item.foldRule == "earlier_message", let key = item.turnKey, let turn = map[key],
+                   turn.settled == true, turn.latestMessageKey != item.key,
+                   !expandedScopes.contains(.init(kind: "turn", key: key)) { return nil }
+            }
+            if lens == .full, kind == "tool_call", let key = item.workGroupKey,
+               let group = map[key], (group.entryCount ?? 0) > 1,
+               !expandedScopes.contains(.init(kind: "work_group", key: key)) { return nil }
+            guard let body else {
                 return item.body?.reference == nil ? nil : ConversationRow(id: item.id, text: "Read message", own: false, note: nil, item: item)
             }
-            guard !body.text.isEmpty else { return nil }
+            guard !body.text.isEmpty || body.content?.contains(where: { $0.piece != "text" }) == true else { return nil }
             let local = outgoing.first { $0.id == item.senderMessageId }
             let note: String?
             switch body.kind {
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
+            case "prompt_uncertain": note = "Delivery unconfirmed"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
-            case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
+            case "permission_ask": note = [body.answeredOptionLabel, body.answerSentence, body.state == "live" ? "Respond on the web" : body.state?.capitalized].compactMap { $0 }.joined(separator: " · ")
+            case "user_input": note = [body.answers?.flatMap(\.answers).joined(separator: ", "), body.failureDetail, body.answerSentence, body.state == "live" ? "Respond on the web" : body.state?.capitalized].compactMap { $0 }.joined(separator: " · ")
+            case "credential_request": note = [body.state?.capitalized, body.delivery?.status, "Respond on the web"].compactMap { $0 }.joined(separator: " · ")
             default: note = nil
             }
+            let presentation: ConversationRow.Presentation
+            switch body.kind {
+            case "prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded": presentation = .message
+            case "agent_message":
+                let turn = item.turnKey.flatMap { map[$0] }
+                let narration = lens == .full && turn.map { $0.settled != true || $0.latestMessageKey != item.key } == true
+                presentation = body.toOwner == false || narration ? .narration : .message
+            case "tool_call": presentation = .tool
+            default: presentation = .system
+            }
             return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,
-                                   senderLabel: body.isPrompt && !body.isOwnerPrompt ? body.senderLabel : nil,
-                                   retryID: local?.retryable == true ? local?.id : nil, item: item)
+                senderLabel: body.isPrompt && !body.isOwnerPrompt ? body.senderLabel : nil,
+                retryID: local?.retryable == true ? local?.id : nil, item: item, body: body,
+                pieces: body.content ?? [], presentation: presentation,
+                attachments: local?.attachments ?? item.senderMessageId.flatMap { outgoingAttachments[$0] } ?? [])
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
             ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
         }
-        if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
+        if lens == .full, let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
-        return combined.sorted { (positions[$0.id] ?? Int.max) < (positions[$1.id] ?? Int.max) }
+        combined.sort { (positions[$0.id] ?? Int.max) < (positions[$1.id] ?? Int.max) }
+        var previousAgentMessage = false
+        for index in combined.indices {
+            let row = combined[index]
+            let agentMessage = !row.own && (row.body?.kind == "agent_message" || row.id == liveRow?.id)
+            combined[index].breakBefore = previousAgentMessage && (agentMessage || row.body?.kind == "agent_turn_started")
+            previousAgentMessage = agentMessage
+        }
+        return combined
     }
     var latestMessage: ConversationRow? {
-        rows.last(where: { $0.own || $0.senderLabel != nil || ["agent_message", "user_input", "permission_ask"].contains($0.item?.body?.value?.kind ?? "") || $0.id == liveRow?.id })
+        rows.last(where: { $0.own || $0.senderLabel != nil || ["agent_message", "user_input", "permission_ask"].contains($0.body?.kind ?? $0.item?.body?.value?.kind ?? "") || $0.id == liveRow?.id })
     }
     var latestLine: String {
         guard let row = latestMessage else { return "Conversation" }
@@ -637,17 +715,22 @@ import UniformTypeIdentifiers
     /// The open tail's cursor and the first order of its window, both from its last snapshot.
     private var tailCoverage: Int?
     private var tailFirstOrder: ConversationCursor.Order?
-    @discardableResult func beginTail() -> Int {
+    var tailAfterSequence: Int? { tailCoverage }
+    @discardableResult func beginTail(resuming: Bool = false) -> Int {
         tailGeneration += 1
-        tailCoverage = nil; tailFirstOrder = nil
+        if !resuming { tailCoverage = nil; tailFirstOrder = nil }
         currentRemoteKeys = []
         return tailGeneration
     }
     func endTail(generation: Int) {
         guard generation == tailGeneration else { return }
         tailGeneration += 1
-        tailCoverage = nil; tailFirstOrder = nil
-        if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
+        // This cursor comes only from admitted live frames, never the display cache.
+        // Keep it across socket changes so the server honors retained scope ranges.
+        if let current = status {
+            status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest,
+                stoppedWithoutEnding: current.stoppedWithoutEnding, runtimeEpoch: current.runtimeEpoch)
+        }
         saveDisplay(force: true)
     }
 
@@ -662,13 +745,20 @@ import UniformTypeIdentifiers
         guard generation == tailGeneration, let id = conversationID else { return false }
         let requestedLens = lens
         switch frame {
-        case .reset: return false
+        case .reset:
+            tailCoverage = nil; tailFirstOrder = nil
+            return false
         case .snapshot(let snapshot):
             do {
                 try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: readerGeneration, streamGeneration: generation, using: service)
                 guard generation == tailGeneration, id == conversationID, lens == requestedLens else { return false }
                 tailCoverage = snapshot.coverage?.throughSequence
                 tailFirstOrder = snapshot.page.items.first?.order
+                // A genuinely fresh snapshot resets server subscriptions to timeline.
+                // Refresh retained scopes, then reconnect once with this live cursor.
+                let held = transcript ? scopeKeys.keys.filter { $0.kind != "timeline" } : []
+                for scope in held { await readScope(scope, cursor: nil, notifyTail: false, using: service) }
+                if !held.isEmpty { scopeRevision += 1 }
                 error = nil
                 return true
             } catch { if !Task.isCancelled, generation == tailGeneration { reportReadFailure(error) }; return false }
@@ -676,7 +766,10 @@ import UniformTypeIdentifiers
             guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
                   changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
                   changes.status.stoppedWithoutEnding == status?.stoppedWithoutEnding,
-                  changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
+                  changes.status.runtimeEpoch == status?.runtimeEpoch else {
+                tailCoverage = nil; tailFirstOrder = nil
+                return false
+            }
             do {
                 let (liveText, receipts) = try await lightReads(changes.status, id: id, transcript: transcript, using: service)
                 let sizes = transcript ? await bodySizes(for: changes.upserts) : [:]
@@ -690,17 +783,27 @@ import UniformTypeIdentifiers
                     error = nil
                     return true
                 }
-                let timeline = changes.scopeChanges.first { $0.scope.kind == "timeline" }
+                let timelineScope = ConversationCursor.Scope(kind: "timeline", key: nil)
                 let removed = Set(changes.removedKeys)
+                let timeline = changes.scopeChanges.first { $0.scope == timelineScope }
                 let leftWindow = Set(timeline?.removedKeys ?? [])
                 // Explicitly loaded history before the window keeps its rows.
                 func inWindow(_ item: ConversationItem) -> Bool {
                     guard let first = tailFirstOrder, let order = item.order else { return true }
                     return (order.sequence, order.slot) >= (first.sequence, first.slot)
                 }
-                var next = items.filter { !removed.contains($0.key) && !(leftWindow.contains($0.key) && inWindow($0)) }
+                for scope in scopeKeys.keys { scopeKeys[scope]?.subtract(removed) }
+                for change in changes.scopeChanges where change.scope == timelineScope || scopeKeys[change.scope] != nil {
+                    scopeKeys[change.scope, default: []].subtract(change.removedKeys)
+                    scopeKeys[change.scope, default: []].formUnion(change.itemKeys)
+                }
+                let heldElsewhere = scopeKeys.filter { $0.key != timelineScope }.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+                let held = scopeKeys.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+                let scopedDepartures = Set(changes.scopeChanges.filter { $0.scope.kind != "timeline" }.flatMap(\.removedKeys)).subtracting(held)
+                var next = items.filter { !removed.contains($0.key) && !scopedDepartures.contains($0.key) && !(leftWindow.contains($0.key) && inWindow($0) && !heldElsewhere.contains($0.key)) }
                 let upserts = Dictionary(changes.upserts.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
-                for key in timeline?.itemKeys ?? [] {
+                let admittedKeys = changes.scopeChanges.filter { $0.scope == timelineScope || scopeKeys[$0.scope] != nil }.flatMap(\.itemKeys)
+                for key in admittedKeys {
                     guard let item = upserts[key] else { continue }
                     if let at = next.firstIndex(where: { $0.key == key }) { next[at] = item; continue }
                     let at = next.firstIndex { other in
@@ -708,6 +811,13 @@ import UniformTypeIdentifiers
                         return (order.sequence, order.slot) < (otherOrder.sequence, otherOrder.slot)
                     } ?? next.count
                     next.insert(item, at: at)
+                }
+                // A deferred body belongs to its exact reference. Updated inline/deferred
+                // values must never keep an earlier expansion on screen.
+                for incoming in changes.upserts {
+                    if items.first(where: { $0.key == incoming.key })?.body != incoming.body {
+                        expandedBodies[incoming.key] = nil
+                    }
                 }
                 settleLiveRow(candidates: changes.upserts, output: changes.status.liveOutput)
                 if items != next { items = next }
@@ -719,6 +829,13 @@ import UniformTypeIdentifiers
                 applyReceipts(receipts)
                 tailCoverage = changes.coverage.throughSequence
                 saveDisplay()
+                let invalidated = changes.invalidatedScopes.filter { $0.kind != "timeline" && scopeKeys[$0] != nil }
+                for scope in invalidated {
+                    await readScope(scope, cursor: nil, notifyTail: false, using: service)
+                }
+                // Restart after the whole invalidation batch. Restarting after its first
+                // read would cancel the task before the remaining scopes refreshed.
+                if !invalidated.isEmpty { scopeRevision += 1 }
                 error = nil
                 return true
             } catch { if !Task.isCancelled, generation == tailGeneration { reportReadFailure(error) }; return false }
@@ -741,6 +858,11 @@ import UniformTypeIdentifiers
             if replaceHistoryOnSnapshot { visibleRows = [] }
             if replaceHistoryOnSnapshot || loadedConversationID != id || loadedLens != requestedLens { historyGeneration += 1; releaseOversizedBody(); items = []; expandedBodies = [:]; hasNewerHistory = false; replaceHistoryOnSnapshot = false; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
             settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
+            for incoming in snapshot.page.items {
+                if items.first(where: { $0.key == incoming.key })?.body != incoming.body {
+                    expandedBodies[incoming.key] = nil
+                }
+            }
             // Replace the current window; retain explicitly loaded history before it.
             let keys = Set(snapshot.page.items.map(\.key))
             let nextItems: [ConversationItem]
@@ -750,7 +872,15 @@ import UniformTypeIdentifiers
                 if !items.isEmpty { historyGeneration += 1 }
                 nextItems = snapshot.page.items; older = snapshot.page.older
             }
-            if items != nextItems { items = nextItems }
+            let scopedKeys = scopeKeys.filter { $0.key.kind != "timeline" }.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+            var merged = Dictionary(nextItems.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
+            for item in items where scopedKeys.contains(item.key) && !keys.contains(item.key) { merged[item.key] = item }
+            let priorOrder = Dictionary((nextItems + items.filter { scopedKeys.contains($0.key) && !keys.contains($0.key) }).enumerated().map { ($0.element.key, $0.offset) }, uniquingKeysWith: { first, _ in first })
+            let scopedItems = merged.values.sorted {
+                if let a = $0.order, let b = $1.order { return (a.sequence, a.slot) < (b.sequence, b.slot) }
+                return (priorOrder[$0.key] ?? Int.max) < (priorOrder[$1.key] ?? Int.max)
+            }
+            if items != scopedItems { items = scopedItems }
             currentRemoteKeys.formUnion(snapshot.page.items.map(\.key))
             admitHistoryScope(snapshot.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(snapshot.page.items.map(\.key)))
             retainDisplay()
@@ -790,7 +920,10 @@ import UniformTypeIdentifiers
             guard received.contains(message.id) else { return false }
             // A refusal remains retryable even after its server row arrives.
             let delivered = items.first(where: { $0.senderMessageId == message.id })?.body?.value?.kind == "prompt"
-            if delivered { outgoingText[message.id] = nil; outgoingAttachments[message.id] = nil }
+            if delivered {
+                outgoingText[message.id] = nil
+                if !message.attachments.isEmpty { outgoingAttachments[message.id] = message.attachments }
+            }
             return delivered
         }
         for item in items {
@@ -822,6 +955,65 @@ import UniformTypeIdentifiers
             case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
             case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
             default: break
+            }
+        }
+    }
+    func scopeHasOlder(_ item: ConversationItem) -> Bool {
+        item.historyScope.flatMap { scopeOlder[$0] } != nil
+    }
+    func toggleScope(_ item: ConversationItem, using service: any ConversationServing) async {
+        guard let scope = item.historyScope else { return }
+        if expandedScopes.contains(scope) { expandedScopes.remove(scope) }
+        else { expandedScopes.insert(scope); await loadScope(item, using: service) }
+    }
+    /// Full needs each visible head's bounded scope, not a copy of the whole history.
+    func loadScope(_ item: ConversationItem, using service: any ConversationServing) async {
+        guard let scope = item.historyScope, scopeKeys[scope] == nil else { return }
+        await readScope(scope, cursor: nil, using: service)
+    }
+    func loadEarlierScope(_ item: ConversationItem, using service: any ConversationServing) async {
+        guard let scope = item.historyScope, let cursor = scopeOlder[scope] else { return }
+        await readScope(scope, cursor: cursor, using: service)
+    }
+    private func readScope(_ scope: ConversationCursor.Scope, cursor: ConversationCursor?, notifyTail: Bool = true, using service: any ConversationServing) async {
+        guard let id = conversationID, !loadingScopes.contains(scope),
+              lens == .full || scope.kind == "turn" else { return }
+        let generation = readerGeneration, history = historyGeneration, requestedLens = lens
+        let beforeRead = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
+        loadingScopes.insert(scope)
+        defer { if generation == readerGeneration { loadingScopes.remove(scope) } }
+        do {
+            let page: ConversationPage
+            if let cursor { page = try await service.conversationPage(id, cursor: cursor) }
+            else { page = try await service.conversationScope(id, lens: requestedLens, scope: scope) }
+            let sizes = await bodySizes(for: page.items)
+            guard !Task.isCancelled, generation == readerGeneration, history == historyGeneration,
+                  id == conversationID, requestedLens == lens else { return }
+            displayByteSizes.merge(sizes) { _, new in new }
+            var map = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
+            if cursor == nil, let previous = scopeKeys[scope] {
+                let elsewhere = scopeKeys.filter { $0.key != scope }.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+                let fresh = Set(page.items.map(\.key))
+                for key in previous.subtracting(fresh).subtracting(elsewhere) { map[key] = nil; expandedBodies[key] = nil }
+                scopeKeys[scope] = fresh
+            }
+            for item in page.items {
+                // A tail change received during this HTTP read wins over its older page.
+                guard map[item.key] == beforeRead[item.key] else { continue }
+                if map[item.key]?.body != item.body { expandedBodies[item.key] = nil }
+                map[item.key] = item
+            }
+            items = map.values.sorted { ($0.order?.sequence ?? 0, $0.order?.slot ?? 0) < ($1.order?.sequence ?? 0, $1.order?.slot ?? 0) }
+            scopeKeys[scope, default: []].formUnion(page.items.map(\.key))
+            scopeOlder[scope] = page.older
+            if let key = scope.key { bodyErrors[key] = nil }
+            admitHistoryScope(scope, keys: Set(page.items.map(\.key)))
+            retainDisplay()
+            reconcileItems()
+            if notifyTail { scopeRevision += 1 }
+        } catch {
+            if !Task.isCancelled, generation == readerGeneration, let key = scope.key {
+                bodyErrors[key] = ServerReadFailure.note(error) ?? "This history did not load. Try again."
             }
         }
     }

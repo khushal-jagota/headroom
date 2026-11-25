@@ -166,6 +166,10 @@ import UniformTypeIdentifiers
         XCTAssertEqual(model.projectionBuildCount, count + 2)
         model.expandedBodies["reply"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Expanded"}]}"#.utf8))
         XCTAssertEqual(model.rows.first?.text, "Expanded")
+        await service.setSnapshot(Self.snapshot([Self.item("reply", kind: "agent_message", text: "Fresh after reconnect")]))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertNil(model.expandedBodies["reply"], "A new snapshot body invalidates the previous expansion")
+        XCTAssertEqual(model.rows.first?.text, "Fresh after reconnect")
     }
     func testLiveReferenceReusesOnlyIdenticalBytesAndCoalescesRefreshDuringInFlightRead() async throws {
         let model = ConversationModel(); model.conversationID = "conv_1"; model.lens = .full
@@ -252,13 +256,18 @@ import UniformTypeIdentifiers
         XCTAssertTrue(admitted)
         let gap = await model.applyTail(try changes(from: 4), using: service)
         XCTAssertFalse(gap)
+        XCTAssertNil(model.tailAfterSequence)
+        _ = await model.applyTail(.snapshot(snapshot), using: service)
         let invalidated = await model.applyTail(try changes(from: 5, invalidated: [["kind": "timeline", "key": NSNull()]]), using: service)
         XCTAssertFalse(invalidated)
+        _ = await model.applyTail(.snapshot(snapshot), using: service)
         var restarted = snapshotJSON["status"] as! [String: Any]; restarted["runtime_epoch"] = "later"
         let epoch = await model.applyTail(try changes(from: 5, status: restarted), using: service)
         XCTAssertFalse(epoch)
         let reset = await model.applyTail(.reset, using: service)
         XCTAssertFalse(reset)
+        XCTAssertNil(model.tailAfterSequence)
+        _ = await model.applyTail(.snapshot(snapshot), using: service)
         let continued = await model.applyTail(try changes(from: 5), using: service)
         XCTAssertTrue(continued)
     }
@@ -1123,6 +1132,123 @@ import UniformTypeIdentifiers
         try measure("300-items-480KB", count: 300, characters: 1_600)
         try measure("4-large-bodies-520KB", count: 4, characters: 130_000)
     }
+    // The old projection discarded every bodyless head and had no scoped reads.
+    // These cases cover the wire-to-display boundary in the existing Foundation host.
+    func testFocusFoldExpansionKeepsToolAndNarrationRowsOut() async throws {
+        let fixture = Self.structuredProjection()
+        let service = ConversationStub(fate: "started")
+        await service.setSnapshot(Self.snapshot(fixture.timeline))
+        try await service.setScope(.init(kind: "turn", key: "turn"), items: fixture.turn)
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.map(\.id), ["turn", "latest"])
+        let head = try XCTUnwrap(model.items.first { $0.key == "turn" })
+        await model.toggleScope(head, using: service)
+        XCTAssertEqual(model.rows.map(\.id), ["turn", "earlier", "latest"])
+        XCTAssertTrue(model.rows.last?.breakBefore == true)
+        XCTAssertFalse(model.rows.contains { $0.presentation == .tool || $0.presentation == .workGroup || $0.presentation == .narration })
+        await model.toggleScope(head, using: service)
+        XCTAssertEqual(model.rows.map(\.id), ["turn", "latest"])
+    }
+
+    func testFullScopeSurvivesReconnectAndReceivesScopedTailChanges() async throws {
+        let fixture = Self.structuredProjection()
+        let service = ConversationStub(fate: "started")
+        try await service.setScope(.init(kind: "turn", key: "turn"), items: fixture.turn)
+        try await service.setScope(.init(kind: "work_group", key: "group"), items: fixture.calls)
+        let model = ConversationModel(); model.conversationID = "conv_1"; model.lens = .full
+        var snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot(fixture.timeline).utf8))
+        snapshot.coverage = .init(throughSequence: 8)
+        let admitted = await model.applyTail(.snapshot(snapshot), using: service)
+        XCTAssertTrue(admitted)
+        let head = try XCTUnwrap(model.items.first { $0.key == "turn" })
+        XCTAssertEqual(head.durationSeconds, 168, "The renderer needs the settled head's real duration")
+        await model.loadScope(head, using: service)
+        let group = try XCTUnwrap(model.items.first { $0.key == "group" })
+        XCTAssertEqual(group.entryCount, 2, "The renderer needs the run's real call count")
+        XCTAssertFalse(model.rows.contains { $0.presentation == .tool }, "A multi-call run starts closed")
+        await model.toggleScope(group, using: service)
+        XCTAssertEqual(model.rows.filter { $0.presentation == .tool }.count, 2)
+        XCTAssertTrue(model.rows.contains { $0.presentation == .narration })
+        XCTAssertEqual(Set(model.retainedRanges.map(\.scope.kind)), ["timeline", "turn", "work_group"])
+        // A resumed stream must send its admitted cursor along with retained scopes.
+        // Otherwise the real server replaces them with a timeline-only subscription.
+        let previousGeneration = model.beginTail(resuming: true)
+        model.endTail(generation: previousGeneration)
+        let after = try XCTUnwrap(model.tailAfterSequence)
+        XCTAssertEqual(after, 8)
+        model.beginTail(resuming: true)
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!)
+        let request = try api.conversationTailRequest("conv_1", lens: .full, transcript: true, ranges: model.retainedRanges, after: after)
+        let query = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(query.first { $0.name == "after" }?.value, "8")
+        let encodedRanges = try XCTUnwrap(query.first { $0.name == "ranges" }?.value)
+        let ranges = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encodedRanges.utf8)) as? [[String: Any]])
+        XCTAssertEqual(Set(ranges.compactMap { ($0["scope"] as? [String: Any])?["kind"] as? String }), ["timeline", "turn", "work_group"])
+        let timelineScope = try XCTUnwrap(ranges.compactMap { $0["scope"] as? [String: Any] }.first { $0["kind"] as? String == "timeline" })
+        XCTAssertTrue(timelineScope["key"] is NSNull, "The server requires an explicit null key for timeline scope")
+        XCTAssertEqual(model.rows.filter { $0.presentation == .tool }.count, 2)
+        var changed = fixture.calls[0]
+        changed["body"] = ["kind": "inline", "value": ["kind": "tool_call", "title": "Read files", "status": "completed", "detail": "Final output"]]
+        let updated = try APIClient.decoder().decode(ConversationItem.self, from: JSONSerialization.data(withJSONObject: changed))
+        let delta = ConversationTailChanges(lens: "full", fromSequence: 8, coverage: .init(throughSequence: 9), upserts: [updated],
+            scopeChanges: [.init(scope: .init(kind: "work_group", key: "group"), itemKeys: [updated.key], removedKeys: ["call-2"])],
+            removedKeys: [], invalidatedScopes: [], status: snapshot.status)
+        let applied = await model.applyTail(.changes(delta), using: service)
+        XCTAssertTrue(applied)
+        XCTAssertEqual(model.rows.first { $0.id == "call-1" }?.body?.detail, "Final output")
+        XCTAssertFalse(model.rows.contains { $0.id == "call-2" }, "A scoped removal cannot remain frozen on screen")
+    }
+
+    func testTypedMediaKeepsImageOnlyRowsAndOutgoingThumbnailThroughReceipt() async throws {
+        let content: [[String: Any]] = [["piece": "image", "stored_file_id": "image-1", "media_type": "image/jpeg", "file_name": "photo.jpeg", "width": 800, "height": 600],
+            ["piece": "text", "text": "The updated screen."],
+            ["piece": "file", "stored_file_id": "movie-1", "media_type": "video/quicktime", "file_name": "walkthrough.mov", "byte_count": 123]]
+        let owner: [String: Any] = ["kind": "row", "key": "owner", "sender_message_id": "local", "body": ["kind": "inline", "value": ["kind": "prompt", "content": [content[0]]]]]
+        let agent: [String: Any] = ["kind": "row", "key": "agent", "body": ["kind": "inline", "value": ["kind": "agent_message", "content": content]]]
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let local = ConversationSend.Piece(piece: "image", data: "local-image-bytes", mediaType: "image/jpeg", fileName: "photo.jpeg")
+        model.outgoing = [.init(id: "local", text: "", attachments: [local])]
+        let service = ConversationStub(fate: "started")
+        await service.setSnapshot(Self.snapshot([owner, agent]))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.count, 2, "An image-only message is real content")
+        let received = try XCTUnwrap(model.rows.first { $0.id == "local" })
+        XCTAssertEqual(received.pieces.first?.storedFileId, "image-1")
+        XCTAssertEqual(received.attachments, [local], "Keep the local preview until stored media loads")
+        XCTAssertTrue(model.outgoing.isEmpty, "The fallback must not duplicate the received message")
+        let reply = try XCTUnwrap(model.rows.first { $0.id == "agent" })
+        XCTAssertEqual(reply.pieces.map(\.piece), ["image", "text", "file"])
+        XCTAssertTrue(reply.pieces[2].isVideo)
+        XCTAssertEqual(reply.pieces[0].width, 800)
+        XCTAssertEqual(reply.text, "The updated screen.", "Filenames must not become message prose")
+    }
+
+    func testConversationMediaURLKeepsEncodedConversationAndFileSegments() throws {
+        let api = APIClient(baseURL: URL(string: "https://home.example")!)
+        let url = try api.conversationFileURL("conversation/one", storedFileID: "file?#two")
+        XCTAssertEqual(url.absoluteString, "https://home.example/api/conversation/conversations/conversation%2Fone/files/file%3F%23two")
+        XCTAssertNil(url.query)
+        XCTAssertNil(url.fragment)
+    }
+
+    private static func structuredProjection() -> (timeline: [[String: Any]], turn: [[String: Any]], calls: [[String: Any]]) {
+        func row(_ key: String, sequence: Int, kind: String, body: [String: Any], group: String? = nil) -> [String: Any] {
+            var result: [String: Any] = ["kind": "row", "key": key, "row_kind": kind, "turn_key": "turn", "order": ["sequence": sequence, "slot": 1], "body": ["kind": "inline", "value": body]]
+            if kind == "agent_message" { result["fold_rule"] = "earlier_message" }
+            if let group { result["work_group_key"] = group }
+            return result
+        }
+        let head: [String: Any] = ["kind": "turn", "key": "turn", "order": ["sequence": 1, "slot": 0], "settled": true, "stopped": false, "ending": "completed", "duration_seconds": 168, "folded_message_count": 1, "tool_call_count": 2, "latest_message_key": "latest"]
+        let earlier = row("earlier", sequence: 2, kind: "agent_message", body: ["kind": "agent_message", "to_owner": true, "content": [["piece": "text", "text": "First result"]]])
+        let narration = row("narration", sequence: 3, kind: "agent_message", body: ["kind": "agent_message", "to_owner": false, "content": [["piece": "text", "text": "Check the files"]]])
+        let group: [String: Any] = ["kind": "work_group", "key": "group", "turn_key": "turn", "order": ["sequence": 4, "slot": 0], "entry_count": 2, "settled": true]
+        let first = row("call-1", sequence: 4, kind: "tool_call", body: ["kind": "tool_call", "title": "Read files", "status": "running"], group: "group")
+        let second = row("call-2", sequence: 5, kind: "tool_call", body: ["kind": "tool_call", "title": "Check files", "status": "completed"], group: "group")
+        let latest = row("latest", sequence: 8, kind: "agent_message", body: ["kind": "agent_message", "to_owner": true, "content": [["piece": "text", "text": "Final result"]]])
+        return ([head, earlier, latest], [narration, group], [first, second])
+    }
+
     private static func milliseconds(_ duration: Duration) -> Double {
         Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1_000_000_000_000_000
     }
@@ -1170,6 +1296,15 @@ private actor ConversationStub: ConversationServing {
     func releaseBody() { bodyContinuation?.resume(); bodyContinuation = nil }
     func setBody(_ value: ConversationBody) { body = value }
     func setPage(_ value: ConversationPage) { page = value }
+    var scopes: [ConversationCursor.Scope: ConversationPage] = [:]
+    func setScope(_ scope: ConversationCursor.Scope, items: [[String: Any]]) throws {
+        let data = try JSONSerialization.data(withJSONObject: ["items": items, "older": NSNull()])
+        scopes[scope] = try APIClient.decoder().decode(ConversationPage.self, from: data)
+    }
+    func conversationScope(_ id: String, lens: ConversationLens, scope: ConversationCursor.Scope) async throws -> ConversationPage {
+        guard let page = scopes[scope] else { throw URLError(.unsupportedURL) }
+        return page
+    }
     var receipt: String?
     var liveReads = 0
     var requestedLenses: [ConversationLens] = []

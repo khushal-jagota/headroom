@@ -59,12 +59,12 @@ struct ConversationComposer: View {
                         }
                     }
                 }.frame(minHeight: 44)
-            }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            }.font(reviewReply ? PanelsTheme.TypeScale.small : ConversationTypography.body).foregroundStyle(PanelsTheme.muted)
                 .accessibilityIdentifier("conversation-error")
         }
         if !model.attachments.isEmpty || model.preparingPhoto {
             ConversationAttachmentTray(pieces: model.attachments, preparingPhotoNames: model.preparingPhotos.values.sorted(),
-                preparing: model.preparingDraftPhotos) { index in
+                preparing: model.preparingDraftPhotos, conversationText: !reviewReply) { index in
                 guard model.attachments.indices.contains(index) else { return }
                 model.attachments.remove(at: index)
             }
@@ -76,7 +76,7 @@ struct ConversationComposer: View {
                     Button("Retry reply") { Haptics.light(); Task { _ = await sendReply?() } }
                         .frame(minHeight: 44).disabled(capturingSpeech || model.preparingPhoto)
                 }
-            }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            }.font(reviewReply ? PanelsTheme.TypeScale.small : ConversationTypography.body).foregroundStyle(PanelsTheme.muted)
         }
     }
 
@@ -127,7 +127,7 @@ struct ConversationComposer: View {
                 if speech.recording || speech.transcribing || speech.starting {
                     Button { speech.cancel() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel recording")
                     if speech.starting {
-                        Text("Microphone…").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                        Text("Microphone…").font(reviewReply ? PanelsTheme.TypeScale.small : ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
                     } else {
                         HStack(spacing: 3) {
                             ForEach(0..<18) { index in
@@ -136,7 +136,7 @@ struct ConversationComposer: View {
                         }.frame(maxWidth: .infinity, maxHeight: 24)
                             .animation(reduceMotion ? nil : .linear(duration: PanelsTheme.Motion.fast), value: speech.level)
                             .accessibilityLabel(speech.recording ? "Recording" : "Turning speech into text")
-                        if speech.recording, let start = speech.startedAt { Text(start, style: .timer).monospacedDigit().font(PanelsTheme.TypeScale.small) }
+                        if speech.recording, let start = speech.startedAt { Text(start, style: .timer).monospacedDigit().font(reviewReply ? PanelsTheme.TypeScale.small : ConversationTypography.body) }
                         else { RingSpinner(size: .compact) }
                     }
                     Spacer(minLength: 0)
@@ -165,14 +165,14 @@ struct ConversationComposer: View {
             HStack(spacing: 4) {
                 ConversationBackendMark(backend: DriverCatalog.composerBackend(model.backendKey, in: store.drivers))
                 Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
-            }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).padding(.vertical, 4)
+            }.font(reviewReply ? PanelsTheme.TypeScale.small : ConversationTypography.body).padding(.horizontal, 8).padding(.vertical, 4)
                 .frame(minHeight: 30).overlay(Capsule().stroke(PanelsTheme.border))
         }.accessibilityLabel("Choose model")
     }
 
     private var field: some View {
         TextField(placeholder ?? (reviewReply ? "Reply…" : "Message"), text: $model.draft, axis: .vertical)
-            .font(PanelsTheme.TypeScale.body).lineLimit(1...5)
+            .font(reviewReply ? PanelsTheme.TypeScale.body : ConversationTypography.body).lineLimit(1...5)
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)
             .textFieldStyle(.plain).accessibilityIdentifier("conversation-input")
@@ -223,12 +223,13 @@ struct ConversationAttachmentTray: View {
     let pieces: [ConversationSend.Piece]
     var preparingPhotoNames: [String] = []
     var preparing = false
+    var conversationText = true
     var remove: ((Int) -> Void)? = nil
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
-                    ConversationAttachmentTile(piece: piece, preparing: preparing && piece.piece == "image", remove: remove.map { action in { action(index) } })
+                    ConversationAttachmentTile(piece: piece, preparing: preparing && piece.piece == "image", conversationText: conversationText, remove: remove.map { action in { action(index) } })
                 }
                 ForEach(Array(preparingPhotoNames.enumerated()), id: \.offset) { _, name in
                     HStack(spacing: 8) {
@@ -252,6 +253,7 @@ struct ConversationAttachmentTray: View {
 struct ConversationAttachmentTile: View {
     let piece: ConversationSend.Piece
     var preparing = false
+    var conversationText = true
     var remove: (() -> Void)? = nil
     @State private var thumbnail: UIImage?
     @ScaledMetric(relativeTo: .body) private var side = 64.0
@@ -272,7 +274,7 @@ struct ConversationAttachmentTile: View {
                         .font(PanelsTheme.TypeScale.caption.weight(.semibold)).foregroundStyle(PanelsTheme.muted)
                         .frame(width: 40, height: 40).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
+                        Text(name).font(conversationText ? ConversationTypography.body : PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
                         Text(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }.frame(maxWidth: 160, alignment: .leading)

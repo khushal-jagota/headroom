@@ -197,15 +197,16 @@ private struct ConversationSurface: View {
             // has not started yet has only its owner's start values to read.
             if model.conversationID == nil { await readConfiguration() }
         }
-        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
+        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)|\(model.scopeRevision)") {
             guard active, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
-                let generation = model.beginTail()
+                let after = model.tailAfterSequence
+                let generation = model.beginTail(resuming: after != nil)
                 defer { model.endTail(generation: generation) }
                 var applied = false, failed = false
                 do {
-                    for try await frame in store.client.conversationTail(id, lens: model.lens, transcript: isPage) {
+                    for try await frame in store.client.conversationTail(id, lens: model.lens, transcript: isPage, ranges: model.retainedRanges, after: after) {
                         let before = configurationFacts
                         guard await model.applyTail(frame, transcript: isPage, generation: generation, using: store.client) else { break }
                         // Held prompts, the read boundary and the running model change with a
@@ -264,14 +265,14 @@ private struct ConversationSurface: View {
                         Text(TicketMachine.unknownActivityText(model.machineLocale))
                         Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
                     }
-                }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                }.font(ConversationTypography.metadata).foregroundStyle(PanelsTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
                 ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
             }
             if readOnly {
-                Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
+                Text("Historical conversation · read only").font(ConversationTypography.body)
                     .foregroundStyle(PanelsTheme.faint).padding()
             } else {
                 bottom.fixedSize(horizontal: false, vertical: true)
@@ -289,17 +290,23 @@ private struct ConversationSurface: View {
         if !isPage {
             Button(action: open) {
                 HStack(spacing: 8) {
-                    Group {
-                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
-                            RingSpinner(size: .compact)
-                        } else {
-                            Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
-                        }
-                    }.frame(width: 12)
+                    let known = model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth)
+                    let working = model.status?.turnRunning == true || model.status?.backgroundTasks?.isEmpty == false
                     let latest = model.latestMessage
-                    Text(.init(model.compactPreview))
-                        .font(PanelsTheme.TypeScale.small).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            if known && working { RingSpinner(size: .compact) }
+                            else { Circle().fill(PanelsTheme.accent).frame(width: 6, height: 6).opacity(model.hasUnread ? 1 : 0) }
+                            if !known { Text("Current activity is unknown") }
+                            else if working { ConversationElapsedLabel(prefix: "Working for", startedAt: model.status?.rest.latestTurn?.startedAtUnixMilliseconds) }
+                            else { Text("Idle") }
+                        }
+                        if !model.compactPreview.isEmpty, model.compactPreview != "Conversation" {
+                            Text(model.compactPreview).lineLimit(1)
+                        }
+                    }
+                    .font(ConversationTypography.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     if latest?.own == true, latest?.note != nil {
                         Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not delivered")
                     }
@@ -309,7 +316,7 @@ private struct ConversationSurface: View {
                 .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(model.compactPreview)
+            .accessibilityLabel("Conversation. " + model.compactPreview)
             .accessibilityIdentifier("conversation-line")
             .frame(minHeight: ConversationLayout.lineHeight)
             .foregroundStyle(PanelsTheme.faint)
@@ -333,7 +340,7 @@ private struct ConversationSurface: View {
                                     Image(systemName: "xmark").font(.system(size: 18)).frame(width: 44, height: 44)
                                 }.accessibilityLabel("Remove queued message")
                             }
-                        }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 12)
+                        }.font(ConversationTypography.body).padding(.horizontal, 12)
                             .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 12))
                     }
                 }.disabled(changingQueue).padding(.horizontal, 12)
@@ -374,6 +381,9 @@ struct ConversationThread: View {
     var active = false
     @State private var appeared = false
     @State private var visibleRowIDs: Set<String> = []
+    private var activityUnknown: Bool {
+        model.status?.authority != "current" || model.error != nil || TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth)
+    }
     private var readBoundary: ConversationReadBoundary? {
         model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
     }
@@ -398,46 +408,51 @@ struct ConversationThread: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if model.status?.diagnosticsExpired == true {
+                        Text("Some diagnostic history expired.")
+                            .font(ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
+                            .padding(.bottom, 20).accessibilityIdentifier("conversation-diagnostics-expired")
+                    }
                     if model.older != nil {
                         Button("Earlier messages") { Task { await model.loadOlder(using: store.client) } }
-                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44)
+                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44).padding(.bottom, 20)
                     }
                     ForEach(model.rows) { row in
                         HStack {
                             if row.own { Spacer(minLength: 28) }
                             if row.own, let note = row.note { refusedMark(note: note, retryID: readOnly ? nil : row.retryID) }
-                            VStack(alignment: .leading, spacing: 6) {
-                                if let sender = row.senderLabel {
-                                    Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                                }
-                                if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
-                                    Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
-                                    if let error = model.bodyErrors[item.key] {
-                                        Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
-                                    }
-                                } else if !row.text.isEmpty {
-                                    PanelsMarkdown(source: row.text, baseURL: store.baseURL)
-                                }
-                                if !row.attachments.isEmpty {
-                                    ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
-                                }
-                                if !row.own, let note = row.note {
-                                    Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
-                                }
-                            }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
-                                // Code, tables and charts take what they are offered; the spacer keeps only its minimum.
+                            ConversationTranscriptRow(row: row, model: model, activityUnknown: activityUnknown)
                                 .layoutPriority(1)
                             if !row.own { Spacer(minLength: 0) }
-                        }.id(row.id)
+                        }
+                            .padding(.bottom, row.presentation == .workGroup && row.item?.entryCount == 1 && model.bodyErrors[row.item?.key ?? ""] == nil ? 0 : 20)
+                            .id(row.id)
                             .onScrollVisibilityChange(threshold: 0.01) { visible in
                                 if visible { visibleRowIDs.insert(row.id) }
                                 else { visibleRowIDs.remove(row.id) }
                             }
                     }
+                    if model.status?.stoppedWithoutEnding == true, !model.rows.contains(where: { $0.body?.kind == "turn_stopped" }) {
+                        Text("Stopped before it finished")
+                            .font(ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
+                            .padding(.bottom, 20).accessibilityIdentifier("conversation-stopped-without-ending")
+                    }
+                    if model.status?.hasBackgroundTaskAfterTheTurn == true {
+                        ForEach(model.status?.backgroundTasks ?? [], id: \.taskId) { task in
+                            HStack(spacing: 8) {
+                                if !activityUnknown { RingSpinner(size: .compact) }
+                                Text("Background task: " + task.taskDescription)
+                            }
+                            .font(ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
+                            .padding(.bottom, 20)
+                            .accessibilityIdentifier("conversation-background-task")
+                        }
+                    }
                 }
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
+            .font(ConversationTypography.body)
             .accessibilityIdentifier("conversation-thread")
             .confirmationDialog(refusedNote?.note ?? "", isPresented: Binding(get: { refusedNote != nil }, set: { if !$0 { refusedNote = nil } }), titleVisibility: .visible) {
                 if let id = refusedNote?.retryID {
@@ -516,7 +531,7 @@ struct ConversationThread: View {
                                 Text("Latest")
                                 Image(systemName: "arrow.down")
                             }
-                            .font(PanelsTheme.TypeScale.latestAction)
+                            .font(ConversationTypography.body)
                             .foregroundStyle(PanelsTheme.text)
                             .padding(.horizontal, 14).frame(height: 44)
                             .background(PanelsTheme.raised, in: Capsule())

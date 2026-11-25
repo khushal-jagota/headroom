@@ -542,8 +542,9 @@ conversation model. The chat uses the page surface with raised outgoing-message
 bubbles, the thread and input; it does not repeat the latest-message line. The page's bottom bar remains
 available for sending without opening the chat. At rest the line remains visible
 while typing and recording,
-with the latest message from either side and “You:” for outgoing messages.
-Working uses the server's current running state.
+with Working for an elapsed time or Idle, followed by the latest message when one exists.
+“You:” identifies outgoing previews. Continuing background work keeps the working state.
+Unknown connection or machine activity replaces that claim with an explicit unknown state.
 
 The empty composer is at least 48 points tall with a plus and microphone. Text
 opens a card with the input above the controls. At accessibility text sizes the
@@ -596,7 +597,24 @@ turn's running state changes. A gap or reset reopens the tail for a fresh
 snapshot. Full subscribes
 to live output and reads its versioned text body. Streaming and recorded replies
 share a visual identity. Focus follows the server's reply-only contract. Earlier
-pages and deferred bodies load on demand. Opening finds the first unread owner
+pages and deferred bodies load on demand. Turn heads preserve elapsed and settled
+work. Focus can disclose folded earlier messages without revealing tool activity.
+Full reads the turn and tool-run scopes, preserves narration and system history,
+and opens native tool disclosures for details. Short 28-point separators are two
+points thick between adjacent agent messages. Each continuing background task has
+its own description and ring after the turn ends. Conversation prose, code,
+composer text and dock text use 15-point text with Dynamic Type. Markdown headings
+use 20 points, status uses 15 points, and attribution stays compact at 13 points. Review card styles are unchanged.
+
+Message pieces remain typed and ordered. Owner attachments precede their text;
+agent pieces keep their original order. Stored images use inline thumbnails and
+open the native full-screen pinch-to-zoom viewer. Video files show a poster and
+open native playback. Both use validated conversation-scoped downloads through
+the native request factory. Thumbnails decode off the main actor, and an outgoing
+local thumbnail remains until its stored replacement loads. Other files retain
+their filename and system preview. Video intake belongs to the composer upload flow.
+
+Opening finds the first unread owner
 message, loading earlier pages if necessary, or returns to the latest line.
 Speech starts on an explicit tap after permission. Words are held until recording
 ends, then appear as an editable draft. Cancel discards recognition results. Nothing
