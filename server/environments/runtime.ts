@@ -43,6 +43,7 @@ export interface EnvironmentOperations {
   service_unit: string | null;
   /** Called only for an installed release that runs in its own service unit. */
   provider(): UpdateProvider | null;
+  ensure_home_machine?(root: string, unit: string, revision: string): Promise<void>;
   staging: ReleaseStaging;
   installer: InstallerOperations;
   create_mac(context: MacUpdateCompositionContext): MacUpdateComposition;
@@ -77,6 +78,15 @@ export async function createEnvironmentRuntime(
     collector: config.test_mode ? null : operations.collector,
   });
   const attempts = new FileUpdateAttemptStore(attempt_path(data_directory), () => changes.emit());
+  if (installed && operations.service_unit && operations.ensure_home_machine) {
+    const attempt =
+      attempts.read() ?? attempts.import_legacy_request(data_directory, config.app_sha);
+    if (
+      attempt?.to_sha === config.app_sha &&
+      (attempt.state === 'installing' || attempt.state === 'done')
+    )
+      await operations.ensure_home_machine(installed, operations.service_unit, attempt.to_sha);
+  }
   const provider = installed === null ? null : operations.provider();
   const move = create_server_move({
     config,

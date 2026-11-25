@@ -1,5 +1,5 @@
 /** Bind real environment adapters to one server invocation. Default activation stays separate. */
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { update_repository_configuration } from '../core/config.ts';
 import { is_os_error } from '../core/system_errors.ts';
@@ -80,48 +80,24 @@ export const create_production_environment_operations: ProductionEnvironmentFact
   signal.throwIfAborted();
   const repository = update_repository_configuration(environment, dirname(context.config.db_path));
 
-  if (
-    service_unit &&
-    context.config.app_sha &&
-    !context.config.test_mode &&
-    !installer_test_mode(environment)
-  ) {
-    const { installed_update_root } = await import('./updates/service.ts');
-    const root = await installed_update_root(
-      context.config.app_sha,
-      application_root,
-      context.config.db_path,
-      service_unit,
-    );
-    if (root) {
-      const { FileUpdateAttemptStore, attempt_path } = await import('./updates/attempts.ts');
-      const data = join(root, 'data');
-      const store = new FileUpdateAttemptStore(attempt_path(data), () => {});
-      const attempt = store.read() ?? store.import_legacy_request(data, context.config.app_sha);
-      if (
-        attempt &&
-        (attempt.state === 'installing' || attempt.state === 'done') &&
-        attempt.to_sha === context.config.app_sha
-      ) {
-        const { ensure_upgrade_machine } = await import('../installation/upgrade_machine.ts');
-        const { production_home_dependencies } = await import('../installation/production.ts');
-        await ensure_upgrade_machine(
-          root,
-          service_unit,
-          context.config.port,
-          attempt.to_sha,
-          context.database,
-          await production_home_dependencies(
-            { child_processes: context.child_processes, signal, deadline: null },
-            environment,
-          ),
-        );
-      }
-    }
-  }
   return {
     app_root: application_root,
     service_unit,
+    async ensure_home_machine(root, unit, revision) {
+      const { ensure_upgrade_machine } = await import('../installation/upgrade_machine.ts');
+      const { production_home_dependencies } = await import('../installation/production.ts');
+      await ensure_upgrade_machine(
+        root,
+        unit,
+        context.config.port,
+        revision,
+        context.database,
+        await production_home_dependencies(
+          { child_processes: context.child_processes, signal, deadline: null },
+          environment,
+        ),
+      );
+    },
     // Runtime invokes this only after installed_update_root accepts the actual paths/unit.
     provider: () =>
       repository === null
