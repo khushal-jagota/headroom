@@ -1,6 +1,7 @@
-/** Digest-pinned bootstrap inputs and the most recent permanent server publication. */
+/** Digest-checked permanent machine Releases: the supported floor and newest publication. */
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, stat, rename } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
@@ -19,10 +20,6 @@ function validate_pin(value: unknown): MachineBaselinePin {
     !is_record(value) ||
     typeof value.source_sha !== 'string' ||
     !/^[0-9a-f]{40}$/.test(value.source_sha) ||
-    typeof value.run_id !== 'string' ||
-    !/^[1-9][0-9]*$/.test(value.run_id) ||
-    typeof value.artifact_id !== 'string' ||
-    !/^[1-9][0-9]*$/.test(value.artifact_id) ||
     typeof value.zip_sha256 !== 'string' ||
     !/^[0-9a-f]{64}$/.test(value.zip_sha256) ||
     typeof value.archive_sha256 !== 'string' ||
@@ -33,18 +30,12 @@ function validate_pin(value: unknown): MachineBaselinePin {
     throw new Error('Invalid retained machine baseline pin');
   return value as unknown as MachineBaselinePin;
 }
-/**
- * `oldest` is the supported floor. `previous` is the build that machines run before the first
- * permanent server Release exists. After that, the newest permanent Release is the previous build.
- */
-export async function machine_baseline_pin(
-  platform: MachinePlatform,
-  role: 'oldest' | 'previous' = 'oldest',
-): Promise<MachineBaselinePin> {
-  const values = JSON.parse(
-    await readFile(new URL('./machine_baselines.json', import.meta.url), 'utf8'),
-  );
-  return validate_pin(values?.[role]?.[platform]);
+/** The supported floor is explicit. The previous baseline always comes from the release catalog. */
+async function baseline_contract() {
+  return JSON.parse(await readFile(new URL('./machine_baselines.json', import.meta.url), 'utf8'));
+}
+export async function machine_baseline_pin(platform: MachinePlatform): Promise<MachineBaselinePin> {
+  return validate_pin((await baseline_contract()).oldest?.[platform]);
 }
 export async function extract_machine_baseline(
   zip: string,
@@ -77,14 +68,15 @@ export async function extract_machine_baseline(
     zip_sha256: pin.zip_sha256,
   };
 }
-export async function load_machine_baselines(
+/** Read one baseline directly from a permanent Release, without an Actions or cache fallback. */
+export async function load_machine_baseline(
   platform: MachinePlatform,
+  role: 'oldest' | 'previous',
   root: string,
-  cache: string,
   repository: string,
   token: string,
   signal: AbortSignal,
-): Promise<{ oldest: MachineBaseline; previous: MachineBaseline }> {
+): Promise<MachineBaseline> {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid baseline repository');
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
   const get = async (url: string, binary = false) => {
@@ -93,91 +85,68 @@ export async function load_machine_baselines(
       signal,
     });
     if (!response.ok)
-      throw new Error(
-        `Retained machine baseline is unavailable (${response.status}). Restore the protected baseline custody copy.`,
-      );
+      throw new Error(`Permanent machine baseline is unavailable (${response.status})`);
     return response;
   };
-  await mkdir(cache, { recursive: true, mode: 0o700 });
-  /** A digest-pinned Actions artifact, cached by its role, then checked and extracted. */
-  const retained = async (role: 'oldest' | 'previous'): Promise<MachineBaseline> => {
-    const pin = await machine_baseline_pin(platform, role);
-    const cached = join(cache, role === 'oldest' ? `${platform}.zip` : `${platform}-previous.zip`);
-    try {
-      await stat(cached);
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-      const metadata = await (
-        await get(`https://api.github.com/repos/${repository}/actions/artifacts/${pin.artifact_id}`)
-      ).json();
-      if (
-        !is_record(metadata) ||
-        !is_record(metadata.workflow_run) ||
-        metadata.digest !== 'sha256:' + pin.zip_sha256 ||
-        String(metadata.workflow_run.id) !== pin.run_id ||
-        metadata.expired !== false
+  let release: unknown;
+  if (role === 'oldest') {
+    const contract = await baseline_contract();
+    if (typeof contract.oldest?.release_tag !== 'string')
+      throw new Error('Missing permanent machine floor Release');
+    release = await (
+      await get(
+        `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(contract.oldest.release_tag)}`,
       )
-        throw new Error('Retained machine artifact differs from its pinned GitHub identity');
-      const response = await get(
-        `https://api.github.com/repos/${repository}/actions/artifacts/${pin.artifact_id}/zip`,
-      );
-      if (!response.body) throw new Error('Missing baseline archive stream');
-      const staging = cached + '.download';
-      await pipeline(
-        Readable.fromWeb(response.body as ReadableStream),
-        createWriteStream(staging, { flags: 'wx', mode: 0o600 }),
-        { signal },
-      );
-      if ((await sha256_file(staging)) !== pin.zip_sha256)
-        throw new Error('Retained baseline download digest mismatch');
-      await rename(staging, cached);
-    }
-    return extract_machine_baseline(cached, pin, platform, join(root, role));
-  };
-  const oldest = await retained('oldest');
-  const releases: unknown[] = [];
-  for (let page = 1; ; page++) {
-    const batch = await (
-      await get(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`)
     ).json();
-    if (!Array.isArray(batch)) throw new Error('Invalid release baseline catalog');
-    releases.push(...batch);
-    if (batch.length < 100) break;
-  }
-  const release = releases
-    .filter(
-      (item) =>
-        is_record(item) &&
-        item.draft === false &&
-        item.prerelease === false &&
-        typeof item.tag_name === 'string' &&
-        item.tag_name.startsWith('server-'),
-    )
-    .sort((a, b) => {
-      if (
-        !is_record(a) ||
-        !is_record(b) ||
-        typeof a.published_at !== 'string' ||
-        typeof b.published_at !== 'string' ||
-        !Number.isFinite(Date.parse(a.published_at)) ||
-        !Number.isFinite(Date.parse(b.published_at))
+  } else {
+    const releases: unknown[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await (
+        await get(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`)
+      ).json();
+      if (!Array.isArray(batch)) throw new Error('Invalid release baseline catalog');
+      releases.push(...batch);
+      if (batch.length < 100) break;
+    }
+    release = releases
+      .filter(
+        (item) =>
+          is_record(item) &&
+          item.draft === false &&
+          item.prerelease === false &&
+          typeof item.tag_name === 'string' &&
+          item.tag_name.startsWith('server-'),
       )
-        throw new Error('Invalid published baseline date');
-      return Date.parse(b.published_at) - Date.parse(a.published_at);
-    })[0];
-  if (!release) return { oldest, previous: await retained('previous') };
-  if (!is_record(release) || !Array.isArray(release.assets))
+      .sort((a, b) => {
+        if (
+          !is_record(a) ||
+          !is_record(b) ||
+          typeof a.published_at !== 'string' ||
+          typeof b.published_at !== 'string' ||
+          !Number.isFinite(Date.parse(a.published_at)) ||
+          !Number.isFinite(Date.parse(b.published_at))
+        )
+          throw new Error('Invalid published baseline date');
+        return Date.parse(b.published_at) - Date.parse(a.published_at);
+      })[0];
+  }
+  if (
+    !is_record(release) ||
+    release.draft !== false ||
+    release.prerelease !== false ||
+    !Array.isArray(release.assets)
+  )
     throw new Error('Invalid permanent baseline assets');
   const asset = release.assets.find((item) => is_record(item) && item.name === 'publication.json');
   if (!is_record(asset) || typeof asset.browser_download_url !== 'string')
-    throw new Error('Previous server release has no checked publication');
+    throw new Error('Machine Release has no checked publication');
   const receipt_response = await get(
     `https://api.github.com/repos/${repository}/releases/assets/${asset.id}`,
     true,
   );
   const receipt = await receipt_response.json();
   if (!is_record(receipt) || !is_record(receipt.manifest))
-    throw new Error('Invalid previous publication');
+    throw new Error('Invalid machine publication');
   const update = platform === 'linux' ? receipt.linux_executor : receipt.mac;
   const zip_asset = release.assets.find(
     (item) =>
@@ -189,34 +158,39 @@ export async function load_machine_baselines(
     typeof zip_asset.browser_download_url !== 'string' ||
     typeof zip_asset.digest !== 'string'
   )
-    throw new Error('Previous machine release archive is missing');
-  const previous_pin = {
+    throw new Error('Machine Release archive is missing');
+  const checked_pin = validate_pin({
     source_sha: receipt.manifest.app_sha,
     archive_sha256: update.archive_sha256,
     archive_size: update.archive_size,
     zip_sha256: zip_asset.digest.replace(/^sha256:/, ''),
-    artifact_id: String(zip_asset.id),
-    run_id: String(receipt.publication_run_id),
-  };
-  const checked_previous_pin = validate_pin(previous_pin);
-  const zip = join(root, 'previous.zip');
+  });
+  if (role === 'oldest' && !isDeepStrictEqual(checked_pin, await machine_baseline_pin(platform)))
+    throw new Error('Permanent machine floor differs from its retained pin');
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const zip = join(root, `${role}.zip`);
   const response = await get(
     `https://api.github.com/repos/${repository}/releases/assets/${zip_asset.id}`,
     true,
   );
-  if (!response.body) throw new Error('Previous archive download has no body');
+  if (!response.body) throw new Error('Machine Release archive download has no body');
   await pipeline(
     Readable.fromWeb(response.body as ReadableStream),
     createWriteStream(zip, { flags: 'wx', mode: 0o600 }),
     { signal },
   );
-  return {
-    oldest,
-    previous: await extract_machine_baseline(
-      zip,
-      checked_previous_pin,
-      platform,
-      join(root, 'previous'),
-    ),
-  };
+  return extract_machine_baseline(zip, checked_pin, platform, join(root, role));
+}
+export async function load_machine_baselines(
+  platform: MachinePlatform,
+  root: string,
+  repository: string,
+  token: string,
+  signal: AbortSignal,
+): Promise<{ oldest: MachineBaseline; previous: MachineBaseline }> {
+  const [oldest, previous] = await Promise.all([
+    load_machine_baseline(platform, 'oldest', root, repository, token, signal),
+    load_machine_baseline(platform, 'previous', root, repository, token, signal),
+  ]);
+  return { oldest, previous };
 }

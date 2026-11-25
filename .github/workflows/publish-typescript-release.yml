@@ -321,11 +321,6 @@ jobs:
       - name: Prepare Darwin native tools
         if: matrix.platform == 'darwin'
         run: brew install icu4c pkgconf
-      - name: Restore digest-pinned oldest machine archive
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/machine-baseline-cache
-          key: machine-baseline-${{ matrix.platform }}-${{ hashFiles('server/environments/release/machine_baselines.json') }}
       - name: Download the candidate and prove historical compatibility
         env:
           GH_TOKEN: ${{ github.token }}
@@ -341,7 +336,7 @@ jobs:
           node --input-type=module <<'REQUEST'
           import { writeFileSync } from 'node:fs';
           const root = process.env.RUNNER_TEMP;
-          writeFileSync(root + '/machine-compatibility/request.json', JSON.stringify({candidate_zip:root + '/machine-compatibility/candidate.zip', output_directory:root + '/machine-compatibility/tmp/proof', cache_directory:root + '/machine-baseline-cache'}));
+          writeFileSync(root + '/machine-compatibility/request.json', JSON.stringify({candidate_zip:root + '/machine-compatibility/candidate.zip', output_directory:root + '/machine-compatibility/tmp/proof'}));
           REQUEST
           if [ "$RUNNER_OS" = Linux ]; then
             systemd-run --user --scope --quiet -p Delegate=yes -- \
