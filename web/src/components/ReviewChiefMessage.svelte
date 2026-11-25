@@ -20,8 +20,8 @@
   const sending = $derived(composer.attempts.some(attempt => attempt.status === 'sending' || attempt.status === 'checking'));
   // The send button shows how a send ended, then goes back to the arrow: a green tick when it
   // arrived, a red cross when it was refused, an amber question mark when it may not have arrived.
-  // A refused or uncertain message returns to the field. An uncertain one stays amber until the
-  // words change or the next send starts, because sending it again can deliver it twice.
+  // A refused or uncertain message returns to the field. Each result leaves after a moment, or sooner
+  // when the words change or the next send starts.
   let result = $state<'sent' | 'failed' | 'unsure'>();
   let note = $state<string>();
   let resultTimer: ReturnType<typeof setTimeout> | undefined;
@@ -31,7 +31,7 @@
     note = reason;
     clearTimeout(resultTimer);
     if (next === 'unsure') unsureText = composer.text;
-    else resultTimer = setTimeout(() => { result = undefined; note = undefined; }, next === 'sent' ? 1500 : 4000);
+    resultTimer = setTimeout(() => { result = undefined; note = undefined; }, next === 'sent' ? 1500 : 4000);
   }
   $effect(() => {
     if (composer.accepted) untrack(() => show('sent'));
