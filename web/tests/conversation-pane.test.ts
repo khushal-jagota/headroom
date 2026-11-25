@@ -124,16 +124,21 @@ describe("the header", () => {
 });
 
 describe("queued messages in the pane", () => {
-  it("use the held box before the composer", () => {
+  it("wait in the tray on the composer's top edge, one line each, not in the thread", () => {
     const { body } = render(PaneWithQueryClient, {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const content = body.indexOf("data-conversation-content");
     const stack = body.indexOf("data-conversation-held-stack");
     expect(content).toBeGreaterThan(-1);
-    expect(stack).toBeGreaterThan(content);
+    expect(stack).toBeGreaterThan(body.indexOf("data-conversation-composer"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-held-row"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
+    const tray = body.slice(stack, body.indexOf("data-conversation-box"));
+    expect(tray).toContain("After that, log each 429");
+    expect(tray).not.toContain("c2-bubble");
+    expect(tray).not.toContain("Queued ·");
+    expect(tray).not.toContain("data-conversation-held-more");
     // One anchoring rule for every state: a short thread reads from the top.
     expect(body).not.toContain("data-anchor-end");
   });
