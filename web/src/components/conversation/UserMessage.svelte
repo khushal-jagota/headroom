@@ -15,6 +15,7 @@
   import { refusalOffersResend } from '../../lib/conversation/transcript';
   import { recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
   import { getContext } from 'svelte';
+  import { localMediaOf, sentAttachmentsOf, type LocalMediaPiece } from '../../lib/conversation/localSentMedia';
   let { presentationRowKey = null, row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
     presentationRowKey?: string | null;
     row?: Extract<TranscriptRow, {kind: 'prompt'|'prompt_refused'|'prompt_uncertain'|'prompt_discarded'}> | null;
@@ -31,7 +32,31 @@
   const held = $derived(!row && local?.presentation?.kind === "held" ? local.presentation : null);
   const upload = $derived(!row && local?.presentation?.kind === "upload" ? local.presentation : null);
   const queuedWords = $derived(held ? editableHeldWords(held.row) : null);
-  const pendingNames = $derived(!row && !held && !upload ? local?.attachmentNames ?? [] : []);
+  // The pictures and videos this browser sent with the message, from its own files. While the
+  // message is on its way they are drawn in place of their upload, at their final size, with
+  // the upload's progress on them. Once Panels has stored them, the stored copies draw over them.
+  const sentAttachments = $derived(sentAttachmentsOf(local?.messageId ?? row?.senderMessageId));
+  const localMedia = $derived(sentAttachments.map((attachment, index): LocalMediaPiece | null => {
+    const media = localMediaOf(attachment);
+    return media && { ...media, progress: upload?.files[index]?.progress ?? null };
+  }));
+  const isUploadPiece = (piece: (typeof content)[number]) => piece.piece === 'attachment_upload' || piece.piece === 'video_upload';
+  const storedPieces = $derived(content.flatMap((piece, at) => piece.piece === 'image' || piece.piece === 'file' ? [at] : []));
+  const drawsLocalMedia = $derived(localMedia.some(Boolean) && storedPieces.length === 0);
+  const displayedContent = $derived.by(() => {
+    if (!drawsLocalMedia) return content;
+    const local = new Set(sentAttachments.flatMap((attachment, index) => localMedia[index] && attachment.uploadId ? [attachment.uploadId] : []));
+    return [...localMedia.filter(media => media !== null),
+      ...content.filter(piece => !(isUploadPiece(piece) && 'upload_id' in piece && local.has(piece.upload_id)))];
+  });
+  /** Each stored piece's own local copy, when this browser sent it and the order agrees. */
+  const backdrops = $derived(storedPieces.length > 0 && storedPieces.length === sentAttachments.length
+    ? new Map(storedPieces.flatMap((at, index) => localMedia[index] ? [[at, localMedia[index]!.url] as const] : []))
+    : undefined);
+  /** A picture or video says its progress on itself; only other files keep a line. */
+  const drawnLocally = (index: number) => drawsLocalMedia && localMedia[index] !== null && localMedia[index] !== undefined;
+  const uploadLines = $derived((upload?.files ?? []).filter((file, index) => !drawnLocally(index) || file.failed));
+  const pendingNames = $derived((!row && !held && !upload ? local?.attachmentNames ?? [] : []).filter((_name, index) => !drawnLocally(index)));
   /** v6: a system note's words as one plain line of text (Markdown marks dropped). */
   const systemText = $derived(content.flatMap(piece => piece.piece === 'text' ? [piece.text] : []).join(' ')
     .replace(/`([^`]*)`/g, '$1').replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/\s+/g, ' ').trim());
@@ -166,7 +191,7 @@
   {/if}
 {/snippet}
 {#snippet bubbleFooter()}
-  {#each upload?.files ?? [] as file}
+  {#each uploadLines as file}
     <div class="c2-outgoing-attachment">
       <span>{file.name}</span>
       {#if file.progress !== null}
@@ -189,7 +214,7 @@
       <span class="c2-system-words"><span data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</span>
     </SystemLine>
   {:else}
-    <MessagePieces {presentationRowKey} {content} {conversationId} bubble failed={undelivered !== null} footer={undelivered || upload?.files.length || pendingNames.length ? bubbleFooter : undefined}/>
+    <MessagePieces {presentationRowKey} content={displayedContent} {backdrops} {conversationId} bubble failed={undelivered !== null} footer={undelivered || uploadLines.length || pendingNames.length ? bubbleFooter : undefined}/>
   {/if}
   {#if steered}
     <SystemLine align="end" data-conversation-steered="">Steered<span aria-hidden="true">{" · "}</span><span data-conversation-status-next>into the running turn</span></SystemLine>

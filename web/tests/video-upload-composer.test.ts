@@ -6,7 +6,8 @@ import { AttachmentTransfers, VideoTransfers, pendingUploadsAsPieces, restoredPe
 import type { PendingVideo, UploadDestination, VideoUploadAdapter, VideoUploadStatus } from "../src/lib/conversation/videoUploads/contracts";
 
 const destination: UploadDestination = {kind: "ticket", id: "t_video", expected_conversation_id: null};
-const file = {name: "recording.mp4", size: 100, type: "video/mp4", privateBytes: "never persist these"} as unknown as File;
+// A real File: a video gets a local address for its first frame, which needs a Blob.
+const file = Object.assign(new File(["x".repeat(100)], "recording.mp4", {type: "video/mp4"}), {privateBytes: "never persist these"});
 function video(): PendingVideo {
   return {id: 1, fileName: file.name, byteCount: 100, mediaType: file.type, destination: {...destination}, receivedBytes: 0, phase: "uploading", file};
 }

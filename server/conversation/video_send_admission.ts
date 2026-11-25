@@ -3,7 +3,12 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Database } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
-import { MessageFile, MessageImage, type MessageContent } from './message_content.ts';
+import {
+  MessageFile,
+  MessageImage,
+  type MediaSize,
+  type MessageContent,
+} from './message_content.ts';
 import type { ConversationMessageFiles } from './message_files.ts';
 import { conversation_message_content, inline_image_budget, type SentPiece } from './http.ts';
 import { ConversationStorePrimitives } from './record/data/store.ts';
@@ -136,10 +141,20 @@ export class VideoSendAdmission implements MessageAdmission {
         if (checked.conversation_id === null) this.service.finish(checked, 'refused');
   }
 
-  adopt(upload_id: string, conversation_id: string): MessageImage | MessageFile {
+  adopt(
+    upload_id: string,
+    conversation_id: string,
+    media_size: MediaSize | null = null,
+  ): MessageImage | MessageFile {
     const checked = this.checked.get(upload_id);
     if (!checked) throw new HttpError(409, 'Attachment admission was not checked.');
-    return adopt_upload_piece(this.service, checked, conversation_id, this.inline_budget);
+    return adopt_upload_piece(
+      this.service,
+      checked,
+      conversation_id,
+      this.inline_budget,
+      media_size,
+    );
   }
 
   finish(fate: PromptDeliveryFate): void {
@@ -187,23 +202,28 @@ export function adopt_upload_piece(
   checked: CheckedVideoUpload,
   conversation_id: string,
   budget = { remaining: MAX_CONVERSATION_IMAGE_BYTES },
+  media_size: MediaSize | null = null,
 ): MessageImage | MessageFile {
   try {
     const kept = service.adopt(checked, conversation_id);
     const status = service.status(checked.upload_id);
     const image = kept.media_type.startsWith('image/') && kept.byte_count <= budget.remaining;
     if (image) budget.remaining -= kept.byte_count;
+    // Only a picture or a video has a box to keep. Any other file drops a stray size.
+    const size = /^(image|video)\//.test(kept.media_type) ? media_size : null;
     return image
       ? new MessageImage({
           stored_file_id: kept.stored_file_id,
           media_type: kept.media_type,
           file_name: status.filename,
+          media_size: size,
         })
       : new MessageFile({
           stored_file_id: kept.stored_file_id,
           media_type: kept.media_type,
           file_name: status.filename,
           byte_count: kept.byte_count,
+          media_size: size,
         });
   } catch (error) {
     if (error instanceof VideoUploadError) throw new HttpError(error.status_code, error.message);

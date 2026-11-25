@@ -634,7 +634,6 @@ strong {
   object-fit: contain;
   border-radius: var(--radius-lg);
 }
-.file-preview-media > .file-preview-media--wide { min-width: var(--media-min-width); }
 .file-preview-media > .file-preview-video-poster { background: var(--surface-2); }
 .file-preview-media-play {
   position: absolute;
@@ -669,6 +668,50 @@ strong {
   .file-preview-media > .file-preview-video-poster { max-height: var(--media-max-height-phone); }
 }
 
+/* A picture or video takes its final box before it loads, so nothing around it moves.
+   With a recorded size the box has the media's own shape, never upscaled, within the
+   largest box its place allows. A conversation fits media without a size into one fixed
+   frame (below). The media fades in inside its box. */
+.file-preview-media { --media-box-width: 28rem; --media-box-height: var(--media-max-height); }
+@media (max-width: 600px) { .file-preview-media { --media-box-height: var(--media-max-height-phone); } }
+.file-preview-media[data-media-frame="sized"] {
+  width: min(var(--media-w), var(--media-box-width), calc(var(--media-box-height) * var(--media-ratio)));
+  aspect-ratio: var(--media-ratio);
+  background: var(--surface-2);
+}
+.file-preview-media[data-media-frame="sized"] > :is(.file-preview-image, .file-preview-video-poster) {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  object-fit: cover;
+}
+:is([data-conversation-pane], .review-message-card, .review-outgoing-reply) .file-preview-media[data-media-frame="fixed"] {
+  width: var(--media-box-width);
+  height: var(--media-box-height);
+  background: var(--surface-2);
+}
+:is([data-conversation-pane], .review-message-card, .review-outgoing-reply) .file-preview-media[data-media-frame="fixed"] > :is(.file-preview-image, .file-preview-video-poster) {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: scale-down;
+}
+/* The media draws over this browser's own copy of what it sent, which fills the same box. */
+.file-preview-media > .file-preview-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.file-preview-media[data-media-frame] > :is(.file-preview-image, .file-preview-video-poster) { position: relative; }
+/* The box is the placeholder. A video's own fill would cover the local copy under it. */
+.file-preview-media[data-media-frame] > .file-preview-video-poster { background: transparent; }
+.file-preview-media > [data-media-reveal] { transition: opacity var(--motion-base) var(--motion-ease); }
+.file-preview-media > [data-media-reveal]:not([data-media-loaded]) { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .file-preview-media > [data-media-reveal] { transition: none; } }
+
 /* Two or more together: an even grid of square, cropped cells. */
 .file-preview-grid {
   display: grid;
@@ -679,9 +722,11 @@ strong {
 }
 .file-preview-grid > br { display: none; }
 .file-preview-grid > *, .file-preview-grid .file-preview { min-width: 0; margin: 0; }
-.file-preview-grid .file-preview-media { width: 100%; max-width: none; aspect-ratio: 1; border-radius: var(--radius-md); }
+.file-preview-grid .file-preview-media,
+.file-preview-grid .file-preview-media[data-media-frame] { width: 100%; height: auto; max-width: none; aspect-ratio: 1; border-radius: var(--radius-md); }
 .file-preview-grid .file-preview-media > .file-preview-image,
-.file-preview-grid .file-preview-media > .file-preview-video-poster {
+.file-preview-grid .file-preview-media > .file-preview-video-poster,
+.file-preview-grid .file-preview-media[data-media-frame] > :is(.file-preview-image, .file-preview-video-poster) {
   width: 100%;
   height: 100%;
   max-height: none;
@@ -4123,14 +4168,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* Pictures in a bubble (sent or waiting) are at most 320 wide and 200 tall, their aspect ratio
  * kept, so a mock can be read in place; they open the viewer. The bubble is as wide as its
  * widest content. */
-:is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px); }
+:is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px); --media-box-width: 320px; --media-box-height: 200px; }
 :is(.chat-u, .chat-qrow) .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
   max-width: 100%;
   max-height: 200px;
   border-radius: var(--cv-r-lg);
 }
-:is(.chat-u, .chat-qrow) .file-preview-media > .file-preview-media--wide { min-width: 0; }
-:is(.chat-u, .chat-qrow) .file-preview-grid { width: min(100%, 320px); gap: var(--cv-s1); margin: 0; }
+/* In pixels, so the bubble that measures the grid measures 320, not the pictures' own widths. */
+:is(.chat-u, .chat-qrow) .file-preview-grid { width: 320px; max-width: 100%; gap: var(--cv-s1); margin: 0; }
 :is(.chat-u, .chat-qrow) .file-preview-grid .file-preview-media { max-width: none; border-radius: var(--cv-r-md); }
 
 /* --- Tool rows ------------------------------------------------------------------------------

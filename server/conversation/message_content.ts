@@ -7,14 +7,33 @@ export class MessageText {
     this.text = values.text;
   }
 }
+/** A picture's or video's width and height as the sender's browser showed it. A message
+ *  draws its box at this size before the stored file loads. */
+export interface MediaSize {
+  readonly width: number;
+  readonly height: number;
+}
+/** Keep a piece's size off its JSON. The record writes it explicitly
+ *  (`message_content_json_entries`), and the executor wire, which an agent reads, never needs it. */
+function keep_display_size(piece: object, size: MediaSize | null): void {
+  Object.defineProperty(piece, 'media_size', { value: size, enumerable: false });
+}
 export class MessageImage {
   readonly stored_file_id: string;
   readonly media_type: string;
   readonly file_name: string | null;
-  constructor(values: { stored_file_id: string; media_type: string; file_name?: string | null }) {
+  /** A display hint for Panels' own screens, set in the constructor (`keep_display_size`). */
+  declare readonly media_size?: MediaSize | null;
+  constructor(values: {
+    stored_file_id: string;
+    media_type: string;
+    file_name?: string | null;
+    media_size?: MediaSize | null;
+  }) {
     this.stored_file_id = values.stored_file_id;
     this.media_type = values.media_type;
     this.file_name = values.file_name ?? null;
+    keep_display_size(this, values.media_size ?? null);
   }
 }
 export class MessageFile {
@@ -22,16 +41,20 @@ export class MessageFile {
   readonly media_type: string;
   readonly file_name: string;
   readonly byte_count: number;
+  /** A display hint for Panels' own screens, set in the constructor (`keep_display_size`). */
+  declare readonly media_size?: MediaSize | null;
   constructor(values: {
     stored_file_id: string;
     media_type: string;
     file_name: string;
     byte_count: number;
+    media_size?: MediaSize | null;
   }) {
     this.stored_file_id = values.stored_file_id;
     this.media_type = values.media_type;
     this.file_name = values.file_name;
     this.byte_count = values.byte_count;
+    keep_display_size(this, values.media_size ?? null);
   }
 }
 export type MessagePiece = MessageText | MessageImage | MessageFile;
@@ -159,6 +182,7 @@ export function message_content_json_entries(content: MessageContent): Record<st
           stored_file_id: piece.stored_file_id,
           media_type: piece.media_type,
           ...(piece.file_name === null ? {} : { file_name: piece.file_name }),
+          ...media_size_entries(piece.media_size),
         };
       return {
         piece: 'file',
@@ -166,9 +190,26 @@ export function message_content_json_entries(content: MessageContent): Record<st
         media_type: piece.media_type,
         file_name: piece.file_name,
         byte_count: piece.byte_count,
+        ...media_size_entries(piece.media_size),
       };
     }),
   };
+}
+/** The stored and wire form of a media size: two whole-pixel fields, or neither. */
+export function media_size_entries(size: MediaSize | null | undefined): {
+  width?: number;
+  height?: number;
+} {
+  return size ? { width: size.width, height: size.height } : {};
+}
+/** Largest accepted side. A send with a larger side is refused; a stored one reads as no size. */
+export const MEDIA_SIZE_LIMIT = 100_000;
+/** Read `width` and `height` from a piece. Anything but two whole sides in range is no size. */
+export function media_size_from(fields: Record<string, unknown>): MediaSize | null {
+  const { width, height } = fields;
+  const side = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MEDIA_SIZE_LIMIT;
+  return side(width) && side(height) ? { width, height } : null;
 }
 function text(stored: Record<string, unknown>, field: string): string {
   if (!(field in stored)) throw new Error(`'${field}'`);
@@ -197,6 +238,7 @@ export function message_content_from_stored(stored: Record<string, unknown>): Me
           stored_file_id: text(fields, 'stored_file_id'),
           media_type: text(fields, 'media_type'),
           file_name,
+          media_size: media_size_from(fields),
         });
       }
       case 'file': {
@@ -208,6 +250,7 @@ export function message_content_from_stored(stored: Record<string, unknown>): Me
           media_type: text(fields, 'media_type'),
           file_name: text(fields, 'file_name'),
           byte_count,
+          media_size: media_size_from(fields),
         });
       }
       default:

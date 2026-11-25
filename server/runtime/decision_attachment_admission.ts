@@ -3,7 +3,7 @@ import type { SentPiece } from '../conversation/http.ts';
 import { adopt_upload_piece } from '../conversation/video_send_admission.ts';
 import type { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import type { CheckedVideoUpload } from '../conversation/video_uploads/contracts.ts';
-import type { MessageFile, MessageImage } from '../conversation/message_content.ts';
+import type { MediaSize, MessageFile, MessageImage } from '../conversation/message_content.ts';
 
 export function decision_attachment_admission(
   service: VideoUploadService | undefined,
@@ -13,7 +13,13 @@ export function decision_attachment_admission(
   checks: CheckedVideoUpload[],
   budget: { remaining: number },
 ):
-  | { adopt: (upload_id: string, conversation_id: string) => MessageImage | MessageFile }
+  | {
+      adopt: (
+        upload_id: string,
+        conversation_id: string,
+        size: MediaSize | null,
+      ) => MessageImage | MessageFile;
+    }
   | undefined {
   const refs = sent.filter(
     (piece) => piece.piece === 'attachment_upload' || piece.piece === 'video_upload',
@@ -38,7 +44,7 @@ export function decision_attachment_admission(
     }
   });
   return {
-    adopt: (upload_id, conversation_id) =>
-      adopt_upload_piece(service, by_id.get(upload_id)!, conversation_id, budget),
+    adopt: (upload_id, conversation_id, size) =>
+      adopt_upload_piece(service, by_id.get(upload_id)!, conversation_id, budget, size),
   };
 }

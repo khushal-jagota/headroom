@@ -5,7 +5,12 @@ import { adopt_upload_piece } from '../video_send_admission.ts';
 import type { VideoUploadService } from '../video_uploads/service.ts';
 import type { CheckedVideoUpload } from '../video_uploads/contracts.ts';
 import { Fields } from './intake.ts';
-import { conversation_message_content, inline_image_budget, type SentPiece } from '../http.ts';
+import {
+  conversation_message_content,
+  inline_image_budget,
+  sent_upload_piece,
+  type SentPiece,
+} from '../http.ts';
 import { UserInputAnswer } from '../events.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { MessageImage, MessageFile } from '../message_content.ts';
@@ -24,10 +29,13 @@ export function answer_attachments(value: unknown, question_id: string): SentAns
     const fields = new Fields(value_piece, ['body', 'answers', question_id, 'attachments', index]);
     const piece = fields.choice('piece', ['image', 'file', 'attachment_upload', 'video_upload']);
     if (piece === 'attachment_upload' || piece === 'video_upload') {
-      const upload_id = fields.text('upload_id');
-      fields.extras(['piece', 'upload_id']);
+      fields.text('upload_id');
+      fields.extras(['piece', 'upload_id', 'width', 'height']);
       fields.finish();
-      pieces.push({ piece, upload_id: upload_id! });
+      const upload = sent_upload_piece(value_piece);
+      if (upload === null)
+        throw new HttpError(422, 'Width and height must both be whole pixels from 1 to 100000.');
+      pieces.push(upload);
       continue;
     }
     const data = fields.text('data');
@@ -113,7 +121,8 @@ export async function keep_answer_attachments(
     sender_message_id:
       operation_id === null ? null : JSON.stringify(['answer', request_id, operation_id]),
     video_admission: {
-      adopt: (upload_id, id) => adopt_upload_piece(service!, checked.get(upload_id)!, id, budget),
+      adopt: (upload_id, id, size) =>
+        adopt_upload_piece(service!, checked.get(upload_id)!, id, budget, size),
     },
   })) as (MessageImage | MessageFile)[];
   let offset = 0;

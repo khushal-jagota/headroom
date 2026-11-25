@@ -149,6 +149,7 @@
         const replacement = current.filter((entry) => !replaced.includes(entry));
         publishAttachmentDraft(key, [...replacement, attachment]);
         void transfers.start(attachment);
+        void transfers.measure(attachment);
       } catch (problem) {
         intakeError = problem instanceof Error ? problem.message : "The attachment could not be read.";
         onError?.(problem);
