@@ -48,28 +48,32 @@ import SwiftData
             container = try ModelContainer(for: Schema([LocalRecord.self, OutgoingMetadata.self]), configurations: [ModelConfiguration(url: location)])
             container?.mainContext.autosaveEnabled = false
             if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
-            if url == nil {
-                let payloads = try outgoing.videoOwnershipPayloads()
-                let directory = Self.directory
-                videoStartupSweep = Task.detached(priority: .utility) {
-                    try? Self.sweepVideoFiles(in: directory, payloads: payloads)
-                }
-            }
         } catch { container = nil; startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
+        // Cleanup is optional and must never make an already-open store unavailable.
+        if url == nil, let container {
+            let directory = Self.directory
+            videoStartupSweep = Task.detached(priority: .utility) {
+                try? Self.sweepVideoFiles(in: directory, container: container)
+            }
+        }
     }
     /// Imports wait for this launch-only sweep, so an in-flight new copy cannot be swept.
     func waitForVideoStartupSweep() async { await videoStartupSweep?.value }
 
     func sweepUnownedVideoFiles(in directory: URL) async throws {
-        let payloads = try outgoing.videoOwnershipPayloads()
+        guard let container else { throw startupError ?? CocoaError(.fileReadUnknown) }
         try await Task.detached(priority: .utility) {
-            try Self.sweepVideoFiles(in: directory, payloads: payloads)
+            try Self.sweepVideoFiles(in: directory, container: container)
         }.value
     }
-    nonisolated private static func sweepVideoFiles(in directory: URL, payloads: [(String, Data)]) throws {
+    nonisolated private static func sweepVideoFiles(in directory: URL, container: ModelContainer) throws {
         let videos = directory.appendingPathComponent("videos", isDirectory: true)
         guard FileManager.default.fileExists(atPath: videos.path) else { return }
-        let owned = OutgoingStore.ownedVideoFiles(payloads)
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let payloads = try OutgoingStore.videoOwnershipPayloads(in: context)
+        // An unreadable record may own any file. Preserve everything until it is readable.
+        guard let owned = OutgoingStore.ownedVideoFiles(payloads) else { return }
         for file in try FileManager.default.contentsOfDirectory(at: videos, includingPropertiesForKeys: nil) {
             if !owned.contains("videos/" + file.lastPathComponent) {
                 try FileManager.default.removeItem(at: file)

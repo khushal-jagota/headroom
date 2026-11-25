@@ -21,7 +21,7 @@ import XCTest
         XCTAssertEqual(try reopened.outgoing.work(server: "a", id: "send")?.message?.senderMessageId, "send")
         XCTAssertNil(try reopened.outgoing.work(server: "b", id: "send"))
     }
-    func testLaunchVideoSweepKeepsDraftAndOutgoingFilesAndSkipsMalformedRecords() async throws {
+    func testLaunchVideoSweepPreservesAllFilesUntilDraftAndOutgoingOwnershipIsReadable() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let videos = directory.appendingPathComponent("videos")
@@ -38,12 +38,26 @@ import XCTest
         let work = PendingWork(id: "video", created: .now, kind: .message, owner: .ticket("ticket"),
             message: ConversationSend(conversationId: nil, content: [piece("outbox.mov")], senderMessageId: "video", sentAtUnixMilliseconds: 1))
         try store.outgoing.enqueue(work, server: "b")
+        let allFiles: Set<String> = ["draft.mov", "outbox.mov", "orphan.mov"]
         try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("broken".utf8))
-        let records = try store.outgoing.videoOwnershipPayloads()
-        XCTAssertEqual(OutgoingStore.ownedVideoFiles(records + [("outbox", Data("broken".utf8))]),
-                       ["videos/draft.mov", "videos/outbox.mov"])
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), allFiles,
+                       "An unreadable draft may own any file, so cleanup must preserve all files")
+
+        let outgoing = try XCTUnwrap(store.record(server: "b", kind: "outbox", id: "video"))
+        let originalPayload = outgoing.payload
+        outgoing.payload = Data("broken".utf8)
+        // Saving the repaired draft also commits the deliberately corrupted outbox payload.
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("[]".utf8))
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), allFiles,
+                       "An unreadable outgoing row must also defer the entire sweep")
+
+        outgoing.payload = originalPayload
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("[]".utf8))
         try await store.sweepUnownedVideoFiles(in: directory)
         XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), ["draft.mov", "outbox.mov"])
+
     }
 
     func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {

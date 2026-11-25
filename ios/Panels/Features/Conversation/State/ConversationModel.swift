@@ -400,27 +400,46 @@ import UniformTypeIdentifiers
             attachments.append(piece)
         }
     }
-    /// Inspect metadata before a non-video Files pick can allocate its contents.
+    /// Non-image Files picks inspect metadata before allocating their contents.
+    /// Images use ImageIO's file-backed downsampling and the existing photo budget.
     @discardableResult func attachFile(_ url: URL, type: UTType?,
+        fileSize: @escaping @Sendable (URL) throws -> Int? = { try $0.resourceValues(forKeys: [.fileSizeKey]).fileSize },
         read: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }) async -> Bool {
         let originServer = persistenceAPI.map { LocalStore.server($0.baseURL) }
         let originDraft = draftKey
+        let image = type?.conforms(to: .image) == true
+        let identity = UUID()
+        if image { preparingPhotos[identity] = url.lastPathComponent }
+        defer { preparingPhotos.removeValue(forKey: identity) }
         do {
-            let data = try await Task.detached(priority: .userInitiated) {
-                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-                guard let size, size <= 20_000_000 else {
-                    throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+            if image {
+                let prepared = try await ConversationImagePreparation.prepareFile(url, imageWorkStarted: imageWorkStarted)
+                // Preserve the combined budget while allowing navigation during ImageIO.
+                while originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
+                    let previous = attachments
+                    let combined = try await ConversationImagePreparation.prepare(previous + [prepared],
+                        alreadyPrepared: preparedAttachments + [prepared], imageWorkStarted: imageWorkStarted)
+                    guard originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey else { break }
+                    guard attachments == previous else { continue }
+                    attachments = combined
+                    preparedAttachments = combined
+                    return true
                 }
-                return try read(url)
-            }.value
-            if originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
-                return await attach(data, type: type, fileName: url.lastPathComponent)
+                try retainAttachment(prepared, originServer: originServer, originDraft: originDraft)
+            } else {
+                let piece = try await Task.detached(priority: .userInitiated) {
+                    if let size = try fileSize(url), size > 20_000_000 {
+                        throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+                    }
+                    let data = try read(url)
+                    guard data.count <= 20_000_000 else {
+                        throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+                    }
+                    return ConversationSend.Piece(piece: "file", data: data.base64EncodedString(),
+                        mediaType: type?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent)
+                }.value
+                try retainAttachment(piece, originServer: originServer, originDraft: originDraft)
             }
-            let image = type?.conforms(to: .image) == true
-            let piece = ConversationSend.Piece(piece: image ? "image" : "file", data: data.base64EncodedString(),
-                mediaType: type?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent)
-            let pieces = try await ConversationImagePreparation.prepare([piece], imageWorkStarted: imageWorkStarted)
-            for piece in pieces { try retainAttachment(piece, originServer: originServer, originDraft: originDraft) }
             return true
         } catch {
             do {

@@ -258,20 +258,20 @@ import SwiftData
         return try context.fetch(query).isEmpty
     }
 
-    /// Snapshot only on the store actor; decode ownership away from the main actor.
-    func videoOwnershipPayloads() throws -> [(String, Data)] {
+    /// A background sweep owns its own context; no model rows cross actor boundaries.
+    nonisolated static func videoOwnershipPayloads(in context: ModelContext) throws -> [(String, Data)] {
         let kinds = ["attachments", "outbox"]
         return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { kinds.contains($0.kind) }))
             .map { ($0.kind, $0.payload) }
     }
-    nonisolated static func ownedVideoFiles(_ records: [(String, Data)]) -> Set<String> {
+    nonisolated static func ownedVideoFiles(_ records: [(String, Data)]) -> Set<String>? {
         var files = Set<String>()
         for (kind, payload) in records {
             if kind == "attachments" {
-                guard let pieces = try? JSONDecoder().decode([ConversationSend.Piece].self, from: payload) else { continue }
+                guard let pieces = try? JSONDecoder().decode([ConversationSend.Piece].self, from: payload) else { return nil }
                 files.formUnion(pieces.compactMap { $0.localVideo?.filePath })
             } else {
-                guard let work = try? JSONDecoder().decode(PendingWork.self, from: payload) else { continue }
+                guard let work = try? JSONDecoder().decode(PendingWork.self, from: payload) else { return nil }
                 files.formUnion(Self.videoFiles(work))
             }
         }

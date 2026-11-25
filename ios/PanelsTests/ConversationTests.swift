@@ -26,6 +26,37 @@ import UniformTypeIdentifiers
         catch { XCTAssertNotNil(model.failedAttachment) }
     }
 
+    func testFilesImageOverNonImageLimitUsesBoundedImageIOPreparation() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Self.jpegPhoto(size: 32).write(to: source)
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: 20_000_001)
+        try handle.close()
+        let model = ConversationModel()
+        let attached = await model.attachFile(source, type: .jpeg, read: { _ in
+            XCTFail("Files images must use ImageIO's URL path, not the whole-file reader")
+            return Data()
+        })
+        XCTAssertTrue(attached, "The 20 MB non-image limit does not refuse a Files photo")
+        let piece = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(piece.piece, "image")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data))).count,
+                                 ConversationImagePreparation.maximumImageBytes)
+        XCTAssertNotNil(try Self.readJPEG(piece))
+    }
+
+    func testFilesPickWithUnknownMetadataSizeIsNotRefusedForMissingSize() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data("note".utf8).write(to: source)
+        let model = ConversationModel()
+        let attached = await model.attachFile(source, type: .plainText, fileSize: { _ in nil })
+        XCTAssertTrue(attached)
+        XCTAssertEqual(model.attachments.first?.data, Data("note".utf8).base64EncodedString())
+        XCTAssertNil(model.failedAttachment)
+    }
+
     func testVideoIntakeFinishesInStartingDraftAfterOwnerAndDraftSwitch() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
         defer { try? FileManager.default.removeItem(at: source) }
