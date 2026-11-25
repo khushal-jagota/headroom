@@ -1,94 +1,232 @@
-/** Exercise an inherited Chief transcript on the same disposable installed home and browser. */
+/** Exercise inherited active conversations on the disposable installed home and browser. */
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import type { Page } from 'playwright';
-import { issue_launch_token } from '../../../agent_identity/data.ts';
-import { createDatabase } from '../../../core/database/index.ts';
+import { canonical_principal, issue_launch_token } from '../../../agent_identity/data.ts';
+import { randomUUID } from 'node:crypto';
+import { DEFAULT_BACKEND_INSTANCE_ID } from '../../../drivers/built_in.ts';
+import type { Principal } from '../../../core/contracts.ts';
+import { append_projection } from '../../../conversation/views/data/writer.ts';
+import type { ConversationEventKind } from '../../../conversation/events.ts';
+import { conversation_event_payload_from_canonical_json } from '../../../conversation/record/codec.ts';
+import { createDatabase, type TransactionSql } from '../../../core/database/index.ts';
 
-const historyMarker = 'Latest synthetic Chief history before the upgrade.';
-const liveMarker = 'New Chief message from the upgraded home.';
 const owner = { kind: 'owner', id: 'owner' };
-const chief = { kind: 'chief', id: 'chief' };
+interface ActiveHistory {
+  principal: Principal;
+  conversation: string;
+  route: string;
+  turns: number;
+}
+type InheritedHistory = ActiveHistory & { through: number };
+function historyMarker(principal: Principal) {
+  return 'Latest synthetic ' + principal.kind + ' history before the upgrade.';
+}
 
-export function seed_large_conversation(base: string, conversation: string) {
+export async function seed_active_histories(
+  base: string,
+  url: string,
+  chiefConversation: string,
+  machine_id: string,
+  workspace: string,
+) {
+  const post = async (route: string, data: unknown) => {
+    const response = await fetch(url + route, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+      signal: AbortSignal.timeout(25_000),
+    });
+    const raw = await response.text();
+    assert.ok(response.ok, route + ': ' + raw);
+    return JSON.parse(raw);
+  };
+  const project = await post('/api/projects', { name: 'Conversation qualification' });
+  const manager = await post('/api/managers', {
+    title: 'Active qualification Manager',
+    project_id: project.id,
+  });
+  const ticket = await post('/api/tickets', {
+    title: 'Unfinished qualification Ticket',
+    worker_type: 'coding',
+    project_id: project.id,
+    ceiling: 'needs_brief',
+  });
+  const managerConversation = 'qualification-' + randomUUID();
+  const ticketConversation = 'qualification-' + randomUUID();
+  for (const id of [managerConversation, ticketConversation])
+    await post('/api/conversation/conversations', {
+      conversation_id: id,
+      backend_key: DEFAULT_BACKEND_INSTANCE_ID,
+      model: 'TEST',
+      workspace_folder: workspace,
+      machine_id,
+    });
+  const histories: ActiveHistory[] = [
+    {
+      principal: { kind: 'chief', id: 'chief' },
+      conversation: chiefConversation,
+      route: 'chief-of-staff',
+      turns: 1000,
+    },
+    {
+      principal: { kind: 'manager', id: manager.id },
+      conversation: managerConversation,
+      route: 'manager/' + manager.id,
+      turns: 950,
+    },
+    {
+      principal: { kind: 'ticket', id: ticket.id },
+      conversation: ticketConversation,
+      route: ticket.id,
+      turns: 900,
+    },
+  ];
   const db = createDatabase(join(base, 'installed/data/planner.db'));
   try {
+    const seeded = histories.map((h) => ({ ...h, through: db.write((tx) => seed_history(tx, h)) }));
+    // The historical facts and rows are synthetic. Mark all three saved projections
+    // as version 5 in one short transaction immediately before the press.
     return db.write((tx) => {
-      const last = tx.get<{ latest_sequence: number }>(
-        'SELECT latest_sequence FROM conversations WHERE conversation_id=?',
-        [conversation],
-      );
-      assert.ok(last);
-      let sequence = last.latest_sequence;
-      const time = Math.floor(Date.now() / 1000);
-      const insert = (kind: string, payload: unknown) =>
-        tx.run('INSERT INTO conversation_events VALUES (?,?,?,?,?)', [
-          conversation,
-          ++sequence,
-          kind,
-          JSON.stringify(payload),
-          time,
+      for (const h of histories)
+        tx.run('UPDATE conversation_view_state SET projection_version=5 WHERE conversation_id=?', [
+          h.conversation,
         ]);
-      for (let i = 0; i < 1_000; i++) {
-        insert('prompt', {
-          content: [{ piece: 'text', text: 'Check work ' + i }],
-          mode: 'queue',
-          sender_label: 'Owner',
-          sender: owner,
-        });
-        for (const status of ['pending', 'in_progress', 'completed'])
-          insert('plan_updated', { entries: [{ text: 'Check work ' + i, status }] });
-        for (const tool of ['Read', 'Bash', 'Edit', 'Verify']) {
-          const tool_call_id = tool + i;
-          insert('tool_call_started', {
-            tool_call_id,
-            title: tool,
-            tool_kind: 'execute',
-            detail: 'Synthetic input ' + i,
-          });
-          insert('tool_call_finished', {
-            tool_call_id,
-            tool_call_status: 'completed',
-            detail: 'Synthetic result ' + i,
-          });
-        }
-        insert('message_to_owner', {
-          content: [{ piece: 'text', text: i === 999 ? historyMarker : 'Checked work ' + i }],
-          sender_label: 'Chief',
-          sender: chief,
-          recipient: owner,
-        });
-        insert('turn_ended', { ending: 'completed', error_summary: null });
-      }
-      tx.run('UPDATE conversations SET latest_sequence=? WHERE conversation_id=?', [
-        sequence,
-        conversation,
-      ]);
-      // An older projection forces the installed candidate to rebuild from the inherited events.
-      tx.run('DELETE FROM conversation_view_state WHERE conversation_id=?', [conversation]);
-      tx.run(
-        "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-        [conversation],
+      const largest = tx.all<{ conversation_id: string }>(
+        'SELECT conversation_id FROM conversations ORDER BY latest_sequence DESC LIMIT 3',
       );
-      const largest = tx.get<{ conversation_id: string; count: number }>(
-        'SELECT conversation_id, count(*) AS count FROM conversation_events GROUP BY conversation_id ORDER BY count DESC LIMIT 1',
+      assert.deepEqual(
+        largest.map((row) => row.conversation_id),
+        histories.map((h) => h.conversation),
       );
-      assert.equal(largest?.conversation_id, conversation);
-      assert.equal(largest.count, sequence);
-      return sequence;
+      return seeded;
     });
   } finally {
     db.close();
   }
 }
 
+function seed_history(tx: TransactionSql, { conversation, principal, turns }: ActiveHistory) {
+  const last = tx.get<{ latest_sequence: number }>(
+    'SELECT latest_sequence FROM conversations WHERE conversation_id=?',
+    [conversation],
+  );
+  assert.ok(last);
+  let sequence = last.latest_sequence;
+  const time = Math.floor(Date.now() / 1000);
+  const insert = (kind: ConversationEventKind, payload: unknown) => {
+    const encoded = JSON.stringify(payload);
+    tx.run('INSERT INTO conversation_events VALUES (?,?,?,?,?)', [
+      conversation,
+      ++sequence,
+      kind,
+      encoded,
+      time,
+    ]);
+    append_projection(tx, [
+      {
+        conversation_id: conversation,
+        sequence,
+        kind,
+        payload: conversation_event_payload_from_canonical_json(kind, encoded),
+        created_at: time,
+      },
+    ]);
+  };
+  for (let i = 0; i < turns; i++) {
+    insert('prompt', {
+      content: [{ piece: 'text', text: 'Check work ' + i }],
+      mode: 'queue',
+      sender_label: 'Owner',
+      sender: owner,
+    });
+    for (const status of ['pending', 'in_progress', 'completed'])
+      insert('plan_updated', { entries: [{ text: 'Check work ' + i, status }] });
+    for (const tool of ['Read', 'Bash', 'Edit', 'Verify']) {
+      const tool_call_id = tool + i;
+      insert('tool_call_started', {
+        tool_call_id,
+        title: tool,
+        tool_kind: 'execute',
+        detail: 'Synthetic input ' + i,
+      });
+      insert('tool_call_finished', {
+        tool_call_id,
+        tool_call_status: 'completed',
+        detail: 'Synthetic result ' + i,
+      });
+    }
+    insert('message_to_owner', {
+      content: [
+        {
+          piece: 'text',
+          text: i === turns - 1 ? historyMarker(principal) : 'Checked work ' + i,
+        },
+      ],
+      sender_label: principal.kind,
+      sender: principal,
+      recipient: owner,
+    });
+    insert('turn_ended', { ending: 'completed', error_summary: null });
+  }
+  tx.run('UPDATE conversations SET latest_sequence=? WHERE conversation_id=?', [
+    sequence,
+    conversation,
+  ]);
+  if (principal.kind === 'ticket') {
+    tx.run("UPDATE tickets SET conversation_id=? WHERE id=? AND stage!='done'", [
+      conversation,
+      principal.id,
+    ]);
+    tx.run('INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)', [
+      conversation,
+      principal.id,
+    ]);
+  } else {
+    tx.run(
+      'INSERT INTO agents(agent_key,conversation_id) VALUES (?,?) ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id',
+      [principal.kind === 'chief' ? 'chief_of_staff' : 'manager_' + principal.id, conversation],
+    );
+  }
+  assert.deepEqual(canonical_principal(tx, conversation), principal);
+  return sequence;
+}
+
+/** One parallel read per active view immediately after the install journal commits.
+ * A 409 or 503 must fail this attempt even if a retry would succeed a moment later. */
+export async function check_committed_views(url: string, histories: InheritedHistory[]) {
+  return Promise.all(
+    histories.map(async ({ conversation, through, principal }) => {
+      const response = await fetch(
+        url +
+          '/api/conversation/conversations/' +
+          encodeURIComponent(conversation) +
+          '/view?lens=focus',
+        { signal: AbortSignal.timeout(25_000) },
+      );
+      assert.equal(response.status, 200, principal.kind + ' initial view: ' + response.status);
+      const snapshot = await response.json();
+      assert.equal(snapshot.page.projection_version, 6);
+      assert.equal(snapshot.page.conversation_id, conversation);
+      assert.ok(snapshot.coverage.through_sequence >= through);
+      assert.ok(JSON.stringify(snapshot.page.items).includes(historyMarker(principal)));
+      return {
+        role: principal.kind,
+        status: response.status,
+        projection: snapshot.page.projection_version,
+        sequence: snapshot.coverage.through_sequence,
+      };
+    }),
+  );
+}
+
 export async function check_large_conversation(
   page: Page,
   url: string,
   base: string,
-  id: string,
-  seeded: number,
+  { conversation: id, through: seeded, principal, route, turns }: InheritedHistory,
 ) {
+  const liveMarker = 'New ' + principal.kind + ' message from the upgraded home.';
   const session = await page.context().newCDPSession(page);
   const snapshots = new Set<string>();
   let streamed: number | undefined;
@@ -111,12 +249,15 @@ export async function check_large_conversation(
         streamed = value.coverage.through_sequence;
     });
     await page.goto('about:blank');
-    await page.goto(url + '/#/workspace/chief-of-staff', { waitUntil: 'domcontentloaded' });
+    await page.goto(url + '/#/workspace/' + route, { waitUntil: 'domcontentloaded' });
     const pane = page.locator('[data-conversation-pane]');
     if ((await pane.getAttribute('data-conversation-state')) !== 'opened')
       await page.locator('[data-conversation-expand]').click();
     const rows = pane.locator('[data-conversation-view-key]');
-    await rows.filter({ hasText: historyMarker }).first().waitFor({ timeout: 25_000 });
+    await rows
+      .filter({ hasText: historyMarker(principal) })
+      .first()
+      .waitFor({ timeout: 25_000 });
     assert.ok(snapshots.size, 'Browser never received the large conversation snapshot');
     const db = createDatabase(join(base, 'installed/data/planner.db'));
     let token: string;
@@ -129,7 +270,10 @@ export async function check_large_conversation(
             [id],
           )!.count,
       );
-      assert.ok(projected_rows >= 7_000, 'Expected the candidate to project a large transcript');
+      assert.ok(
+        projected_rows >= turns * 7,
+        'Expected the candidate to project a large transcript',
+      );
       token = issue_launch_token(db, id);
     } finally {
       db.close();

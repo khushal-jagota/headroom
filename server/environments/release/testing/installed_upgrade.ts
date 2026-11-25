@@ -8,7 +8,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { chromium } from 'playwright';
-import { check_large_conversation, seed_large_conversation } from './large_conversation.ts';
+import {
+  check_large_conversation,
+  seed_active_histories,
+  check_committed_views,
+} from './large_conversation.ts';
 import { published_mac_home_fault } from './mac_home_machine_fault.ts';
 import { healthy } from '../../updates/installer/health.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
@@ -255,8 +259,14 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       path: join(o.base, 'evidence/update-rolled-back.png'),
       animations: 'disabled',
     });
-    phase = 'seeding the large Chief conversation before the upgrade';
-    const seeded = seed_large_conversation(o.base, recovered.conversation_id);
+    phase = 'seeding active conversation views before the upgrade';
+    const histories = await seed_active_histories(
+      o.base,
+      url,
+      recovered.conversation_id,
+      o.machine_id,
+      workspace,
+    );
     phase = 'retrying the update';
     const retried = page.waitForResponse(
       (response) =>
@@ -269,11 +279,15 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.ok(retryResponse.ok(), await retryResponse.text());
     phase = 'checking the release feed, home and enrolled machines';
     const enrolled = [HOME_MACHINE_ID, o.machine_id];
+    let first_views: Awaited<ReturnType<typeof check_committed_views>> | undefined;
     await wait_for(async () => {
       const journal = await readJournal();
       if (journal.attempt_id === rolledBackAttempt) return false;
       if (journal.state === 'failed' || journal.steps?.rollback_failed)
         throw new Error('Installer retry failed: ' + recorded_failure_detail(journal.detail));
+      if (journal.state === 'done' && !first_views) {
+        first_views = await check_committed_views(url, histories);
+      }
       const status = await read_status();
       if (status?.attempt?.attempt_id !== journal.attempt_id) return false;
       if (status?.attempt?.state === 'failed')
@@ -363,14 +377,11 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         conversation_id: restarted.conversation_id,
       };
     }
-    phase = 'opening the largest conversation and receiving a new Chief message';
-    const large_conversation = await check_large_conversation(
-      page,
-      url,
-      o.base,
-      recovered.conversation_id,
-      seeded,
-    );
+    phase = 'opening active conversations and receiving their new messages';
+    assert.ok(first_views);
+    const large_conversations = [];
+    for (const history of histories)
+      large_conversations.push(await check_large_conversation(page, url, o.base, history));
     await writeFile(
       join(o.base, 'evidence/upgrade.json'),
       JSON.stringify(
@@ -389,7 +400,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           restored_home_machine: missingMachine?.label,
           recovered_conversation: recovered.conversation_id,
           original_linux_start: originalStart,
-          large_conversation,
+          first_views,
+          large_conversations,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
         },
         null,
