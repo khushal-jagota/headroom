@@ -56,7 +56,7 @@
     snapshots={editor.backends}
     models={editor.snapshot?.available_models ?? []}
     backendEffortOptions={editor.snapshot?.reasoning_effort_options ?? []}
-    below chevron="none" scrollPanel
+    below chevron="none"
     readError={editor.backendsError ? String(editor.backendsError) : null}
     onRetry={() => editor.loadBackends()}
     disabled={locked || editor.saving}
@@ -94,5 +94,7 @@
   .employee-configuration-key {
     color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-xs);
   }
+  .employee-configuration-setup :global([data-employee-configuration-picker]) { max-width: 100%; }
+  .employee-configuration-setup :global([data-conversation-picker-trigger]) { min-height: 24px; }
   .employee-configuration-problem { flex-basis: 100%; display: flex; align-items: center; gap: var(--space-2); }
 </style>

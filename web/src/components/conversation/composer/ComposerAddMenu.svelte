@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { floatingPanel } from "../../../lib/floatingPanel";
+
   let { open = $bindable(false), root = $bindable(null), disabled, fileCount, onFile, onCommand }: {
     open?: boolean;
     root?: HTMLDivElement | null;
@@ -7,12 +9,14 @@
     onFile: () => void;
     onCommand: () => void;
   } = $props();
+  let trigger = $state<HTMLButtonElement | null>(null);
 </script>
 
 <div class="chat-add" bind:this={root}>
   <button
     type="button"
     class="chat-image chat-add-btn"
+    bind:this={trigger}
     data-conversation-add
     aria-haspopup="menu"
     aria-expanded={open}
@@ -26,7 +30,7 @@
     </svg>
   </button>
   {#if open}
-    <div class="chat-add-menu" role="menu">
+    <div class="chat-add-menu" role="menu" popover="manual" {@attach floatingPanel(trigger, "top-start")}>
       <button
         type="button"
         class="chat-add-item"
@@ -62,14 +66,10 @@
 </div>
 
 <style>
-  /* --- the add menu: a Surface floating with a shadow, upward from the +, its left edge on the
-     +'s and its bottom 8px above the composer's top edge; its rows are quiet pill buttons. */
-  .chat-add { position: relative; display: inline-flex; }
+  /* --- the add menu: a Surface floating with a shadow from the +, its left edge on the +'s
+     (lib/floatingPanel); its rows are quiet pill buttons. */
+  .chat-add { display: inline-flex; }
   .chat-add-menu {
-    position: absolute;
-    z-index: 40;
-    inset-block-end: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
-    inset-inline-start: 0;
     min-width: 220px;
     display: flex;
     flex-direction: column;

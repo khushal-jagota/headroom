@@ -66,13 +66,9 @@
   .delivery-mode-host { display: contents; }
   .delivery-mode-face { white-space: nowrap; }
   .delivery-mode-name { white-space: nowrap; }
-  /* The chip is one of the composer's run chips (app.css). Its menu is a native dropdown:
-     anchored on its own chip, right edges aligned, its bottom 8px above the composer's top
-     edge, as wide as its longest label (its rows: ListboxPicker). */
+  /* The chip is one of the composer's run chips (app.css). Its menu opens from its own chip,
+     right edges aligned, as wide as its longest label (its rows: ListboxPicker). */
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
-    left: auto;
-    right: 0;
-    bottom: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
     width: max-content;
     min-width: 0;
   }
