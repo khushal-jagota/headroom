@@ -19,8 +19,8 @@
     onEdit: () => void;
     busy?: boolean;
     /** The empty Review page keeps a send out of view while it goes, after it arrives and
-     *  after it is refused. Its send button shows all three, and a refused send returns to
-     *  the field. A send that waits, is queued or may not have arrived still shows. */
+     *  after it is refused or may not have arrived. Its send button shows each, and the message
+     *  returns to the field. A send that waits or is queued still shows. */
     quiet?: boolean;
   } = $props();
 
@@ -31,7 +31,8 @@
   const heldIds = $derived(new Set(held.map(message => message.messageId)));
   const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)
     && !(quiet && (attempt.status === 'sent' || attempt.status === 'sending' || attempt.status === 'checking'
-      || attempt.status === 'failed' || attempt.status === 'upload-failed'))));
+      || attempt.status === 'failed' || attempt.status === 'upload-failed'
+      || attempt.status === 'connection-failed' || attempt.status === 'uncertain'))));
   const queue = $derived(held.filter(belongsInHeldQueue));
   const pendingQueue = $derived(attempts.filter(queueAttempt));
 

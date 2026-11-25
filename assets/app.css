@@ -4608,6 +4608,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .composer-field[data-composer-field-held][data-composer-field-controls-below] { grid-template-rows: minmax(0, 1fr) auto; }
 .composer-field[data-composer-field-held].has-attachments { grid-template-rows: minmax(0, 1fr) auto auto; }
 .composer-field[data-composer-field-held] > .composer-field-input { align-self: start; }
+/* With the controls beside the words, the one row stays where an unheld field puts it. */
+.composer-field[data-composer-field-held]:not([data-composer-field-controls-below]):not(.has-attachments) > .composer-field-input { align-self: end; }
 
 /* Its icons: a 32px target, the 22px glyph in the secondary tone, lifting to the strong tone on
  * hover. */

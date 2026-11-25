@@ -594,7 +594,8 @@ export class ReviewReplyComposer {
   }
 
   async edit(attempt: ReviewOutgoingReply): Promise<boolean> {
-    if (this.submitting || this.intakeBusy || (attempt.status !== 'failed' && attempt.status !== 'upload-failed')) return false;
+    if (this.submitting || this.intakeBusy || (attempt.status !== 'failed' && attempt.status !== 'upload-failed'
+      && attempt.status !== 'connection-failed' && attempt.status !== 'uncertain')) return false;
     const nextId = Math.max(this.#nextAttachmentId, ...[...this.#images, ...this.#files].map(file => file.id + 1));
     const restoredImages = restoredPendingImages(attempt.message.content, nextId);
     const restoredFiles = restoredPendingFiles(attempt.message.content, restoredImages.nextId);

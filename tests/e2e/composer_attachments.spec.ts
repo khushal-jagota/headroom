@@ -452,9 +452,10 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
   console.log(`Approval attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing rail host`);
 });
 
-test('a refused send on the empty Review page returns to the field with a cross and leaves no bubble', async ({ signalServer, newContext }) => {
+test('the empty Review page shows how a send ended on its button and keeps its input for the Chief only', async ({ signalServer, newContext }) => {
   // Only a real browser and the live send route together show the whole path: the refusal
-  // from the server, the message put back in the field, and the send button's cross and tick.
+  // from the server, the message put back in the field, the button's cross, tick and question
+  // mark, and the page leaving the Chief box out once something waits in the queue.
   const chiefConversation = 'review-refused-chief';
   await post(signalServer, `/api/test/signals/${chiefConversation}/start`);
   await bindConversation(signalServer, 'agent', 'chief_of_staff', chiefConversation);
@@ -478,4 +479,20 @@ test('a refused send on the empty Review page returns to the field with a cross 
   await expect(send).toHaveClass(/sent/);
   await expect(input).toHaveValue('');
   await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  // The connection drops: the message may have arrived, so it returns to the field with a question mark.
+  await expect(send).not.toHaveClass(/sent/);
+  await page.route(sendRoute, (route) => route.abort());
+  await input.fill('Chief, are you there?');
+  await send.click();
+  await expect(send).toHaveClass(/unsure/);
+  await expect(input).toHaveValue('Chief, are you there?');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  await page.unroute(sendRoute);
+  // A question arrives while the page is showing "nothing needs you": the Chief box goes, so a note cannot pass for an answer.
+  await input.fill('');
+  const ticket = await createTicketConversation(signalServer, { conversationId: 'review-waiting-agent', title: 'Waiting agent' });
+  await post(signalServer, '/api/test/signals/review-waiting-agent/finish');
+  await connectedMessage(signalServer, 'review-waiting-agent', ticketPrincipal(ticket), 'A question for you.');
+  await expect(page.locator('[data-review-final-status]')).toHaveText('1 thing awaits review.');
+  await expect(input).toHaveCount(0);
 });

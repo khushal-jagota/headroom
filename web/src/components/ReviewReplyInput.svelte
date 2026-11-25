@@ -6,7 +6,7 @@
   import type {PendingConversationImage} from '../lib/conversation/pendingImages';
   import {createVoiceCapture,voiceCaptureSupported,type VoiceCapture,type VoiceCaptureState} from '../lib/conversation/voiceCapture';
   let {uploads=$bindable([]),uploadDestination,text=$bindable(''),files=$bindable([]),images=$bindable([]),intakeBusy=$bindable(false),voiceActive=$bindable(false),draftKey,attachmentDisabled=false,sendDisabled=false,placeholder='Reply…',label='Reply',sendLabel='Send reply',preserveHeight=false,sending=false,result,sendTitle,onSend,onError}: {
-    uploads?:PendingAttachment[];uploadDestination:UploadDestination;text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;draftKey:string;attachmentDisabled?:boolean;sendDisabled?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;sending?:boolean;result?:'sent'|'failed';sendTitle?:string;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
+    uploads?:PendingAttachment[];uploadDestination:UploadDestination;text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;draftKey:string;attachmentDisabled?:boolean;sendDisabled?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;sending?:boolean;result?:'sent'|'failed'|'unsure';sendTitle?:string;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
   }=$props();
   let root=$state<HTMLDivElement|null>(null);
   let input=$state<HTMLTextAreaElement|null>(null);
