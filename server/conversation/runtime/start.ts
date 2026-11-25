@@ -1,5 +1,4 @@
 /** Conversation starts and automatic start admission. */
-import { PlannerError } from '../../core/contracts.ts';
 import type { StartRequest } from '../start_admission/contracts.ts';
 import { ConversationState } from './state.ts';
 import type { TurnToken } from '../backends/contracts.ts';
@@ -44,11 +43,7 @@ export async function start_conversation(
 ): Promise<void> {
   return host.workspace_admission.operation(
     async (admitted) => {
-      if (!admitted)
-        throw new PlannerError(
-          'update_in_progress',
-          'Workspace admission is closed for an owner update.',
-        );
+      if (!admitted) throw host.workspace_admission.refusal();
       host.require_runtime_ownership();
       const refusal = host.execution_refusal(request.conversation_id);
       if (refusal !== null) throw refusal;
