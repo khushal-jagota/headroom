@@ -966,6 +966,83 @@ test('a late result after recovery settles its original submission without anoth
 
 // A steer can outlive the Home observer without a pending first-prompt reservation.
 // Its exact command link must settle the original input after reconstruction.
+test('a retained prompt observer preserves the terminal refusal already recorded by recovery', async () => {
+  const { decode_recipient_message } =
+    await import('../message_delivery/data/recipient_deliveries.ts');
+  const { refused_row } = await import('../conversation/runtime/messages.ts');
+  const { PromptDeliveryRefusalReason } = await import('../conversation/contracts.ts');
+  const f = await remote_fixture();
+  const envelope = {
+    command_id: f.command.command_id,
+    command_sequence: 1,
+    created_at_vps_ms: 1,
+    child_command: f.command,
+  };
+  f.database.write((tx) => {
+    tx.run(
+      "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id) VALUES(?,?,?,?,?,?,?,'waiting',1,?)",
+      [
+        f.command.command_id,
+        f.reference.executor_incarnation,
+        'write_prompt',
+        'core',
+        f.reference.child_id,
+        f.command.turn!.turn_number,
+        JSON.stringify(envelope),
+        ORIGINAL_MAC_MACHINE_ID,
+      ],
+    );
+    tx.run(
+      'INSERT INTO recipient_delivery_commands SELECT ?,submission_id,attempt_id FROM recipient_deliveries WHERE submission_id=?',
+      [f.command.command_id, 'core:sender'],
+    );
+  });
+  void f.sending.catch(() => {});
+  f.offline();
+  const restarted = f.restore();
+  try {
+    await f.proxy.detach();
+    await f.sending.catch(() => {});
+    const payload = f.database.read((sql) =>
+      sql.get<{ payload: string }>(
+        'SELECT payload FROM recipient_deliveries WHERE submission_id=?',
+        ['core:sender'],
+      ),
+    )!.payload;
+    // Recovery wins the local receipt race before the retained native observer writes.
+    restarted.store.append_events('core', [
+      refused_row(
+        decode_recipient_message(payload),
+        'queue',
+        PromptDeliveryRefusalReason.write_to_backend_failed,
+      ),
+    ]);
+    await f
+      .finish({
+        command_id: f.command.command_id,
+        child: f.reference,
+        disposition: 'refused',
+        result: { error_type: 'PromptWriteRefused', error_message: 'input did not arrive' },
+      })
+      .catch(() => {});
+    await vi.waitFor(() =>
+      expect(restarted.core.conversations.get('core')!.reserved_turn).toBeNull(),
+    );
+    expect(
+      restarted.store
+        .read_events_after('core', 0)
+        .filter(
+          (event) =>
+            'sender_message_id' in event.payload && event.payload.sender_message_id === 'sender',
+        ),
+    ).toHaveLength(1);
+    expect(f.prompts).toHaveLength(1);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 2 });
+    await f.close();
+  }
+});
+
 test('a recovered steer settles from its exact late native result without resending', async () => {
   const { LateSteer } = await import('./vps_remote_child.ts');
   const { link_recipient_command } =

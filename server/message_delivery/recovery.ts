@@ -12,6 +12,7 @@ import {
   decode_recipient_message,
   require_recipient_target,
   finish_recipient_delivery,
+  prune_finished_recipient_deliveries,
 } from './data/recipient_deliveries.ts';
 import { prompt_row, refused_row, uncertain_row } from '../conversation/runtime/messages.ts';
 import { late_steer_owns_message } from '../conversation/runtime/controls.ts';
@@ -213,6 +214,23 @@ async function recover_row(host: SqliteProcessConversationSystem, row: RecoveryR
           }
         });
     }
+    const state = host.conversation_state(row.conversation_id);
+    if (row.state === 'pending' && (message.requested_mode ?? 'queue') === 'queue' && state) {
+      const restored = await state.lock.run(() => {
+        if (state.held_prompts.length === 0) return false;
+        database.read((sql) => require_recipient_target(sql, row.submission_id));
+        if (
+          !state.held_prompts.some((held) => held.sender_message_id === message.sender_message_id)
+        )
+          host.hold_prompt(state, message);
+        return true;
+      });
+      if (restored) {
+        release_admission_leases();
+        host.schedule_drain(state);
+        return;
+      }
+    }
     const fate = await host.send(row.conversation_id, message.content, {
       ...message,
       mode: message.requested_mode,
@@ -241,6 +259,7 @@ async function recover_row(host: SqliteProcessConversationSystem, row: RecoveryR
 
 export function resume_recipient_deliveries(host: SqliteProcessConversationSystem): void {
   const database = host.options.store.start_admission_database;
+  database.write(prune_finished_recipient_deliveries);
   const rows = database.read((sql) =>
     sql.all<RecoveryRow>(
       `SELECT ${columns} FROM recipient_deliveries WHERE state IN ('pending','dispatching','uncertain') ORDER BY delivery_order`,
@@ -265,7 +284,20 @@ export function resume_recipient_deliveries(host: SqliteProcessConversationSyste
     ),
   )) {
     const state = host.conversation_state(row.conversation_id);
-    if (state) host.schedule_drain(state);
+    const pending = rows.find((pending) => pending.conversation_id === row.conversation_id);
+    const key = pending
+      ? pending.recipient_kind === 'ticket'
+        ? `ticket:${pending.recipient_id}`
+        : pending.recipient_kind === 'chief'
+          ? 'agent:chief_of_staff'
+          : pending.recipient_kind === 'manager'
+            ? `agent:manager_${pending.recipient_id}`
+            : `conversation:${pending.conversation_id}`
+      : `conversation:${row.conversation_id}`;
+    if (state)
+      void own_recipient_delivery(host, () =>
+        conversation_link_lock(key).run(async () => host.schedule_drain(state)),
+      ).catch((error) => console.error('Held delivery recovery failed', error));
   }
 }
 

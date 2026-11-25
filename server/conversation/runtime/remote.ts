@@ -423,7 +423,18 @@ function resume_pending_admission(
             state.record.conversation_id,
             message.sender_message_id!,
           );
-          if (previous?.payload.kind === 'prompt') continue;
+          const kind =
+            accepted !== null
+              ? 'prompt'
+              : refused
+                ? 'prompt_delivery_refused'
+                : 'prompt_delivery_uncertain';
+          if (
+            previous?.payload.kind === 'prompt' ||
+            previous?.payload.kind === kind ||
+            (accepted === null && previous && previous.payload.kind !== 'prompt_delivery_uncertain')
+          )
+            continue;
           const rows = await host.persist(state, () =>
             host.options.store.append_events(state.record.conversation_id, [
               accepted !== null

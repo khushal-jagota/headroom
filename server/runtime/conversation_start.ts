@@ -452,24 +452,11 @@ async function send_existing_ticket(
   content: MessageContent,
   options: TicketMessageOptions,
 ): Promise<DeliveredMessage> {
-  if (database.read((sql) => conversation_workspace_retired(sql, sending_into))) {
-    if (await observe_conversation_operation(() => system.is_running(sending_into), options.signal))
-      throw new PlannerError(
-        'already_running',
-        'The retired workspace still has an active conversation',
-      );
-    await system.kill(sending_into);
-    database.write((tx) =>
-      tickets.clear_ticket_conversation_link(tx, id, {
-        expected_conversation_id: sending_into,
-        now: options.now,
-      }),
+  if (database.read((sql) => conversation_workspace_retired(sql, sending_into)))
+    throw new PlannerError(
+      'validation',
+      'Restart this Ticket to retire its old workspace conversation before sending another message.',
     );
-    return send_to_ticket_conversation(system, database, id, content, {
-      ...options,
-      conversation_id: null,
-    });
-  }
   const fate = await observe_conversation_operation(
     async () => system.send(sending_into, content, send_options(options, true)),
     options.signal,

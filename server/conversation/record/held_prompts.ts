@@ -1,5 +1,6 @@
 /** Durable custody for the conversation's held line. */
 import type { Database as FullDatabase, TransactionSql } from '../../core/database/contracts.ts';
+import { hold_recipient_delivery } from '../../message_delivery/data/recipient_deliveries.ts';
 import type { Message } from '../runtime/contracts.ts';
 import { message_content_json_entries, message_content_from_stored } from '../message_content.ts';
 import { uncertain_row } from '../runtime/messages.ts';
@@ -13,6 +14,7 @@ export function save_held_prompt(
   conversation_id: string,
   message: Message,
   position: number,
+  runtime_held_ids: readonly string[],
 ): void {
   const {
     recording_receipt: _receipt,
@@ -29,15 +31,20 @@ export function save_held_prompt(
   });
   database.write(
     (tx) => {
+      if (!message.delivery_uncertain)
+        hold_recipient_delivery(tx, conversation_id, message.sender_message_id);
       tx.run('DELETE FROM conversation_held_prompts WHERE held_prompt_id=? AND conversation_id=?', [
         message.held_prompt_id,
         conversation_id,
       ]);
       const rows = tx.all<{ held_prompt_id: string; dispatching: number }>(
-        'SELECT held_prompt_id,dispatching FROM conversation_held_prompts WHERE conversation_id=? ORDER BY dispatching DESC,position',
+        'SELECT held_prompt_id,dispatching FROM conversation_held_prompts WHERE conversation_id=? ORDER BY position',
         [conversation_id],
       );
-      const at = position + rows.filter((row) => row.dispatching).length;
+      const at =
+        position +
+        rows.filter((row) => row.dispatching && !runtime_held_ids.includes(row.held_prompt_id))
+          .length;
       rows.forEach((row, index) =>
         tx.run('UPDATE conversation_held_prompts SET position=? WHERE held_prompt_id=?', [
           index < at ? index : index + 1,
@@ -57,7 +64,7 @@ export function read_held_prompts(database: Database, conversation_id: string): 
   return database.read((sql) =>
     sql
       .all<{ payload: string; dispatching: number }>(
-        'SELECT payload,dispatching FROM conversation_held_prompts WHERE conversation_id=? ORDER BY dispatching DESC,position',
+        'SELECT payload,dispatching FROM conversation_held_prompts WHERE conversation_id=? ORDER BY position',
         [conversation_id],
       )
       .map((row) => {

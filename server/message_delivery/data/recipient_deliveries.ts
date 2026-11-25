@@ -62,6 +62,7 @@ export function admit_recipient_delivery(
       : `${conversation_id}:${message.sender_message_id}`;
   const { recording_receipt: _receipt, content: _content, ...values } = message;
   const result = database.write((tx) => {
+    prune_finished_recipient_deliveries(tx);
     const previous = tx.get<RecipientAttempt>(
       'SELECT submission_id,attempt_id FROM recipient_deliveries WHERE submission_id=?',
       [submission_id],
@@ -128,16 +129,17 @@ export function mark_recipient_attempt(
       );
       if (!row) return [];
       require_recipient_target(tx, submission_id);
+      const attempt_id = randomUUID();
       tx.run(
-        "UPDATE recipient_deliveries SET state='dispatching',native_transport=? WHERE submission_id=? AND attempt_id=?",
-        [native_transport, submission_id, row.attempt_id],
+        "UPDATE recipient_deliveries SET state='dispatching',native_transport=?,attempt_id=? WHERE submission_id=? AND attempt_id=?",
+        [native_transport, attempt_id, submission_id, row.attempt_id],
       );
       if (message.held_prompt_id)
         tx.run(
           'UPDATE conversation_held_prompts SET dispatching=1,dispatch_turn=? WHERE held_prompt_id=?',
           [turn_number, message.held_prompt_id],
         );
-      return [row];
+      return [{ submission_id, attempt_id }];
     }),
   );
 }
@@ -159,8 +161,15 @@ export function finish_recipient_delivery(
             : 'delivered';
   database.write((tx) =>
     tx.run(
-      "UPDATE recipient_deliveries SET state=?,outcome=? WHERE submission_id=? AND attempt_id=? AND state NOT IN ('delivered','refused','discarded')",
-      [state, JSON.stringify(outcome), attempt.submission_id, attempt.attempt_id],
+      "UPDATE recipient_deliveries SET state=?,outcome=?,settled_at=? WHERE submission_id=? AND attempt_id=? AND state NOT IN ('delivered','refused','discarded') AND (?!='held' OR state!='dispatching')",
+      [
+        state,
+        JSON.stringify(outcome),
+        ['delivered', 'refused', 'discarded'].includes(state) ? Date.now() : null,
+        attempt.submission_id,
+        attempt.attempt_id,
+        state,
+      ],
     ),
   );
 }
@@ -200,10 +209,11 @@ export function settle_recipient_event(
     [payload.sender_message_id],
   );
   tx.run(
-    'UPDATE recipient_deliveries SET state=?,outcome=? WHERE submission_id=? AND conversation_id=?',
+    'UPDATE recipient_deliveries SET state=?,outcome=?,settled_at=? WHERE submission_id=? AND conversation_id=?',
     [
       state,
       JSON.stringify(delivery_fate_json(outcome_fate(payload))),
+      ['delivered', 'refused', 'discarded'].includes(state) ? Date.now() : null,
       `${conversation_id}:${payload.sender_message_id}`,
       conversation_id,
     ],
@@ -293,14 +303,17 @@ export function recipient_command_is_current(sql: ReadSql, command_id: string): 
     attempt_id: string;
     expected_attempt: string;
     state: string;
+    operation: string;
   }>(
-    'SELECT c.submission_id,c.attempt_id,r.attempt_id AS expected_attempt,r.state FROM recipient_delivery_commands c JOIN recipient_deliveries r USING(submission_id) WHERE c.command_id=?',
+    'SELECT c.submission_id,c.attempt_id,r.attempt_id AS expected_attempt,r.state,e.operation FROM recipient_delivery_commands c JOIN recipient_deliveries r USING(submission_id) JOIN executor_commands e ON e.command_id=c.command_id WHERE c.command_id=?',
     [command_id],
   );
   for (const link of links) {
     if (
       link.attempt_id !== link.expected_attempt ||
-      !['pending', 'held', 'dispatching'].includes(link.state)
+      (link.operation === 'start'
+        ? !['pending', 'held', 'dispatching'].includes(link.state)
+        : link.state !== 'dispatching')
     )
       return false;
     try {
@@ -311,4 +324,25 @@ export function recipient_command_is_current(sql: ReadSql, command_id: string): 
     }
   }
   return true;
+}
+
+/** Receipts and conversation events retain terminal outcomes independently of delivery payloads. */
+export function prune_finished_recipient_deliveries(tx: TransactionSql): void {
+  tx.run(
+    "DELETE FROM recipient_deliveries WHERE state IN ('delivered','refused','discarded') AND settled_at<? AND NOT EXISTS (SELECT 1 FROM recipient_delivery_commands d JOIN executor_commands c ON c.command_id=d.command_id WHERE d.submission_id=recipient_deliveries.submission_id AND c.state IN ('waiting','delivered'))",
+    [Date.now() - 7 * 24 * 60 * 60 * 1000],
+  );
+}
+
+/** Re-holding a proven unissued input closes its old native attempt atomically with custody. */
+export function hold_recipient_delivery(
+  tx: TransactionSql,
+  conversation_id: string,
+  sender_message_id: string | null,
+): void {
+  if (sender_message_id === null) return;
+  tx.run(
+    "UPDATE recipient_deliveries SET state='held',attempt_id=CASE WHEN state IN ('dispatching','uncertain') THEN ? ELSE attempt_id END,native_transport=NULL,settled_at=NULL WHERE submission_id=? AND state IN ('pending','held','dispatching','uncertain')",
+    [randomUUID(), `${conversation_id}:${sender_message_id}`],
+  );
 }

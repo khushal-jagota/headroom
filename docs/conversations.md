@@ -54,6 +54,8 @@ Home acknowledges an agent message after it saves the complete input and its del
 
 Recipient admission gives all producers one order and releases its locks before native preparation or delivery. A persistent generation fences restart, reset, cleanup, deletion, and move. Intake refuses promptly while such an operation remains unfinished. Waiting prompts survive a server restart. Recovery resumes unattempted work and reconciles native attempts from their command records. Without proof of an outcome, delivery stays uncertain and does not repeat automatically.
 
+Failed or interrupted cleanup keeps its safety fence until an explicit retry proves cleanup. Messages to that recipient receive a terminal refusal, so the sender can continue with later writes. An ordinary send to a retired workspace also refuses promptly. Restart the Worker to retire that conversation before a new send. Pending custody limits apply per recipient, and a full recipient does not block admission for another recipient.
+
 A busy agent is not a refusal. The sender picks how a busy agent meets the message:
 
 - **Steer**, the default for messages from people and Panels system prompts, injects text into the running turn when the backend's driver says it can steer an active turn. Antigravity cannot, so a message sent during its turn waits for the turn to end.

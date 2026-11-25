@@ -344,11 +344,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   queue(state: ConversationState, message: Message): Promise<PromptDeliveryFate> {
     return send.queue(this, state, message);
   }
-  hold_prompt(
-    state: ConversationState,
-    message: Message,
-    position = state.held_prompts.length,
-  ): PromptDeliveryQueued {
+  hold_prompt(state: ConversationState, message: Message, position?: number): PromptDeliveryQueued {
     return send.hold_prompt(this, state, message, position);
   }
   reserve_turn(

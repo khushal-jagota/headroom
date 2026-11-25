@@ -141,14 +141,18 @@ export function write_agent_message_acceptance(
   });
   if (message.pending) {
     const pending = tx.get<{ count: number; bytes: number }>(
-      'SELECT COUNT(*) AS count,COALESCE(SUM(retained_bytes+length(CAST(record_json AS BLOB))),0) AS bytes FROM agent_message_acceptances WHERE pending=1',
+      'SELECT COUNT(*) AS count,COALESCE(SUM(retained_bytes+length(CAST(record_json AS BLOB))),0) AS bytes FROM agent_message_acceptances WHERE recipient_kind=? AND recipient_id=? AND pending=1',
+      [message.recipient.kind, message.recipient.id],
     )!;
     if (
       pending.count >= MAX_PENDING_AGENT_MESSAGES ||
       pending.bytes + retained_bytes + Buffer.byteLength(record_json, 'utf8') >
         MAX_PENDING_AGENT_MESSAGE_BYTES
     )
-      throw new PlannerError('retry_later', 'Home cannot retain more pending messages');
+      throw new PlannerError(
+        'validation',
+        'Home cannot retain more pending messages for this recipient',
+      );
   }
   tx.run('INSERT INTO agent_message_acceptances VALUES(?,?,?,?,?,?,?,?,?,?)', [
     message.submission_id,

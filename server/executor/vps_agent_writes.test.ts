@@ -481,3 +481,54 @@ test('recipient custody releases the sender before a native receipt and survives
     await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
 });
+
+// A crash can leave cleanup fenced. That destination must refuse durably rather than stop
+// the sender's inbox before its later owner reply. Reuse the real inbox and core host.
+test('an interrupted recipient lifecycle refuses one inbox item and admits the next owner reply', async () => {
+  const w = world({ kind: 'manager', id: 'm_fenced' });
+  w.database.write((tx) => {
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']);
+    tx.run("INSERT INTO recipient_lifecycles VALUES('chief','chief',1,1)");
+  });
+  const { ConversationStartRequest } = await import('../conversation/contracts.ts');
+  const f = core_setup({ restart_of: w.database });
+  await f.start();
+  await f.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: w.child.conversation_id,
+      model: 'model',
+      workspace_folder: '/workspace',
+    }),
+  );
+  const inbox = new MacInbox(w.writes.store, w.writes.clock, w.writes.runs);
+  inbox.agent_writes.conversations = f.core;
+  const first = w.envelope(1, 'message.send', {
+    body: { target: { kind: 'chief', id: 'chief' }, message: 'fenced correction' },
+  });
+  const second = w.envelope(2, 'message.send', {
+    body: { target: { kind: 'owner', id: 'owner' }, message: 'owner reply after refusal' },
+  });
+  try {
+    const accept = (envelope: QueuedEnvelope) =>
+      inbox.accept_batch(
+        w.child.conversation_id,
+        { sender_id: envelope.sender_id, items: [{ envelope, sender_refusal: null }] },
+        identity,
+      );
+    await expect(accept(first)).resolves.toMatchObject({
+      stop: null,
+      receipts: [{ disposition: 'refused', result: { error: { code: 'validation' } } }],
+    });
+    expect((await w.send(first)).disposition).toBe('refused');
+    await expect(accept(second)).resolves.toMatchObject({
+      stop: null,
+      receipts: [{ disposition: 'accepted', result: { fate: 'recorded' } }],
+    });
+    expect(f.store.read_events_after(w.child.conversation_id, 0).map((row) => row.kind)).toEqual([
+      'message_to_owner',
+    ]);
+  } finally {
+    await inbox.stop({ deadline: performance.now() / 1000 + 10 });
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});

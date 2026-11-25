@@ -14,10 +14,12 @@ export function recipient_lifecycle(
   );
 }
 export function require_recipient_available(sql: ReadSql, target: Principal): void {
+  // A crash or failed cleanup retains the fence until an explicit lifecycle retry proves it.
+  // Refuse this send terminally so the sender's inbox can admit its later writes.
   if (recipient_lifecycle(sql, target).retiring)
     throw new PlannerError(
-      'retry_later',
-      'The recipient has an unfinished restart, reset, cleanup, deletion, or move. Retry after that operation finishes.',
+      'validation',
+      'The recipient has an unfinished restart, reset, cleanup, deletion, or move. Retry that lifecycle operation before sending another message.',
     );
 }
 export function begin_recipient_lifecycle(tx: TransactionSql, target: Principal): number {

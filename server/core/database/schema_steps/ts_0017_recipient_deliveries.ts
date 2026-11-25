@@ -22,17 +22,22 @@ export const recipient_deliveries_step: SchemaStep = {
       state TEXT NOT NULL CHECK(state IN ('pending','held','dispatching','delivered','refused','uncertain','discarded')),
       attempt_id TEXT NOT NULL,
       native_transport TEXT CHECK(native_transport IN ('local','mailbox')),
-      outcome TEXT
+      outcome TEXT,
+      settled_at INTEGER
     )`);
     tx.run(
       'CREATE INDEX recipient_delivery_pending ON recipient_deliveries(recipient_kind,recipient_id,state,delivery_order)',
     );
     tx.run(`CREATE TABLE recipient_delivery_commands (
       command_id TEXT NOT NULL REFERENCES executor_commands(command_id),
-      submission_id TEXT NOT NULL REFERENCES recipient_deliveries(submission_id),
+      submission_id TEXT NOT NULL REFERENCES recipient_deliveries(submission_id) ON DELETE CASCADE,
       attempt_id TEXT NOT NULL,
       PRIMARY KEY(command_id,submission_id)
     )`);
+    tx.run(
+      'CREATE INDEX recipient_delivery_attempt_commands ON recipient_delivery_commands(submission_id,attempt_id)',
+    );
+    tx.run('CREATE INDEX recipient_delivery_retention ON recipient_deliveries(state,settled_at)');
     tx.run(`CREATE TABLE conversation_held_prompts (
       held_prompt_id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,

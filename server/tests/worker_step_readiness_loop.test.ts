@@ -203,7 +203,7 @@ test('restart defers the next opener and only one starts a fresh conversation', 
         'stale correction',
         'steer',
       ),
-    ).rejects.toMatchObject({ code: 'retry_later' });
+    ).rejects.toMatchObject({ code: 'validation' });
     expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
     release_kill();
     const [restarted, next] = await Promise.all([restarting, next_step]);
@@ -1028,4 +1028,47 @@ test('a kickoff racing a steer shares admission order without releasing its clai
     await child.release('kickoff');
     await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
+});
+
+// Ordinary admission must not wait for native cleanup of a retired workspace.
+// The explicit restart route retains that proof and restores a fresh recipient.
+test('a retired workspace refuses ordinary admission until an explicit Worker restart', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  await start_ready_worker_step(ticket.id, options);
+  const old_id = read(db, ticket.id).conversation_id!;
+  db.write((tx) => {
+    tx.run('INSERT INTO ticket_workspace_conversations VALUES(?,?,?,?)', [
+      old_id,
+      ticket.id,
+      HOME_MACHINE_ID,
+      'retired-workspace',
+    ]);
+    tx.run('INSERT INTO ticket_workspace_retirements VALUES(?,?,?,?)', [
+      ticket.id,
+      HOME_MACHINE_ID,
+      'retired-workspace',
+      now,
+    ]);
+  });
+  const kill = vi.spyOn(system, 'kill');
+  const send = () =>
+    send_message(
+      system,
+      db,
+      new TestClock(new Date(now * 1000).toISOString()),
+      { principal: OWNER, conversationId: null },
+      { kind: 'ticket', id: ticket.id },
+      'owner correction',
+    );
+  await expect(send()).rejects.toMatchObject({ code: 'validation' });
+  expect(kill).not.toHaveBeenCalled();
+  await restart_worker(system, db, OWNER, ticket.id, {
+    now: options.now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, options),
+  });
+  expect(read(db, ticket.id).conversation_id).not.toBe(old_id);
+  await expect(send()).resolves.toMatchObject({
+    conversation_id: read(db, ticket.id).conversation_id,
+  });
 });

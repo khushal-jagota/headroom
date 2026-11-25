@@ -360,8 +360,33 @@ export function hold_prompt(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   message: Message,
-  position = state.held_prompts.length,
+  position?: number,
 ): PromptDeliveryQueued {
+  if (position === undefined) {
+    const orders = host.options.store.start_admission_database.read((sql) => {
+      const identities = [message, ...state.held_prompts].map(
+        (held) => `${state.record.conversation_id}:${held.sender_message_id}`,
+      );
+      return new Map(
+        sql
+          .all<{ submission_id: string; delivery_order: number }>(
+            `SELECT submission_id,delivery_order FROM recipient_deliveries WHERE submission_id IN (${identities.map(() => '?').join(',')})`,
+            identities,
+          )
+          .map((row) => [row.submission_id, row.delivery_order]),
+      );
+    });
+    const order = orders.get(`${state.record.conversation_id}:${message.sender_message_id}`);
+    const later =
+      order === undefined
+        ? -1
+        : state.held_prompts.findIndex(
+            (held) =>
+              (orders.get(`${state.record.conversation_id}:${held.sender_message_id}`) ?? -1) >
+              order,
+          );
+    position = later < 0 ? state.held_prompts.length : later;
+  }
   const held: Message = {
     ...message,
     // A message held again keeps the identity the queue already showed.
@@ -374,6 +399,7 @@ export function hold_prompt(
     state.record.conversation_id,
     held,
     position,
+    state.held_prompts.map((held) => held.held_prompt_id),
   );
   host.start_admission.queue(message.sender_message_id);
   state.held_prompts.splice(position, 0, held);
