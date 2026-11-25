@@ -1,5 +1,6 @@
 /** Fixed external installer entry. Runs from the retained release. */
-import { readFileSync, writeSync } from 'node:fs';
+import { writeSync } from 'node:fs';
+import { read_record_json } from '../attempts.ts';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
@@ -12,9 +13,7 @@ import type { InstallerRequest } from './contracts.ts';
 
 function read_request(path: string): InstallerRequest {
   assert_installer_path(path);
-  const value: unknown = JSON.parse(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path)),
-  );
+  const value = read_record_json(path);
   if (!is_object(value)) throw new Error('Installer request must be an object');
   const text = (key: string): string => {
     const item = value[key];

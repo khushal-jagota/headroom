@@ -1,14 +1,7 @@
-import {
-  existsSync,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { is_object } from '../codec.ts';
+import { read_record_json } from '../attempts.ts';
 import { release_installer_barrier, with_installer_lock } from '../../update_barrier.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { error_detail } from './commands.ts';
@@ -46,11 +39,7 @@ function installed_sha(app: string): unknown {
   assert_installer_path(app);
   assert_installer_path(join(app, 'manifest.json'));
   try {
-    const value = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-        readFileSync(join(app, 'manifest.json')),
-      ),
-    );
+    const value = read_record_json(join(app, 'manifest.json'));
     return is_object(value) ? (value.app_sha ?? null) : null;
   } catch (error) {
     if (

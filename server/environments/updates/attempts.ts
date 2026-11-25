@@ -63,7 +63,7 @@ export function exclusive_existing_lock<T>(path: string, action: () => T): T {
 export function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
-function read_record_json(path: string): unknown {
+export function read_record_json(path: string): unknown {
   // Reject invalid UTF-8 and leave a BOM for JSON to reject.
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
     readFileSync(path),

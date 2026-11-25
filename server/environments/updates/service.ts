@@ -16,7 +16,12 @@ import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
-import { FileUpdateAttemptStore, UpdateConflict, utc_now } from './attempts.ts';
+import {
+  FileUpdateAttemptStore,
+  SETTLED_ATTEMPT_STATES,
+  UpdateConflict,
+  utc_now,
+} from './attempts.ts';
 import { add_seconds, instant, resolve } from './logic/experience.ts';
 import {
   ATTEMPT_OBSERVER_SECONDS,
@@ -64,7 +69,6 @@ export interface UpdateServiceOptions {
   install_refusal?: () => string | null;
   /** Tells the owner about a failed update. It must not throw. */
   notify_failure?: (attempt: UpdateAttempt) => void;
-  can_refresh?: () => boolean;
   now?: () => number;
   record_now?: () => string;
 }
@@ -179,7 +183,7 @@ export class UpdateService {
       current?.steps.rollback_failed !== undefined
     )
       return null;
-    if (current !== null && !states('done', 'failed').has(current.state)) {
+    if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) {
       this.attempts.change(attempt_id, states(current.state), (record) => ({
         ...record,
         state: 'failed',
@@ -217,15 +221,9 @@ export class UpdateService {
       : staged_app_path(this.options.current_root, release.manifest.app_sha);
   }
   refresh_available(options: { force?: boolean } = {}): void {
-    if (
-      !this.running ||
-      this.options.provider === null ||
-      !(this.options.can_refresh?.() ?? true) ||
-      this.prefetching !== null
-    )
-      return;
+    if (!this.running || this.options.provider === null || this.prefetching !== null) return;
     const current = this.attempts.read();
-    if (current !== null && !states('done', 'failed').has(current.state)) return;
+    if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) return;
     if (!options.force && this.now() - this.last_checked < UPDATE_AVAILABILITY_REFRESH_SECONDS)
       return;
     this.last_checked = this.now();

@@ -143,15 +143,11 @@ export async function run_installer_command(
     value.signal.removeEventListener('abort', abort);
   }
 }
-export function create_installer_effects(
+function darwin_installer_effects(
   request: InstallerRequest,
   execution: InstallerExecution,
-): InstallerEffects {
-  assert_installer_path(request.current_root, execution.environment);
-  assert_installer_path(request.database, execution.environment);
-  assert_installer_path(request.data_directory, execution.environment);
-  assert_installer_health_url(request.health_url, execution.environment);
-  const darwin = process.platform === 'darwin';
+  check_health: InstallerEffects['healthy'],
+) {
   let mac: Promise<import('../darwin/service.ts').DarwinHomeService> | undefined;
   const home = () =>
     (mac ??= import('../darwin/service.ts').then(({ create_darwin_home_io, DarwinHomeService }) => {
@@ -169,49 +165,87 @@ export function create_installer_effects(
         throw new AppValidationError('Installer Node differs from the retained installation');
       return service;
     }));
-  let effects:
-    | Promise<ReturnType<typeof import('../darwin/service.ts').create_darwin_installer_effects>>
-    | undefined;
-  const home_effects = () =>
-    (effects ??= import('../darwin/service.ts').then(({ create_darwin_installer_effects }) =>
-      create_darwin_installer_effects(home, (sha) =>
-        healthy(
-          request.health_url,
-          sha,
-          request.health_timeout_seconds,
-          execution.signal,
-          execution.environment,
-        ),
-      ),
-    ));
   return {
-    ...(darwin
-      ? {
-          async resume_interrupted() {
-            // The coordinator was recreated after a crash or login. An absent job
-            // is permitted here; any loaded job still has to authenticate.
-            (await home()).phase = 'stopped';
-          },
-          async validate_service() {
-            await (await home_effects()).validate_service();
-          },
-          async recover_unchanged(sha: string) {
-            return (await home_effects()).recover_unchanged(sha);
-          },
-          async finish_success() {
-            return (await home_effects()).finish_success();
-          },
-          async finish_rollback() {
-            return (await home_effects()).finish_rollback();
-          },
-        }
-      : {}),
+    async resume_interrupted() {
+      // A resumed coordinator may find a stopped job. Every loaded job still authenticates.
+      (await home()).phase = 'stopped';
+    },
+    async validate_service() {
+      await (await home()).validate_running_home();
+    },
+    async service(action: 'stop' | 'start') {
+      const service = await home();
+      if (action === 'stop') await service.stop();
+      else await service.start();
+    },
+    async recover_unchanged(sha: string) {
+      const service = await home();
+      if (service.phase === 'stopped') return false;
+      await service.validate_running_home();
+      if (!(await check_health(sha)))
+        throw new Error('The unchanged home did not pass health after its stop failed');
+      await service.resume_auxiliaries();
+      return true;
+    },
+    async finish_success() {
+      const service = await home(),
+        errors: string[] = [];
+      try {
+        await service.provision_schedules();
+      } catch (error) {
+        errors.push(`schedule setup: ${String(error)}`);
+      }
+      try {
+        await service.resume_auxiliaries();
+      } catch (error) {
+        errors.push(String(error));
+      }
+      return errors.length
+        ? 'The release passed health, but its auxiliary jobs did not restart: ' + errors.join('; ')
+        : null;
+    },
+    async finish_rollback() {
+      try {
+        await (await home()).resume_auxiliaries();
+        return null;
+      } catch (error) {
+        return `Its auxiliary jobs did not restart: ${String(error)}`;
+      }
+    },
+  };
+}
+
+export function create_installer_effects(
+  request: InstallerRequest,
+  execution: InstallerExecution,
+): InstallerEffects {
+  assert_installer_path(request.current_root, execution.environment);
+  assert_installer_path(request.database, execution.environment);
+  assert_installer_path(request.data_directory, execution.environment);
+  assert_installer_health_url(request.health_url, execution.environment);
+  const check_health: InstallerEffects['healthy'] = (sha, prepared_attempt_id) => {
+    assert_installer_health_url(request.health_url, execution.environment);
+    return healthy(
+      request.health_url,
+      sha,
+      request.health_timeout_seconds,
+      execution.signal,
+      execution.environment,
+      false,
+      undefined,
+      prepared_attempt_id,
+    );
+  };
+  const mac =
+    process.platform === 'darwin'
+      ? darwin_installer_effects(request, execution, check_health)
+      : null;
+  return {
+    ...mac,
     async service(action) {
       if (installer_test_mode(execution.environment))
         throw new Error('Installer service actions are unavailable in tests');
-      if (darwin) {
-        return (await home_effects()).service(action);
-      }
+      if (mac) return mac.service(action);
       const value = phase(execution, SERVICE_COMMAND_TIMEOUT_SECONDS);
       await run_installer_command(['systemctl', '--user', action, request.service_unit], value, {
         check: true,
@@ -309,18 +343,6 @@ export function create_installer_effects(
         { check: true, output: 'inherit', lifetime_lock_fd },
       );
     },
-    healthy(sha, prepared_attempt_id) {
-      assert_installer_health_url(request.health_url, execution.environment);
-      return healthy(
-        request.health_url,
-        sha,
-        request.health_timeout_seconds,
-        execution.signal,
-        execution.environment,
-        false,
-        undefined,
-        prepared_attempt_id,
-      );
-    },
+    healthy: check_health,
   };
 }
