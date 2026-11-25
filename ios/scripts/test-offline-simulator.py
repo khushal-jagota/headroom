@@ -1219,6 +1219,21 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if REVIEW_MESSAGES and name in ("review-open-chief", "review-open-summary"):
+                    # Reuse this host for the retained Review path walk. Synthetic pushes
+                    # select a different destination without popping the artifact first.
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    payload = dict(aps={"alert": {"title": "Review navigation proof", "body": name}},
+                                   server_url=url,
+                                   route="/#/agents/chief-of-staff" if name == "review-open-chief" else "/#/review")
+                    file = output / (name + ".apns")
+                    file.write_text(json.dumps(payload))
+                    result = subprocess.run(["xcrun", "simctl", "push", DEVICE, BUNDLE, str(file)], capture_output=True)
+                    self.respond({"output": (result.stdout + result.stderr).decode()},
+                                 200 if result.returncode == 0 else 500)
+                    return
                 if UPDATES_SMOKE and name.startswith("updates/"):
                     phase = name.removeprefix("updates/")
                     if phase not in ("offer", "updating", "restart", "failed", "refused", "complete"):
