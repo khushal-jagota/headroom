@@ -25,6 +25,7 @@
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
   import { releaseTextRestoration, type TextRestorationPlacement, type LatestPlacementIntent } from './placement';
+  import { outgoingMessageIsSending } from "../../../lib/conversation/outgoing";
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -268,6 +269,8 @@
     if (aligned && reader?.restorationOutcome === 'idle') releaseTextRestoration(operation);
     return aligned;
   }
+  /** A send in flight or accepted. Each owns the placement of its own message. */
+  const PLACEABLE_SEND = '[data-conversation-outgoing][data-conversation-accepted="true"], [data-conversation-outgoing][data-conversation-sending="true"]';
   let pendingPresentationTarget: Element | null = null;
   let heldSent = $state<{ messageId: string; displayKey: string | null; rowKey: string | null } | null>(null);
   let liveArrivalPixels = 0;
@@ -546,8 +549,8 @@
   }
 
   function hasUnplacedAcceptedSend(): boolean {
-    if (outgoingMessages.some(message => message.accepted && !message.restored && !settledMessageIds.has(message.messageId))) return true;
-    return [...(contentElement?.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]') ?? [])]
+    if (outgoingMessages.some(message => (message.accepted || outgoingMessageIsSending(message)) && !message.restored && !settledMessageIds.has(message.messageId))) return true;
+    return [...(contentElement?.querySelectorAll<HTMLElement>(PLACEABLE_SEND) ?? [])]
       .some(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) &&
         !outgoingMessages.some(message => message.messageId === element.dataset.conversationOutgoing && message.restored));
   }
@@ -709,17 +712,18 @@
           if (message === undefined) arrivingMessages.delete(key);
           else if (presentationReady(message)) pendingFullMessageKey = key;
         }
-        // Only confirmed acceptance creates a send placement. A recovery bubble is not acceptance.
+        // A send in flight or accepted creates the send placement, so the answer room is built
+        // in the frame the bubble appears. A bubble that failed or came back from a reload is recovery.
         for (const message of outgoingMessages) {
           if (message.restored) settledMessageIds.add(message.messageId);
         }
-        const recovery = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing]:not([data-conversation-accepted="true"])')]
+        const recovery = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing]:not([data-conversation-accepted="true"]):not([data-conversation-sending="true"])')]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) && !recoverySeen.has(element.dataset.conversationOutgoing!)).at(-1);
         if (recovery && presentationReady(recovery)) {
           recoveryToPlace = recovery.dataset.conversationOutgoing!;
           recoverySeen.add(recoveryToPlace);
         }
-        const accepted = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]')]
+        const accepted = [...thread.querySelectorAll<HTMLElement>(PLACEABLE_SEND)]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!)).at(-1);
         if (accepted !== undefined) supersedeRestorationWithAcceptedSend();
         if (accepted !== undefined && presentationReady(accepted)) {
@@ -1150,7 +1154,7 @@
       repairLayout(thread);
       requestReconciliation();
     });
-    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
+    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "data-conversation-sending", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
     observer.observe(thread);
     observer.observe(content);
     return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
