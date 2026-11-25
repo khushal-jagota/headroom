@@ -7,6 +7,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   shell,
@@ -158,29 +159,51 @@ async function switchServer(typed: string): Promise<ServerAddressResult> {
   return result;
 }
 
-// A link or a new window that leaves the app opens in the default browser. A new window
-// for a server path, such as a file opened in another tab, opens at the server's address.
+// Every link the page follows or opens in a new window passes here, and each ends in one of
+// three places: the default browser, a page of the app, or a message that says why not.
 function sendLinksToTheBrowser(window: BrowserWindow): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openOutside(url);
+    openLink(window, url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).protocol === 'panels:') return;
     event.preventDefault();
-    openOutside(url);
+    openLink(window, url);
   });
 }
 
-function openOutside(link: string): void {
-  const url = new URL(link);
-  if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
-    void shell.openExternal(url.href);
+function openLink(window: BrowserWindow, link: string): void {
+  const url = parseLink(link);
+  if (!url) return void refuseLink(window, link, 'It is not a valid address.');
+  const address = serverAddress();
+  const ownServer = address !== null && url.protocol !== 'mailto:' && url.origin === new URL(address).origin;
+  // A page of the connected server opens in the app. The server's data and files stay with
+  // the browser, which can show or download them.
+  if (ownServer && !/^\/(api|files)(\/|$)/.test(url.pathname)) {
+    if (!window.isDestroyed()) void window.loadURL(`${SCREENS_URL.slice(0, -1)}${url.pathname}${url.search}${url.hash}`);
     return;
   }
-  const address = serverAddress();
-  if (url.protocol === 'panels:' && url.host === SCREENS_HOST && address)
-    void shell.openExternal(`${address}${url.pathname}${url.search}${url.hash}`);
+  if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+    shell.openExternal(url.href).catch((error: Error) => refuseLink(window, link, `The browser would not open it: ${error.message}`));
+    return;
+  }
+  // A link to a server path in a new window, such as a file opened in another tab, opens at the server's address.
+  if (url.protocol === 'panels:' && url.host === SCREENS_HOST && address) {
+    shell.openExternal(`${address}${url.pathname}${url.search}${url.hash}`).catch((error: Error) => refuseLink(window, link, `The browser would not open it: ${error.message}`));
+    return;
+  }
+  refuseLink(window, link, 'Panels opens web and email links only.');
+}
+
+function parseLink(link: string): URL | null {
+  try { return new URL(link); } catch { return null; }
+}
+
+/** The click had no result the person could see, so say why. */
+function refuseLink(window: BrowserWindow, link: string, reason: string): void {
+  if (window.isDestroyed()) return;
+  void dialog.showMessageBox(window, { type: 'info', message: 'Panels could not open this link.', detail: `${link}\n\n${reason}` });
 }
 
 // Calls that act answer only the separate setup origin. An artifact can invoke the
