@@ -184,12 +184,13 @@ extension View {
 
 struct TicketMachineLabel: View {
     let locale: String?
+    var machineId: String? = nil
+    @Environment(AppStore.self) private var store
     var body: some View {
-        if let name = TicketMachine.name(locale) {
-            Label(name, systemImage: locale == "macos" ? "laptopcomputer" : "server.rack")
-                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                .accessibilityLabel("Runs on \(name)")
-        }
+        let name = TicketMachine.name(locale, machineId: machineId, machines: store.machines)
+        Label(name, systemImage: locale == "macos" ? "laptopcomputer" : "server.rack")
+            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            .accessibilityLabel("Runs on \(name)")
     }
 }
 struct TicketActivityMark: View {

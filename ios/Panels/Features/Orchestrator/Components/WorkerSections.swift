@@ -73,7 +73,7 @@ struct WorkerRows<T: GroupedWorker>: View {
             ForEach(tickets) { ticket in
                 NavigationLink(value: AppRoute.ticket(ticket.id)) {
                     HStack(alignment: .center, spacing: PanelsTheme.Space.md) {
-                        TicketMachineLabel(locale: ticket.locale)
+                        TicketMachineLabel(locale: ticket.locale, machineId: ticket.machineId)
                         Text(ticket.title).font(PanelsTheme.TypeScale.body)
                             .foregroundStyle((ticket.awaitingApproval || ticket.awaitingAnswer || ticket.assigned || ticket.agentState == "errored" || ticket.conversationSignal?.messageForOwner == true) ? PanelsTheme.strong : PanelsTheme.faint)
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
@@ -81,7 +81,7 @@ struct WorkerRows<T: GroupedWorker>: View {
                     }.padding(.horizontal, AgentPageLayout.rowInset).padding(.vertical, PanelsTheme.Space.sm)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("worker-\(ticket.id)")
-                    .conversationAccessibility(label: TicketMachine.accessibilityLabel("\(ticket.title), \(WorkerGroup.classify(ticket).title)", locale: ticket.locale, health: store.executorHealth), signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
+                    .conversationAccessibility(label: TicketMachine.accessibilityLabel("\(ticket.title), \(WorkerGroup.classify(ticket).title)", locale: ticket.locale, machineId: ticket.machineId, machines: store.machines, health: store.executorHealth), signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
             }
         }
     }

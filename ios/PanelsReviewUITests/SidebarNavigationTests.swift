@@ -5,6 +5,37 @@ import XCTest
 /// composer under an open conversation, and a Chief draft kept across destinations.
 /// Real navigation, gestures and keyboard layout need the app; model tests cannot prove them.
 final class SidebarNavigationTests: XCTestCase {
+    /// One-off output capture using the existing loopback host. Resolution and
+    /// refresh behavior have Foundation coverage; this method captures actual labels.
+    @MainActor func testMachineNamesAndUnknownActivityFollowRename() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        app.openReviewCards(timeout: 15)
+        let openTicket = app.buttons["review.openTicket"]
+        XCTAssertTrue(openTicket.waitForExistence(timeout: 10)); openTicket.tap()
+        let namedLabel = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Runs on Mac 1")).firstMatch
+        XCTAssertTrue(namedLabel.waitForExistence(timeout: 10))
+        capture("machine-name-ticket-mac-1")
+        let line = app.buttons["conversation-line"]
+        XCTAssertTrue(line.waitForExistence(timeout: 10)); line.tap()
+        XCTAssertTrue(app.staticTexts["Current activity on Mac 1 is unknown."].waitForExistence(timeout: 10))
+        capture("machine-name-conversation-mac-1")
+        let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/machine-name/rename")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        // Wait for the existing bounded resource refresh with the conversation open.
+        XCTAssertTrue(app.staticTexts["Current activity on Studio is unknown."].waitForExistence(timeout: 45))
+        capture("machine-name-conversation-renamed-studio")
+    }
+
     /// A notification leaves Review's artifact path retained behind Chief. This one-off
     /// walk proves that the real Sidebar selection discards it, which a queue test cannot.
     /// It reuses the split fixture and host; no production notification service is involved.

@@ -180,6 +180,7 @@ private struct ConversationSurface: View {
                 await ticket.refresh()
                 guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
                 model.machineLocale = ticket.value?.detail.locale
+                model.machineId = ticket.value?.detail.machineId
             }
             if checksCurrentConversation, store.currentConversationID(owner) == nil {
                 let generation = model.readerGeneration
@@ -259,9 +260,9 @@ private struct ConversationSurface: View {
             header
             if isPage, model.machineLocale == "macos" {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                    TicketMachineLabel(locale: model.machineLocale)
+                    TicketMachineLabel(locale: model.machineLocale, machineId: model.presentedMachineId)
                     if TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
-                        Text(TicketMachine.unknownActivityText(model.machineLocale))
+                        Text(TicketMachine.unknownActivityText(model.machineLocale, machineId: model.presentedMachineId, machines: store.machines))
                         Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
                     }
                 }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
@@ -382,6 +383,11 @@ struct ConversationThread: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
+    private func note(_ row: ConversationRow) -> String? {
+        guard let item = row.item, let body = model.expandedBodies[item.key] ?? item.body?.value else { return row.note }
+        let name = store.machines.first { $0.machineId == model.presentedMachineId }?.name
+        return body.answerSentence(machineName: name) ?? row.note
+    }
     /// The server refused this message. Like Messages: a red mark that offers Try Again.
     private func refusedMark(note: String, retryID: String?) -> some View {
         Button { refusedNote = (note, retryID) } label: {
@@ -422,7 +428,7 @@ struct ConversationThread: View {
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
                                 }
-                                if !row.own, let note = row.note {
+                                if !row.own, let note = note(row) {
                                     Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))

@@ -69,6 +69,7 @@
     permissionAvailable = true,
     userInputAvailable = true,
     activityUncertain = false,
+    destinationName,
     current = { model: null, reasoningEffort: null },
     readError = null,
     onRetryModelChoices,
@@ -166,6 +167,7 @@
     permissionAvailable?: boolean;
     userInputAvailable?: boolean;
     activityUncertain?: boolean;
+    destinationName?: string;
     current?: RunValues;
     readError?: string | null;
     onRetryModelChoices?: () => Promise<void>;
@@ -694,6 +696,7 @@
     {models}
     {ownSenderLabel}
     {activityUncertain}
+    {destinationName}
     {conversationState}
     {emptyState}
     bind:jump

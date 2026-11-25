@@ -24,6 +24,7 @@ ARTIFACT_LINKS_PROOF = os.environ.get("PANELS_ARTIFACT_LINKS_PROOF") == "1"
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
 REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 UPDATES_SMOKE = os.environ.get("PANELS_UPDATES_SMOKE") == "1"
+MACHINE_NAMES_SMOKE = os.environ.get("PANELS_MACHINE_NAMES_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -81,6 +82,8 @@ def main() -> int:
             for d in group
         )
     base_ticket = json.loads((ROOT / "ios/PanelsTests/Fixtures/ticket-full.json").read_text())
+    if MACHINE_NAMES_SMOKE:
+        base_ticket.update(locale="macos", machine_id="mac-names-proof")
     tickets = {}
     for index in range(1, 4):
         ticket = copy.deepcopy(base_ticket)
@@ -384,7 +387,7 @@ def main() -> int:
         "page_posts": [],
         "slow": (
             not REVIEW_COMPLETION and not GOALS_SMOKE
-            and not REACHABILITY_SMOKE and not DESIGN_REVIEW
+            and not REACHABILITY_SMOKE and not DESIGN_REVIEW and not MACHINE_NAMES_SMOKE
         ),
         "writes": [],
         "messages": [],
@@ -766,7 +769,7 @@ def main() -> int:
                 "recap_preview": ticket["recap"],
                 "recap_updated_at": None,
                 "recap_stage_changed": False,
-                "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
+                "machine_id": ticket.get("machine_id", "75a49e78-97de-4e28-8dc5-79646761c46f"),
                 "recap_reference": None,
                 "worker_type": ticket["worker_type"],
                 "stage_label": stage.get("label", "Current"),
@@ -794,7 +797,7 @@ def main() -> int:
                 "proposal_created_at": proposal["created_at"] if proposal else None,
                 "stage_ownership": "worker",
                 "terminal": stage.get("is_terminal", False),
-                "locale": "vps",
+                "locale": ticket.get("locale", "vps"),
             },
         }
 
@@ -1245,8 +1248,19 @@ def main() -> int:
             value: dict[str, Any]
             path = urlparse(self.path).path
             query = parse_qs(urlparse(self.path).query)
+            if MACHINE_NAMES_SMOKE and path == "/api/machines":
+                self.respond({"machines": [{"machine_id": "mac-names-proof", "name": state.get("machine_name", "Mac 1")}]})
+                return
+            if MACHINE_NAMES_SMOKE and path == "/api/executor/health":
+                self.respond({"mode": "remote", "connection_state": "disconnected", "last_contact_at_ms": None})
+                return
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if MACHINE_NAMES_SMOKE and name == "machine-name/rename":
+                    with lock:
+                        state["machine_name"] = "Studio"
+                    self.respond({"name": "Studio"})
+                    return
                 if REVIEW_MESSAGES and name in ("review-open-chief", "review-open-summary"):
                     # Reuse this host for the retained Review path walk. Synthetic pushes
                     # select a different destination without popping the artifact first.
@@ -2011,6 +2025,7 @@ def main() -> int:
             ):
                 value = {
                     "backend_key": "codex",
+                    **({"machine_id": "mac-names-proof"} if MACHINE_NAMES_SMOKE else {}),
                     "model": "sol",
                     "held_prompts": [],
                     "owner_read_through_sequence": 0

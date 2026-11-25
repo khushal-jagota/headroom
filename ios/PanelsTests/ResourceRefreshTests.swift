@@ -150,6 +150,22 @@ import XCTest
         XCTAssertTrue(store.errors.isEmpty)
     }
 
+    // Risk: names copied from a Ticket never reflect a machine rename. This reuses
+    // the URLProtocol host and the real shared resource read, with no connected server.
+    func testSharedMachineReadPublishesRenameWithoutTicketReload() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture() }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        await store.readSettings(probing: false)
+        XCTAssertEqual(TicketMachine.name("macos", machineId: "mac", machines: store.machines), "Mac 1")
+        let handle = store.resources.handle(ChiefResources.machines)
+        XCTAssertEqual(handle.key, "/api/machines")
+        RefreshProtocol.state.withLock { $0.machineName = "Studio"; $0.paths = [] }
+        await store.readSettings(probing: false)
+        XCTAssertEqual(TicketMachine.name("macos", machineId: "mac", machines: store.machines), "Studio")
+        XCTAssertEqual(TicketMachine.unknownActivityText("macos", machineId: "mac", machines: store.machines), "Current activity on Studio is unknown.")
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/machines" }.count }, 1)
+    }
+
     func testHealthFailureDoesNotCoverSuccessfulOrdinaryReads() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.healthFailure = .cannotFindHost }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
@@ -436,6 +452,7 @@ private struct RefreshFixture {
     var readKeys: [String] = []
     var events: [EventsRequest] = []
     var revision = "1"
+    var machineName = "Mac 1"
     var epoch = "initial"
     var supportsVersions = true
     var failure: URLError.Code?
@@ -567,6 +584,7 @@ private struct RefreshFixture {
         let body: Any
         switch key {
         case "/api/workers/chief-of-staff/settings": body = ["future_field": "preserved", "employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
+        case "/api/machines": body = ["machines": [["machine_id": "mac", "name": machineName]]]
         case "/api/updates": body = ["state": "not_checked", "app_sha": "running", "allowed_actions": [], "machines": [], "available_machines": [], "client_versions": [], "interruption": ["stops_agents": false, "agents": [], "machine_ids": []]] as [String: Any]
         case "/api/executor/health": body = ["mode": "remote", "connection_state": "ready"]
         default: throw URLError(.unsupportedURL)

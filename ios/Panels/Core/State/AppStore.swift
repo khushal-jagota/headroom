@@ -26,6 +26,8 @@ import SwiftUI
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
     var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    private var machinesResource: ResourceHandle<MachineCatalog> { resources.handle(ChiefResources.machines) }
+    var machines: [MachineCatalog.Machine] { machinesResource.value?.machines ?? [] }
     private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
     /// The server's driver list; nil until it arrives, or when the server has none.
     var drivers: DriverCatalog? { driversResource.value }
@@ -374,8 +376,8 @@ import SwiftUI
         let generation = runGeneration
         running = true
         serverConnection.begin()
-        let chief = chiefResource, updates = updateResource, health = healthResource, drivers = driversResource
-        chief.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
+        let chief = chiefResource, updates = updateResource, health = healthResource, drivers = driversResource, machines = machinesResource
+        chief.acquire(); updates.acquire(); health.acquire(); drivers.acquire(); machines.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
@@ -387,7 +389,7 @@ import SwiftUI
         hasRun = true
         defer {
             updateReads.cancel()
-            chief.release(); updates.release(); health.release(); drivers.release()
+            chief.release(); updates.release(); health.release(); drivers.release(); machines.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 serverConnection.pause()
@@ -556,7 +558,8 @@ import SwiftUI
             async let chief: Void = chiefResource.refresh()
             async let health: Void = healthResource.refresh()
             async let updates: Void = updateResource.refresh()
-            _ = await (chief, health, updates)
+            async let machines: Void = machinesResource.refresh()
+            _ = await (chief, health, updates, machines)
         }
     }
 

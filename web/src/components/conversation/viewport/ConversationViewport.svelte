@@ -44,6 +44,7 @@
     models,
     ownSenderLabel,
     activityUncertain = false,
+    destinationName,
     conversationState,
     emptyState,
     reader = null,
@@ -67,6 +68,7 @@
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
     activityUncertain?: boolean;
+    destinationName?: string;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
     /** The way back to the newest line while the reader is away from it, for the pane to
@@ -1236,7 +1238,7 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
+      <ProjectedTranscript {activityUncertain} {destinationName} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -1245,6 +1247,7 @@
       {models}
       {ownSenderLabel}
       {activityUncertain}
+      {destinationName}
       {conversationId}
       {outgoingMessages}
       {acknowledgedMessageIds}

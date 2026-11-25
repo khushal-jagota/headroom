@@ -201,6 +201,7 @@ export type HeldPrompt = StoredMessageContent & {
 
 /** What a conversation is, what it is doing, and what it is waiting on. */
 export type ConversationView = {
+  machine_id?: string;
   conversation_id: string;
   backend_key: ConversationBackendKey;
   supports_steer: boolean;

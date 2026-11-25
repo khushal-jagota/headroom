@@ -3,8 +3,8 @@
   import type { ConversationViewStatus } from "../../lib/conversation/view/contracts";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
-  import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
-  import { executorAnswerAvailable, executorAnswerSentence, EXECUTOR_ASK_UNCERTAIN } from "../../lib/conversation/executorEvidence";
+  import { machineName, macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
+  import { executorAnswerAvailable, executorAnswerSentence, executorAskUncertain } from "../../lib/conversation/executorEvidence";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -183,8 +183,9 @@
   let view = $state<ConversationView | null>(null);
   // Ticket suggestions use the same resolved workspace as ordinary creation.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
-  const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
-  const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
+  const destinationMachineId = $derived(view?.machine_id ?? machineId ?? startValues?.machine_id);
+  const machines = createQuery(() => ({...queries.machines(), enabled: !!destinationMachineId}), () => queryClient);
+  const destinationName = $derived(machineName(locale, destinationMachineId, machines.data?.machines));
   let remote = $derived(locale === "macos");
   const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
@@ -223,6 +224,8 @@
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
+  let askNoteSaved = $state(false);
+  const currentAskNote = $derived(askNoteSaved ? executorAnswerSentence("saved", destinationName) : askNote);
   let askNoteKey = $state<string | null>(null);
   /** The asks that the server took an answer for. A card stays until the tail says that
    *  its ask is over, and a second press in that moment must not send a second answer. */
@@ -285,17 +288,18 @@
     askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
     askStatus?.pending_user_input?.request_id === userInput?.requestId));
-  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).flatMap(row => { const sentence = executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate); return sentence === null ? [] : [{answerId:row.key,sentence}]; }));
-  let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
-    (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
-  let userInputNote = $derived((askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
-    (remote && !userInputAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
-  // The transcript leaves a waiting ask to its card, and needs to know when that card is
-  // the one saying its availability on this machine is unknown.
+  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).flatMap(row => { const sentence = executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate, destinationName); return sentence === null ? [] : [{answerId:row.key,sentence}]; }));
+  const permissionCustomNote = $derived(askNoteKey === `permission:${ask?.askId}` ? currentAskNote : null);
+  const userInputCustomNote = $derived(askNoteKey === `user_input:${userInput?.requestId}` ? currentAskNote : null);
+  const permissionAvailabilityUnknown = $derived(permissionCustomNote === null && remote && !permissionAvailable);
+  const userInputAvailabilityUnknown = $derived(userInputCustomNote === null && remote && !userInputAvailable);
+  let permissionNote = $derived(permissionCustomNote ?? (permissionAvailabilityUnknown ? executorAskUncertain(destinationName) : null));
+  let userInputNote = $derived(userInputCustomNote ?? (userInputAvailabilityUnknown ? executorAskUncertain(destinationName) : null));
+  // The transcript leaves a waiting ask to the card that reports its unknown availability.
   setContext<AskCardReading>(ASK_CARD_CONTEXT, {
     saysAvailabilityUnknown: (kind, id) => kind === "permission"
-      ? ask?.askId === id && permissionNote === EXECUTOR_ASK_UNCERTAIN
-      : userInput?.requestId === id && userInputNote === EXECUTOR_ASK_UNCERTAIN
+      ? ask?.askId === id && permissionAvailabilityUnknown
+      : userInput?.requestId === id && userInputAvailabilityUnknown
   });
   // What the composer has picked, so a refused message sent again from the thread runs
   // under the model the person is looking at — the one its next step asks them to choose.
@@ -1023,11 +1027,13 @@
     if (answeredPermissionAsk === askId) return;
     askNoteKey = `permission:${askId}`;
     askNote = null;
+    askNoteSaved = false;
     busy = true;
     try {
       const { fate } = await answerPermissionAsk(openedId, askId, optionId);
+      askNoteSaved = fate === "saved";
       askNote = fate !== "refused"
-        ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
+        ? null
         : "The backend did not take that answer. Cancelling the turn always works.";
       if (fate !== "refused") answeredPermissionAsk = askId;
       void refreshView();
@@ -1044,11 +1050,13 @@
     if (answeredUserInput === requestId) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
+    askNoteSaved = false;
     busy = true;
     try {
       const { fate } = await answerUserInput(openedId, requestId, answers);
+      askNoteSaved = fate === "saved";
       askNote = fate !== "refused"
-        ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
+        ? null
         : "The backend did not take those answers. You can try again or stop the turn.";
       if (fate !== "refused") answeredUserInput = requestId;
       void refreshView();
@@ -1082,6 +1090,7 @@
     fateNote = null;
     errorNote = null;
     askNote = null;
+    askNoteSaved = false;
   }
 
   /** Read the record again, and tell whatever is waiting on it what the record said.
@@ -1192,6 +1201,7 @@
   {permissionAvailable}
   {userInputAvailable}
   {activityUncertain}
+  {destinationName}
   {current}
   readError={pickerReadError}
   onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}

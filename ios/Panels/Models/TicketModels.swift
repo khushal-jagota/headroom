@@ -2,6 +2,7 @@ import Foundation
 
 struct TicketDetail: Codable, Identifiable, Sendable {
     var locale: String? = nil
+    var machineId: String? = nil
     let id: String
     let title: String
     let workerType: String?

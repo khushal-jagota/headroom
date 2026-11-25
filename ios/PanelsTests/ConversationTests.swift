@@ -123,6 +123,11 @@ import UniformTypeIdentifiers
             let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
             let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(json.utf8))
             XCTAssertTrue(body.answerSentence?.contains(text) == true, "Wrong evidence for \(fate)")
+            switch fate {
+            case "saved": XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), "The home saved your answer. Delivery to Mac 1 is pending.")
+            case "applied": XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), "Mac 1 applied your answer.")
+            default: XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), body.answerSentence)
+            }
         }
     }
 
@@ -639,6 +644,20 @@ import UniformTypeIdentifiers
         model.items = [try APIClient.decoder().decode(ConversationItem.self, from: Data(#"{"kind":"row","key":"row-1","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}"#.utf8))]
         model.reportReadFailure(URLError(.secureConnectionFailed))
         XCTAssertNil(model.error, "With content on screen a failed refresh stays silent")
+    }
+
+    // Risk: a historical conversation inherits the Ticket's current destination.
+    // The existing decoder/model host proves conversation identity takes precedence.
+    func testConversationMachineIdentityPrecedesCurrentTicket() throws {
+        let model = ConversationModel()
+        model.machineId = "current-ticket-machine"
+        XCTAssertEqual(model.presentedMachineId, "current-ticket-machine")
+        let data = Data(#"{"backend_key":"codex","machine_id":"historical-machine"}"#.utf8)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: data))
+        XCTAssertEqual(model.presentedMachineId, "historical-machine")
+        let older = Data(#"{"backend_key":"codex"}"#.utf8)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: older))
+        XCTAssertEqual(model.presentedMachineId, "current-ticket-machine", "Older records retain the Ticket fallback")
     }
 
     func testHeldPromptRecoveredWithoutDuplicatingLocalQueue() async throws {
