@@ -126,10 +126,8 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     (response) =>
       response.url().endsWith(`/held-prompts/${discardId}`) && response.request().method() === 'DELETE',
   );
-  // A queued row's actions sit in its "more" menu, which opens first.
+  // A queued line carries its own actions.
   const discardControl = page.locator(`[data-conversation-held-discard="${discardId}"]`);
-  await page.locator('[data-conversation-held-row]', { has: discardControl }).locator('[data-conversation-held-more]').click();
-  await captureSuccess(page, 'ticket-busy-queue-actions.png');
   await discardControl.click();
   const discarded = await discardedResponse;
   expect(await discarded.json()).toEqual({ discarded: true });
@@ -140,7 +138,6 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
       response.url().endsWith(`/held-prompts/${promoteId}/promote`) && response.request().method() === 'POST',
   );
   const promoteControl = page.locator(`[data-conversation-held-promote="send_now"][data-held-prompt-id="${promoteId}"]`);
-  await page.locator('[data-conversation-held-row]', { has: promoteControl }).locator('[data-conversation-held-more]').click();
   await promoteControl.click();
   const promoted = await promotedResponse;
   expect(promoted.request().postDataJSON()).toEqual({ mode: 'send_now' });

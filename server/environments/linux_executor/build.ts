@@ -18,6 +18,55 @@ import { extract_runtime, read_runtime_revision } from './archive.ts';
 import { LINUX_EXECUTOR_ENTRYPOINT } from './configuration.ts';
 import type { LinuxExecutorBuildOptions, LinuxExecutorPublication } from './contracts.ts';
 
+export async function assemble_linux_executor(
+  source: string,
+  revision: string,
+  runtime: string,
+  execution: ReleaseExecution,
+): Promise<string> {
+  const fence = () => assert_release_execution(execution);
+  const built = await build_exported_app(
+    source,
+    {
+      requested_sha: revision,
+      candidate_app: runtime,
+      install_dependencies: true,
+      target: LINUX_EXECUTOR,
+    },
+    { public_cli_entrypoint: 'server/cli/main.ts' },
+    execution,
+  );
+  if (built.runtime_contract?.version !== 2 || built.runtime_contract.system !== 'linux')
+    throw new AppValidationError('Linux executor requires its version-2 Linux runtime contract');
+  require_minimum_node(process.versions.node, built.runtime_contract);
+  fence();
+  await writeFile(
+    join(runtime, MAC_RUNTIME_MANIFEST_NAME),
+    JSON.stringify({
+      schema_version: 1,
+      application_revision: revision,
+      platform: 'linux',
+      architecture: 'x86_64',
+      role: 'executor',
+    }) + '\n',
+  );
+  const build_id = await digest_machine_build(runtime);
+  const marker = JSON.parse(await readFile(join(runtime, MAC_RUNTIME_MANIFEST_NAME), 'utf8'));
+  await writeFile(
+    join(runtime, MAC_RUNTIME_MANIFEST_NAME),
+    JSON.stringify({ ...marker, build_id }) + '\n',
+  );
+  const manifest = { ...built, artifact_digest: await digest_app_artifact(runtime) };
+  fence();
+  await writeFile(
+    join(runtime, 'manifest.json'),
+    JSON.stringify({ format: APP_FORMAT, ...manifest }) + '\n',
+  );
+  await read_runtime_revision(runtime, revision);
+  fence();
+  return build_id;
+}
+
 export async function build_linux_executor(
   options: LinuxExecutorBuildOptions,
   execution: ReleaseExecution,
@@ -42,45 +91,12 @@ export async function build_linux_executor(
     await mkdir(output, { mode: 0o700 });
     owned = true;
     fence();
-    const built = await build_exported_app(
+    const build_id = await assemble_linux_executor(
       options.source_root,
-      {
-        requested_sha: revision,
-        candidate_app: runtime,
-        install_dependencies: true,
-        target: LINUX_EXECUTOR,
-      },
-      { public_cli_entrypoint: 'server/cli/main.ts' },
+      revision,
+      runtime,
       execution,
     );
-    if (built.runtime_contract?.version !== 2 || built.runtime_contract.system !== 'linux')
-      throw new AppValidationError('Linux executor requires its version-2 Linux runtime contract');
-    require_minimum_node(process.versions.node, built.runtime_contract);
-    fence();
-    await writeFile(
-      join(runtime, MAC_RUNTIME_MANIFEST_NAME),
-      JSON.stringify({
-        schema_version: 1,
-        application_revision: revision,
-        platform: 'linux',
-        architecture: 'x86_64',
-        role: 'executor',
-      }) + '\n',
-    );
-    const build_id = await digest_machine_build(runtime);
-    const marker = JSON.parse(await readFile(join(runtime, MAC_RUNTIME_MANIFEST_NAME), 'utf8'));
-    await writeFile(
-      join(runtime, MAC_RUNTIME_MANIFEST_NAME),
-      JSON.stringify({ ...marker, build_id }) + '\n',
-    );
-    const manifest = { ...built, artifact_digest: await digest_app_artifact(runtime) };
-    fence();
-    await writeFile(
-      join(runtime, 'manifest.json'),
-      JSON.stringify({ format: APP_FORMAT, ...manifest }) + '\n',
-    );
-    await read_runtime_revision(runtime, revision);
-    fence();
     const archive_sha256 = await create_app_archive(runtime, archive, LINUX_EXECUTOR);
     const archive_size = (await stat(archive)).size;
     fence();

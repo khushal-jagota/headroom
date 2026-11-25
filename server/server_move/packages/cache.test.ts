@@ -3,11 +3,24 @@
  * for the target's platform. The cache comes first; a source fills it; altered bytes, another
  * revision or another platform are refused. Uses a synthetic archive in a private folder.
  */
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { create } from 'tar';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { update_repository_configuration } from '../../core/config.ts';
+import { APP_ARCHIVE_NAME } from '../../environments/release/configuration.ts';
+import { TRUSTED_RELEASE_WORKFLOW } from '../../environments/release/source.ts';
+import { GitHubReleaseServerPackages } from './github_releases.ts';
 import { sha256_file } from '../../environments/server_state/checksums.ts';
 import type { AppManifest } from '../../environments/updates/contracts.ts';
 import { ServerPackageCache, SERVER_PACKAGE_RECEIPT } from './cache.ts';
@@ -87,3 +100,74 @@ test('the cache serves a checked package, a source fills it, and other bytes or 
     new ServerPackageCache(join(root, 'empty'), null).get('linux', revision, signal),
   ).rejects.toThrow(/No linux server package is cached/);
 });
+
+test.each(['anonymous', 'existing credential'])(
+  'the move cache downloads the released server package with %s access',
+  async (access) => {
+    const root = mkdtempSync(join(tmpdir(), 'panels-move-release-'));
+    folders.push(root);
+    const repository = 'owner/product';
+    const configured = access === 'existing credential';
+    if (configured) {
+      mkdirSync(join(root, 'secrets'));
+      writeFileSync(join(root, 'secrets/update-token'), 'fixture-token\n');
+    }
+    const config = update_repository_configuration({ PLAN_UPDATE_REPOSITORY: repository }, root)!;
+    const packed = await archive(root, 'panels-app');
+    execFileSync('python3', ['-m', 'zipfile', '-c', 'app.zip', APP_ARCHIVE_NAME], { cwd: root });
+    const digest = await sha256_file(packed);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json([
+          {
+            tag_name: `server-${revision}-42-1`,
+            target_commitish: revision,
+            draft: false,
+            prerelease: false,
+            assets: [
+              { id: 11, name: 'publication.json' },
+              { id: 12, name: 'app.zip' },
+            ],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          source_run: {
+            repository,
+            source_sha: revision,
+            event: 'push',
+            ref: 'refs/heads/main',
+            run_id: '42',
+            run_attempt: '1',
+            workflow_path: TRUSTED_RELEASE_WORKFLOW,
+            workflow_ref: `${repository}/${TRUSTED_RELEASE_WORKFLOW}@refs/heads/main`,
+          },
+          publication_run_id: 42,
+          artifact_id: 12,
+          artifact_source: 'github-release',
+          archive_sha256: digest,
+          manifest,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(readFileSync(join(root, 'app.zip'))));
+    const source = new GitHubReleaseServerPackages(config.repository, config.token_file, fetcher);
+    const cache = new ServerPackageCache(root, source);
+    const result = await cache.get('linux', revision, new AbortController().signal);
+    expect(result.archive_sha256).toBe(digest);
+    expect(readFileSync(cache.archive_path('linux', revision))).toEqual(readFileSync(packed));
+
+    const base = `https://api.github.com/repos/${repository}/`;
+    const requests = fetcher.mock.calls.map(([url, options]) => {
+      const headers = new Headers(options?.headers);
+      expect(headers.get('authorization')).toBe(configured ? 'Bearer fixture-token' : null);
+      return [String(url), headers.get('accept')];
+    });
+    expect(requests).toEqual([
+      [base + 'releases?per_page=100&page=1', 'application/vnd.github+json'],
+      [base + 'releases/assets/11', 'application/octet-stream'],
+      [base + 'releases/assets/12', 'application/octet-stream'],
+    ]);
+  },
+);

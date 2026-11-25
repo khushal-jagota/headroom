@@ -1,23 +1,21 @@
+import { UPDATE_CONFIRMATION_MS } from "../config";
 import type { ConnectionStatus } from "../../changeStream";
-import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../contracts";
+import type { UpdateStatus, MachineUpdateState } from "../contracts";
 
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
-  | "available" | "updating" | "complete"
-  | "failed" | "mac_failed" | "mac_unreachable" | "unreachable" | "machines";
-export type UpdateFailureState = "failed" | "mac_failed" | "mac_unreachable";
+  | "check_unavailable" | "available" | "updating" | "refresh_needed"
+  | "failed" | "unreachable" | "machines";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
 /** What the card's action button does. */
-export type UpdateCardAction = "offer" | "refresh" | "retry" | "retry_mac" | "reconnect";
+export type UpdateCardAction = "install" | "refresh" | "retry" | "reconnect";
 export type UpdateCard = {
   word: string;
   tone: "changing" | "settled" | "wrong" | "done";
   action?: { label: string; does: UpdateCardAction };
-  info?: UpdateFailureState;
   detail?: string;
   track?: boolean;
-  sentence?: boolean;
 };
 
 export type UpdatePresentationInput = {
@@ -30,6 +28,14 @@ export type UpdatePresentationInput = {
   now: number;
 };
 
+/** The same receipt expires at the same time across reloads. */
+export function updateConfirmationUntil(status: UpdateStatus | undefined): number | null {
+  const attempt = status?.attempt;
+  if (!status?.app_sha || attempt?.state !== "done" || attempt.to_sha !== status.app_sha) return null;
+  const completed = Date.parse(attempt.completed_at ?? "");
+  return Number.isFinite(completed) ? completed + UPDATE_CONFIRMATION_MS : null;
+}
+
 /** The server owns update facts. Only the connection and this page's version overlay them. */
 export function updatePresentation({ status, connection, pageIsBehind, starting, now }: UpdatePresentationInput): UpdatePresentation {
   if (connection !== "connected") {
@@ -38,16 +44,15 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
     const updating = (starting || status?.state === "updating") && Number.isFinite(deadline) && now < deadline;
     return { state: updating ? "updating" : "unreachable", dimmed: true };
   }
-  if (starting || status?.state === "updating") return { state: "updating", dimmed: false };
-  // Panels rolled back, so its failure is the news.
-  if (status?.state === "failed") return { state: "failed", dimmed: false };
-  // Panels moved on. A page left behind cannot write, so it refreshes first and then
-  // shows a Mac failure, which the server keeps.
-  if (pageIsBehind) return { state: "complete", dimmed: false };
+  if (starting) return { state: "updating", dimmed: false };
   if (!status) return { state: null, dimmed: false };
-  if (status.state === "up_to_date") {
-    const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
-    return { state: hasTarget ? "machines" : null, dimmed: false };
+  if (status.state === "up_to_date" || status.state === "not_checked" || status.state === "check_unavailable") {
+    const until = updateConfirmationUntil(status);
+    const recent = until !== null && now >= until - UPDATE_CONFIRMATION_MS && now < until;
+    if (recent || status.machines.some(machine => machine.state !== "current"))
+      return { state: "machines", dimmed: false };
+    if (status.state !== "check_unavailable")
+      return { state: pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
 }
@@ -59,22 +64,22 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
   switch (state) {
     case "available":
       return { word: "Update available", tone: "settled",
-        action: allows("update") && status?.available ? { label: "Update", does: "offer" } : undefined };
+        action: allows("update") && status?.available ? { label: "Update", does: "install" } : undefined };
     case "updating":
       return { word: "Updating…", tone: "changing", track: true };
-    case "complete":
-      return { word: "Update complete", tone: "done", action: { label: "Refresh", does: "refresh" } };
+    case "check_unavailable":
+      return { word: "Couldn’t check for updates", tone: "wrong", detail: status?.detail ?? undefined };
+    case "refresh_needed":
+      return { word: "Refresh to load this version", tone: "settled", action: { label: "Refresh", does: "refresh" } };
     case "failed":
-      return { word: "Update didn't install", tone: "wrong", info: state,
+      return { word: "Update didn't install", tone: "wrong", detail: status?.detail ?? status?.attempt?.detail ?? undefined,
         action: allows("retry") && attempt ? { label: "Try again", does: "retry" } : undefined };
-    case "mac_failed":
-    case "mac_unreachable":
-      return { word: "Machine update needs attention", tone: "wrong" };
     case "machines": {
       const rows = status?.machines ?? [];
       const failed = rows.some(row => row.state === "failed" || row.state === "unavailable");
       const updating = rows.some(row => row.state === "updating");
-      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : "Update complete",
+      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : status?.state === "up_to_date" ? "Up to date" : "Update installed",
+        detail: status?.state === "check_unavailable" ? "Couldn’t confirm the latest version." : undefined,
         tone: failed ? "wrong" : updating ? "changing" : "done" };
     }
     case "unreachable":
@@ -100,21 +105,13 @@ export function machineUpdateLabel(machine: MachineUpdateState): string {
   }
 }
 
-export function interruptionText(interruption: UpdateInterruption | null): string | null {
-  if (!interruption) return null;
-  return interruption.stops_agents ? "This update stops your agents" : "Your agents keep running";
-}
-
-/** An available offer is not evidence of what an earlier press interrupted. */
-export function cardInterruption(status: UpdateStatus, presentation: UpdateCardState | UpdateStatus["state"] = status.state): UpdateInterruption | null {
-  return presentation === "available" ? status.interruption : status.attempt?.interruption ?? null;
-}
-
-/** Offer requirements can differ from the requirements of the running server. */
-export function deviceUpdateWarnings(status: UpdateStatus): string[] {
-  const compatibility = status.available?.compatibility;
-  if (!compatibility) return [];
+/** Only the update on offer can warn about the work and devices it will affect. */
+export function updateOfferWarnings(status: UpdateStatus, presentation: UpdateCardState | null): string[] {
+  if (presentation !== "available" || status.state !== "available" || !status.available) return [];
   const warnings = new Set<string>();
+  if (status.interruption?.stops_agents) warnings.add("This update will interrupt running agents");
+  const compatibility = status.available.compatibility;
+  if (!compatibility) return [...warnings];
   for (const identity of status.client_versions) {
     if (identity.kind === "ios" && identity.build !== undefined && identity.build < compatibility.ios.minimum_build) {
       warnings.add("Your iPhone needs the TestFlight update first.");

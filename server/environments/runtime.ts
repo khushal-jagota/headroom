@@ -5,7 +5,7 @@ import { read_presence } from '../executor/vps_presence_store.ts';
 import { judge_presence } from '../executor/logic/presence.ts';
 import { now_ms } from '../executor/clock.ts';
 import { executor_platform } from '../machines/executor_credentials.ts';
-import { UpdateBarrier } from './update_barrier.ts';
+import { UpdateBarrier, with_installer_lock } from './update_barrier.ts';
 import { notify_update_failure } from './updates/failure_notice.ts';
 import type { UpdateAttempt } from './updates/contracts.ts';
 import type { Config } from '../core/config.ts';
@@ -24,9 +24,7 @@ import type {
   MacUpdateCompositionContext,
   MacUpdateServiceContract,
 } from './updates/mac/contracts.ts';
-import { DeploymentResources } from './updates/resource_versions.ts';
-import { deployment_status } from './updates/logic/experience.ts';
-import { DEPLOYMENT_SUCCESS_DISPLAY_SECONDS } from './updates/configuration.ts';
+import { legacy_deployment } from './updates/legacy_deployment.ts';
 import { load_metrics_config, store_path } from './vps_metrics/configuration.ts';
 import { MetricsRuntime } from './vps_metrics/runtime.ts';
 import type { CollectorFactory } from './vps_metrics/sampler/contracts.ts';
@@ -43,6 +41,7 @@ export interface EnvironmentOperations {
   service_unit: string | null;
   /** Called only for an installed release that runs in its own service unit. */
   provider(): UpdateProvider | null;
+  ensure_home_machine?(root: string, unit: string, revision: string): Promise<void>;
   staging: ReleaseStaging;
   installer: InstallerOperations;
   create_mac(context: MacUpdateCompositionContext): MacUpdateComposition;
@@ -77,6 +76,15 @@ export async function createEnvironmentRuntime(
     collector: config.test_mode ? null : operations.collector,
   });
   const attempts = new FileUpdateAttemptStore(attempt_path(data_directory), () => changes.emit());
+  if (installed && operations.service_unit && operations.ensure_home_machine) {
+    const attempt =
+      attempts.read() ?? attempts.import_legacy_request(data_directory, config.app_sha);
+    if (
+      attempt?.to_sha === config.app_sha &&
+      (attempt.state === 'installing' || attempt.state === 'done')
+    )
+      await operations.ensure_home_machine(installed, operations.service_unit, attempt.to_sha);
+  }
   const provider = installed === null ? null : operations.provider();
   const move = create_server_move({
     config,
@@ -122,12 +130,6 @@ export async function createEnvironmentRuntime(
             };
           }),
       ),
-    linux_registered: () =>
-      context.database.read((sql) =>
-        Boolean(
-          sql.get("SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"),
-        ),
-      ),
     attempts,
     provider,
     current_app_sha: config.app_sha,
@@ -166,31 +168,24 @@ export async function createEnvironmentRuntime(
             ),
         }),
   });
-  const deployment = () =>
-    deployment_status(attempts.read(), config.app_sha, {
-      success_seconds: DEPLOYMENT_SUCCESS_DISPLAY_SECONDS,
-      now: new Date().toISOString(),
-    });
+  const deployment = legacy_deployment(attempts, config.app_sha);
   let starting: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
   let actual_stop: Promise<void> | undefined;
   return {
     mac_updates: mac.service,
     update_barrier,
-    recover_update_barrier() {
+    async recover_update_barrier() {
       if (!update_barrier.frozen || update_barrier.move_hold !== null) return;
       const generation = update_barrier.generation;
       const attempt_id = attempts.read()?.attempt_id ?? '';
       if (updates.owns_preparation(attempt_id)) return;
-      update_barrier.installer_guard(attempt_id, (active) => {
-        if (active) {
-          updates.installer_observed(attempt_id);
-          return;
-        }
+      const owner = await with_installer_lock(data_directory, null, async () => {
         if (updates.owns_preparation(attempt_id)) return;
-        const released = updates.recover_orphaned_attempt(attempt_id, generation);
+        const released = await updates.recover_orphaned_attempt(attempt_id, generation);
         if (released !== null) update_barrier.remove(released);
       });
+      if (!owner.acquired) updates.installer_observed(attempt_id);
     },
     update_attempt_id: () => attempts.read()?.attempt_id ?? '',
     waiting_screens_root: () => updates.ready_screens_root(),
@@ -200,7 +195,7 @@ export async function createEnvironmentRuntime(
     executor_routes: [move.executor_routes],
     server_move_notice: (machine_id) => move.coordinator.notice(machine_id),
     areas: [
-      { prefix: '/api', routes: create_update_routes(updates, mac.reads) },
+      { prefix: '/api', routes: create_update_routes(updates) },
       { prefix: '/api', routes: move.owner_routes },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
       {
@@ -215,11 +210,11 @@ export async function createEnvironmentRuntime(
       {
         prefix: '/api',
         routes: async (app) => {
-          app.get('/deployment-status', async () => deployment());
+          app.get('/deployment-status', async () => deployment.status());
         },
       },
     ],
-    resourceProviders: [new DeploymentResources(deployment)],
+    resourceProviders: [deployment.resource],
     before_worker_readiness_poll: () => {
       const updating = updates.poll();
       return move.coordinator.holds_work() || updating;

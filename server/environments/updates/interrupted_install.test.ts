@@ -11,10 +11,13 @@ import {
   SEED_STATEMENT_QUERY,
 } from '../../core/database/index.ts';
 import { require_schema_revision } from '../../core/database/admission.ts';
-import { BASELINE_SEED, probe_step } from '../../core/database/schema_steps/testing/steps.ts';
+import { BASELINE_SEED } from '../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
-import { UpdateBarrier } from '../update_barrier.ts';
-import { recover_interrupted_install, schema_chain } from './interrupted_install.ts';
+import { UpdateBarrier, with_installer_lock } from '../update_barrier.ts';
+import { install } from './installer/install.ts';
+import { restore_database_snapshot } from '../backup/restore.ts';
+import { InstallationRecord } from './installer/record.ts';
+import { recover_interrupted_install } from './interrupted_install.ts';
 import {
   KILLED_ATTEMPT,
   KILLED_FROM as FROM,
@@ -74,13 +77,11 @@ async function killed_install(point: string) {
     root,
     database,
     head,
-    chain: schema_chain(steps, BASELINE_SEED.alembicRevision, head),
     recover: (app_sha: string) =>
       recover_interrupted_install({
         database,
         app_root: join(root, 'app'),
         app_sha,
-        chain: schema_chain(steps, BASELINE_SEED.alembicRevision, head),
       }),
   };
 }
@@ -110,16 +111,7 @@ it('a kill before the steps commit: the next start puts back the previous app an
       // The installer's own snapshot, recorded before the swap, is what recovery restores.
       assert.equal(dirname(record(killed.root).backup), join(killed.root, 'backups'));
 
-      const journal = vi.spyOn(console, 'warn').mockImplementation(() => {});
       assert.equal(await killed.recover(TO), 'rolled_back');
-      const revision =
-        point === 'first_step_open' ? BASELINE_SEED.alembicRevision : probe_step.revision;
-      assert.deepEqual(journal.mock.calls, [
-        [
-          `Interrupted update ${KILLED_ATTEMPT}: database revision ["${revision}"]; decision roll_back`,
-        ],
-      ]);
-      journal.mockRestore();
       assert.equal(installed_sha(killed.root), FROM);
       assert(existsSync(join(killed.root, '.app-next-' + TO)));
       assert(!existsSync(join(killed.root, '.app-previous-' + FROM)));
@@ -137,23 +129,14 @@ it('a kill before the steps commit: the next start puts back the previous app an
   }
 }, 30_000);
 
-it('a kill after the steps commit keeps the new app on the stepped database', async () => {
-  // The attempt file still reads as mid-install. Only the revision shows the step committed.
+it('a kill after migration but before readiness restores the previous app and data', async () => {
   const killed = await killed_install('steps_committed');
   try {
     assert.equal(record(killed.root).steps.service_started, undefined);
-    const journal = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    assert.equal(await killed.recover(TO), 'kept_new_app');
-    assert.deepEqual(journal.mock.calls, [
-      [
-        `Interrupted update ${KILLED_ATTEMPT}: database revision ["${killed.head}"]; decision keep_new_app`,
-      ],
-    ]);
-    journal.mockRestore();
-    assert.equal(installed_sha(killed.root), TO);
-    require_schema_revision(killed.database, killed.head);
-    assert(existsSync(join(killed.root, '.app-previous-' + FROM)));
-    assert.equal(record(killed.root).state, 'done');
+    assert.equal(await killed.recover(TO), 'rolled_back');
+    assert.equal(installed_sha(killed.root), FROM);
+    require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
+    assert.equal(record(killed.root).state, 'failed');
     assert(!existsSync(join(killed.root, 'data/update-barrier.json')));
   } finally {
     rmSync(killed.root, { recursive: true, force: true });
@@ -164,9 +147,7 @@ it('a kill before the swap changes nothing, during or after the snapshot too', a
   // The previous app stays in place on its untouched database, and recovery leaves it.
   for (const point of ['before_swap', 'snapshot_unrecorded', 'snapshot_recorded']) {
     const killed = await killed_install(point);
-    const digest = () =>
-      createHash('sha256').update(readFileSync(killed.database)).digest('hex') +
-      readFileSync(join(killed.root, 'data/update-attempt.json'), 'utf8');
+    const digest = () => createHash('sha256').update(readFileSync(killed.database)).digest('hex');
     try {
       assert.equal(record(killed.root).steps.app_swapped, undefined);
       assert.equal(
@@ -178,9 +159,101 @@ it('a kill before the swap changes nothing, during or after the snapshot too', a
       assert.equal(installed_sha(killed.root), FROM);
       assert(existsSync(join(killed.root, '.app-next-' + TO)));
       assert.equal(digest(), before);
+      assert.equal(record(killed.root).state, 'failed');
+      assert(!existsSync(join(killed.root, 'data/update-barrier.json')));
       require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
     } finally {
       rmSync(killed.root, { recursive: true, force: true });
     }
   }
 }, 30_000);
+
+it('registration cannot strand a migrated home when the coordinator dies', async () => {
+  const killed = await killed_install('steps_committed');
+  const data = join(killed.root, 'data');
+  try {
+    new InstallationRecord({ data_directory: data, attempt_id: KILLED_ATTEMPT }).record(
+      'coordinator_registered',
+    );
+    const marker = join(data, 'update-barrier.json');
+    writeFileSync(marker, 'another-attempt\n');
+    await assert.rejects(killed.recover(TO), /marker belongs to a different attempt/);
+    assert.equal(readFileSync(marker, 'utf8').trim(), 'another-attempt');
+    writeFileSync(marker, KILLED_ATTEMPT + '\n');
+    const raw = record(killed.root);
+    writeFileSync(join(data, 'update-attempt.json'), JSON.stringify({ ...raw, backup: null }));
+    await assert.rejects(killed.recover(TO), /cannot verify its retained release and snapshot/);
+    assert.equal(installed_sha(killed.root), TO);
+    require_schema_revision(killed.database, killed.head);
+    assert(existsSync(marker));
+    writeFileSync(join(data, 'update-attempt.json'), JSON.stringify(raw));
+    assert.equal(await killed.recover(TO), 'rolled_back');
+    assert.equal(installed_sha(killed.root), FROM);
+    require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
+    assert.deepEqual(statements(killed.database), BASELINE_SEED.statements);
+    assert(record(killed.root).steps.rollback_app_restored);
+    assert.equal(record(killed.root).state, 'installing');
+    assert(existsSync(join(data, 'update-barrier.json')));
+    assert.equal(await killed.recover(FROM), 'none');
+    assert(existsSync(join(data, 'update-barrier.json')));
+  } finally {
+    rmSync(killed.root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it('the independent coordinator recovers a stopped installation after restart even when the candidate cannot boot', async () => {
+  const killed = await killed_install('steps_committed');
+  const data = join(killed.root, 'data');
+  const request = {
+    current_root: killed.root,
+    data_directory: data,
+    database: killed.database,
+    attempt_id: KILLED_ATTEMPT,
+    backup_directory: join(killed.root, 'backups'),
+    node_executable: process.execPath,
+    service_unit: 'test.service',
+    health_url: 'http://127.0.0.1:0',
+    health_timeout_seconds: 1,
+  };
+  try {
+    new InstallationRecord(request).record('coordinator_registered');
+    await with_installer_lock(data, KILLED_ATTEMPT, async () => {
+      assert.equal(await killed.recover(TO), 'none');
+    });
+    const events: string[] = [];
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async restore(snapshot) {
+          events.push('restore');
+          await restore_database_snapshot(snapshot, killed.database, { live_stopped: true });
+        },
+        async healthy(sha) {
+          events.push('verify-previous');
+          return sha === FROM && installed_sha(killed.root) === FROM;
+        },
+        async capture() {
+          return assert.fail('unexpected capture');
+        },
+        async snapshot() {
+          assert.fail('unexpected snapshot');
+        },
+        async schema_steps() {
+          assert.fail('unexpected migration');
+        },
+      },
+      { stderr: () => {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, ['stop', 'restore', 'start', 'verify-previous']);
+    assert.equal(record(killed.root).state, 'failed');
+    assert(!existsSync(join(data, 'update-barrier.json')));
+    require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
+  } finally {
+    rmSync(killed.root, { recursive: true, force: true });
+  }
+}, 30000);

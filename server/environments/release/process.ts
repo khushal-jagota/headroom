@@ -10,6 +10,8 @@ import type { ReleaseExecution } from './contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import { MAX_BUILD_COMMAND_OUTPUT_BYTES } from './process_configuration.ts';
 
+export class ReleaseCommandTimedOut extends AppValidationError {}
+
 export interface ReleaseCommandResult {
   readonly code: number;
   readonly stdout: string;
@@ -95,14 +97,14 @@ export async function run_release_command(
     fail(
       execution.signal.aborted
         ? execution.signal.reason
-        : new AppValidationError(`release command timed out: ${argv[0]}`),
+        : new ReleaseCommandTimedOut(`release command timed out: ${argv[0]}`),
     );
   signal.addEventListener('abort', abort);
   const fence = () => {
     if (failure !== undefined) throw failure;
     assert_release_execution(execution);
     if (performance.now() / 1000 >= until)
-      throw new AppValidationError(`release command timed out: ${argv[0]}`);
+      throw new ReleaseCommandTimedOut(`release command timed out: ${argv[0]}`);
   };
   try {
     fence();

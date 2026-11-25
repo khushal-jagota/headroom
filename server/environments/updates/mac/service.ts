@@ -1,4 +1,5 @@
 import {
+  HOME_MACHINE_ID,
   ORIGINAL_MAC_MACHINE_ID,
   same_machine_build,
   valid_uuid,
@@ -27,7 +28,6 @@ import type {
   MacUpdateCheck,
   MacUpdateCompositionContext,
   MacUpdateHealthRead,
-  MacUpdatePhase,
   MacUpdateReport,
   MacUpdateServiceContract,
   MacUpdateStatus,
@@ -204,7 +204,6 @@ export class MacUpdateService implements MacUpdateServiceContract {
         machine_id,
         archive_root: linux?.root ?? this.archive_root,
         platform,
-        linux_registered: () => false,
       });
       kept.linux_archive_owner = linux;
       kept.archive_owner = linux ?? this;
@@ -246,7 +245,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     return { ...attempt, mac_attempt_id: request_id };
   }
   private unchanged(release: PublishedUpdate): boolean {
-    const machine = this.context.machines?.().find((item) => item.machine_id === this.machine_id);
+    const machine = this.context.machines().find((item) => item.machine_id === this.machine_id);
     const build = this.build_identity(release).build_id;
     // Older retained publications have no content identity to compare.
     return build === undefined
@@ -283,8 +282,8 @@ export class MacUpdateService implements MacUpdateServiceContract {
     this.emit();
   }
   retry_machine(machine_id: string, attempt_id: string): void {
-    const inventory = this.context.machines?.();
-    if (inventory && !inventory.some((machine) => machine.machine_id === machine_id))
+    const inventory = this.context.machines();
+    if (!inventory.some((machine) => machine.machine_id === machine_id))
       throw new UpdateConflict('This machine is no longer registered.');
     const service = this.for_machine(machine_id) as MacUpdateService;
     const attempt = service.selected_attempt();
@@ -317,7 +316,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     });
   }
   machine_states(release: PublishedUpdate | null = null): MachineUpdateState[] {
-    return (this.context.machines?.() ?? []).map((machine) => {
+    return this.context.machines().map((machine) => {
       const service = this.for_machine(machine.machine_id) as MacUpdateService;
       const attempt = service.selected_attempt();
       const active = service.attempt();
@@ -331,6 +330,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
       let state: MachineUpdateState['state'] = 'current';
       if (selected !== null && service.artifact(selected) === null) state = 'unavailable';
       else if (changed && preparation_error !== null) state = 'failed';
+      else if (
+        release === null &&
+        (status?.phase === 'downloading' || status?.phase === 'ready_to_restart')
+      )
+        state = machine.present ? 'updating' : 'waiting';
       else if (changed) {
         if (release !== null) state = 'available';
         else if (status?.phase === 'failed' || status?.phase === 'reverted') state = 'failed';
@@ -351,9 +355,10 @@ export class MacUpdateService implements MacUpdateServiceContract {
         attempt_id: release !== null ? null : (attempt?.attempt_id ?? active?.attempt_id ?? null),
         request_id: release !== null ? null : (status?.request_id ?? null),
         detail:
-          state === 'current'
-            ? null
-            : (preparation_error ?? (release === null ? (status?.detail ?? null) : null)),
+          preparation_error ??
+          (release === null && (state !== 'current' || status?.phase === 'current')
+            ? (status?.detail ?? null)
+            : null),
         can_retry:
           release === null &&
           attempt?.state === 'done' &&
@@ -476,49 +481,52 @@ export class MacUpdateService implements MacUpdateServiceContract {
     };
     await drain(this);
   }
+  /** Wait for this home's required package while other machines download independently. */
+  async prepare_home(release: PublishedUpdate): Promise<void> {
+    if (!this.context.machines().some((machine) => machine.machine_id === HOME_MACHINE_ID)) return;
+    const local = this.for_machine(HOME_MACHINE_ID) as MacUpdateService;
+    if (local.unchanged(release)) return;
+    if (!local.artifact(release))
+      throw new UpdateConflict('The release has no package for this home machine.');
+    const owner = local.archive_owner ?? local;
+    await owner.queue_preparation(async () => {
+      const digest = local.artifact(release)!.archive_sha256;
+      if (!owner.ready_archives.has(digest)) {
+        await owner.prepare_once(release);
+        owner.ready_archives.add(digest);
+      }
+      local.save_preparation(release, null);
+    });
+  }
   prepare(release: PublishedUpdate): Promise<void> {
     this.signal.throwIfAborted();
-    const machines = this.context.machines?.();
-    if (machines !== undefined) {
-      const changed = machines.filter(
-        (machine) => !(this.for_machine(machine.machine_id) as MacUpdateService).unchanged(release),
-      );
-      const platforms = new Set(changed.map((machine) => machine.platform));
-      return Promise.all(
-        [...platforms].map((platform) => {
-          const owner = platform === 'linux' ? this.linux_owner() : this;
-          return owner.queue_preparation(async () => {
-            let detail: string | null = null;
-            try {
-              await owner.prepare_once(release);
-              owner.signal.throwIfAborted();
-              if (platform === 'linux' && release.linux_executor)
-                owner.ready_archives.add(release.linux_executor.archive_sha256);
-            } catch (error) {
-              if (owner.signal.aborted) throw error;
-              detail = error instanceof Error ? error.message : String(error);
-            }
-            for (const machine of changed.filter((machine) => machine.platform === platform))
-              (this.for_machine(machine.machine_id) as MacUpdateService).save_preparation(
-                release,
-                detail,
-              );
-          });
-        }),
-      ).then(() => {});
-    }
-
-    const owner = this.platform === 'linux' ? this.linux_owner() : this;
-    return owner.queue_preparation(async () => {
-      this.signal.throwIfAborted();
-      await owner.prepare_once(release);
-      if (
-        owner.platform === 'darwin' &&
-        !owner.signal.aborted &&
-        owner.context.linux_registered?.()
-      )
-        owner.schedule_linux_preparation(release);
-    });
+    const machines = this.context.machines();
+    const changed = machines.filter(
+      (machine) => !(this.for_machine(machine.machine_id) as MacUpdateService).unchanged(release),
+    );
+    const platforms = new Set(changed.map((machine) => machine.platform));
+    return Promise.all(
+      [...platforms].map((platform) => {
+        const owner = platform === 'linux' ? this.linux_owner() : this;
+        return owner.queue_preparation(async () => {
+          let detail: string | null = null;
+          try {
+            await owner.prepare_once(release);
+            owner.signal.throwIfAborted();
+            if (platform === 'linux' && release.linux_executor)
+              owner.ready_archives.add(release.linux_executor.archive_sha256);
+          } catch (error) {
+            if (owner.signal.aborted) throw error;
+            detail = error instanceof Error ? error.message : String(error);
+          }
+          for (const machine of changed.filter((machine) => machine.platform === platform))
+            (this.for_machine(machine.machine_id) as MacUpdateService).save_preparation(
+              release,
+              detail,
+            );
+        });
+      }),
+    ).then(() => {});
   }
   private schedule_linux_preparation(release: PublishedUpdate | null): void {
     if (this.signal.aborted || release?.linux_executor == null) return;
@@ -836,18 +844,6 @@ export class MacUpdateService implements MacUpdateServiceContract {
         detail: 'This machine waits for this update.',
       }
     );
-  }
-  phase(attempt_id: string): MacUpdatePhase | null {
-    const saved = this.saved_status(attempt_id);
-    return saved === null || saved.phase === 'unavailable' ? null : saved.phase;
-  }
-  reported_at(attempt_id: string): number | null {
-    try {
-      return statSync(this.report_path(attempt_id)).mtimeMs / 1000;
-    } catch (error) {
-      if (missing(error)) return null;
-      throw error;
-    }
   }
   report(report: MacUpdateReport, health: MacUpdateHealthRead | null): MacUpdateStatus {
     const detail = report.detail ?? null,

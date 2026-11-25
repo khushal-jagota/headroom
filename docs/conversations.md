@@ -68,7 +68,7 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 | suppressed | Dropped on purpose before the wire, usually because a notice went stale. |
 | recorded | A message to the owner was written. No backend was called. |
 
-On the web, Send clears the draft. Queue sends to a busy agent wait in the box above the composer, where the owner can use **Send now**, **Steer**, **Edit**, and **Remove** when available. A queued message enters the conversation when the agent takes it. Steer, Send now, and sends to an idle agent appear in the conversation at once with upload progress and the send result. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
+On the web, Send clears the draft. Queue sends to a busy agent wait in a tray on the top edge of the composer, one line each, with **Steer**, **Send now**, **Edit**, and **Remove** on the line when available. A queued message enters the conversation when the agent takes it. Steer, Send now, and sends to an idle agent appear in the conversation at once with upload progress and the send result. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
@@ -158,7 +158,7 @@ The notebook feeds attention: messages to the owner, open asks, and failures bec
 
 After each application save, Headroom updates changed conversation statuses and sends them to the browser. Server startup recalculates every status from conversation records and current runtime state. Plain SQLite edits remain possible.
 
-The pane reads a stored view that is built from the notebook. When the app connection returns, an open, visible pane catches up from that record without another send. A hidden or collapsed pane still reconciles sends with unknown outcomes. When a change alters the format of that view, nothing more is needed: after the server starts, it rebuilds each old view from its notebook in the background, one conversation at a time. Until its view is rebuilt, a pane is told that the view is upgrading and tries again.
+The pane reads a stored view that is built from the notebook. When the app connection returns, an open, visible pane catches up from that record without another send. A hidden or collapsed pane still reconciles sends with unknown outcomes. During an update, the new server rebuilds stale views for the Chief, active Managers and unfinished Tickets before it accepts connections. Other conversations rebuild in the background, one at a time. Opening a waiting conversation moves it ahead of unopened ones. Its pane retries until the whole history is ready.
 
 ## Decisions that shape it
 

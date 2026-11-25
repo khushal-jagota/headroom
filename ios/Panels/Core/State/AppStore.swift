@@ -25,7 +25,6 @@ import SwiftUI
     var workspaceHidden: [String: Int] = [:]
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
     var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
-    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
     private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
     /// The server's driver list; nil until it arrives, or when the server has none.
@@ -44,11 +43,10 @@ import SwiftUI
     var executorHealth: ExecutorHealth? { healthResource.value }
     var updateStatus: PanelsUpdateStatus? { updateResource.value }
     var updateFailure: ServerReadFailure? { updateResource.failure }
-    var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
     var serverUnreachable: Bool {
         errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
-            deploymentResource.failure?.isServerUnreachable == true || updateResource.failure?.isServerUnreachable == true
+            updateResource.failure?.isServerUnreachable == true
     }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
@@ -376,8 +374,8 @@ import SwiftUI
         let generation = runGeneration
         running = true
         serverConnection.begin()
-        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource
-        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
+        let chief = chiefResource, updates = updateResource, health = healthResource, drivers = driversResource
+        chief.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
@@ -389,7 +387,7 @@ import SwiftUI
         hasRun = true
         defer {
             updateReads.cancel()
-            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release()
+            chief.release(); updates.release(); health.release(); drivers.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 serverConnection.pause()
@@ -499,7 +497,7 @@ import SwiftUI
         }
     }
 
-    /// Pull to refresh. Chief settings and deployment read again, and the view opens a
+    /// Pull to refresh. Chief settings and update status read again, and the view opens a
     /// new stream, whose first frame is a fresh snapshot. The pull ends when that
     /// snapshot lands, or when the new stream ends without one. Without a foreground
     /// stream, one snapshot is read.
@@ -535,7 +533,7 @@ import SwiftUI
         }
     }
 
-    /// Refresh after confirmed writes. Chief settings and deployment read again. The
+    /// Refresh after confirmed writes. Chief settings and update status read again. The
     /// view follows its stream, which carries the write; a stream that is not current reconnects now. Without a
     /// foreground stream, one snapshot is read.
     func refresh() async {
@@ -556,10 +554,9 @@ import SwiftUI
         if probing { await resources.reconcile() }
         else {
             async let chief: Void = chiefResource.refresh()
-            async let deployment: Void = deploymentResource.refresh()
             async let health: Void = healthResource.refresh()
             async let updates: Void = updateResource.refresh()
-            _ = await (chief, deployment, health, updates)
+            _ = await (chief, health, updates)
         }
     }
 

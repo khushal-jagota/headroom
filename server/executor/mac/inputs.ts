@@ -9,7 +9,7 @@ import type { FilesService } from './files.ts';
 import {
   ExecutorPaths,
   INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS,
-  INPUT_DOWNLOAD_RETRY_MAX_SECONDS,
+  INPUT_DOWNLOAD_MAX_ATTEMPTS,
 } from './configuration.ts';
 import type { MacFileTransport } from './transport/files.ts';
 import { ExecutorHttpError } from './transport/errors.ts';
@@ -51,8 +51,7 @@ export class MacInputs {
         join(this.paths.root, 'artifacts/files/conversations'),
         `${conversation}/${safe_component(stored_file_id)}`,
       );
-      let delay = INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS;
-      for (;;) {
+      for (let attempt = 1; ; attempt++) {
         signal.throwIfAborted();
         try {
           await this.download(command.command_id, stored_file_id, target, signal);
@@ -63,11 +62,20 @@ export class MacInputs {
             throw new InputDownloadRefused(
               `input ${stored_file_id} is no longer served (${error.status})`,
             );
+          if (attempt >= INPUT_DOWNLOAD_MAX_ATTEMPTS)
+            throw new InputDownloadRefused(
+              `Could not download input ${stored_file_id} after ${attempt} attempts: ${failure_detail(error)}`,
+              { cause: error },
+            );
           console.warn(
             `Input download failed command=${command.command_id}: ${failure_detail(error)}`,
           );
           try {
-            await sleep(delay * 1000, undefined, { signal });
+            await sleep(
+              INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS * 2 ** (attempt - 1) * 1000,
+              undefined,
+              { signal },
+            );
           } catch (error) {
             if (
               signal.aborted &&
@@ -78,7 +86,6 @@ export class MacInputs {
               throw signal.reason;
             throw error;
           }
-          delay = Math.min(delay * 2, INPUT_DOWNLOAD_RETRY_MAX_SECONDS);
         }
       }
     }

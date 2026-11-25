@@ -1,4 +1,4 @@
-/** How long an install may take before settle() calls it unfinished. */
+/** The expected end of the trial for the status screen. */
 import {
   DATABASE_BACKUP_BYTES_PER_SECOND,
   DATABASE_BACKUP_FLOOR_SECONDS,

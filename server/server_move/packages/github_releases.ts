@@ -3,14 +3,17 @@
  * `mac-home.zip` for Apple Silicon. The trust checks are those of the update provider's
  * release reader. Credentials stay outside records and errors.
  */
-import { createWriteStream, readFileSync } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { mkdtemp, open, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
 import { is_record } from '../../core/records.ts';
-import { TRUSTED_RELEASE_WORKFLOW } from '../../environments/release/source.ts';
+import {
+  release_request_headers,
+  TRUSTED_RELEASE_WORKFLOW,
+} from '../../environments/release/source.ts';
 import { APP_ARCHIVE_NAME } from '../../environments/release/configuration.ts';
 import { with_zip_member } from '../../environments/updates/zip.ts';
 import type { AppManifest } from '../../environments/updates/contracts.ts';
@@ -33,27 +36,30 @@ function list(value: unknown): Record<string, unknown>[] {
 
 export class GitHubReleaseServerPackages implements ServerPackageSource {
   private readonly repository: string;
-  private readonly token_file: string;
+  private readonly token_file: string | null;
   private readonly fetch: typeof fetch;
-  constructor(repository: string, token_file: string, fetcher: typeof fetch = globalThis.fetch) {
+  constructor(
+    repository: string,
+    token_file: string | null,
+    fetcher: typeof fetch = globalThis.fetch,
+  ) {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid release repository');
     this.repository = repository;
     this.token_file = token_file;
     this.fetch = fetcher;
   }
   private async get(path: string, signal: AbortSignal, binary = false): Promise<Response> {
-    const token = readFileSync(this.token_file, 'utf8').trim();
-    if (!token) throw new Error('The release credential is unavailable.');
+    const headers = release_request_headers(
+      this.token_file,
+      binary ? 'application/octet-stream' : 'application/vnd.github+json',
+    );
     let response: Response;
     try {
       response = await this.fetch(`https://api.github.com/repos/${this.repository}/${path}`, {
         method: 'GET',
         redirect: 'follow',
         signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: binary ? 'application/octet-stream' : 'application/vnd.github+json',
-        },
+        headers,
       });
     } catch (error) {
       signal.throwIfAborted();

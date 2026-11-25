@@ -3,7 +3,7 @@ import { ExecutorValidationError } from '../protocol_errors.ts';
 import { constants, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
 import { getPriority, setPriority } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { basename, dirname, join, isAbsolute } from 'node:path';
 import { getSystemErrorName } from 'node:util';
 import { isMainThread } from 'node:worker_threads';
 import koffi from 'koffi';
@@ -425,6 +425,35 @@ export function open_directory_descriptor(
     throw error;
   }
 }
+/** Open one regular file; each lookup stays relative to its retained parent. */
+export function open_regular_descriptor(path: string): number {
+  const parent = open_directory_descriptor(dirname(path));
+  let descriptor: number;
+  try {
+    descriptor = open_relative(
+      parent,
+      basename(path),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    close_native_descriptor(parent);
+    throw error;
+  }
+  try {
+    close_native_descriptor(parent);
+  } catch (error) {
+    close_native_descriptor(descriptor);
+    throw error;
+  }
+  try {
+    if (!fstatSync(descriptor).isFile())
+      throw new ExecutorValidationError('artifact is not regular file');
+    return descriptor;
+  } catch (error) {
+    close_native_descriptor(descriptor);
+    throw error;
+  }
+}
 /** The SQLite owner retains this lease independently of file-worker lifetime. */
 export function acquire_process_lock(root: string): { close(): void } {
   const parent = open_directory_descriptor(root);
@@ -745,7 +774,7 @@ export function mac_backend_path(home: string): string {
   ].join(':');
 }
 type PlistValue = string | number | boolean | PlistValue[] | { [key: string]: PlistValue };
-function plist(value: Record<string, PlistValue>): string {
+export function plist(value: Record<string, PlistValue>): string {
   const escape = (text: string) =>
     text
       .replaceAll('&', '&amp;')

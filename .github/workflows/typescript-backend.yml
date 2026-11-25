@@ -2,7 +2,7 @@ name: TypeScript backend checkpoint
 
 on:
   pull_request:
-    branches: [staging]
+    branches: [staging, feature/server-and-machine-code, feature/update-rework]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [staging]
@@ -18,6 +18,14 @@ permissions:
   contents: read
 
 jobs:
+  server-suite:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    uses: ./.github/workflows/typescript-backend-server.yml
+
+  web-suite:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    uses: ./.github/workflows/development-tools.yml
+
   browser:
     name: Browser gates (${{ matrix.backend }}, Node 22)
     # Browser gates run on the schedule and on manual runs, not on pull requests

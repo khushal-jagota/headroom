@@ -17,8 +17,7 @@ interface Reply {
 }
 interface Case {
   name: string;
-  action: 'available' | 'available_order' | 'publication' | 'download';
-  run_id: number;
+  action: 'available' | 'download';
   artifact_id: number;
   responses: Record<string, Reply>;
   inactivity_ms?: number;
@@ -47,7 +46,6 @@ export async function probe_update_provider(request: Request) {
       }) as typeof setTimeout;
     }
     const provider = new GitHubUpdateProvider('owner/repository', request.token_file, {
-      temporary_directory: request.root,
       target: item.target ?? request.target,
       fetch: async (input, options) => {
         const url = new URL(input instanceof globalThis.Request ? input.url : input.toString());
@@ -124,15 +122,6 @@ export async function probe_update_provider(request: Request) {
     try {
       let result: unknown;
       if (item.action === 'available') result = await provider.available();
-      else if (item.action === 'available_order') {
-        const considered: unknown[] = [];
-        provider.publication = async (run_id) => {
-          considered.push(run_id);
-          return null;
-        };
-        await provider.available();
-        result = { considered };
-      } else if (item.action === 'publication') result = await provider.publication(item.run_id);
       else {
         const destination = join(request.root, `download-${index}.zip`);
         await provider.download_artifact(item.artifact_id, destination);

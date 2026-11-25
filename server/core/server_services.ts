@@ -1,3 +1,4 @@
+import { read_home_trial } from '../environments/updates/home_trial.ts';
 import Fastify from 'fastify';
 import { install_request_lifetime } from './http/lifetime.ts';
 import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
@@ -579,13 +580,21 @@ export class ServerServices {
     this.assert_startup_open();
     const { app, background } = await this.create_http(context, conversation, environments);
     this.assert_startup_open();
-    environments?.recover_update_barrier?.();
+    await environments?.recover_update_barrier?.();
     const startup_frozen = this.update_barrier.frozen;
     if (startup_frozen)
       conversation.core?.workspace_admission.claim(() => {}, {
         idle: () => true,
         require_idle: false,
       });
+    if (read_home_trial(this.update_barrier, this.config.app_sha)) {
+      // Older installers accept the first successful health response. Prepare priority views
+      // before listening, after the service selects this release and acquires its database.
+      const views_ready = begin_startup_phase('active conversation views');
+      await this.areas.prepareActiveViews();
+      views_ready();
+      this.assert_startup_open();
+    }
     let normal_started = false;
     let normal_starting: Promise<void> | undefined;
     const release_normal_work = (): Promise<void> => {
@@ -642,7 +651,7 @@ export class ServerServices {
           const attempt_id = environments?.update_attempt_id?.() ?? '';
           const was_frozen = this.update_barrier.frozen;
           this.update_barrier.refresh();
-          if (this.update_barrier.frozen) environments?.recover_update_barrier?.();
+          if (this.update_barrier.frozen) await environments?.recover_update_barrier?.();
           if (this.update_barrier.frozen || this.lifetime.isClosing()) return;
           if (was_frozen) environments?.reopen_update_work?.(attempt_id);
           // Producer startup is one-shot, including a rejected partial start. Orphan

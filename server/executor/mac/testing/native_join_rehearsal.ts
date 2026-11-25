@@ -15,6 +15,7 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { shell_quote } from '../../../conversation/worker_unit/logic.ts';
 import { mac_installation_paths } from '../platform.ts';
+import { native_launcher_trial } from './native_launcher_trial.ts';
 import { build_mac_launcher } from '../packaging/launcher_main.ts';
 
 const root = resolve(process.env.MAC_REHEARSAL_ROOT!);
@@ -106,31 +107,33 @@ try {
   for (const path of [paths.install, paths.app, paths.plist, paths.state])
     await assert.rejects(lstat(path), { code: 'ENOENT' });
   await run(['launchctl', 'print', domain]);
-  const launcher_app = join(root, 'launcher/Panels TypeScript.app');
-  await mkdir(join(root, 'launcher'));
-  await build_mac_launcher(launcher_app, '-');
-  await run([
-    process.execPath,
-    join(source, 'server/executor/mac/packaging/publication_main.ts'),
-    '--source',
-    process.env.MAC_REHEARSAL_INPUTS!,
-    '--node-distribution',
-    resolve(process.execPath, '../..'),
-    '--node-modules',
-    join(process.env.MAC_REHEARSAL_INPUTS!, 'server/node_modules'),
-    '--repeat-node-modules',
-    join(process.env.MAC_REHEARSAL_REPEAT_INPUTS!, 'server/node_modules'),
-    '--output',
-    join(root, 'package'),
-    '--revision',
-    revision,
-    '--launcher-app',
-    launcher_app,
-    '--run-id',
-    process.env.MAC_REHEARSAL_RUN_ID!,
-    '--run-attempt',
-    process.env.MAC_REHEARSAL_RUN_ATTEMPT!,
-  ]);
+  if (!process.env.MAC_REHEARSAL_PACKAGE_ID) {
+    const launcher_app = join(root, 'launcher/Panels TypeScript.app');
+    await mkdir(join(root, 'launcher'));
+    await build_mac_launcher(launcher_app, '-');
+    await run([
+      process.execPath,
+      join(source, 'server/executor/mac/packaging/publication_main.ts'),
+      '--source',
+      process.env.MAC_REHEARSAL_INPUTS!,
+      '--node-distribution',
+      resolve(process.execPath, '../..'),
+      '--node-modules',
+      join(process.env.MAC_REHEARSAL_INPUTS!, 'server/node_modules'),
+      '--repeat-node-modules',
+      join(process.env.MAC_REHEARSAL_REPEAT_INPUTS!, 'server/node_modules'),
+      '--output',
+      join(root, 'package'),
+      '--revision',
+      revision,
+      '--launcher-app',
+      launcher_app,
+      '--run-id',
+      process.env.MAC_REHEARSAL_RUN_ID!,
+      '--run-attempt',
+      process.env.MAC_REHEARSAL_RUN_ATTEMPT!,
+    ]);
+  }
   steps.package = 'passed';
 
   proxy.listen(0, '127.0.0.1');
@@ -204,6 +207,9 @@ try {
   const quiesce = await run([paths.console, 'executor', 'quiesce', '--exit-when-ready']);
   assert.equal(JSON.parse(quiesce.stdout).exit_committed, true);
   steps.quiesce = 'passed';
+  await run(['launchctl', 'bootout', `${domain}/${paths.job}`]);
+  joined = false;
+  steps.launcher_trial = await native_launcher_trial(root, paths, run);
   steps.passed = true;
 } catch (error) {
   await writeFile(join(evidence, 'failure.txt'), String((error as Error).stack ?? error));

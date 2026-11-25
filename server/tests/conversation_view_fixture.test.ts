@@ -3,13 +3,23 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from 'vitest';
+import { PromptDiscardedEventPayload } from '../conversation/events.ts';
+import { text_message_content } from '../conversation/message_content.ts';
 import type { ConversationEventKind } from '../conversation/events.ts';
 import { ConversationAccess, ResolvedConversationStart } from '../conversation/contracts.ts';
 import { conversation_event_payload_from_canonical_json } from '../conversation/record/codec.ts';
-import { ConversationStorePrimitives } from '../conversation/record/data/store.ts';
+import {
+  ConversationStore,
+  ConversationStorePrimitives,
+} from '../conversation/record/data/store.ts';
 import { append_projection } from '../conversation/views/data/writer.ts';
 import { read_page } from '../conversation/views/data/storage.ts';
-import { rebuild_one_conversation_view } from '../conversation/views/data/rebuild.ts';
+import {
+  ConversationViewRebuilder,
+  out_of_date_conversation_ids,
+  rebuild_one_conversation_view,
+} from '../conversation/views/data/rebuild.ts';
+import { view_coverage } from '../conversation/views/routes.ts';
 import { fixture as database_fixture } from './ticket_fixture.ts';
 
 interface FixtureEvent {
@@ -112,5 +122,67 @@ test('the existing conversation fixtures match Python projection rows and both l
     database.write((tx) => tx.run('UPDATE conversation_view_state SET projection_version=0'));
     await rebuild_one_conversation_view(database, 'fixture');
     verify();
+  }
+});
+
+// A completed replay alone cannot catch a live append that creates a false current
+// projection, or show that opening an archive changes the order between atomic installs.
+test('active views finish first and a newly opened archive keeps events written during replay', async () => {
+  const database = database_fixture();
+  const store = new ConversationStore(database);
+  const event = new PromptDiscardedEventPayload({
+    content: text_message_content('archive'),
+    sender_label: 'owner',
+  });
+  for (const conversation_id of ['a', 'b', 'c', 'chief']) {
+    store.create_conversation(
+      new ResolvedConversationStart({
+        conversation_id,
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: null,
+        workspace_folder: '/workspace',
+        access: 'full',
+      }),
+    );
+    store.append_events(conversation_id, [event]);
+  }
+  database.write((tx) => {
+    tx.run(
+      "INSERT OR REPLACE INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff','chief')",
+    );
+    tx.run('DELETE FROM conversation_view_state');
+    tx.run('CREATE TABLE install_order(id TEXT)');
+    tx.run(
+      'CREATE TEMP TRIGGER observe_install AFTER INSERT ON main.conversation_view_state BEGIN INSERT INTO install_order VALUES (NEW.conversation_id); END',
+    );
+  });
+  const rebuilder = new ConversationViewRebuilder();
+  await rebuilder.prepare_active(database);
+  expect(out_of_date_conversation_ids(database)).toEqual(['a', 'b', 'c']);
+  rebuilder.start(database);
+  try {
+    // The first replay yielded after reading its original high-water mark.
+    store.append_events('a', [event]);
+    expect(() => database.read((sql) => view_coverage(sql, 'a'))).toThrow();
+    rebuilder.prioritize('c');
+    await rebuilder.finish();
+    const ids = database.read((sql) =>
+      sql.all<{ id: string }>('SELECT id FROM install_order ORDER BY rowid').map((r) => r.id),
+    );
+    expect(ids).toEqual(['chief', 'a', 'c', 'b']);
+    expect(database.read((sql) => view_coverage(sql, 'a'))).toBe(2);
+    expect(
+      database.read((sql) =>
+        sql.all(
+          'SELECT sequence FROM conversation_view_rows WHERE conversation_id=? ORDER BY sequence',
+          ['a'],
+        ),
+      ),
+    ).toEqual([{ sequence: 1 }, { sequence: 2 }]);
+  } finally {
+    rebuilder.close();
+    await rebuilder.finish();
   }
 });

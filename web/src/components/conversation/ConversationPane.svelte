@@ -13,7 +13,6 @@
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import SystemLine from "./SystemLine.svelte";
-  import UserMessage from "./UserMessage.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import { belongsInHeldQueue, heldQueuePosition, transcriptOutgoing, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from "../../lib/conversation/transcriptOutgoing";
   import type { PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
@@ -356,7 +355,7 @@
     belongsInHeldQueue(message) && !acknowledgedMessageIds.has(message.messageId)).sort((left, right) =>
     heldQueuePosition(left) - heldQueuePosition(right)));
   const hasNewOutgoing = $derived(outgoing.some(message => !message.restored));
-  setContext<TranscriptSendActions>(TRANSCRIPT_SEND_ACTIONS, {
+  const sendActions: TranscriptSendActions = {
     running: () => running,
     canSteer: () => supportsSteer && ask === null && userInput === null,
     discard: row => row.heldPromptId ? onDiscardHeldPrompt?.(row.heldPromptId) : undefined,
@@ -365,7 +364,8 @@
     canEditHeld: () => !readOnly && !!onDiscardHeldPrompt,
     editUpload: id => composerHandle?.editPendingSend(id),
     retryUpload: id => composerHandle?.retryPendingSend(id)
-  });
+  };
+  setContext<TranscriptSendActions>(TRANSCRIPT_SEND_ACTIONS, sendActions);
 
   export function takeBackUnsentMessage(content: readonly SentMessagePiece[]): boolean {
     return composerHandle?.takeBackUnsentMessage(content) ?? false;
@@ -507,7 +507,9 @@
           <SystemLine mark={headStatus.mark === "spinner" ? "spinner" : headStatus.mark === null ? null : "dot"}>{headStatus.text}</SystemLine>
         </span>
       {/if}
-      {#if connectionTrouble}
+      {#if reader?.preparingHistory}
+        <span class="cv-state" role="status"><SystemLine mark="spinner">Preparing conversation history</SystemLine></span>
+      {:else if connectionTrouble}
         <span class="cv-state" data-conversation-connection role="img" aria-label="Connection trouble" title="Connection trouble">
           <svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>
         </span>
@@ -665,7 +667,7 @@
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
-  {#if reader?.entryPhase === 'error'}
+  {#if reader?.entryPhase === 'error' && !reader.preparingHistory}
     <div class="chat-receipt" role="status" data-conversation-entry-status="error">The conversation did not load.
       <button type="button" class="chat-qrow-act" onclick={() => { void reader?.connect().catch(() => undefined); }}>Retry conversation</button>
     </div>
@@ -674,15 +676,7 @@
     data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null || credentialWaiting) ? true : undefined}
     style:visibility={!hasNewOutgoing && (!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase)) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
-  {#snippet waitingMessages()}
-    <HeldPromptStack>
-      {#each queuedMessages as message (message.messageId)}
-        <UserMessage local={message} conversationId={conversationId ?? ""} {ownSenderLabel}/>
-      {/each}
-    </HeldPromptStack>
-  {/snippet}
   <ConversationViewport
-    afterTranscript={!readOnly && queuedMessages.length ? waitingMessages : undefined}
     bind:placementReady
     bind:entryPresentationPending
     {ownerReadThroughSequence}
@@ -729,6 +723,9 @@
   </div>
   {/if}
 
+  {#snippet queue()}
+    <HeldPromptStack messages={queuedMessages} actions={sendActions} ownSenderLabel={ownSenderLabel ?? "owner"}/>
+  {/snippet}
   {#if readOnly}
     <div class="conversation-read-only" data-conversation-read-only-notice>
       Past conversation · read only
@@ -769,6 +766,7 @@
       disabled={composerDisabled}
       {sendAvailable}
       {showRunPicker}
+      {queue}
       {onSend}
       onPendingSends={entries => { pendingSends = entries; }}
       onMessageComposed={() => { if (conversationState === "rest") conversationState = "opened"; }}
