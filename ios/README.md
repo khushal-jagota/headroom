@@ -867,9 +867,12 @@ Each Sidebar card shows the status tag of its worst active goal. Chief and Manag
 show their own goals with working checklists and manual charts. A binary goal without
 a checklist offers Mark done or Mark not done. Manual charts offer their configured
 increments, such as Add 100 words. A Manager with one goal displays that goal
-under the Manager's name; multiple goals use cards. Holder documents use the same
-native page renderer, including Tickets blocks; when none is authored the page
-keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+under the Manager's name; multiple goals use cards. Chief and Manager pages put
+their labeled, paged Tickets list immediately after the title and recap, before
+goals and authored content. Goal cards have no section heading. Pages omit absent
+goals and empty authored documents, including their section spacing. Tickets stay in one
+fixed place and old authored Tickets blocks do not render. All goals remains in
+Settings and includes inactive goals and column filters.
 Goal screens share a full project catalogue read for labels, filters and editing.
 
 A goal page opens its holder's conversation. Previous goal transcripts use the
