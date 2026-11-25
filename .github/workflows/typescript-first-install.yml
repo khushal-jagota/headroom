@@ -2,6 +2,8 @@ name: First server and machine installation
 
 on:
   workflow_call:
+    inputs:
+      use_release_packages: {type: boolean, default: false}
   workflow_dispatch:
     inputs:
       replay_from: {description: "Earlier native release build run ID (optional)", type: string}
@@ -11,14 +13,6 @@ on:
         type: choice
         options: [both, linux, darwin]
         default: both
-  pull_request:
-    branches-ignore: [staging, main, feature/server-and-machine-code, feature/update-rework]
-    paths:
-      - "server/installation/**"
-      - "server/environments/release/**"
-      - "scripts/panels_install*"
-      - "server/environments/mac_executor/**"
-      - ".github/workflows/typescript-first-install.yml"
 
 concurrency:
   group: first-install-${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
@@ -26,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   replay:
@@ -95,7 +90,26 @@ jobs:
           browser_setup_started=$SECONDS
           node server/node_modules/playwright/cli.js install chromium
           printf 'seconds=%s\n' "$((SECONDS-browser_setup_started))" > "$FIRST_INSTALL_ROOT/evidence/browser-setup-time.txt"
-      - name: Build the real native server and machine packages from this revision
+      - name: Use the home archive, build receipt, and machine archive from this release
+        if: inputs.use_release_packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            home_package=panels-app
+            home_build=panels-publication-build
+            machine_package=panels-linux-executor
+          else
+            home_package=panels-mac-home
+            home_build=panels-mac-home-build
+            machine_package=panels-mac-runtime
+          fi
+          gh run download "$GITHUB_RUN_ID" -n "$home_package" -D "$FIRST_INSTALL_ROOT/build/server"
+          gh run download "$GITHUB_RUN_ID" -n "$home_build" -D "$FIRST_INSTALL_ROOT/build/server"
+          gh run download "$GITHUB_RUN_ID" -n "$machine_package" -D "$FIRST_INSTALL_ROOT/build/machine"
+      - name: Build the native packages for a standalone first-install rehearsal
+        if: ${{ !inputs.use_release_packages }}
         run: |
           set -euo pipefail
           umask 077
@@ -159,7 +173,7 @@ jobs:
       # A run by hand keeps the built packages for a few days, so an operator can install a
       # branch revision with --archive and --receipt. Only the packages and receipts.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.use_release_packages
         with:
           name: first-install-packages-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -171,8 +185,9 @@ jobs:
           retention-days: 3
       - name: Run the full install command and join a second machine instance
         run: node server/installation/testing/first_install_proof.ts
-      - name: Prove cross-release update and rollback without a compatible host Node
-        if: runner.os == 'macOS'
+      # The release gate exercises the installed public predecessor on both systems.
+      - name: Probe two synthetic versions on a standalone Mac rehearsal
+        if: runner.os == 'macOS' && !inputs.use_release_packages
         env:
           PANELS_NATIVE_HOME_TEST: "1"
           NATIVE_EVIDENCE: ${{ runner.temp }}/first-install-proof/evidence/native-update

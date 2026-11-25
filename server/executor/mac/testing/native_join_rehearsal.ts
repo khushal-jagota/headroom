@@ -107,31 +107,33 @@ try {
   for (const path of [paths.install, paths.app, paths.plist, paths.state])
     await assert.rejects(lstat(path), { code: 'ENOENT' });
   await run(['launchctl', 'print', domain]);
-  const launcher_app = join(root, 'launcher/Panels TypeScript.app');
-  await mkdir(join(root, 'launcher'));
-  await build_mac_launcher(launcher_app, '-');
-  await run([
-    process.execPath,
-    join(source, 'server/executor/mac/packaging/publication_main.ts'),
-    '--source',
-    process.env.MAC_REHEARSAL_INPUTS!,
-    '--node-distribution',
-    resolve(process.execPath, '../..'),
-    '--node-modules',
-    join(process.env.MAC_REHEARSAL_INPUTS!, 'server/node_modules'),
-    '--repeat-node-modules',
-    join(process.env.MAC_REHEARSAL_REPEAT_INPUTS!, 'server/node_modules'),
-    '--output',
-    join(root, 'package'),
-    '--revision',
-    revision,
-    '--launcher-app',
-    launcher_app,
-    '--run-id',
-    process.env.MAC_REHEARSAL_RUN_ID!,
-    '--run-attempt',
-    process.env.MAC_REHEARSAL_RUN_ATTEMPT!,
-  ]);
+  if (!process.env.MAC_REHEARSAL_PACKAGE_ID) {
+    const launcher_app = join(root, 'launcher/Panels TypeScript.app');
+    await mkdir(join(root, 'launcher'));
+    await build_mac_launcher(launcher_app, '-');
+    await run([
+      process.execPath,
+      join(source, 'server/executor/mac/packaging/publication_main.ts'),
+      '--source',
+      process.env.MAC_REHEARSAL_INPUTS!,
+      '--node-distribution',
+      resolve(process.execPath, '../..'),
+      '--node-modules',
+      join(process.env.MAC_REHEARSAL_INPUTS!, 'server/node_modules'),
+      '--repeat-node-modules',
+      join(process.env.MAC_REHEARSAL_REPEAT_INPUTS!, 'server/node_modules'),
+      '--output',
+      join(root, 'package'),
+      '--revision',
+      revision,
+      '--launcher-app',
+      launcher_app,
+      '--run-id',
+      process.env.MAC_REHEARSAL_RUN_ID!,
+      '--run-attempt',
+      process.env.MAC_REHEARSAL_RUN_ATTEMPT!,
+    ]);
+  }
   steps.package = 'passed';
 
   proxy.listen(0, '127.0.0.1');
