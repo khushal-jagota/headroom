@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import PaneWithQueryClient from "./fixtures/PaneWithQueryClient.svelte";
 import type { HeldPromptRow } from "../src/lib/conversation/heldPrompts";
 import type { ConversationViewItem, CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
-import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
+import { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 
 const base = { conversationId: "c-1", draftKey: "conversation-pane", onSend: async () => true };
 const ask = { askId: "a-1", title: "Upload build 41", detail: null, options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }] };
@@ -63,6 +63,19 @@ describe("a waiting ask in the opened conversation", () => {
 });
 
 describe("the header", () => {
+  it("shows archive preparation until the reader recovers", () => {
+    const reader = new ConversationViewReader("c-1", "focus", true);
+    const pane = () => render(PaneWithQueryClient, {
+      props: { ...base, conversationState: "opened", readOnly: true, reader }
+    }).body;
+    reader.preparingHistory = true;
+    expect(pane()).toContain("Preparing conversation history");
+    expect(pane()).not.toContain("The conversation did not load");
+    reader.preparingHistory = false;
+    expect(pane()).not.toContain("Preparing conversation history");
+    reader.close();
+  });
+
   it("carries the title alone, never who does the work", () => {
     const body = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", title: "Vylo pricing", subtitle: "Coding worker" } }).body;
     expect(body).toMatch(/data-conversation-title[^>]*>Vylo pricing</);

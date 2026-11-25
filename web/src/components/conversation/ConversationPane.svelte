@@ -507,7 +507,9 @@
           <SystemLine mark={headStatus.mark === "spinner" ? "spinner" : headStatus.mark === null ? null : "dot"}>{headStatus.text}</SystemLine>
         </span>
       {/if}
-      {#if connectionTrouble}
+      {#if reader?.preparingHistory}
+        <span class="cv-state" role="status"><SystemLine mark="spinner">Preparing conversation history</SystemLine></span>
+      {:else if connectionTrouble}
         <span class="cv-state" data-conversation-connection role="img" aria-label="Connection trouble" title="Connection trouble">
           <svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>
         </span>
@@ -665,7 +667,7 @@
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
-  {#if reader?.entryPhase === 'error'}
+  {#if reader?.entryPhase === 'error' && !reader.preparingHistory}
     <div class="chat-receipt" role="status" data-conversation-entry-status="error">The conversation did not load.
       <button type="button" class="chat-qrow-act" onclick={() => { void reader?.connect().catch(() => undefined); }}>Retry conversation</button>
     </div>

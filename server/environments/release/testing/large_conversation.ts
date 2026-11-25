@@ -116,11 +116,12 @@ export async function seed_active_histories(
         return { ...h, through };
       }),
     );
-    // The historical facts and rows are synthetic. Mark all three saved projections
+    // The historical facts and rows are synthetic. Mark the active and archived projections
     // as version 5 in one short transaction immediately before the press.
     return db.write((tx) => {
       const archived = tx.run(
-        "UPDATE conversation_view_state SET projection_version=5 WHERE conversation_id GLOB 'qualification-archive-*'",
+        'UPDATE conversation_view_state SET projection_version=5 WHERE conversation_id GLOB ?',
+        [archivePrefix + '*'],
       );
       assert.equal(archived.changes, archive_histories);
       for (const h of histories)

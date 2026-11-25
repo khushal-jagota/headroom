@@ -38,6 +38,7 @@ export class ConversationViewReader {
     // undefined: no current newest evidence; null: an authoritative empty timeline.
     private newestReadWitness: ConversationViewItem | null | undefined = undefined;
     trouble = $state(false);
+    preparingHistory = $state(false);
     loading = $state(false);
     restoring = $state(false);
     restorationFailed = $state(false);
@@ -397,6 +398,13 @@ export class ConversationViewReader {
         }
     }
     private async open(): Promise<void> {
+        // A preparing archive keeps the original connect pending until history can be read.
+        let preparing: boolean;
+        do {
+            preparing = await this.openStream();
+        } while (preparing && !this.disposed && this.requests.size === 0);
+    }
+    private openStream(): Promise<boolean> {
         this.releaseSource();
         this.source = null;
         if (this.retry !== null) {
@@ -410,17 +418,17 @@ export class ConversationViewReader {
             query.after = String(this.coverage);
             query.ranges = JSON.stringify(this.pages.filter(p => p.items.length).map(p => ({ scope: p.scope, first: p.items[0]!.order, last: p.items.at(-1)!.order })));
         }
-        await new Promise<void>((resolve, reject) => {
+        return new Promise<boolean>((resolve, reject) => {
             let settled = false;
             const source = new EventSource(this.url('/tail', query));
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
-            const ready = () => { this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
+            const ready = () => { this.preparingHistory = false; this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
                 settled = true;
-                resolve();
+                resolve(false);
             } };
             const fail = (error: unknown) => { if (!active())
-                return; source.close(); this.source = null; this.loading = false; this.tailTrouble = true; this.updateTrouble();
+                return; source.close(); this.source = null; this.preparingHistory = false; this.loading = false; this.tailTrouble = true; this.updateTrouble();
                 if (this.entryPhase === 'loading') this.entryPhase = 'error';
                 if (this.status) this.status = { ...this.status, authority: 'unknown', turn_running: null, pending_permission: null, pending_user_input: null, live_output: null, live_tool_key: null, live_tool_progress: null };
                 this.changed();
@@ -474,7 +482,7 @@ export class ConversationViewReader {
                         this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 0);
                         if (!settled) {
                             settled = true;
-                            resolve();
+                            resolve(false);
                         }
                         return;
                     }
@@ -541,10 +549,34 @@ export class ConversationViewReader {
                 }
             });
             source.addEventListener('reset', () => { if (!active()) return; this.rereadHistory(); fail(new Error('Conversation view reset')); });
-            source.onerror = () => fail(new Error('Conversation disconnected'));
-            const abort = () => { source.close(); if (!settled) {
+            const probe = new AbortController();
+            source.onerror = async () => {
+                if (!active() || this.source !== source) return;
+                source.close();
+                this.source = null;
+                if (!settled) {
+                    // EventSource hides the HTTP status. Only a refused stream needs a status-only read.
+                    try {
+                        const response = await clientFetch(this.url('', { transcript: 'false' }), { signal: probe.signal });
+                        if (response.status === 409 && (await response.json()).detail === 'Conversation view is upgrading') {
+                            if (!active()) return;
+                            this.preparingHistory = true;
+                            this.tailTrouble = false;
+                            this.updateTrouble();
+                            this.changed();
+                            this.retry = setTimeout(() => { this.retry = null; settled = true; resolve(true); }, 1500);
+                            return;
+                        }
+                        await response.body?.cancel();
+                    } catch {
+                        // A failed status read takes the ordinary disconnect path.
+                    }
+                }
+                fail(new Error('Conversation disconnected'));
+            };
+            const abort = () => { probe.abort(); source.close(); if (!settled) {
                 settled = true;
-                resolve();
+                resolve(false);
             } };
             this.abort.signal.addEventListener('abort', abort, { once: true });
             this.releaseSource = () => { this.abort.signal.removeEventListener('abort', abort); abort(); };

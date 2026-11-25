@@ -326,10 +326,34 @@ it('retains actual newest on fresh entry without reading a watermark-based histo
   expect(reader.entryPhase).toBe('complete');
 });
 
+it('waits for an archived history and opens it automatically once the server catches up', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('EventSource', Source);
+  const probe = vi.fn(async () => Response.json({ detail: 'Conversation view is upgrading' }, { status: 409 }));
+  vi.stubGlobal('fetch', probe);
+  const reader = new ConversationViewReader('c', 'focus', true);
+  readers.push(reader);
+  const connected = reader.connect();
+  // The native stream conceals the HTTP refusal. Only the ordinary snapshot explains it.
+  Source.all[0].onerror?.();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(probe.mock.calls[0]).toEqual([expect.stringContaining('/c/view?lens=focus&transcript=false'), expect.anything()]);
+  expect(reader.preparingHistory).toBe(true);
+  expect(reader.trouble).toBe(false);
+  expect(reader.entryPhase).toBe('loading');
+  await vi.advanceTimersByTimeAsync(1500);
+  Source.all[1].send('snapshot', snapshot());
+  await connected;
+  expect(reader.preparingHistory).toBe(false);
+  expect(reader.entryPhase).toBe('placing');
+  expect(reader.coverage).toBe(1);
+});
+
 it('recovers the initial entry gate after a failed stream connection', async () => {
   vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
   const reader = new ConversationViewReader('c', 'focus', true);
   readers.push(reader);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ detail: 'Another conflict' }, { status: 409 })));
   const first = reader.connect();
   Source.all[0].onerror?.();
   await expect(first).rejects.toBeDefined();
