@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until the owner presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
+Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. The pull request into main qualifies sealed packages on disposable hosted machines. The main push promotes the packages from that run after it verifies that the Git trees match. Panels downloads that release in the background and checks it, but nothing changes until the owner presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
 ```text
 staging PR or push → server and web suites
@@ -27,7 +27,7 @@ The TypeScript Linux builder rebuilds browser assets from source, then removes b
 - **The installer.** The independent service runs the installer and Node from the pinned previous release. Its request and journal live outside the release.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
 
-Pull requests into main qualify the Mac launcher with ad-hoc signatures on the hosted Mac. The test installs the public predecessor and re-signs its installed launcher copy. It checks the executable code and bundle identifier before it exercises the update. The main release uses the original Developer ID signatures on both packages and checks that their team identifiers match before publication.
+Pull requests into main qualify the Mac launcher with ad-hoc signatures on the hosted Mac. The test installs the public predecessor and re-signs its installed launcher copy. It checks the executable code and bundle identifier before it exercises the update. On main, the signer uses the qualified launcher executable, signs it with the Developer ID, and submits it for Apple notarization. It compares the executable with its signature removed, swaps the signed app with the previous public launcher in a disposable installation, and starts a worker through it. The signed archive must preserve every other payload byte except the signature and the build ID that covers it. Linux packages and the Mac home package go to publication as the exact qualified archives.
 
 ## What a release needs from the host
 
@@ -41,7 +41,7 @@ Claude, Codex and Antigravity conversations use owner-maintained CLIs outside th
 
 The platform adapter owns service identity, independent installer launch, and installer source. Linux uses a separate systemd unit. A Mac home uses a separate LaunchAgent in the graphical login session. Both launch the coordinator from the retained release. The same coordinator selects the new version, checks the trial and restores the previous version on failure.
 
-The workflow also keeps the Actions publication for the transition. The deployed updater uses it to install the first release with the new reader. Attempts that already name Actions artifacts retain their original source and expiration.
+The previous published updater reads permanent GitHub Releases. The release tag retains the package revision from qualification. Its receipt records the main run that published those bytes, and its audit records the pull request and main commit. Older homes that only read GitHub Actions need a retained intermediate release while its artifacts are available. Attempts that already name Actions artifacts retain their original source and expiration.
 
 ## How an install happens
 

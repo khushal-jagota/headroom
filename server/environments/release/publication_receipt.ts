@@ -57,6 +57,8 @@ export type PublicationReceipt = Omit<PublishedUpdate, 'proof_artifact_id' | 'ma
 };
 export interface PublicationReceiptOptions extends Partial<MacHomeReceiptOptions> {
   readonly source_root: string;
+  readonly qualified_mac_artifact_zip: string;
+  readonly qualified_mac_artifact_id: string;
   readonly machine_compatibility_linux_zip: string;
   readonly machine_compatibility_linux_artifact_id: string;
   readonly machine_compatibility_darwin_zip: string;
@@ -159,13 +161,15 @@ export async function validate_linux_executor_publication(
 }
 export async function write_publication_receipt(
   options: PublicationReceiptOptions,
-  source_run: PublicationSourceRun,
+  publishing_run: PublicationSourceRun,
+  qualified: { build_run: PublicationSourceRun; head: string; branch: string },
   execution: ReleaseExecution,
   github_token: string,
 ): Promise<PublicationReceipt> {
   const fence = () => assert_release_execution(execution);
   fence();
-  require_publication_run(source_run);
+  require_publication_run(publishing_run);
+  const { build_run } = qualified;
   if (execution.deadline === null || !Number.isFinite(execution.deadline))
     throw new Error('Receipt requires the original finite publication deadline');
   const signal = AbortSignal.any([
@@ -196,6 +200,7 @@ export async function write_publication_receipt(
   if (!github_token) throw new Error('Artifact binding requires the current GitHub token');
   for (const path of [
     options.source_root,
+    options.qualified_mac_artifact_zip,
     options.linux_artifact_zip,
     options.linux_build_artifact_zip,
     options.mac_artifact_zip,
@@ -215,7 +220,7 @@ export async function write_publication_receipt(
     fence();
     await mkdir(output, { mode: 0o700 });
     owned = true;
-    await require_clean_publication_source(source, source_run.source_sha, execution);
+    await require_clean_publication_source(source, publishing_run.source_sha, execution);
     const artifacts = [];
     for (const input of [
       { path: options.linux_artifact_zip, id: options.artifact_id, name: 'panels-app' },
@@ -224,7 +229,16 @@ export async function write_publication_receipt(
         id: options.linux_build_artifact_id,
         name: 'panels-publication-build',
       },
-      { path: options.mac_artifact_zip, id: options.mac_artifact_id, name: 'panels-mac-runtime' },
+      {
+        path: options.mac_artifact_zip,
+        id: options.mac_artifact_id,
+        name: 'panels-signed-mac-runtime',
+      },
+      {
+        path: options.qualified_mac_artifact_zip,
+        id: options.qualified_mac_artifact_id,
+        name: 'panels-mac-runtime',
+      },
       {
         path: options.machine_compatibility_linux_zip,
         id: options.machine_compatibility_linux_artifact_id,
@@ -260,8 +274,10 @@ export async function write_publication_receipt(
         : []),
     ]) {
       fence();
+      const from_signer = input.name === 'panels-signed-mac-runtime';
+      const producing_run = from_signer ? publishing_run : build_run;
       const response = await fetch(
-        `https://api.github.com/repos/${source_run.repository}/actions/artifacts/${input.id}`,
+        `https://api.github.com/repos/${publishing_run.repository}/actions/artifacts/${input.id}`,
         {
           headers: {
             Accept: 'application/vnd.github+json',
@@ -286,9 +302,9 @@ export async function write_publication_receipt(
         integer(metadata.id) !== Number(input.id) ||
         metadata.name !== input.name ||
         metadata.expired !== false ||
-        integer(run.id) !== Number(source_run.run_id) ||
-        run.head_sha !== source_run.source_sha ||
-        run.head_branch !== 'main' ||
+        integer(run.id) !== Number(producing_run.run_id) ||
+        run.head_sha !== (from_signer ? publishing_run.source_sha : qualified.head) ||
+        run.head_branch !== (from_signer ? 'main' : qualified.branch) ||
         integer(run.repository_id) !== integer(run.head_repository_id) ||
         !info.isFile() ||
         !Number.isSafeInteger(info.size) ||
@@ -328,13 +344,10 @@ export async function write_publication_receipt(
       'run_id',
       'run_attempt',
     ] as const)
-      if (producer[field] !== source_run[field])
+      if (producer[field] !== build_run[field])
         throw new Error('Linux build differs from the current publication attempt');
     const manifest_value = record(build.manifest),
-      identity = manifest_identity(
-        { format: APP_FORMAT, ...manifest_value },
-        source_run.source_sha,
-      ),
+      identity = manifest_identity({ format: APP_FORMAT, ...manifest_value }, build_run.source_sha),
       runtime_contract = parse_optional_runtime_contract(manifest_value.runtime_contract);
     if (runtime_contract?.version !== 2)
       throw new Error('Receipt requires the Node runtime contract');
@@ -374,13 +387,13 @@ export async function write_publication_receipt(
         archive_path,
         sealed,
         archive_sha256,
-        source_run.source_sha,
+        build_run.source_sha,
         execution.child_processes,
         undefined,
         execution,
       );
     const actual_manifest = await validate_app_manifest(join(sealed, 'manifest.json'), {
-      expected_sha: source_run.source_sha,
+      expected_sha: build_run.source_sha,
       require_runtime: true,
     });
     if (
@@ -403,10 +416,11 @@ export async function write_publication_receipt(
       throw new Error('Publication license evidence differs from its inventory');
     const published_mac = await validate_mac_publication(
       mac_root,
-      source_run,
+      build_run,
       mac_artifact_id,
       options.mac_build_result,
       execution,
+      true,
     );
     let published_linux_executor: PublishedLinuxExecutorUpdate | undefined;
     if (has_linux_executor) {
@@ -416,7 +430,7 @@ export async function write_publication_receipt(
         await member(options.linux_executor_artifact_zip!, name, join(executor_root, name));
       published_linux_executor = await validate_linux_executor_publication(
         executor_root,
-        source_run.source_sha,
+        build_run.source_sha,
         linux_executor_artifact_id!,
         options.linux_executor_build_result!,
         execution,
@@ -428,7 +442,7 @@ export async function write_publication_receipt(
       await mkdir(home_work, { mode: 0o700 });
       mac_home = await validate_mac_home_receipt(
         mac_home_options,
-        source_run,
+        build_run,
         home_work,
         execution,
         member,
@@ -436,13 +450,37 @@ export async function write_publication_receipt(
     }
     if (!published_linux_executor)
       throw new Error('Machine compatibility requires both platform archives');
+    const original_mac_metadata = join(work, 'qualified-mac.json');
+    const signing_proof_path = join(output, 'signing-proof.json');
+    await member(
+      options.qualified_mac_artifact_zip,
+      'mac-runtime-publication.json',
+      original_mac_metadata,
+    );
+    await member(options.mac_artifact_zip, 'signing-proof.json', signing_proof_path);
+    const signing = await json_file(signing_proof_path);
+    const original_mac = await json_file(original_mac_metadata);
+    const signed_mac = await json_file(join(mac_root, 'mac-runtime-publication.json'));
+    if (
+      signing.qualified_archive_sha256 !== digest(original_mac.archive_sha256) ||
+      signing.qualified_build_id !== digest(original_mac.build_id) ||
+      signing.qualified_launcher_sha256 !== digest(original_mac.launcher_sha256) ||
+      signing.signed_archive_sha256 !== published_mac.archive_sha256 ||
+      signing.signed_build_id !== digest(signed_mac.build_id) ||
+      signing.signed_launcher_sha256 !== digest(signed_mac.launcher_sha256) ||
+      typeof signing.team !== 'string' ||
+      !signing.team ||
+      typeof signing.notarization_id !== 'string' ||
+      !signing.notarization_id
+    )
+      throw new Error('The signature proof differs from the qualified or signed Mac package');
     const machine_build_ids: Record<string, string> = {};
     for (const [platform, zip, archive_digest, build_path] of [
       [
         'darwin',
         options.machine_compatibility_darwin_zip,
-        published_mac.archive_sha256,
-        join(mac_root, 'mac-runtime-publication.json'),
+        digest(original_mac.archive_sha256),
+        original_mac_metadata,
       ],
       [
         'linux',
@@ -455,7 +493,7 @@ export async function write_publication_receipt(
       await member(zip, `machine-compatibility-${platform}.json`, path);
       machine_build_ids[platform] = await validate_machine_compatibility(
         await publication_json_file(path),
-        source_run,
+        build_run,
         platform,
         archive_digest,
         await json_file(build_path),
@@ -465,7 +503,7 @@ export async function write_publication_receipt(
         await json_file(path),
       );
     }
-    const ios_review = await check_head_review(source, source_run.source_sha, execution);
+    const ios_review = await check_head_review(source, publishing_run.source_sha, execution);
     for (const artifact of artifacts)
       if ((await sha256_file(artifact.path)) !== artifact.sha256)
         throw new Error('Bound artifact ZIP changed during receipt validation');
@@ -478,7 +516,7 @@ export async function write_publication_receipt(
       machines: {
         'darwin-arm64': {
           archive_sha256: published_mac.archive_sha256,
-          build_id: machine_build_ids.darwin!,
+          build_id: digest(signed_mac.build_id),
         },
         ...(published_linux_executor
           ? {
@@ -493,7 +531,7 @@ export async function write_publication_receipt(
     await remove_owned_tree(work);
     fence();
     const receipt: PublicationReceipt = {
-      publication_run_id: integer(Number(source_run.run_id)),
+      publication_run_id: integer(Number(publishing_run.run_id)),
       artifact_id,
       manifest: actual_manifest,
       parts,
@@ -506,7 +544,10 @@ export async function write_publication_receipt(
       expires_at: new Date(Date.now() + UPDATE_ARTIFACT_RETENTION_DAYS * 86_400_000).toISOString(),
     };
     replace_existing_json(join(output, 'publication-audit.json'), {
-      source_run,
+      publishing_run,
+      build_run,
+      qualified_pull_head: qualified.head,
+      source_run: { ...publishing_run, source_sha: build_run.source_sha },
       artifacts: artifacts.map(({ metadata }) => metadata),
       ios_review,
     });

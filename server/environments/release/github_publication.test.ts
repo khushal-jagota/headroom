@@ -15,6 +15,7 @@ async function fixture() {
   await mkdir(join(root, 'inputs'));
   await mkdir(join(root, 'receipt'));
   const sha = 'a'.repeat(40);
+  const main_sha = 'f'.repeat(40);
   const source_run = {
     repository: 'owner/repo',
     source_sha: sha,
@@ -66,13 +67,17 @@ async function fixture() {
   await writeFile(join(root, 'receipt/publication.json'), JSON.stringify(receipt));
   await writeFile(
     join(root, 'receipt/publication-audit.json'),
-    JSON.stringify({ source_run, artifacts }),
+    JSON.stringify({
+      source_run,
+      publishing_run: { ...source_run, source_sha: main_sha },
+      artifacts,
+    }),
   );
-  return { root, sha, receipt };
+  return { root, sha, main_sha, receipt };
 }
 
 test('permanent server publication keeps desktop latest and binds every consumer to permanent assets', async () => {
-  const { root, sha, receipt } = await fixture();
+  const { root, sha, main_sha, receipt } = await fixture();
   const requests: { method: string; url: string; body: Record<string, unknown> }[] = [];
   const uploaded = new Map<string, { id: number; bytes: string }>();
   const desktop = 'desktop-v1';
@@ -82,7 +87,7 @@ test('permanent server publication keeps desktop latest and binds every consumer
   try {
     const url = await publish_github_release({
       repository: 'owner/repo',
-      source_sha: sha,
+      source_sha: main_sha,
       publication_directory: root,
       token: 'secret',
       signal: AbortSignal.timeout(10_000),
@@ -133,6 +138,7 @@ test('permanent server publication keeps desktop latest and binds every consumer
       expires_at: null,
       parts: receipt.parts,
       artifact_id: uploaded.get('app.zip')!.id,
+      publishing_run: { source_sha: main_sha },
       source_run: { source_sha: sha, run_id: '10', run_attempt: '2' },
     });
     for (const [part, name] of [
@@ -174,14 +180,14 @@ test('permanent server publication keeps desktop latest and binds every consumer
 });
 
 test('changed checked ZIP leaves the release as a draft and never publishes', async () => {
-  const { root, sha } = await fixture();
+  const { root, main_sha } = await fixture();
   const methods: string[] = [];
   try {
     await writeFile(join(root, 'inputs/mac.zip'), 'different bytes');
     await expect(
       publish_github_release({
         repository: 'owner/repo',
-        source_sha: sha,
+        source_sha: main_sha,
         publication_directory: root,
         token: 'secret',
         signal: AbortSignal.timeout(10_000),
