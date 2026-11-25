@@ -79,14 +79,14 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/mac-executor-rehearsal"
-          pin=server/environments/release/machine_baselines.json
-          artifact=$(jq -r '.previous.darwin.artifact_id' "$pin")
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$root/previous.zip"
-          echo "$(jq -r '.previous.darwin.zip_sha256' "$pin")  $root/previous.zip" | shasum -a 256 -c -
-          unzip -p "$root/previous.zip" panels-mac-runtime.tar.gz > "$root/previous.tar.gz"
-          echo "$(jq -r '.previous.darwin.archive_sha256' "$pin")  $root/previous.tar.gz" | shasum -a 256 -c -
+          export MAC_REHEARSAL_BASELINE_ROOT="$root/baseline"
+          node --input-type=module <<'JS'
+          import { load_machine_baseline } from './server/environments/release/machine_baselines.ts';
+          await load_machine_baseline('darwin', 'previous', process.env.MAC_REHEARSAL_BASELINE_ROOT,
+            process.env.GITHUB_REPOSITORY, process.env.GH_TOKEN, AbortSignal.timeout(5 * 60_000));
+          JS
           mkdir "$root/previous"
-          tar -xzf "$root/previous.tar.gz" -C "$root/previous"
+          tar -xzf "$root/baseline/previous/panels-mac-runtime.tar.gz" -C "$root/previous"
       - name: Rehearse the sealed package without real provider credentials
         shell: bash
         env:

@@ -39,7 +39,7 @@ const platform: MachinePlatform = process.platform;
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const request = JSON.parse(await readFile(process.argv[2]!, 'utf8'));
 assert.ok(is_record(request));
-for (const field of ['candidate_zip', 'output_directory', 'cache_directory'])
+for (const field of ['candidate_zip', 'output_directory'])
   assert.ok(typeof request[field] === 'string' && isAbsolute(request[field]));
 const root = request.output_directory as string;
 assert.ok(
@@ -59,7 +59,6 @@ const started = performance.now();
 const baseline = await load_machine_baselines(
   platform,
   root,
-  request.cache_directory as string,
   run.repository,
   process.env.GITHUB_TOKEN!,
   lifetime,
