@@ -234,8 +234,8 @@ struct ConversationAttachmentTray: View {
                     HStack(spacing: 8) {
                         RingSpinner(size: .compact)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name).lineLimit(1).truncationMode(.middle)
-                            Text("Preparing photo…").foregroundStyle(PanelsTheme.muted)
+                            Text(name).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                            Text("Preparing photo…").textSelection(.enabled).foregroundStyle(PanelsTheme.muted)
                         }.font(PanelsTheme.TypeScale.small)
                     }
                     .padding(10).background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
@@ -268,12 +268,12 @@ struct ConversationAttachmentTile: View {
                 .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 HStack(spacing: 8) {
-                    Text(kind)
+                    Text(kind).textSelection(.enabled)
                         .font(PanelsTheme.TypeScale.caption.weight(.semibold)).foregroundStyle(PanelsTheme.muted)
                         .frame(width: 40, height: 40).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
+                        Text(name).textSelection(.enabled).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)).textSelection(.enabled)
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }.frame(maxWidth: 160, alignment: .leading)
                 }
@@ -284,7 +284,7 @@ struct ConversationAttachmentTile: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(PanelsTheme.border))
         .overlay(alignment: .bottom) {
             if preparing {
-                Text("Preparing photo…").font(PanelsTheme.TypeScale.caption)
+                Text("Preparing photo…").textSelection(.enabled).font(PanelsTheme.TypeScale.caption)
                     .padding(3).background(PanelsTheme.surface)
             }
         }

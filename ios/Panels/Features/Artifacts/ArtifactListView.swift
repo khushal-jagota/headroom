@@ -42,7 +42,7 @@ struct ArtifactListView: View {
             fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
             if let error { LoadErrorView(message: error) { await load(); refreshVersion += 1 } }
             if !hasLoaded && isLoading { RingSpinner("Loading artifacts…") }
-            if hasLoaded && entries.isEmpty { Text("No artifacts yet").foregroundStyle(PanelsTheme.faint) }
+            if hasLoaded && entries.isEmpty { Text("No artifacts yet").textSelection(.enabled).foregroundStyle(PanelsTheme.faint) }
             if hasLoaded && nextOffset < total {
                 Button { Task { await load(more: true) } } label: {
                     HStack { Text("More files"); Spacer(); if isLoading { RingSpinner() } }
@@ -53,7 +53,7 @@ struct ArtifactListView: View {
     @ViewBuilder private func fileSection(_ files: [ArtifactEntry], title: String) -> some View {
         if !files.isEmpty {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                Text(title).font(.caption2).foregroundStyle(PanelsTheme.faint)
+                Text(title).textSelection(.enabled).font(.caption2).foregroundStyle(PanelsTheme.faint)
                 ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
                 ArtifactFileRow(owner: owner, entry: entry, open: { openRoute(.artifact($0, dock: .conversation(owner.conversationOwner))) })
             } }
@@ -105,13 +105,14 @@ private struct ArtifactFolderSection: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-            Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).font(.caption2).foregroundStyle(PanelsTheme.faint)
+            Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).textSelection(.enabled).font(.caption2).foregroundStyle(PanelsTheme.faint)
             ForEach(visible) { entry in
                 if let directory = entry.directory {
                     DisclosureGroup {
                         ArtifactListView(owner: owner, directory: directory)
                     } label: { Label(entry.label, systemImage: "folder") }.accessibilityLabel(entry.label)
                         .accessibilityValue("Folder, \(entry.childCount) items")
+                        .systemCopyText(entry.label)
                         .listRowBackground(Color.clear)
                 } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
             }

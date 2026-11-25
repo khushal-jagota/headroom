@@ -25,21 +25,21 @@ final class ReviewQueueScreensTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let headline = app.staticTexts["review.summary.headline"]
-        let detail = app.staticTexts["review.summary.detail"]
+        let headline = app.readableText("review.summary.headline")
+        let detail = app.readableText("review.summary.detail")
         let back = app.buttons["review.return"]
         let skip = app.buttons["review.skip"]
 
         // New only, with the agents line.
         XCTAssertTrue(headline.waitForExistence(timeout: 15))
-        XCTAssertEqual(headline.label, "5 new.")
-        XCTAssertEqual(detail.label, "Ready to review.")
-        XCTAssertEqual(app.staticTexts["review.summary.working"].label, "4 agents working right now")
+        XCTAssertEqual(headline.readableContent, "5 new.")
+        XCTAssertEqual(detail.readableContent, "Ready to review.")
+        XCTAssertEqual(app.readableText("review.summary.working").readableContent, "4 agents working right now")
         try await shot("summary-new-only")
         back.tap()
 
         // The window's order: the Chief's message waits longest, then the proposal.
-        let message = app.staticTexts["First unread message"]
+        let message = app.readableText("First unread message")
         XCTAssertTrue(message.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["review.markRead"].exists)
         try await shot("card-message")
@@ -70,11 +70,11 @@ final class ReviewQueueScreensTests: XCTestCase {
         try await shot("ticket-proposal")
         app.backButton.tap()
         XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Rebuild the iPhone Review queue"].exists)
+        XCTAssertTrue(app.readableText("Rebuild the iPhone Review queue").exists)
         skip.tap()
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10))
         skip.tap()
-        let question = app.staticTexts["Which build should go to TestFlight first?"]
+        let question = app.readableText("Which build should go to TestFlight first?")
         XCTAssertTrue(question.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["review.ask.send"].isEnabled, "Nothing chosen yet")
         app.buttons["review.ask.option.Build 15"].tap()
@@ -89,7 +89,7 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         try await shot("card-ask-question")
         skip.tap()
-        let permission = app.staticTexts["Run the tests on the Mac simulator?"]
+        let permission = app.readableText("Run the tests on the Mac simulator?")
         XCTAssertTrue(permission.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["review.ask.decline"].exists)
         try await shot("card-ask-permission")
@@ -97,20 +97,20 @@ final class ReviewQueueScreensTests: XCTestCase {
 
         // Skipped only.
         XCTAssertTrue(headline.waitForExistence(timeout: 8))
-        XCTAssertEqual(headline.label, "5 skipped.")
-        XCTAssertEqual(detail.label, "Nothing new.")
+        XCTAssertEqual(headline.readableContent, "5 skipped.")
+        XCTAssertEqual(detail.readableContent, "Nothing new.")
         XCTAssertEqual(back.label, "Review skipped")
         try await shot("summary-skipped-only")
         // New and skipped: a proposal arrives while the summary is up.
         try await proof("review-new-proposal")
-        XCTAssertTrue(app.staticTexts["6 to review."].waitForExistence(timeout: 10))
-        XCTAssertEqual(detail.label, "1 new, 5 skipped.")
+        XCTAssertTrue(app.readableText("6 to review.").waitForExistence(timeout: 10))
+        XCTAssertEqual(detail.readableContent, "1 new, 5 skipped.")
         XCTAssertEqual(back.label, "Back to review")
         try await shot("summary-new-and-skipped")
         back.tap()
 
         // New work first. Its proposal moves to Chief while on screen: a notice, actions off.
-        XCTAssertTrue(app.staticTexts["Add the summary screen"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Add the summary screen").waitForExistence(timeout: 10))
         try await proof("review-move/offline-new")
         let notice = app.descendants(matching: .any)["review.notice"]
         XCTAssertTrue(notice.waitForExistence(timeout: 10))
@@ -121,13 +121,13 @@ final class ReviewQueueScreensTests: XCTestCase {
         skip.tap()
 
         // A refused decision comes back to the front with its reason.
-        XCTAssertTrue(app.staticTexts["Rebuild the iPhone Review queue"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Rebuild the iPhone Review queue").waitForExistence(timeout: 10))
         try await proof("review-refuse-decisions")
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         approve.tap()
         let refusal = app.descendants(matching: .any)["review.refusal"]
         XCTAssertTrue(refusal.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Rebuild the iPhone Review queue"].exists)
+        XCTAssertTrue(app.readableText("Rebuild the iPhone Review queue").exists)
         // The refused card brings back its note and its picture.
         XCTAssertEqual(note.value as? String, "Keep the summary's four states exactly as approved.")
         XCTAssertTrue(chips.waitForExistence(timeout: 8))
@@ -135,7 +135,7 @@ final class ReviewQueueScreensTests: XCTestCase {
         skip.tap()
 
         // The permission ask answers through the outbox, and the card leaves at once.
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10))
         skip.tap()
         XCTAssertTrue(question.waitForExistence(timeout: 10))
         skip.tap()
@@ -148,8 +148,8 @@ final class ReviewQueueScreensTests: XCTestCase {
 
         // All clear.
         try await proof("review-final")
-        XCTAssertTrue(app.staticTexts["All clear."].waitForExistence(timeout: 15))
-        XCTAssertEqual(detail.label, "Nothing to review.")
+        XCTAssertTrue(app.readableText("All clear.").waitForExistence(timeout: 15))
+        XCTAssertEqual(detail.readableContent, "Nothing to review.")
         XCTAssertFalse(back.exists)
         try await shot("summary-all-clear")
     }
@@ -180,18 +180,18 @@ final class ReviewQueueScreensTests: XCTestCase {
         }
         func noCover(_ screen: String) {
             for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
-                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                XCTAssertFalse(app.readableTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch.exists,
                                "\(screen) shows \"\(text)\"")
             }
         }
-        let headline = app.staticTexts["review.summary.headline"]
+        let headline = app.readableText("review.summary.headline")
         let skip = app.buttons["review.skip"]
         let approve = app.buttons["review.approve"]
-        let message = app.staticTexts["First unread message"]
-        let proposal = app.staticTexts["Rebuild the iPhone Review queue"]
-        let historical = app.staticTexts["Historical message"]
-        let question = app.staticTexts["Which build should go to TestFlight first?"]
-        let permission = app.staticTexts["Run the tests on the Mac simulator?"]
+        let message = app.readableText("First unread message")
+        let proposal = app.readableText("Rebuild the iPhone Review queue")
+        let historical = app.readableText("Historical message")
+        let question = app.readableText("Which build should go to TestFlight first?")
+        let permission = app.readableText("Run the tests on the Mac simulator?")
         let order = [message, proposal, historical, question, permission]
 
         // Online: read each card once.
@@ -201,7 +201,7 @@ final class ReviewQueueScreensTests: XCTestCase {
             XCTAssertTrue(card.waitForExistence(timeout: 10)); skip.tap()
         }
         XCTAssertTrue(headline.waitForExistence(timeout: 8))
-        XCTAssertEqual(headline.label, "5 skipped.")
+        XCTAssertEqual(headline.readableContent, "5 skipped.")
 
         // Bad connection: each card again from its saved copy.
         try await proof("offline")
@@ -226,9 +226,9 @@ final class ReviewQueueScreensTests: XCTestCase {
         // A reviewer move that lands online stays on its card when the connection drops.
         try await proof("online")
         try await proof("review-new-proposal")
-        XCTAssertTrue(app.staticTexts["6 to review."].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.readableText("6 to review.").waitForExistence(timeout: 15))
         app.openReviewCards()
-        XCTAssertTrue(app.staticTexts["Add the summary screen"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Add the summary screen").waitForExistence(timeout: 10))
         try await proof("review-move/offline-new")
         let notice = app.descendants(matching: .any)["review.notice"]
         XCTAssertTrue(notice.waitForExistence(timeout: 10))
@@ -284,16 +284,16 @@ final class ReviewQueueScreensTests: XCTestCase {
         }
         func noCover(_ screen: String) {
             for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
-                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                XCTAssertFalse(app.readableTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch.exists,
                                "\(screen) shows \"\(text)\"")
             }
         }
-        let headline = app.staticTexts["review.summary.headline"]
+        let headline = app.readableText("review.summary.headline")
         let skip = app.buttons["review.skip"]
         let markRead = app.buttons["review.markRead"]
-        let proposal = app.staticTexts["Rebuild the iPhone Review queue"]
-        let question = app.staticTexts["Which build should go to TestFlight first?"]
-        let permission = app.staticTexts["Run the tests on the Mac simulator?"]
+        let proposal = app.readableText("Rebuild the iPhone Review queue")
+        let question = app.readableText("Which build should go to TestFlight first?")
+        let permission = app.readableText("Run the tests on the Mac simulator?")
 
         XCTAssertTrue(headline.waitForExistence(timeout: 15))
         app.openReviewCards()
@@ -301,7 +301,7 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertTrue(markRead.waitForExistence(timeout: 10))
         let enabled = NSPredicate(format: "isEnabled == true")
         await fulfillment(of: [expectation(for: enabled, evaluatedWith: markRead)], timeout: 10)
-        XCTAssertFalse(app.staticTexts["First unread message"].exists, "The run was never read")
+        XCTAssertFalse(app.readableText("First unread message").exists, "The run was never read")
         _ = try await proof("offline")
         _ = try await proof("new-message")
         noCover("Never-read message card"); capture("never-read-message")

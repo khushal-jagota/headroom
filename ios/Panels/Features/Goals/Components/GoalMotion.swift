@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The web's rolling number (animated-counter.tsx): one wheel per place value.
 /// Every wheel turns the way the whole number moved, wrapping 9 → 0, on the smooth
@@ -26,13 +27,16 @@ struct GoalCounter: View {
                     } else {
                         Text(part.text).font(.system(size: font, weight: .medium)).monospacedDigit().fixedSize().frame(height: font)
                     }
-                }.transition(reduceMotion ? .identity : .goalWidth)
+                }.transition(reduceMotion ? .identity : .goalWidth).accessibilityHidden(true)
             }
         }
         .contentShape(Rectangle())
         .foregroundStyle(PanelsTheme.strong)
         .animation(reduceMotion ? nil : PanelsTheme.Goal.morph, value: parts.map(\.id))
-        .accessibilityElement(children: .ignore).accessibilityLabel(formatted)
+        .overlay {
+            // Keep the animated glyphs while the native text view owns selection.
+            PanelsSelectableText(formatted, font: .monospacedDigitSystemFont(ofSize: font, weight: .medium), color: .clear, lineLimit: 1)
+        }
     }
 }
 
@@ -132,7 +136,7 @@ struct GoalSaveFailure: View {
     var body: some View {
         if let error = session.saveError {
             VStack(alignment: .leading, spacing: 8) {
-                Text(error).foregroundStyle(PanelsTheme.error)
+                Text(error).textSelection(.enabled).foregroundStyle(PanelsTheme.error)
                 HStack(spacing: 16) {
                     Button("Retry save") { Task { await session.retry() } }
                     Button("Discard edit") { Task { await session.discard() } }

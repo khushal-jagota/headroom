@@ -11,8 +11,8 @@ struct SettingsPlaces: View {
                     Image(systemName: state == .problem ? "exclamationmark.triangle" : "server.rack")
                         .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.accent)
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                        Text("Panels server").foregroundStyle(PanelsTheme.strong)
-                        Text([state?.rawValue ?? "Up to date", store.deployment?.detail, store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        Text("Panels server").textSelection(.enabled).foregroundStyle(PanelsTheme.strong)
+                        Text([state?.rawValue ?? "Up to date", store.deployment?.detail, store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).textSelection(.enabled)
                             .font(PanelsTheme.TypeScale.small)
                             .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.faint)
                     }

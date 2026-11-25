@@ -28,7 +28,7 @@ final class SidebarNavigationTests: XCTestCase {
         XCTAssertTrue(wren.label.contains("Off track"), wren.label)
         XCTAssertTrue(science.label.contains("On track"), science.label)
         XCTAssertLessThan(app.buttons["sidebar-chief"].frame.minY, wren.frame.minY, "Chief comes first")
-        XCTAssertFalse(app.staticTexts["Choose the release notes"].exists, "Cards carry no ticket rows")
+        XCTAssertFalse(app.readableText("Choose the release notes").exists, "Cards carry no ticket rows")
         XCTAssertTrue(app.buttons["sidebar-settings"].exists)
         let reopen = app.buttons["Reopen Previous release"]
         XCTAssertFalse(reopen.exists, "Settled starts collapsed")
@@ -227,10 +227,10 @@ final class SidebarNavigationTests: XCTestCase {
         let wren = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'sidebar-manager-' AND label CONTAINS %@", "Wren release")).firstMatch
         let chiefScreen = app.descendants(matching: .any)["chief-screen"]
         let managerScreen = app.descendants(matching: .any)["orchestrator-screen"]
-        let headline = app.staticTexts["review.summary.headline"]
+        let headline = app.readableText("review.summary.headline")
         func noCover(_ screen: String, except allowed: Set<String> = []) {
             for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] where !allowed.contains(text) {
-                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                XCTAssertFalse(app.readableTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch.exists,
                                "\(screen) shows \"\(text)\"")
             }
         }

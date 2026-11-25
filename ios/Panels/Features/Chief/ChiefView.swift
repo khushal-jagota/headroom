@@ -62,7 +62,7 @@ struct HolderTickets: View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             if let active {
                 if active.tickets.isEmpty {
-                    Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
+                    Text("No active workers").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
                 } else {
                     WorkerSections(tickets: store.withLiveMarks(active.tickets), showHistory: false)
                 }

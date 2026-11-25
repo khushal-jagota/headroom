@@ -100,7 +100,7 @@ struct ReviewArtifactDock: ViewModifier {
                     if let notice { ReviewInlineNote(tone: .info, title: "Reviewer changed", text: "\(notice.reviewer) reviews this now.") }
                     if let refusal { ReviewInlineNote(tone: .refused, title: "Refused", text: refusal) }
                     else if decision.changed, let error = decision.error {
-                        Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
+                        Text(error).textSelection(.enabled).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }

@@ -46,7 +46,7 @@ struct DecisionApproveSheet: View {
         }) {
             ApprovalSections(ticket: ticket, choices: choices, ceiling: $ceiling, holder: $holder)
             if let note, !note.isEmpty {
-                Section("Note to Worker") { Text(note).accessibilityIdentifier("decision.note") }
+                Section("Note to Worker") { Text(note).textSelection(.enabled).accessibilityIdentifier("decision.note") }
             }
         }
     }

@@ -11,6 +11,7 @@ struct TicketView: View {
         return store.resources.handle(TicketResources.manifest(type))
     }
     private var manifest: TicketWorkerType? { detail?.workflow ?? manifestResource?.value?.workerTypes.first }
+    @ScaledMetric(relativeTo: .title) private var titleSize = PanelsTheme.Web.pageTitleSize
     @State private var artifacts: ArtifactPage?
     private var error: String? { resource.error ?? manifestResource?.error }
     @State private var artifactError: String?
@@ -104,28 +105,27 @@ struct TicketView: View {
 
     private func masthead(_ detail: TicketDetail) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            Text(detail.managerTitle ?? "Chief of Staff")
+            Text(detail.managerTitle ?? "Chief of Staff").textSelection(.enabled)
                 .panelsScaledFont(size: PanelsTheme.Web.smallSize)
                 .foregroundStyle(PanelsTheme.Web.tertiary)
-            Text(detail.title)
-                .panelsScaledFont(size: PanelsTheme.Web.pageTitleSize, relativeTo: .title, weight: .semibold)
-                .tracking(-0.26).lineSpacing(1)
-                .foregroundStyle(PanelsTheme.Web.strong)
+            PanelsSelectableText(detail.title, font: .systemFont(ofSize: titleSize, weight: .semibold),
+                color: UIColor(PanelsTheme.Web.strong), lineSpacing: 1, tracking: -0.26)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-            TicketMachineLabel(locale: detail.locale)
+                .accessibilityIdentifier("ticket-title")
+            TicketMachineLabel(locale: detail.locale, selectable: true)
             if !detail.recap.isEmpty { TicketRecapText(text: detail.recap) }
             if let blockers = detail.blockerSummary?.blockedBy, !blockers.isEmpty {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                    Text("Blocked by").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                    Text("Blocked by").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     ForEach(blockers, id: \.ticketId) { blocker in
                         NavigationLink(value: AppRoute.ticket(blocker.ticketId)) { Text(blocker.title).multilineTextAlignment(.leading) }
                             .font(PanelsTheme.TypeScale.small).padding(.vertical, PanelsTheme.Space.xs)
+                            .systemCopyText(blocker.title)
                     }
                 }
             }
             if detail.isBacklogged {
-                Text("Backlogged. Automatic work is paused.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                Text("Backlogged. Automatic work is paused.").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
             }
         }
     }
@@ -142,7 +142,7 @@ struct TicketView: View {
                 Text(presentation.terminal ? "Done" : presentation.currentStage?.label ?? presentation.heading)
                     .panelsScaledFont(size: 15, weight: .semibold)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.Web.error : PanelsTheme.Web.strong)
-                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityAddTraits(.isHeader).textSelection(.enabled)
                 if !presentation.terminal {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
@@ -153,6 +153,7 @@ struct TicketView: View {
                             .foregroundStyle(PanelsTheme.Web.secondary)
                             .frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain).accessibilityIdentifier("ticket-approval-limit")
+                        .systemCopyText("Approved until \(presentation.ceilingLabel), then \(presentation.holderLabel(presentation.ticket.ceilingHolder)) reviews")
                 }
             if !presentation.terminal, presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
                presentation.ticket.pendingProposal?.field != field {
@@ -170,6 +171,8 @@ struct TicketView: View {
                 Text([store.backendLabel(presentation.ticket.employeeBackend), presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
                     .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
             }.buttonStyle(.plain)
+                .systemCopyText([store.backendLabel(presentation.ticket.employeeBackend), presentation.ticket.employeeLaunchModel,
+                    presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
         }
     }
 

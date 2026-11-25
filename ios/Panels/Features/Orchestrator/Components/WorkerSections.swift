@@ -67,7 +67,7 @@ struct WorkerRows<T: GroupedWorker>: View {
     var body: some View {
         VStack(spacing: 0) {
             if tickets.isEmpty {
-                Text("No workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                Text("No workers").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.md)
             }
             ForEach(tickets) { ticket in
@@ -80,7 +80,7 @@ struct WorkerRows<T: GroupedWorker>: View {
                         TicketActivityMark(locale: ticket.locale, signal: ticket.conversationSignal, completed: ticket.stage == "done" || ticket.stage == "cancelled")
                     }.padding(.horizontal, AgentPageLayout.rowInset).padding(.vertical, PanelsTheme.Space.sm)
                         .frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityIdentifier("worker-\(ticket.id)")
+                }.buttonStyle(.plain).systemCopyText(ticket.title).accessibilityIdentifier("worker-\(ticket.id)")
                     .conversationAccessibility(label: TicketMachine.accessibilityLabel("\(ticket.title), \(WorkerGroup.classify(ticket).title)", locale: ticket.locale, health: store.executorHealth), signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
             }
         }

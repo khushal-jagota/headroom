@@ -138,17 +138,17 @@ struct GoalGauge: View {
                         }
                         VStack(spacing: 4) {
                             HStack(alignment: .firstTextBaseline, spacing: 1) {
-                                Text(digits(frame.count)).lineLimit(1).fixedSize()
+                                Text(digits(frame.count)).textSelection(.enabled).lineLimit(1).fixedSize()
                                     .frame(width: frame.width, alignment: .trailing)
                                     .font(.system(size: 32, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong)
-                                if !suffix.isEmpty { Text(suffix).font(.system(size: 16)).foregroundStyle(PanelsTheme.muted) }
+                                if !suffix.isEmpty { Text(suffix).textSelection(.enabled).font(.system(size: 16)).foregroundStyle(PanelsTheme.muted) }
                             }
                             .background { Text(digits(value)).font(.system(size: 32, weight: .medium)).monospacedDigit().fixedSize().hidden()
                                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { motion.width($0, reduce: reduceMotion) } }
                             if !bands.isEmpty {
                                 ZStack {
                                     let label = motion.filled ? shownBand?.label ?? "" : ""
-                                    Text(label).id(label)
+                                    Text(label).textSelection(.enabled).id(label)
                                         .transition(.asymmetric(
                                             insertion: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : 0.3 * 11 * direction, blur: reduceMotion ? 0 : 4, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.enter(PanelsTheme.Goal.standardDuration)),
                                             removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -0.3 * 11 * direction, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.standardEase(0.16))))
@@ -165,12 +165,13 @@ struct GoalGauge: View {
             }
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { inspecting.toggle() })
+            .systemCopyText(block["title"].text + "\nCurrent " + GoalChartPresentation.format(block, headline.value, trim: true) + (headline.target.map { "\nTarget " + GoalChartPresentation.format(block, $0, trim: true) } ?? ""))
             .overlay(alignment: .topTrailing) {
                 if inspecting {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(block["title"].text).font(.system(size: 11)).foregroundStyle(PanelsTheme.muted)
-                        Text("Current  " + GoalChartPresentation.format(block, headline.value, trim: true)).font(.system(size: 13))
-                        if let target = headline.target { Text("Target  " + GoalChartPresentation.format(block, target, trim: true)).font(.system(size: 13)) }
+                        Text(block["title"].text).textSelection(.enabled).font(.system(size: 11)).foregroundStyle(PanelsTheme.muted)
+                        Text("Current  " + GoalChartPresentation.format(block, headline.value, trim: true)).textSelection(.enabled).font(.system(size: 13))
+                        if let target = headline.target { Text("Target  " + GoalChartPresentation.format(block, target, trim: true)).textSelection(.enabled).font(.system(size: 13)) }
                     }.padding(.vertical, 10).padding(.horizontal, 12).background(PanelsTheme.Goal.raised, in: RoundedRectangle(cornerRadius: 14)).allowsHitTesting(false)
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
@@ -211,7 +212,7 @@ struct GoalProgressMeter: View {
                     .frame(width: geo.size.width * fraction)
                     .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: fraction)
             }.frame(height: 8)
-            HStack { Text("0"); Spacer(); Text(block["scale_label"].string ?? GoalChartPresentation.format(block, headline.target)) }
+            HStack { Text("0").textSelection(.enabled); Spacer(); Text(block["scale_label"].string ?? GoalChartPresentation.format(block, headline.target)).textSelection(.enabled) }
                 .font(.system(size: 11)).foregroundStyle(PanelsTheme.Goal.faint)
         }.accessibilityElement(children: .ignore).accessibilityLabel("\(GoalChartPresentation.format(block, headline.value)) of \(GoalChartPresentation.format(block, headline.target))")
     }
@@ -270,13 +271,14 @@ struct GoalRing: View {
                         .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: fraction(index))
                 }
                 VStack(spacing: 5) {
-                    GoalCounter(block: displayBlock, value: display, size: 32).minimumScaleFactor(0.6).lineLimit(1)
-                    Text(active.flatMap { entries.indices.contains($0) ? entries[$0].0 : nil } ?? (block.kind == "time-budget" ? "Spent" : block["total_label"].string ?? "Total"))
+                    GoalCounter(block: displayBlock, value: display, size: 32).allowsHitTesting(false).minimumScaleFactor(0.6).lineLimit(1)
+                    Text(active.flatMap { entries.indices.contains($0) ? entries[$0].0 : nil } ?? (block.kind == "time-budget" ? "Spent" : block["total_label"].string ?? "Total")).textSelection(.enabled)
                         .font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
                         .transaction { $0.animation = nil } // The web swaps this label at once.
                 }
             }.padding(14).frame(width: 144, height: 144)
                 .contentShape(Circle())
+                .systemCopyText(GoalChartPresentation.format(displayBlock, display))
                 .onTapGesture { point in
                     let dx = point.x - 72, dy = point.y - 72
                     guard hypot(dx, dy) > 44 else { active = nil; return }
@@ -294,7 +296,7 @@ struct GoalRing: View {
                             Text(legendValue(index)).monospacedDigit()
                         }.font(.footnote).foregroundStyle(PanelsTheme.muted).frame(minHeight: 32)
                             .opacity(active == nil || active == index ? 1 : 0.5)
-                    }.buttonStyle(.plain).accessibilityAddTraits(active == index ? .isSelected : [])
+                    }.buttonStyle(.plain).systemCopyText(entries[index].0 + " " + legendValue(index)).accessibilityAddTraits(active == index ? .isSelected : [])
                 }
             }.frame(maxWidth: .infinity)
         }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: active)
@@ -324,18 +326,18 @@ struct GoalCompletion: View {
                     RoundedRectangle(cornerRadius: 8).fill(done ? PanelsTheme.success.opacity(0.1) : PanelsTheme.surface)
                     RoundedRectangle(cornerRadius: 8).stroke(done ? PanelsTheme.success : PanelsTheme.faint, lineWidth: 1.5)
                     GoalTick().trim(from: 0, to: done ? 1 : 0).stroke(PanelsTheme.success, style: .init(lineWidth: 2, lineCap: .round)).opacity(done ? 1 : 0)
-                    Text("–").foregroundStyle(PanelsTheme.faint).opacity(done ? 0 : 1)
+                    Text("–").textSelection(.enabled).foregroundStyle(PanelsTheme.faint).opacity(done ? 0 : 1)
                 }.frame(width: 32, height: 32).animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: done)
                 // completion-reading.tsx: the new word rises 8 pt out of a 2 pt blur over 0.24 s; the old one leaves upward.
                 ZStack(alignment: .leading) {
-                    Text(done ? "Done" : "Not done").id(done).panelsScaledFont(size: PanelsTheme.Goal.completionReading, relativeTo: .largeTitle, weight: .medium)
+                    Text(done ? "Done" : "Not done").textSelection(.enabled).id(done).panelsScaledFont(size: PanelsTheme.Goal.completionReading, relativeTo: .largeTitle, weight: .medium)
                         .transition(.asymmetric(insertion: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : 8, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)),
                                                 removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -8, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1))))
                 }.animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: done)
             }
             HStack(spacing: 8) {
                 Circle().frame(width: 6, height: 6)
-                Text(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done")
+                Text(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done").textSelection(.enabled)
             }.font(.footnote).foregroundStyle(PanelsTheme.Goal.tone(done ? "good" : status))
         }
     }

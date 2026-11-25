@@ -177,17 +177,21 @@ extension View {
 /// restores that page's own typography. Native title size, position and collapse stay native.
 private struct PanelsNavigationTypography: UIViewControllerRepresentable {
     let role: PanelsTheme.TypeScale.NavigationTitleRole
+    let title: String
 
-    func makeUIViewController(context: Context) -> Controller { Controller(role: role) }
+    func makeUIViewController(context: Context) -> Controller { Controller(role: role, title: title) }
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.role = role
+        controller.titleText = title
         controller.applyFonts()
     }
 
     final class Controller: UIViewController {
         var role: PanelsTheme.TypeScale.NavigationTitleRole
-        init(role: PanelsTheme.TypeScale.NavigationTitleRole) {
+        var titleText: String
+        init(role: PanelsTheme.TypeScale.NavigationTitleRole, title: String) {
             self.role = role
+            self.titleText = title
             super.init(nibName: nil, bundle: nil)
             registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Controller, _: UITraitCollection) in
                 controller.applyFonts()
@@ -196,7 +200,20 @@ private struct PanelsNavigationTypography: UIViewControllerRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func loadView() { view = UIView(); view.isUserInteractionEnabled = false }
         override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); applyFonts() }
+        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); applyFonts() }
+        override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); installTitleCopy() }
         override func didMove(toParent parent: UIViewController?) { super.didMove(toParent: parent); applyFonts() }
+
+        private func installTitleCopy() {
+            guard let bar = navigationController?.navigationBar else { return }
+            func visit(_ view: UIView) {
+                if let label = view as? UILabel, label.text == titleText, !titleText.isEmpty {
+                    PanelsSelectableText.install(on: label)
+                }
+                view.subviews.forEach(visit)
+            }
+            visit(bar)
+        }
 
         func applyFonts() {
             var owner: UIViewController = self
@@ -217,6 +234,7 @@ private struct PanelsNavigationTypography: UIViewControllerRepresentable {
             item.scrollEdgeAppearance = appearance(bar.scrollEdgeAppearance ?? bar.standardAppearance)
             item.compactAppearance = appearance(bar.compactAppearance ?? bar.standardAppearance)
             item.compactScrollEdgeAppearance = appearance(bar.compactScrollEdgeAppearance ?? bar.standardAppearance)
+            installTitleCopy()
         }
     }
 }
@@ -231,7 +249,7 @@ extension View {
     }
 
     func panelsNavigationTitle(_ title: String, role: PanelsTheme.TypeScale.NavigationTitleRole = .page) -> some View {
-        navigationTitle(title).background(PanelsNavigationTypography(role: role))
+        navigationTitle(title).background(PanelsNavigationTypography(role: role, title: title))
     }
 }
 

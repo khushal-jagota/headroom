@@ -962,6 +962,22 @@ a refusal keeps them with the note.
 
 ## Text entry and navigation
 
+Read-only titles, recaps, messages and Markdown use native text selection and Copy.
+Text stays separate from disclosure buttons. Useful row names and configuration
+values offer the system edit menu on a long press, while a tap retains the row's
+action. Navigation titles keep their native layout and also support text selection.
+Static labels and list values enable the system text menu. Copy never submits an
+edit or decision. Review pauses its card swipe while native text is selected, so
+selection handles cannot skip a card. Text sizes remain unchanged.
+
+The one-off `TextSelectionTests/testCopyTextWithoutLosingNavigation` walk reuses the
+`PanelsReview` scheme and `PANELS_ARTIFACT_DOCK_SMOKE=1` fixture. It copies and pastes
+real titles, recaps and messages through system menus, then verifies row taps,
+Review swipes and list text. Its second walk uses `PANELS_GOALS_SMOKE=1` to copy a
+Goal reading and a native navigation title. These walks add no permanent release
+test or fixture host. A stationary long press on a line chart offers native Copy
+for its inspected readout. A moving finger retains chart inspection.
+
 Each visible screen owns focus for its conversation fields and decision notes.
 Review gives its current card's note, reply or answer field one owner.
 In chat and Review, inert background taps clear that screen's focus.

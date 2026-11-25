@@ -176,5 +176,5 @@ private struct GoalPageTable: View {
 /// One Goal text field, shown as plain text.
 struct GoalReadText: View {
     let value: String
-    var body: some View { Text(value).frame(maxWidth: .infinity, alignment: .leading) }
+    var body: some View { Text(value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
 }

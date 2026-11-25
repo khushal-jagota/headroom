@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Review: the summary screen, or one card with one purpose. The shell's ReviewSession
 /// owns the queue; this screen shows it, reads the next cards ahead and acts on them.
@@ -206,37 +207,45 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppStore.self) private var store
 
+    @State private var selectingText = false
+    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 23
+    @ScaledMetric private var recapSize: CGFloat = 14
+
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title).panelsScaledFont(size: 23, relativeTo: .title, weight: .semibold)
-                        .tracking(-0.37).fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(PanelsTheme.Web.strong).frame(maxWidth: .infinity, alignment: .leading)
+                    PanelsSelectableText(title, font: .systemFont(ofSize: titleSize, weight: .semibold),
+                        color: UIColor(PanelsTheme.Web.strong), tracking: -0.37)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityAddTraits(.isHeader)
                     if let recap, !recap.isEmpty {
-                        Text((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap))
-                            .panelsScaledFont(size: 14).lineSpacing(5).foregroundStyle(PanelsTheme.Web.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                        PanelsSelectableText((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap),
+                            font: .systemFont(ofSize: recapSize), color: UIColor(PanelsTheme.Web.secondary), lineSpacing: 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 8)
                             .accessibilityLabel("Recap").accessibilityValue(recap)
                     }
                     content.padding(.top, 18)
                 }
+                .environment(\.panelsTextSelectionChanged, { selected in
+                    selectingText = selected
+                    if selected { motion.drag = 0; motion.crossedThreshold = false }
+                })
                 .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 28)
                 .offset(x: motion.drag)
                 .opacity(motion.visible && !motion.leaving ? 1 : 0)
                 .allowsHitTesting(!motion.leaving)
                 .simultaneousGesture(DragGesture(minimumDistance: 24)
                     .onChanged { value in
-                        guard !locked, !motion.leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        guard !locked, !selectingText, !motion.leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
                         motion.drag = min(0, value.translation.width)
                         let crossed = -motion.drag > geometry.size.width * ReviewStyle.swipeFraction
                         if crossed && !motion.crossedThreshold { Haptics.light() }
                         motion.crossedThreshold = crossed
                     }
                     .onEnded { value in
-                        guard !locked, !motion.leaving else { return }
+                        guard !locked, !selectingText, !motion.leaving else { return }
                         if -motion.drag > geometry.size.width * ReviewStyle.swipeFraction, abs(value.translation.width) > abs(value.translation.height) * 1.5 {
                             textEntry?.endEditing()
                             onSkip(geometry.size.width)

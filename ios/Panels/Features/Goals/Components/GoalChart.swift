@@ -38,7 +38,7 @@ struct GoalChart: View {
                 chart
             }
             if session.readingsAreStale, !preview, block.kind != "binary" {
-                Text("Previous readings · refresh needed").font(.caption2).foregroundStyle(PanelsTheme.Goal.faint)
+                Text("Previous readings · refresh needed").textSelection(.enabled).font(.caption2).foregroundStyle(PanelsTheme.Goal.faint)
             }
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("goal-chart-\(block.id)")
@@ -53,18 +53,18 @@ struct GoalChart: View {
                             Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0))
                                 .animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded)
                         }
-                        GoalCounter(block: block, value: headline.value, size: 28)
+                        GoalCounter(block: block, value: headline.value, size: 28).allowsHitTesting(false)
                         comparison
                     }.contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
+                }.buttonStyle(.plain).systemCopyText((block["title"].string ?? "Reading") + "\n" + GoalChartPresentation.format(block, headline.value)).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
             } else {
                 title
                 if !["gauge", "time-budget", "allocation"].contains(block.kind) {
                     VStack(alignment: .leading, spacing: 8) {
-                        if block.kind == "progress" { Text("Completed").font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
+                        if block.kind == "progress" { Text("Completed").textSelection(.enabled).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             GoalCounter(block: block, value: headline.value, size: PanelsTheme.Goal.compactReading)
-                            if block.kind == "progress", let target = headline.target, target > 0 { Text("of " + GoalChartPresentation.format(block, target)).font(.body).foregroundStyle(PanelsTheme.Goal.faint) }
+                            if block.kind == "progress", let target = headline.target, target > 0 { Text("of " + GoalChartPresentation.format(block, target)).textSelection(.enabled).font(.body).foregroundStyle(PanelsTheme.Goal.faint) }
                         }
                         comparison
                     }
@@ -79,10 +79,10 @@ struct GoalChart: View {
                     let details = GoalChartPresentation.observationDetails(headline)
                     if !details.isEmpty {
                         DisclosureGroup("Observation details") {
-                            VStack(alignment: .leading, spacing: 6) { ForEach(details, id: \.self) { Text($0) } }.font(.caption).foregroundStyle(PanelsTheme.Goal.faint)
+                            VStack(alignment: .leading, spacing: 6) { ForEach(details, id: \.self) { Text($0).textSelection(.enabled) } }.font(.caption).foregroundStyle(PanelsTheme.Goal.faint)
                         }.font(.caption).tint(PanelsTheme.Goal.faint)
                     }
-                    if let caption = block["caption"].string { Text(caption).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
+                    if let caption = block["caption"].string { Text(caption).textSelection(.enabled).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
                 }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0)
                     .transition(supporting && !reduceMotion ? .goalDisclosure : .opacity)
             }
@@ -101,18 +101,22 @@ struct GoalChart: View {
             withAnimation(reduceMotion ? nil : PanelsTheme.Goal.easeInOut(open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
         }
     }
-    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }
-    private var comparison: some View {
+    @ViewBuilder private var title: some View {
+        let label = Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong)
+        if supporting { label } else { label.textSelection(.enabled) }
+    }
+    @ViewBuilder private var comparison: some View {
         let split = block.kind == "allocation" ? GoalChartPresentation.allocationSummary(block, data: data, projection: projection, range: preference.range) : nil
         let text = block["stacked"].bool == true ? "\(GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection).count) " + (block["total_label"].string ?? "categories") : split ?? (headline.value == nil ? (supporting ? "Current reading unavailable" : data.contains { !$0.values.filter { $0.key != "target" }.isEmpty } ? "No reading for \(headline.label ?? "this range")" : "No readings yet") : !block["expectation"].isNull && headline.target == nil ? "Expected reading unavailable" : GoalChartPresentation.comparison(block, headline: headline))
-        return Text(text + (block["aggregate"].text == "sum" && headline.label == nil && headline.value != nil && headline.missingCount > 0 ? " · \(headline.missingCount) missing readings" : ""))
+        let label = Text(text + (block["aggregate"].text == "sum" && headline.label == nil && headline.value != nil && headline.missingCount > 0 ? " · \(headline.missingCount) missing readings" : ""))
             .font(supporting ? .caption : .footnote).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+        if supporting { label } else { label.textSelection(.enabled) }
     }
     @ViewBuilder private var plot: some View {
         switch block.kind {
         case "gauge":
             if headline.value != nil { GoalGauge(block: block.setting("domain", .array(GoalChartPresentation.domain(block, range: preference.range).map(GoalJSON.number))), headline: headline) }
-            else { Text("No readings yet").foregroundStyle(PanelsTheme.Goal.faint) }
+            else { Text("No readings yet").textSelection(.enabled).foregroundStyle(PanelsTheme.Goal.faint) }
         case "progress": GoalProgressMeter(block: block, headline: headline)
         case "time-budget", "allocation": GoalRing(block: block, data: data, series: GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection), headline: headline, projection: projection, range: preference.range)
         case "number": EmptyView()

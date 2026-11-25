@@ -46,8 +46,8 @@ final class ServerReachabilityTests: XCTestCase {
         app.activate()
         // The removed cover appeared within 35 seconds. It must never appear now.
         let retry = app.buttons["server-unreachable.retry"]
-        let title = app.staticTexts["Panels can’t reach the server."]
-        let readNote = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Couldn’t refresh", "Couldn’t load")).firstMatch
+        let title = app.readableText("Panels can’t reach the server.")
+        let readNote = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@ OR value BEGINSWITH %@ OR value BEGINSWITH %@", "Couldn’t refresh", "Couldn’t load", "Couldn’t refresh", "Couldn’t load")).firstMatch
         for second in 0..<35 {
             XCTAssertFalse(retry.exists, "The server cover appeared after \(second)s")
             XCTAssertFalse(title.exists, "The server cover appeared after \(second)s")

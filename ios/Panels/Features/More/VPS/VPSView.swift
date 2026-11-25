@@ -24,14 +24,14 @@ struct VPSView: View {
                     Section {
                         TimelineView(.periodic(from: .now, by: 5)) { context in
                             HStack {
-                                Text("\(sample.coreCount) cores · \(VPSPresentation.bytes(sample.value("memory_total_bytes"))) memory")
+                                Text("\(sample.coreCount) cores · \(VPSPresentation.bytes(sample.value("memory_total_bytes"))) memory").textSelection(.enabled)
                                 Spacer()
                                 let stale = error != nil || VPSPresentation.stale(latest, now: context.date.timeIntervalSince1970)
-                                Label(stale ? "No feed" : "Current", systemImage: stale ? "clock" : "circle.fill")
+                                Label(stale ? "No feed" : "Current", systemImage: stale ? "clock" : "circle.fill").textSelection(.enabled)
                                     .foregroundStyle(stale ? PanelsTheme.muted : PanelsTheme.success)
                             }.font(PanelsTheme.TypeScale.small)
                         }
-                        Text("Sampled \(Date(timeIntervalSince1970: sample.timestamp).formatted(date: .abbreviated, time: .shortened))")
+                        Text("Sampled \(Date(timeIntervalSince1970: sample.timestamp).formatted(date: .abbreviated, time: .shortened))").textSelection(.enabled)
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }.listRowBackground(PanelsTheme.raised)
                     instruments(sample)
@@ -46,14 +46,14 @@ struct VPSView: View {
                                         .foregroundStyle(PanelsTheme.accent).symbolSize(8)
                                 }
                             }.chartYScale(domain: 0...100).frame(height: 120).accessibilityLabel("Machine CPU history, percent of total capacity")
-                        } else if historyError == nil { Text(history == nil ? "Reading history…" : "No samples in this window").foregroundStyle(PanelsTheme.muted) }
-                    } header: { Text("CPU History").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
+                        } else if historyError == nil { Text(history == nil ? "Reading history…" : "No samples in this window").textSelection(.enabled).foregroundStyle(PanelsTheme.muted) }
+                    } header: { Text("CPU History").textSelection(.enabled).panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
                     Section {
                         ForEach(sample.services) { service in
                             workload(name: service.name, detail: "\(service.processCount) processes · \(service.state ?? "Unknown")", cpu: service.metrics["cpu_percent"]?.value, memory: service.metrics["memory_bytes"]?.value, cores: sample.coreCount)
                         }
-                        if sample.services.isEmpty { Text("No service readings").foregroundStyle(PanelsTheme.muted) }
-                    } header: { Text("Services").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
+                        if sample.services.isEmpty { Text("No service readings").textSelection(.enabled).foregroundStyle(PanelsTheme.muted) }
+                    } header: { Text("Services").textSelection(.enabled).panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
                     Section {
                         if let processError { LoadErrorView(message: processError) { await loadProcesses(reset: true) } }
                         ForEach(processes) { process in
@@ -64,9 +64,9 @@ struct VPSView: View {
                                 if loadingProcesses { RingSpinner() } else { Text("Load more processes") }
                             }.disabled(loadingProcesses)
                         }
-                    } header: { Text("Processes · \(totalProcesses)").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
+                    } header: { Text("Processes · \(totalProcesses)").textSelection(.enabled).panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
                 } else {
-                    ContentUnavailableView("No machine readings", systemImage: "server.rack", description: Text(latest.collection.reason ?? "The server has not collected a sample."))
+                    ContentUnavailableView("No machine readings", systemImage: "server.rack", description: Text(latest.collection.reason ?? "The server has not collected a sample.")).textSelection(.enabled)
                 }
             } else if error == nil { RingSpinner("Reading the machine…") }
         }
@@ -86,22 +86,22 @@ struct VPSView: View {
     }
     private func instruments(_ sample: VPSSample) -> some View {
         Section {
-            LabeledContent("CPU", value: VPSPresentation.percent(sample.value("cpu_percent")))
-            LabeledContent("Memory", value: VPSPresentation.bytes(VPSPresentation.used(total: sample.value("memory_total_bytes"), available: sample.value("memory_available_bytes"))))
-            LabeledContent("Available memory", value: VPSPresentation.bytes(sample.value("memory_available_bytes")))
-            LabeledContent("Load · 1 minute", value: sample.value("load_1")?.formatted(.number.precision(.fractionLength(2))) ?? "—")
-            LabeledContent("Disk read", value: rate(sample.value("disk.read_bytes_per_second")))
-            LabeledContent("Disk write", value: rate(sample.value("disk.write_bytes_per_second")))
-            LabeledContent("Network in", value: rate(sample.value("network.receive_bytes_per_second")))
-            LabeledContent("Network out", value: rate(sample.value("network.transmit_bytes_per_second")))
-            LabeledContent("Disk available", value: VPSPresentation.bytes(sample.value("filesystem.available_bytes")))
-        } header: { Text("Machine").panelsSectionHeading(.monitor) }.monospacedDigit().listRowBackground(PanelsTheme.raised)
+            LabeledContent("CPU", value: VPSPresentation.percent(sample.value("cpu_percent"))).textSelection(.enabled)
+            LabeledContent("Memory", value: VPSPresentation.bytes(VPSPresentation.used(total: sample.value("memory_total_bytes"), available: sample.value("memory_available_bytes")))).textSelection(.enabled)
+            LabeledContent("Available memory", value: VPSPresentation.bytes(sample.value("memory_available_bytes"))).textSelection(.enabled)
+            LabeledContent("Load · 1 minute", value: sample.value("load_1")?.formatted(.number.precision(.fractionLength(2))) ?? "—").textSelection(.enabled)
+            LabeledContent("Disk read", value: rate(sample.value("disk.read_bytes_per_second"))).textSelection(.enabled)
+            LabeledContent("Disk write", value: rate(sample.value("disk.write_bytes_per_second"))).textSelection(.enabled)
+            LabeledContent("Network in", value: rate(sample.value("network.receive_bytes_per_second"))).textSelection(.enabled)
+            LabeledContent("Network out", value: rate(sample.value("network.transmit_bytes_per_second"))).textSelection(.enabled)
+            LabeledContent("Disk available", value: VPSPresentation.bytes(sample.value("filesystem.available_bytes"))).textSelection(.enabled)
+        } header: { Text("Machine").textSelection(.enabled).panelsSectionHeading(.monitor) }.monospacedDigit().listRowBackground(PanelsTheme.raised)
     }
     private func rate(_ value: Double?) -> String { value == nil ? "—" : VPSPresentation.bytes(value) + "/s" }
     private func workload(name: String, detail: String, cpu: Double?, memory: Double?, cores: Int) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-            HStack { Text(name).lineLimit(2); Spacer(); Text(VPSPresentation.percent(VPSPresentation.cpuShare(cpu, cores: cores))).monospacedDigit() }
-            HStack { Text(detail); Spacer(); Text(VPSPresentation.bytes(memory)) }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            HStack { Text(name).textSelection(.enabled).lineLimit(2); Spacer(); Text(VPSPresentation.percent(VPSPresentation.cpuShare(cpu, cores: cores))).textSelection(.enabled).monospacedDigit() }
+            HStack { Text(detail).textSelection(.enabled); Spacer(); Text(VPSPresentation.bytes(memory)).textSelection(.enabled) }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
         }.padding(.vertical, PanelsTheme.Space.xs)
     }
     @MainActor private func load() async {

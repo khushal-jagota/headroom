@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import UIKit
 
 struct ArtifactMarkdownView: View {
     let source: String
@@ -58,27 +59,23 @@ struct PanelsMarkdown: View {
                 if let chart = block.chart { ArtifactChartView(chart: chart) }
                 else {
                     ScrollView(.horizontal) {
-                        Text(block.text).font(.system(size: codeSize, design: .monospaced)).foregroundStyle(PanelsTheme.Web.text)
-                            .textSelection(.enabled).padding(PanelsTheme.Space.md).fixedSize(horizontal: true, vertical: false)
+                        PanelsSelectableText(block.text, font: .monospacedSystemFont(ofSize: codeSize, weight: .regular), color: UIColor(PanelsTheme.Web.text)).padding(PanelsTheme.Space.md).fixedSize(horizontal: true, vertical: false)
                     }.background(PanelsTheme.Web.code, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
                 }
             case .heading(let level):
-                text(document.inline[block.id]).panelsScaledFont(size: size + 1, weight: PanelsTheme.TypeScale.markdownHeadingWeight(level))
-                    .foregroundStyle(PanelsTheme.Web.strong).accessibilityAddTraits(.isHeader)
+                text(document.inline[block.id], pointSize: (size + 1) * scale, weight: level == 2 || level == 3 ? .semibold : .bold, color: PanelsTheme.Web.strong).accessibilityAddTraits(.isHeader)
                     .padding(.top, block.id == 0 ? 0 : PanelsTheme.Space.sm)
             case .quote:
                 HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
                     Rectangle().fill(PanelsTheme.Web.tertiary).frame(width: 2)
-                    text(document.inline[block.id]).panelsScaledFont(size: size).foregroundStyle(PanelsTheme.Web.secondary)
-                        .lineSpacing(bodyLineSpacing)
+                    text(document.inline[block.id], pointSize: size * scale, color: PanelsTheme.Web.secondary, lineSpacing: bodyLineSpacing)
                 }.fixedSize(horizontal: false, vertical: true)
             case .paragraph, .list:
                 if let rows = document.tables[block.id] { table(rows) }
                 else {
                     let lead = emphasizesFirstParagraph && block.id == 0 && block.kind == .paragraph
-                    text(document.inline[block.id]).panelsScaledFont(size: lead ? size + 1 : size, weight: lead ? .medium : .regular)
-                        .foregroundStyle(lead ? PanelsTheme.Web.strong : PanelsTheme.Web.text)
-                        .lineSpacing(lead ? firstParagraphLineSpacing : bodyLineSpacing)
+                    text(document.inline[block.id], pointSize: (lead ? size + 1 : size) * scale, weight: lead ? .medium : .regular,
+                         color: lead ? PanelsTheme.Web.strong : PanelsTheme.Web.text, lineSpacing: lead ? firstParagraphLineSpacing : bodyLineSpacing)
                 }
             }
         }
@@ -87,8 +84,9 @@ struct PanelsMarkdown: View {
         }
     }
 
-    private func text(_ value: AttributedString?) -> some View {
-        Text(value ?? AttributedString()).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+    private func text(_ value: AttributedString?, pointSize: CGFloat, weight: UIFont.Weight = .regular, color: Color, lineSpacing: CGFloat = 0) -> some View {
+        PanelsSelectableText(value ?? AttributedString(), font: .systemFont(ofSize: pointSize, weight: weight), color: UIColor(color), lineSpacing: lineSpacing)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func table(_ rows: [[AttributedString]]) -> some View {
@@ -97,8 +95,7 @@ struct PanelsMarkdown: View {
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
                     GridRow {
                         ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                            Text(cell).textSelection(.enabled).panelsScaledFont(size: size, weight: index == 0 ? .semibold : .regular)
-                                .foregroundStyle(PanelsTheme.Web.text)
+                            PanelsSelectableText(cell, font: .systemFont(ofSize: size * scale, weight: index == 0 ? .semibold : .regular), color: UIColor(PanelsTheme.Web.text))
                                 .fixedSize().padding(PanelsTheme.Space.sm)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(index == 0 ? PanelsTheme.Web.surface : Color.clear)
@@ -132,7 +129,7 @@ struct PanelsMarkdown: View {
             var value = text
             for run in value.runs {
                 if run.inlinePresentationIntent?.contains(.code) == true {
-                    value[run.range].font = .system(size: codeSize, design: .monospaced)
+                    value[run.range].uiKit.font = .monospacedSystemFont(ofSize: codeSize, weight: .regular)
                     value[run.range].backgroundColor = PanelsTheme.Web.code
                 }
                 if run.link != nil {
@@ -156,7 +153,7 @@ private struct ArtifactChartView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            Text(chart.title).panelsScaledFont(size: 15, weight: .semibold).foregroundStyle(PanelsTheme.Web.strong)
+            Text(chart.title).textSelection(.enabled).panelsScaledFont(size: 15, weight: .semibold).foregroundStyle(PanelsTheme.Web.strong)
                 .accessibilityAddTraits(.isHeader)
             plot.frame(height: PanelsTheme.Goal.plotHeight)
             if chart.series.count > 1 { legend }
@@ -215,7 +212,7 @@ private struct ArtifactChartView: View {
         .chartYScale(domain: .automatic(includesZero: true))
         .chartXAxis {
             AxisMarks(values: axisLabels) { value in
-                AxisValueLabel { Text(value.as(String.self) ?? "").font(.system(size: 11)).foregroundStyle(PanelsTheme.Web.tertiary) }
+                AxisValueLabel { Text(value.as(String.self) ?? "").textSelection(.enabled).font(.system(size: 11)).foregroundStyle(PanelsTheme.Web.tertiary) }
             }
         }
         .chartYAxis {
@@ -223,7 +220,7 @@ private struct ArtifactChartView: View {
                 AxisGridLine().foregroundStyle(PanelsTheme.Goal.grid)
                 AxisValueLabel {
                     if let number = value.as(Double.self) {
-                        Text(chart.tick(number)).font(.system(size: 11)).foregroundStyle(PanelsTheme.Web.tertiary)
+                        Text(chart.tick(number)).textSelection(.enabled).font(.system(size: 11)).foregroundStyle(PanelsTheme.Web.tertiary)
                     }
                 }
             }
@@ -268,7 +265,7 @@ private struct ArtifactChartView: View {
 
     private var legendItems: some View {
         ForEach(Array(chart.series.enumerated()), id: \.element.key) { index, series in
-            Text(series.name).foregroundStyle(color(index))
+            Text(series.name).textSelection(.enabled).foregroundStyle(color(index))
         }
     }
 }
