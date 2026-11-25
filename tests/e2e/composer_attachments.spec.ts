@@ -451,3 +451,31 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
   }
   console.log(`Approval attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing rail host`);
 });
+
+test('a refused send on the empty Review page returns to the field with a cross and leaves no bubble', async ({ signalServer, newContext }) => {
+  // Only a real browser and the live send route together show the whole path: the refusal
+  // from the server, the message put back in the field, and the send button's cross and tick.
+  const chiefConversation = 'review-refused-chief';
+  await post(signalServer, `/api/test/signals/${chiefConversation}/start`);
+  await bindConversation(signalServer, 'agent', 'chief_of_staff', chiefConversation);
+  await post(signalServer, `/api/test/signals/${chiefConversation}/finish`);
+  const page = await openPage(await newContext(), signalServer, '#/review', '[data-review-chief-composer]');
+  page.setDefaultTimeout(WAIT_MS);
+  const input = page.locator('[data-review-chief-composer] [data-review-reply]');
+  const send = page.locator('[data-review-send]');
+  const sendRoute = '**/api/chief/conversation/send';
+  await page.route(sendRoute, (route) => route.fulfill({
+    status: 409, contentType: 'application/json', body: '{"detail":"The Chief is not available right now."}',
+  }));
+  await input.fill('Chief, please look at this.');
+  await send.click();
+  await expect(send).toHaveClass(/failed/);
+  await expect(input).toHaveValue('Chief, please look at this.');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  await expect(send).not.toHaveClass(/failed/);
+  await page.unroute(sendRoute);
+  await send.click();
+  await expect(send).toHaveClass(/sent/);
+  await expect(input).toHaveValue('');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+});

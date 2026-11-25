@@ -89,8 +89,8 @@
     /** The microphone, first of the controls at the right. */
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
-     *  while it goes, and a green tick for a moment when `done` says it arrived. */
-    send?: Control & { ready: boolean; sending: boolean; done?: boolean; allowWhileIntake?: boolean };
+     *  while it goes, then for a moment a green tick (`result` "sent") or a red cross ("failed"). */
+    send?: Control & { ready: boolean; sending: boolean; result?: 'sent' | 'failed'; allowWhileIntake?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -449,7 +449,8 @@
             type="button"
             class="composer-field-send"
             class:on={send.ready}
-            class:done={send.done && !send.sending}
+            class:sent={send.result === 'sent' && !send.sending}
+            class:failed={send.result === 'failed' && !send.sending}
             aria-label={send.label}
             aria-busy={send.sending}
             disabled={send.disabled || (intakeBusy && !send.allowWhileIntake)}
@@ -458,8 +459,10 @@
           >
             {#if send.sending}
               <span class="composer-field-spinner" aria-hidden="true"></span>
-            {:else if send.done}
+            {:else if send.result === 'sent'}
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+            {:else if send.result === 'failed'}
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
             {:else}
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
             {/if}
@@ -499,5 +502,10 @@
   .composer-field.is-reply-strip :global(.composer-field-tool svg) { width: 18px; height: 18px; stroke-width: 1.6; }
   .composer-field.is-reply-strip :global(.composer-field-send) { background-color: var(--cv-control); color: var(--cv-t3); }
   .composer-field.is-reply-strip :global(.composer-field-send.on) { background-color: var(--cv-primary-fill); color: var(--cv-primary-ink); }
-  .composer-field :global(.composer-field-send.done) { color: var(--accent-done); opacity: 1; }
+  .composer-field :global(.composer-field-send:is(.sent, .failed)),
+  .composer-field.is-reply-strip :global(.composer-field-send:is(.sent, .failed)) { opacity: 1; }
+  .composer-field :global(.composer-field-send.sent),
+  .composer-field.is-reply-strip :global(.composer-field-send.sent) { color: var(--accent-done); background-color: color-mix(in srgb, var(--accent-done) 18%, var(--cv-control, transparent)); }
+  .composer-field :global(.composer-field-send.failed),
+  .composer-field.is-reply-strip :global(.composer-field-send.failed) { color: var(--accent-error); background-color: color-mix(in srgb, var(--accent-error) 18%, var(--cv-control, transparent)); }
 </style>

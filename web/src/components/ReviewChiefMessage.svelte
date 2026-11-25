@@ -18,14 +18,27 @@
   let voiceActive = $state(false);
   let reply = $state<ReviewReplyInput>();
   const sending = $derived(composer.attempts.some(attempt => attempt.status === 'sending' || attempt.status === 'checking'));
-  // The send button turns to a green tick for a moment when a send arrives, then back to the arrow.
-  let arrived = $state(false);
-  let arrivedTimer: ReturnType<typeof setTimeout> | undefined;
+  // The send button shows how a send ended for a moment, then goes back to the arrow:
+  // a green tick when it arrived, a red cross when it was refused. A refused message returns to the field.
+  let result = $state<'sent' | 'failed'>();
+  let refusal = $state<string>();
+  let resultTimer: ReturnType<typeof setTimeout> | undefined;
+  function show(next: 'sent' | 'failed', reason?: string): void {
+    result = next;
+    refusal = reason;
+    clearTimeout(resultTimer);
+    resultTimer = setTimeout(() => { result = undefined; refusal = undefined; }, next === 'sent' ? 1500 : 4000);
+  }
   $effect(() => {
-    if (!composer.accepted) return;
-    arrived = true;
-    clearTimeout(arrivedTimer);
-    arrivedTimer = setTimeout(() => arrived = false, 1500);
+    if (composer.accepted) untrack(() => show('sent'));
+  });
+  $effect(() => {
+    const refused = composer.attempts.find(attempt => attempt.status === 'failed' || attempt.status === 'upload-failed');
+    if (!refused || composer.submitting || composer.intakeBusy) return;
+    untrack(async () => {
+      const reason = refused.note ?? 'The message was not sent.';
+      if (await composer.edit(refused)) show('failed', `Not sent: ${reason}`);
+    });
   });
   $effect(() => {
     const active = composer.submitting || composer.intakeBusy || voiceActive;
@@ -33,7 +46,7 @@
   });
   onMount(() => {
     const unmount = composer.mount();
-    return () => { unmount(); onBusy?.(false); clearTimeout(arrivedTimer); };
+    return () => { unmount(); onBusy?.(false); clearTimeout(resultTimer); };
   });
 </script>
 
@@ -42,7 +55,7 @@
   <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
     bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
-    sendDisabled={!composer.ready} preserveHeight {sending} sent={arrived}
+    sendDisabled={!composer.ready} preserveHeight {sending} {result} sendTitle={refusal}
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
     onSend={() => composer.send()} onError={problem => composer.error = problem} />
   {#if composer.error}<div class="review-chief-error"><ErrorLine error={composer.error} /></div>{/if}
