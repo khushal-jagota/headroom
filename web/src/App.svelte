@@ -16,7 +16,7 @@
   import ShellStatus from "./components/ShellStatus.svelte";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
-  import { updatePresentation } from "./lib/updates/logic/presentation";
+  import { updateConfirmationUntil, updatePresentation } from "./lib/updates/logic/presentation";
   import { settleUpdateStarting, updateStarting } from "./lib/updates/api";
   import { mutateJson } from "./lib/mutate";
   import { savedSessionOnScreen } from "./lib/savedSession";
@@ -49,9 +49,9 @@
     settleUpdateStarting(status);
     updateClock = Date.now();
   });
-  // A lost connection stops counting as the update at the server's deadline.
+  // Advance either deadline even when no more changes arrive from the home.
   $effect(() => {
-    const deadline = Date.parse(updates.data?.deadline_at ?? "");
+    const deadline = updateConfirmationUntil(updates.data) ?? Date.parse(updates.data?.deadline_at ?? "");
     if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
     return atUpdateDeadline(deadline, () => { updateClock = Date.now(); });
   });

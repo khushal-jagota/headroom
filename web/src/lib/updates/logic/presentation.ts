@@ -1,3 +1,4 @@
+import { UPDATE_CONFIRMATION_MS } from "../config";
 import type { ConnectionStatus } from "../../changeStream";
 import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../contracts";
 
@@ -28,6 +29,14 @@ export type UpdatePresentationInput = {
   now: number;
 };
 
+/** The same receipt expires at the same time across reloads. */
+export function updateConfirmationUntil(status: UpdateStatus | undefined): number | null {
+  const attempt = status?.attempt;
+  if (!status?.app_sha || attempt?.state !== "done" || attempt.to_sha !== status.app_sha) return null;
+  const completed = Date.parse(attempt.completed_at ?? "");
+  return Number.isFinite(completed) ? completed + UPDATE_CONFIRMATION_MS : null;
+}
+
 /** The server owns update facts. Only the connection and this page's version overlay them. */
 export function updatePresentation({ status, connection, pageIsBehind, starting, now }: UpdatePresentationInput): UpdatePresentation {
   if (connection !== "connected") {
@@ -40,11 +49,13 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   // Panels rolled back, so its failure is the news.
   if (status?.state === "failed") return { state: "failed", dimmed: false };
   if (!status) return { state: null, dimmed: false };
-  const installed = Boolean(status.app_sha) && status.attempt?.state === "done" && status.attempt.to_sha === status.app_sha;
-  if (status.state === "check_unavailable" && installed) return { state: "machines", dimmed: false };
-  if (status.state === "up_to_date") {
-    const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
-    return { state: hasTarget || installed ? "machines" : pageIsBehind ? "refresh_needed" : null, dimmed: false };
+  if (status.state === "up_to_date" || status.state === "check_unavailable") {
+    const until = updateConfirmationUntil(status);
+    const recent = until !== null && now >= until - UPDATE_CONFIRMATION_MS && now < until;
+    if (recent || status.machines.some(machine => machine.state !== "current"))
+      return { state: "machines", dimmed: false };
+    if (status.state === "up_to_date")
+      return { state: pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
 }
@@ -108,7 +119,10 @@ export function interruptionText(interruption: UpdateInterruption | null): strin
 
 /** An available offer is not evidence of what an earlier press interrupted. */
 export function cardInterruption(status: UpdateStatus, presentation: UpdateCardState | UpdateStatus["state"] = status.state): UpdateInterruption | null {
-  return presentation === "available" ? status.interruption : status.attempt?.interruption ?? null;
+  if (presentation === "available" || (presentation === "updating" && status.state === "available"))
+    return status.interruption;
+  if (presentation === "updating" && status.state === "updating") return status.attempt?.interruption ?? null;
+  return null;
 }
 
 /** Offer requirements can differ from the requirements of the running server. */

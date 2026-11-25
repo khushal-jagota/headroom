@@ -296,10 +296,36 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.notEqual(before.conversation_id, after.conversation_id);
     await verify_smoke_history(url, preserved);
     phase = 'reopening the update screen';
-    await page.reload();
-    await headline.getByText('Up to date', { exact: true }).waitFor();
-    for (const id of enrolled)
-      await card.locator(`[data-machine-update="${id}"][data-state="current"]`).waitFor();
+    const rail = page.getByRole('region', { name: 'Workspace', exact: true });
+    const reopen = async (alreadyQuiet = false) => {
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          (response) => new URL(response.url()).pathname === '/api/updates' && response.ok(),
+        ),
+        page.reload(),
+      ]);
+      const settled = await response.json();
+      assert.equal(settled.state, 'up_to_date');
+      assert.equal(settled.attempt?.to_sha, candidate);
+      assert.ok(Date.parse(settled.attempt.completed_at), 'Expected the saved completion time');
+      const selector = `[data-shell-status][data-update-attempt="${settled.attempt.attempt_id}"]`;
+      const slot = rail.locator(selector);
+      await slot.waitFor({ state: 'attached' });
+      if (alreadyQuiet)
+        assert.equal(await slot.locator('[data-status-state="machines"]').count(), 0);
+      assert.equal(
+        await slot.getByText('This update stops your agents', { exact: true }).count(),
+        0,
+      );
+      await rail.locator(selector + '[aria-hidden="true"]').waitFor({ state: 'attached' });
+      await slot.locator('.status-card').waitFor({ state: 'detached' });
+    };
+    await reopen();
+    await reopen(true); // A second visit must not revive a completed update.
+    await rail.screenshot({
+      path: join(o.base, 'evidence/sidebar-after-update.png'),
+      animations: 'disabled',
+    });
     await page.screenshot({
       path: join(o.base, 'evidence/update-complete.png'),
       animations: 'disabled',

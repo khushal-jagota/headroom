@@ -28,6 +28,7 @@ export interface UpdateAttemptView {
   to_sha: string;
   mode: UpdateMode;
   state: UpdateAttemptState;
+  completed_at?: string | null;
   detail: string | null;
   deadline_at: string | null;
   interruption: UpdateInterruption | null;

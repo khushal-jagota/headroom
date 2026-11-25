@@ -74,7 +74,7 @@ Every Mac trial takes that snapshot, including a trial with no schema change. Ro
 
 If the installer is interrupted before acceptance, its service manager can restart it to reconcile the saved attempt under the lock. It restores the previous selection and any required snapshot. After acceptance it preserves the newly committed data. Diagnose failed rollback from the installer journal and retain both releases and the snapshot.
 
-The installer records success before it opens the write barrier. On failure it records the cause and the outcome of restoring the previous version. While the result is uncertain, the screen must not report completion. An expired deadline or a stale browser alone proves neither success nor rollback.
+The installer records success before it opens the write barrier. On failure it records the cause and the outcome of restoring the previous version. While the result is uncertain, the screen must not report completion. An expired deadline or a stale browser alone proves neither success nor rollback. The sidebar clears the success notice eight seconds after the home finishes once all machines are current. The result stays in the attempt record. The interruption warning appears only before and during the update.
 
 ## The server and each machine
 

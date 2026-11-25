@@ -21,6 +21,7 @@ export function attempt_body(attempt: UpdateAttempt): UpdateAttemptView {
     to_sha: attempt.to_sha,
     mode: attempt.mode,
     state: attempt.state,
+    ...(attempt.state === 'done' && { completed_at: attempt.steps.done ?? null }),
     detail: attempt.detail,
     deadline_at: attempt.deadline_at,
   };

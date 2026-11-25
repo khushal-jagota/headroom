@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import { render } from "svelte/server";
 import { performUpdateAction, settleUpdateStarting, updateStarting, updateActionRoute } from "../src/lib/updates/api";
+import { UPDATE_CONFIRMATION_MS } from "../src/lib/updates/config";
 import { atUpdateDeadline } from "../src/lib/updates/deadline";
 import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, machineUpdateLabel, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
 import type { UpdateStatus, MachineUpdateState } from "../src/lib/updates/contracts";
 import MachineRows from "../src/lib/updates/MachineRows.svelte";
 
 const attempt = { attempt_id: "a1", from_sha: "1".repeat(40), to_sha: "2".repeat(40),
-  state: "failed" as const, detail: null, deadline_at: null, mode: "now" as const, interruption: null };
+  state: "failed" as const, completed_at: new Date(0).toISOString(), detail: null, deadline_at: null, mode: "now" as const, interruption: null };
 const status: UpdateStatus = { state: "available", allowed_actions: ["update"], activity: "unknown",
   client_versions: [], machines: [], available_machines: [], interruption: { stops_agents: false, agents: [], machine_ids: [] },
   available: { app_sha: "2".repeat(40) }, attempt: null, app_sha: "1".repeat(40), detail: null, deadline_at: null, mac_details: null };
@@ -45,6 +46,21 @@ describe("the update card resolver", () => {
     expect(updatePresentation({ ...base, status: unknown }).state).toBe("check_unavailable");
     const failing = { ...saved, machines: [machine("Desk", "failed")] };
     expect(updateCard("machines", failing)).toMatchObject({ word: "Machine update needs attention", detail: "Couldn’t confirm the latest version." });
+  });
+
+  it("expires the same receipt on a quiet sidebar and after reloading, while retaining outstanding work", () => {
+    const row = machine("Desk", "current");
+    const complete = at("up_to_date", { attempt: { ...attempt, state: "done" }, app_sha: attempt.to_sha, machines: [row] });
+    const show = (value: UpdateStatus, now: number, pageIsBehind = false) =>
+      updatePresentation({ ...base, status: value, now, pageIsBehind }).state;
+    expect(show(complete, UPDATE_CONFIRMATION_MS - 1)).toBe("machines");
+    expect(show(complete, UPDATE_CONFIRMATION_MS)).toBeNull();
+    expect(show(structuredClone(complete), 60_000)).toBeNull();
+    expect(show(complete, 60_000, true)).toBe("refresh_needed");
+    expect(show({ ...complete, attempt: { ...complete.attempt!, completed_at: undefined } }, 1000)).toBeNull();
+    expect(show({ ...complete, state: "check_unavailable" }, 60_000)).toBe("check_unavailable");
+    for (const state of ["failed", "waiting", "updating", "unavailable"] as const)
+      expect(show({ ...complete, machines: [machine("Desk", state)] }, 60_000)).toBe("machines");
   });
 
   it("shows Updating… at once after a press, before the server answers", () => {
@@ -155,7 +171,9 @@ describe("the update card", () => {
     const pressed = { ...offered, state: "updating" as const, attempt: { ...attempt, interruption: status.interruption } };
     expect(cardInterruption(pressed)).toBe(status.interruption);
     expect(cardInterruption({ ...pressed, attempt })).toBeNull();
-    expect(cardInterruption({ ...offered, attempt }, "refresh_needed")).toBeNull();
+    expect(cardInterruption(offered, "updating")).toBe(interruption);
+    for (const state of ["failed", "machines", "refresh_needed", "unreachable"] as const)
+      expect(cardInterruption({ ...pressed, attempt: { ...attempt, interruption } }, state)).toBeNull();
     expect(interruptionText(null)).toBeNull();
   });
 });

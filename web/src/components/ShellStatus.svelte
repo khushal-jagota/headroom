@@ -219,7 +219,7 @@
   });
 </script>
 
-<div bind:this={slot} class="status-slot" data-shell-status
+<div bind:this={slot} class="status-slot" data-shell-status data-update-attempt={status?.attempt?.attempt_id}
   data-open={open ? "" : undefined} data-closing={closing ? "" : undefined}
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
