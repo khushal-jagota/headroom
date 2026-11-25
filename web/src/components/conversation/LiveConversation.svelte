@@ -584,8 +584,9 @@
     }
   }
   /** The open whose first read failed, and the note it left. The reader keeps retrying on its
-   *  own, so the first good snapshot is the end of that open, as if it had never failed. */
-  let failedOpen:{reader:ConversationViewReader;note:string}|null=null;
+   *  own, and opening the pane can replace it, so the first good snapshot of any reader of
+   *  that conversation is the end of that open, as if it had never failed. */
+  let failedOpen:{id:string;note:string}|null=null;
   function finishFailedOpen(local:ConversationViewReader):void{
     const {note}=failedOpen!;
     failedOpen=null;
@@ -602,7 +603,7 @@
     const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
-      if(!local.trouble&&failedOpen?.reader===local)finishFailedOpen(local);
+      if(!local.trouble&&failedOpen?.id===id)finishFailedOpen(local);
       if(local.coverage!==lastCoverage){
         lastCoverage=local.coverage;
         void refreshView(id);
@@ -636,7 +637,7 @@
       void refreshComposerCatalog(id);
       const local=attachReader(id);
       try{await local.connect();}
-      catch(error){failedOpen={reader:local,note:sentenceFor(error)};throw error;}
+      catch(error){failedOpen={id,note:sentenceFor(error)};throw error;}
       if(reader!==local)return;
       await reconcileReceipts(local);
       theRecordHasBeenRead();
