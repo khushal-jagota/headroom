@@ -33,7 +33,7 @@ struct ReviewButtonStyle: ButtonStyle {
     }
 }
 
-/// The visible scroll boundary, after the dock and keyboard consume the bottom safe area.
+/// The visible scroll boundary already excludes the dock and keyboard.
 private struct DecisionScrollBottomKey: EnvironmentKey {
     static let defaultValue: CGFloat? = nil
 }
@@ -50,7 +50,7 @@ struct DecisionScrollViewport: ViewModifier {
     func body(content: Content) -> some View {
         GeometryReader { geometry in
             content.environment(\.decisionScrollBottom, enabled
-                ? geometry.frame(in: .global).maxY - geometry.safeAreaInsets.bottom : nil)
+                ? geometry.frame(in: .global).maxY : nil)
         }
     }
 }
