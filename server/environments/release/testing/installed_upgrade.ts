@@ -343,7 +343,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       if (alreadyQuiet)
         assert.equal(await slot.locator('[data-status-state="machines"]').count(), 0);
       assert.equal(
-        await slot.getByText('This update stops your agents', { exact: true }).count(),
+        await slot.getByText('This update will interrupt running agents', { exact: true }).count(),
         0,
       );
       await rail.locator(selector + '[aria-hidden="true"]').waitFor({ state: 'attached' });
