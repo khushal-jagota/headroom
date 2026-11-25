@@ -57,6 +57,7 @@ export async function seed_active_histories(
     title: 'Unfinished qualification Ticket',
     brief: '',
     worker_type: 'coding',
+    employee_launch_model: 'TEST',
     project_id: project.id,
     ceiling: 'needs_brief',
   });
