@@ -14,7 +14,8 @@ import type { ConversationStoreOptions, OpenRunTurn } from './contracts.ts';
 
 export function createConversationRuntime() {
   let runtime: ConversationViewRuntime | undefined;
-  let rebuilder: ConversationViewRebuilder | undefined;
+  const rebuilder = new ConversationViewRebuilder();
+  let replay_started = false;
   let sealed = false;
   let prepared: { database: Database; store: ConversationStore } | undefined;
   const getRuntime = (): ConversationViewRuntime => {
@@ -61,6 +62,7 @@ export function createConversationRuntime() {
       runtime = {
         database,
         store,
+        prioritize_view: (id) => rebuilder.prioritize(id),
         live_tail,
         sse_heartbeat_ms: SSE_HEARTBEAT_MS,
         async runtime_facts(conversation_id) {
@@ -70,12 +72,15 @@ export function createConversationRuntime() {
         },
       };
     },
+    prepare_active_views(): Promise<void> {
+      return rebuilder.prepare_active(getRuntime().database);
+    },
     start_rebuild(admission?: { readonly closed: boolean }): void {
       if (sealed) throw new Error('Conversation record runtime is shut down');
-      if (rebuilder) throw new Error('Conversation record replay already started');
+      if (replay_started) throw new Error('Conversation record replay already started');
       const current = getRuntime();
       current.live_tail.views.cleanup_stale_epochs();
-      rebuilder = new ConversationViewRebuilder();
+      replay_started = true;
       rebuilder.start(current.database, () => admission?.closed ?? false);
     },
     bind_runtime_facts(facts: ConversationViewRuntime['runtime_facts']): void {
@@ -83,19 +88,18 @@ export function createConversationRuntime() {
     },
     seal(): void {
       sealed = true;
-      rebuilder?.close();
+      rebuilder.close();
       runtime?.live_tail.close_all_subscriptions();
     },
     async close(): Promise<void> {
       sealed = true;
-      rebuilder?.close();
+      rebuilder.close();
       runtime?.live_tail.close_all_subscriptions();
-      await rebuilder?.finish();
+      await rebuilder.finish();
       await (runtime?.store ?? prepared?.store)?.finish_writes();
       runtime?.live_tail.close();
       runtime = undefined;
       prepared = undefined;
-      rebuilder = undefined;
     },
   };
 }

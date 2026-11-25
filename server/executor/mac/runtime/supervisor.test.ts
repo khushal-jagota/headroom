@@ -264,7 +264,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
           archive_path: '/api/executor/update/trial/archive',
           archive_size: 1,
           mode: 'idle',
-          activate: false,
+          activate: true,
         },
       });
       const handover = controller.close_handover_once_kept();

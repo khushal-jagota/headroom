@@ -38,6 +38,7 @@ export class PlannerError extends Error {
           revision_conflict: 409,
           already_running: 409,
           gateway_offline: 503,
+          update_in_progress: 503,
           skill_save_incomplete: 500,
           conversation_save_failed: 503,
           executor_version_refused: 409,

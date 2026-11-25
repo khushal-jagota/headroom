@@ -3,15 +3,17 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-offline-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
+touch "$build/.metadata_never_index"
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
 cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ResourceOwner.swift ios/Panels/Core/Networking/ResourceRead.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/Conversation/Models/*.swift ios/Panels/Features/Conversation/Networking/*.swift \
-  ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
+  ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/Video/VideoContracts.swift ios/Panels/Features/Conversation/Video/VideoAttachments.swift ios/Panels/Features/Conversation/Video/VideoUploadAPI.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift ios/Panels/Features/Review/ReviewMessageDecision.swift ios/Panels/Features/Review/ReviewAskDecision.swift ios/Panels/Features/Review/ReviewSession.swift ios/Panels/Features/Review/ReviewChiefMessageModel.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/Goals/Models/*.swift ios/Panels/Features/Goals/Logic/*.swift ios/Panels/Features/Goals/Networking/*.swift ios/Panels/Features/Goals/State/*.swift ios/Panels/Features/Artifacts/Logic/ArtifactTarget.swift ios/Panels/Features/Artifacts/Networking/ArtifactReader.swift ios/Panels/Features/Notifications/NotificationContracts.swift ios/Panels/Features/Notifications/NotificationController.swift ios/Panels/Features/Notifications/Networking/NativePushAPI.swift ios/Panels/Features/Notifications/Logic/*.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/More/Updates/UpdateModels.swift ios/Panels/Features/More/Updates/UpdateAPI.swift ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/Chief/ChiefAPI.swift ios/Panels/Features/Ticket/Networking/TicketAPI.swift ios/Panels/Features/Ticket/Models/TicketLifecycle.swift ios/Panels/Features/Ticket/Logic/TicketPresentation.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/Orchestrator/RecapAPI.swift ios/Panels/Features/Orchestrator/Logic/WorkerGroups.swift ios/Panels/Features/Artifacts/Logic/ArtifactMarkdown.swift "$build/Sources/Panels/"
+cp ios/PanelsTests/VideoPreparationTests.swift "$build/Tests/PanelsTests/"
 cp ios/PanelsTests/UpdateTests.swift "$build/Tests/PanelsTests/"
 cp ios/PanelsTests/NotificationTests.swift ios/PanelsTests/ArtifactLogicTests.swift ios/PanelsTests/WorkerScreenTests.swift ios/PanelsTests/GoalTests.swift ios/PanelsTests/NavigationViewTests.swift ios/PanelsTests/ResourceRefreshTests.swift ios/PanelsTests/ReviewMessageTests.swift ios/PanelsTests/ReviewChiefMessageTests.swift ios/PanelsTests/ReviewDecisionTests.swift ios/PanelsTests/ReviewQueueTests.swift ios/PanelsTests/OfflineTests.swift ios/PanelsTests/ReviewSavedWorkTests.swift ios/PanelsTests/ConversationTests.swift "$build/Tests/PanelsTests/"
 cp -R ios/PanelsTests/Fixtures "$build/Tests/PanelsTests/"

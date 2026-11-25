@@ -23,7 +23,6 @@ import SwiftUI
     var workspaceHidden: [String: Int] = [:]
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
     var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
-    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
     private var machinesResource: ResourceHandle<MachineCatalog> { resources.handle(ChiefResources.machines) }
     var machines: [MachineCatalog.Machine] { machinesResource.value?.machines ?? [] }
@@ -44,11 +43,10 @@ import SwiftUI
     var executorHealth: ExecutorHealth? { healthResource.value }
     var updateStatus: PanelsUpdateStatus? { updateResource.value }
     var updateFailure: ServerReadFailure? { updateResource.failure }
-    var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
     var serverUnreachable: Bool {
         errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
-            deploymentResource.failure?.isServerUnreachable == true || updateResource.failure?.isServerUnreachable == true
+            updateResource.failure?.isServerUnreachable == true
     }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
@@ -373,8 +371,8 @@ import SwiftUI
         runGeneration += 1
         let generation = runGeneration
         running = true
-        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource, machines = machinesResource
-        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire(); machines.acquire()
+        let chief = chiefResource, updates = updateResource, health = healthResource, drivers = driversResource, machines = machinesResource
+        chief.acquire(); updates.acquire(); health.acquire(); drivers.acquire(); machines.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
@@ -386,7 +384,7 @@ import SwiftUI
         hasRun = true
         defer {
             updateReads.cancel()
-            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release(); machines.release()
+            chief.release(); updates.release(); health.release(); drivers.release(); machines.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 resources.stop(); running = false; closeStreams(); connection = "Connecting"
@@ -491,7 +489,7 @@ import SwiftUI
         }
     }
 
-    /// Pull to refresh. Chief settings and deployment read again, and the view opens a
+    /// Pull to refresh. Chief settings and update status read again, and the view opens a
     /// new stream, whose first frame is a fresh snapshot. The pull ends when that
     /// snapshot lands, or when the new stream ends without one. Without a foreground
     /// stream, one snapshot is read.
@@ -527,7 +525,7 @@ import SwiftUI
         }
     }
 
-    /// Refresh after confirmed writes. Chief settings and deployment read again. The
+    /// Refresh after confirmed writes. Chief settings and update status read again. The
     /// view follows its stream, which carries the write; a stream that is not current reconnects now. Without a
     /// foreground stream, one snapshot is read.
     func refresh() async {
@@ -548,11 +546,10 @@ import SwiftUI
         if probing { await resources.reconcile() }
         else {
             async let chief: Void = chiefResource.refresh()
-            async let deployment: Void = deploymentResource.refresh()
             async let health: Void = healthResource.refresh()
             async let updates: Void = updateResource.refresh()
             async let machines: Void = machinesResource.refresh()
-            _ = await (chief, deployment, health, updates, machines)
+            _ = await (chief, health, updates, machines)
         }
     }
 

@@ -137,7 +137,7 @@ async function observation(
     url = next;
   }
 }
-/** Python checks its overall anchor only after a failed/nonmatching observation. */
+/** A zero timeout requests one bounded observation. Positive timeouts bound the whole trial. */
 export async function healthy(
   health_url: string,
   sha: string,
@@ -146,8 +146,12 @@ export async function healthy(
   environment: NodeJS.ProcessEnv = process.env,
   require_ready = false,
   identity?: string,
+  prepared_attempt_id?: string,
 ): Promise<boolean> {
-  const deadline = performance.now() / 1000 + timeout_seconds;
+  const timeout = AbortSignal.timeout(
+    Math.ceil((timeout_seconds > 0 ? timeout_seconds : HEALTH_INACTIVITY_SECONDS) * 1000),
+  );
+  const lifetime = AbortSignal.any([signal, timeout]);
   // Failed polls are expected while the server restarts, so only the last failure is logged at the deadline.
   let last_failure: unknown;
   const failed = (error: unknown) => {
@@ -159,7 +163,7 @@ export async function healthy(
     try {
       result = await observation(
         `${health_url}?expected_sha=${sha}`,
-        signal,
+        lifetime,
         environment,
         identity,
         failed,
@@ -172,10 +176,12 @@ export async function healthy(
       result?.status === 200 &&
       is_object(result.body) &&
       result.body.app_sha === sha &&
+      (prepared_attempt_id === undefined ||
+        result.body.prepared_attempt_id === prepared_attempt_id) &&
       (!require_ready || result.body.ready === true)
     )
       return true;
-    if (performance.now() / 1000 >= deadline) {
+    if (timeout.aborted || timeout_seconds <= 0) {
       console.warn('installer health check did not pass before its deadline', {
         health_url,
         sha,
@@ -184,6 +190,11 @@ export async function healthy(
       });
       return false;
     }
-    await delay(HEALTH_POLL_SECONDS * 1000, undefined, { signal });
+    try {
+      await delay(HEALTH_POLL_SECONDS * 1000, undefined, { signal: lifetime });
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!timeout.aborted) throw error;
+    }
   }
 }

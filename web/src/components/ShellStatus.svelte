@@ -6,18 +6,17 @@
   import { refreshScreen } from "../lib/resourceVersions/refresh";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import { requestReleaseReload } from "../lib/releaseMonitor";
+  import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import { retryChangeStream } from "../lib/changeStream";
-  import UpdateActions from "./UpdateActions.svelte";
   import type { UpdateStatus } from "../lib/updates/contracts";
-  import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, type UpdateCardState } from "../lib/updates/logic/presentation";
+  import { updateCard, updateOfferWarnings, cardMachines, type UpdateCardState } from "../lib/updates/logic/presentation";
   import MachineRows from "../lib/updates/MachineRows.svelte";
-  import { performUpdateAction } from "../lib/updates/api";
+  import { performUpdateAction, type UpdateActionRequest } from "../lib/updates/api";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation, now }: {
+  let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation }: {
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth; showsSavedSession?: boolean;
-    status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
+    status: UpdateStatus | undefined; presentation: UpdateCardState | null;
   } = $props();
   const desktop = typeof location !== "undefined" && location.protocol === "panels:" && location.host === "app";
   let reachDialog = $state<HTMLDialogElement | null>(null);
@@ -67,28 +66,27 @@
   const desktopUnreachable = $derived(desktop && displayedWord === "unreachable");
   let displayedHealth = $state.raw<ShownHealth>(null);
   let textOut = $state(false);
-  let actions = $state<UpdateActions | null>(null);
   // The card follows the displayed word, so its text changes with the crossfade.
-  const card = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
+  const resolvedCard = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
+  const card = $derived($releaseState.updateAvailable && connectionState === "connected" && resolvedCard && presentation !== "updating"
+    ? { ...resolvedCard, action: { label: "Refresh", does: "refresh" as const } } : resolvedCard);
   function activate(): void {
     if (!card?.action) return;
     switch (card.action.does) {
-      case "offer": actions?.openDialog("offer"); break;
+      case "install": void perform({ action: "install" }); break;
       case "refresh": requestReleaseReload(); break;
       case "reconnect": retryChangeStream(); break;
-      case "retry": void actions?.perform({ action: "retry" }, "failed"); break;
-      case "retry_mac": if (card.info) void actions?.perform({ action: "retry_mac" }, card.info); break;
+      case "retry": void perform({ action: "retry" }); break;
     }
   }
-  const impact = $derived(status ? cardInterruption(status, presentation ?? undefined) : null);
-  let machineError = $state<string | null>(null);
-  async function retryMachine(machine_id: string): Promise<void> {
+  let actionError = $state<string | null>(null);
+  async function perform(request: UpdateActionRequest): Promise<void> {
     if (!status) return;
-    machineError = null;
+    actionError = null;
     try {
-      await performUpdateAction(status, { action: "retry_machine", machine_id });
+      await performUpdateAction(status, request);
     } catch (cause) {
-      machineError = cause instanceof Error ? cause.message : "The machine update failed.";
+      actionError = cause instanceof Error ? cause.message : "The update action failed.";
     }
   }
   let open = $state(false);
@@ -220,7 +218,7 @@
   });
 </script>
 
-<div bind:this={slot} class="status-slot" data-shell-status
+<div bind:this={slot} class="status-slot" data-shell-status data-update-attempt={status?.attempt?.attempt_id}
   data-open={open ? "" : undefined} data-closing={closing ? "" : undefined}
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
@@ -230,7 +228,7 @@
         {#if card}
           <span class="status-base">
             <span class="status-mark" aria-hidden="true"></span>
-            <span class:status-sentence={card.sentence} class:status-word={!card.sentence} class="swap" data-out={textOut ? "" : undefined}>{card.word}</span>
+            <span class="status-word swap" data-out={textOut ? "" : undefined}>{card.word}</span>
             {#if card.action && !desktopUnreachable}
               <button type="button" class="swap status-action" data-out={textOut ? "" : undefined}
                 data-shell-refresh={card.action.does === "refresh" ? "" : undefined} onclick={activate}>{card.action.label}</button>
@@ -238,21 +236,12 @@
             {#if desktopUnreachable}
               <button type="button" class="swap status-info status-info--alone" aria-label="Server connection details" data-out={textOut ? "" : undefined}
                 data-desktop-connection-info onclick={openReachDialog}>i</button>
-            {:else if card.info}
-              <button type="button" class="swap status-info" class:status-info--alone={!card.action} aria-label="Update details" data-out={textOut ? "" : undefined}
-                data-update-info={card.info} onclick={() => card?.info && actions?.openDialog(card.info)}>i</button>
             {/if}
           </span>
           {#if status && presentation !== "unreachable"}
-            {#if interruptionText(impact)}
-              <span class="status-detail">{interruptionText(impact)}</span>
-              {#if impact?.stops_agents && impact.agents.length}<span class="agent-names">{impact.agents.join(", ")}</span>{/if}
-            {/if}
-            {#if presentation === "available"}
-              {#each deviceUpdateWarnings(status) as warning (warning)}<span class="status-detail">{warning}</span>{/each}
-            {/if}
-            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" ? retryMachine : undefined} />
-            {#if machineError}<span role="alert">{machineError}</span>{/if}
+            {#each updateOfferWarnings(status, presentation) as warning (warning)}<span class="status-detail">{warning}</span>{/each}
+            <MachineRows machines={cardMachines(status, presentation ?? undefined)} retry={connectionState === "connected" && !$releaseState.updateAvailable ? (machine_id) => void perform({ action: "retry_machine", machine_id }) : undefined} />
+            {#if actionError}<span role="alert">{actionError}</span>{/if}
           {/if}
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}
           {#if card.detail && !desktopUnreachable}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
@@ -268,7 +257,6 @@
     {/if}
   </div>
 </div>
-{#if status}<UpdateActions bind:this={actions} {status} {now} />{/if}
 
 {#if desktop}
   <dialog bind:this={reachDialog} aria-labelledby={reachTitle} data-desktop-connection-dialog
@@ -324,7 +312,6 @@
   .status-track i { display: block; width: 40%; height: 100%; border-radius: var(--radius-pill); background: var(--accent-bright); animation: track 1.6s var(--glide-ease) infinite; }
   @keyframes track { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
   .status-detail { flex-basis: 100%; }
-  .agent-names { overflow-wrap: anywhere; }
   .status-base { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .navigation-health { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
   .navigation-health .status-mark { align-self: start; margin-top: .4em; }
@@ -334,7 +321,6 @@
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .navigation-health[data-state="changing"] .status-mark { background: var(--accent-bright); animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .status-sentence { min-width: 0; }
   .status-action { flex: none; margin-left: auto; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 660; cursor: pointer; }
   .status-action:hover { text-decoration: underline; }
   .status-info { flex: none; width: 16px; height: 16px; margin-left: var(--space-1); padding: 0; border: var(--border-hairline) solid currentColor; border-radius: var(--radius-pill); background: transparent; color: inherit; font: 600 10px/14px var(--font-ui); opacity: .75; cursor: pointer; }

@@ -12,6 +12,8 @@ import { PlannerError } from './contracts.ts';
 import { registerArea } from './authority/register.ts';
 import type { Database } from './database/index.ts';
 import { indexHtml, mountStatic, sendFile } from './http/static.ts';
+import type { HomeUpdateTrial } from '../environments/updates/home_trial.ts';
+
 export interface Changes {
   subscribe(callback: () => void): () => void;
   emit(): void;
@@ -24,6 +26,7 @@ export async function registerCoreRoutes(
   root: string,
   database: Database,
   waiting_screens_root?: () => string | null,
+  trial?: HomeUpdateTrial | null,
 ): Promise<void> {
   const version_meta = client_version_meta(root, config.app_sha);
   const screens = new ScreenSnapshots(root, waiting_screens_root);
@@ -55,6 +58,14 @@ export async function registerCoreRoutes(
     const expected = Array.isArray(rawExpected) ? rawExpected.at(-1) : rawExpected;
     if (expected !== config.app_sha)
       return reply.code(503).send({ ready: false, error: 'expected app SHA required' });
+    if (trial?.active) {
+      const prepared_attempt_id = trial.prepared_attempt_id;
+      if (!prepared_attempt_id)
+        return reply
+          .code(503)
+          .send({ ready: false, error: 'Waiting for the enrolled home machine' });
+      return { ready: true, app_sha: config.app_sha, prepared_attempt_id };
+    }
     return { ready: true, app_sha: config.app_sha };
   });
   const streams = new Set<Readable>();

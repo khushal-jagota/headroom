@@ -694,6 +694,7 @@ struct ConversationDetailSmokeView: View {
 
 struct ConversationSmokeView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var refreshError: String?
     @State private var path: [AppRoute] = []
     var body: some View {
@@ -717,6 +718,9 @@ struct ConversationSmokeView: View {
                     }
                 }
         }
+        .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
+            if scenePhase == .active { await Outbox.shared.run(api: store.client) }
+        }
     }
     private func refresh() async {
         do { _ = try await store.client.chiefConversation(); refreshError = nil }
@@ -726,20 +730,36 @@ struct ConversationSmokeView: View {
 #endif
 
 struct ConversationCamera: UIViewControllerRepresentable {
-    let completed: (UIImage?) -> Void
+    enum Capture { case photo(UIImage), video(URL), failure(String) }
+    let completed: (Capture?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(completed: completed) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera; picker.delegate = context.coordinator
+        picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        picker.videoQuality = .typeHigh
         return picker
     }
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let completed: (UIImage?) -> Void
-        init(completed: @escaping (UIImage?) -> Void) { self.completed = completed }
+        let completed: (Capture?) -> Void
+        init(completed: @escaping (Capture?) -> Void) { self.completed = completed }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { completed(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            completed(info[.originalImage] as? UIImage)
+            if let video = info[.mediaURL] as? URL {
+                // Keep the picker open until its movie has a private copy.
+                let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension(video.pathExtension)
+                Task {
+                    do {
+                        try await Task.detached(priority: .userInitiated) {
+                            try FileManager.default.copyItem(at: video, to: destination)
+                        }.value
+                        completed(.video(destination))
+                    } catch { completed(.failure(error.localizedDescription)) }
+                }
+            } else if let image = info[.originalImage] as? UIImage { completed(.photo(image)) }
+            else { completed(nil) }
         }
     }
 }

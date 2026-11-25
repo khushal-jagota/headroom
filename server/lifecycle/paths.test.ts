@@ -22,7 +22,8 @@ test('Darwin private runtime refuses foreign ownership, symlinks and public perm
     expect(lstatSync(path).mode & 0o777).toBe(0o755);
     rmSync(path, { recursive: true });
     const foreign = join(root, 'foreign');
-    mkdirSync(foreign, { mode: 0o755 });
+    mkdirSync(foreign);
+    chmodSync(foreign, 0o755);
     symlinkSync(foreign, path);
     expect(() => require_private_runtime_directory(path)).toThrow('private and owned');
     expect(lstatSync(foreign).mode & 0o777).toBe(0o755);

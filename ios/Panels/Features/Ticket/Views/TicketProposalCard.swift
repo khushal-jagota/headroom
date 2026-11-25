@@ -100,6 +100,7 @@ import Observation
             guidance: snapshot.guidance?.text, draftID: snapshot.guidance?.draftID ?? (attachments.isEmpty ? nil : snapshot.identity + ":guidance"),
             decisionDraftUpdatedAt: snapshot.guidance?.draftUpdatedAt,
             ticketTitle: snapshot.presentation.ticket.title, proposalFieldLabel: snapshot.label)
+        work.decisionConversationID = snapshot.presentation.ticket.conversationId
         work.decisionAttachments = attachments.isEmpty ? nil : attachments
         try enqueue(work, snapshot: snapshot, action: "approve")
     }
@@ -111,6 +112,7 @@ import Observation
             ticketID: snapshot.presentation.ticket.id, proposal: snapshot.proposal, guidance: guidance.text,
             draftID: guidance.draftID, decisionDraftUpdatedAt: guidance.draftUpdatedAt,
             ticketTitle: snapshot.presentation.ticket.title, proposalFieldLabel: snapshot.label)
+        work.decisionConversationID = snapshot.presentation.ticket.conversationId
         work.decisionAttachments = attachments.isEmpty ? nil : attachments
         try enqueue(work, snapshot: snapshot, action: "back")
     }

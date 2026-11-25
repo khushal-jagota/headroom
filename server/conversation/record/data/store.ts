@@ -80,6 +80,7 @@ import { apply_facts, participate, read_facts } from './lifecycle.ts';
 import { RecordSettlement } from '../settlement.ts';
 import type { RecordingSettlementOptions } from '../settlement.ts';
 import { facts_after_restart } from '../../logic/retained_turn.ts';
+import { VIEW_PROJECTION_VERSION } from '../../views/contracts.ts';
 import { append_projection } from '../../views/data/writer.ts';
 import {
   conversation_event_kinds_need_the_change_signal,
@@ -973,7 +974,16 @@ export class ConversationStore
           fact.status === S.refused || fact.status === S.unknown || fact.status === S.suppressed,
       ),
     );
-    append_projection(tx, written);
+    // While an old view replays, its events stay canonical. The rebuilder appends the
+    // tail under the same write lock before it installs the complete projection.
+    if (
+      latest === 0 ||
+      tx.get(
+        'SELECT 1 FROM conversation_view_state WHERE conversation_id=? AND projection_version=? AND through_sequence=?',
+        [conversation_id, VIEW_PROJECTION_VERSION, latest],
+      )
+    )
+      append_projection(tx, written);
     return written;
   }
 

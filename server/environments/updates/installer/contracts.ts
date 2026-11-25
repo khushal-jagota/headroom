@@ -28,6 +28,7 @@ export type CaptureOutcome =
   | { readonly kind: 'unavailable'; readonly detail: string };
 export interface InstallerEffects {
   validate_service?(): Promise<void>;
+  resume_interrupted?(): Promise<void>;
   recover_unchanged?(sha: string): Promise<boolean>;
   finish_success?(): Promise<string | null>;
   finish_rollback?(): Promise<string | null>;
@@ -38,7 +39,7 @@ export interface InstallerEffects {
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   /** After the swap and before start: the new app brings the stopped database to its head. */
   schema_steps(lifetime_lock_fd: number, backup_taken: boolean): Promise<void>;
-  healthy(sha: string): Promise<boolean>;
+  healthy(sha: string, prepared_attempt_id?: string): Promise<boolean>;
 }
 export interface InstallerIO {
   stderr(text: string): void;

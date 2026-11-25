@@ -17,6 +17,18 @@ function matches(verifier: string | null, credential: string): boolean {
   const stored = Buffer.from(verifier ?? '');
   return stored.length === supplied.length && timingSafeEqual(stored, supplied);
 }
+/** Trial authentication cannot enroll a machine or change its saved platform. */
+export function verify_enrolled_executor(
+  sql: ReadSql,
+  machine_id: string,
+  credential: string,
+): void {
+  const row = sql.get<{ credential_sha256: string | null }>(
+    'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
+    [machine_id],
+  );
+  if (!row || !matches(row.credential_sha256, credential)) throw forbidden();
+}
 function require_platform(value: unknown): asserts value is 'darwin' | 'linux' {
   if (value !== 'darwin' && value !== 'linux')
     throw new PlannerError('validation', 'Executor platform must be darwin or linux');
@@ -110,9 +122,9 @@ function issue(
   tx: TransactionSql,
   machine_id: string,
   incarnation: string | null,
+  credential = randomBytes(32).toString('base64url'),
 ): MachineCredentialGrant {
   const issued_at_ms = Date.now();
-  const credential = randomBytes(32).toString('base64url');
   tx.run(
     'UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,issued_incarnation=?,legacy_closed_at_ms=COALESCE(legacy_closed_at_ms,?),pending_credential=NULL WHERE machine_id=?',
     [digest(credential), issued_at_ms, incarnation, issued_at_ms, machine_id],
@@ -187,13 +199,38 @@ export function register_machine(
 export function issue_home_machine_credential(
   tx: TransactionSql,
   platform: unknown,
+  credential?: string,
 ): MachineCredentialGrant {
   require_platform(platform);
   tx.run(
     'INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?) ON CONFLICT(machine_id) DO NOTHING',
     [HOME_MACHINE_ID, platform],
   );
-  return issue(tx, HOME_MACHINE_ID, null);
+  return issue(tx, HOME_MACHINE_ID, null, credential);
+}
+
+export function has_home_credential(sql: ReadSql): boolean {
+  return Boolean(
+    sql.get<{ credential_sha256: string | null }>(
+      'SELECT credential_sha256 FROM machine_executor_credentials WHERE machine_id=?',
+      [HOME_MACHINE_ID],
+    )?.credential_sha256,
+  );
+}
+
+/** Recovering the first enrollment never rotates a previously issued machine secret. */
+export function enroll_missing_home_machine(
+  tx: TransactionSql,
+  platform: string,
+  credential: string,
+): void {
+  require_platform(platform);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error('Invalid home machine credential');
+  if (has_home_credential(tx)) {
+    verify_enrolled_executor(tx, HOME_MACHINE_ID, credential);
+    return;
+  }
+  issue_home_machine_credential(tx, platform, credential);
 }
 
 export function replace_credential(tx: TransactionSql, machine_id: string): MachineCredentialGrant {

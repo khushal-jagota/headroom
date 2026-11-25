@@ -1,5 +1,8 @@
 import { fixture } from '../../../tests/ticket_fixture.ts';
 import { afterEach, expect, it, vi } from 'vitest';
+import { text } from 'node:stream/consumers';
+import { BackendSnapshotService } from '../../../conversation/snapshot/service.ts';
+import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { load_claude_sdk } from '../../../drivers/claude/runtime/sdk.ts';
@@ -45,6 +48,58 @@ await load_claude_sdk();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it('an explicit machine card refresh checks the backend registry and returns the advisory', async () => {
+  const environment = new RecordingBackendProbeEnvironment();
+  const executable = '/synthetic/.local/lib/node_modules/@openai/codex/bin/codex';
+  environment.executables.set('codex', executable);
+  environment.writable_prefixes.add('/synthetic/.local');
+  environment.registry_versions.set('@openai/codex', '2.0.0');
+  environment.outcomes.set(JSON.stringify([executable, '--version']), {
+    exit_code: 0,
+    standard_output: '1.0.0',
+    standard_error: '',
+  });
+  const instance_id = parse_backend_instance_id('codex');
+  const catalog = new MacCatalog({
+    backend_ids: [instance_id],
+    snapshots: new BackendSnapshotService({
+      environment,
+      machine_catalog: true,
+      sources: [
+        {
+          instance_id,
+          executable_name: 'codex',
+          status: create_codex_status({ catalog: null, read_login_standing: null }),
+        },
+      ],
+    }),
+    stop_sources: async () => {},
+    on_failure: (error) => {
+      throw error;
+    },
+  });
+  async function card(refresh: boolean) {
+    const result = await catalog.read_result('card', { backend_key: instance_id, refresh });
+    try {
+      return JSON.parse(await text(await result.open())).model_list;
+    } finally {
+      await result.close();
+    }
+  }
+  try {
+    expect((await card(false)).update_advisory).toBeNull();
+    expect(environment.registry_lookups).toEqual([]);
+    expect((await card(true)).update_advisory).toMatchObject({
+      latest_version: '2.0.0',
+      update_available: true,
+    });
+    await card(false);
+    expect(environment.registry_lookups).toEqual(['@openai/codex']);
+  } finally {
+    await catalog.stop({ deadline: performance.now() / 1000 + 2 });
+  }
 });
 
 it('retains catalog reads before reentrant stop and refuses sources after immediate stop', async () => {

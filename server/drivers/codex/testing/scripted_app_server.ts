@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Synthetic Codex JSONL executable shared by the Python and TS parity drivers. */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -36,6 +36,7 @@ const answered = new Set<string>();
 const identity = { threadId: 'scripted-thread', turnId: 'scripted-turn' };
 
 const coreProof = process.env.UNIT17_CORE_PROOF === '1';
+const catalogModel = process.env.UNIT17_CATALOG_MODEL;
 const providerMode = process.env.UNIT17_PROVIDER_MODE ?? '';
 const providerControl = process.env.UNIT17_PROVIDER_CONTROL;
 const statePath = `${trace}.state.json`;
@@ -116,6 +117,24 @@ function coreMessage(message: Record<string, unknown>): boolean {
     send({ method: 'remoteControl/status/changed', params: {} });
   } else if (message.method === 'initialized') {
     /* one-way handshake */
+  } else if (message.method === 'model/list' && catalogModel) {
+    answer({
+      data: [
+        {
+          model: catalogModel,
+          displayName: catalogModel,
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
+          defaultReasoningEffort: 'low',
+          isDefault: true,
+        },
+      ],
+      nextCursor: null,
+    });
+  } else if (message.method === 'account/rateLimits/read' && catalogModel) {
+    answer({
+      rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 2000000000 } },
+    });
   } else if (message.method === 'thread/start') {
     answer({ thread: { id: nativeThread, ephemeral: false } });
     unconsumedNotifications('thread/started');
@@ -232,6 +251,25 @@ function coreMessage(message: Record<string, unknown>): boolean {
     const content = (params.input as { type: string; text?: string }[])
       .map((piece) => piece.text ?? '')
       .join('\n');
+    const artifact = /^Write the Worker artifact (before-update|after-rollback)\.txt\.$/m.exec(
+      content,
+    );
+    if (artifact) {
+      const directory = process.env.UNIT17_WORKER_ARTIFACTS;
+      if (!directory)
+        throw new Error('The scripted Worker requires its qualification artifact directory.');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, artifact[1] + '.txt'),
+        'Private production smoke attachment.\n',
+        { flag: 'wx' },
+      );
+    }
+    if (content.includes('Production smoke prompt.')) {
+      const path = /Attached file "smoke\.txt" .*? is available at (.+)\.$/m.exec(content)?.[1];
+      if (!path || readFileSync(path, 'utf8') !== 'Private production smoke attachment.\n')
+        throw new Error('The provider did not receive the smoke attachment bytes.');
+    }
     const scenario = /\[CASE:([^\]]+)\]/.exec(content)?.[1] ?? 'native';
     if (scenario === 'exit-before-reply') {
       process.stderr.write('codex_login::auth: invalid_grant before admission\n', () =>

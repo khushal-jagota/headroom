@@ -40,6 +40,7 @@ import {
   scope_contains_item,
 } from './data/storage.ts';
 export interface ConversationViewRuntime {
+  prioritize_view?(conversation_id: string): void;
   readonly database: Database;
   readonly store: ConversationRecordStore;
   readonly live_tail: ConversationLiveTail;
@@ -248,12 +249,11 @@ export function view_coverage(sql: ReadSql, conversation_id: string): number {
   );
   if (
     row.latest_sequence &&
-    (!projected || projected.projection_version !== VIEW_PROJECTION_VERSION)
+    (!projected ||
+      projected.projection_version !== VIEW_PROJECTION_VERSION ||
+      projected.through_sequence !== row.latest_sequence)
   ) {
     throw new ConversationViewUpgrading();
-  }
-  if (row.latest_sequence && projected!.through_sequence !== row.latest_sequence) {
-    throw new Error('Conversation projection is behind its events');
   }
   return row.latest_sequence;
 }
@@ -539,6 +539,7 @@ export function createConversationViewRoutes(
             return reply.code(error.status).send({ detail: error.message });
           }
           if (error instanceof ConversationViewUpgrading) {
+            getRuntime().prioritize_view?.(id(request));
             return reply.code(409).send({ detail: VIEW_UPGRADING_DETAIL });
           }
           throw error;

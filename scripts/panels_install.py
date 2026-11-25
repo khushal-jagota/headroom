@@ -595,7 +595,9 @@ def main() -> None:
         preflight(args, target)
         print("Host prerequisites passed. Select and check the release.", flush=True)
         with tempfile.TemporaryDirectory(prefix="panels-install-") as temporary:
-            work = Path(temporary)
+            # Node resolves the entry module. Keep argv on that same path even
+            # when macOS supplies a /var alias for its /private/var temp folder.
+            work = Path(temporary).resolve()
             archive, receipt = select_publication(args, target, work)
             if args.revision is not None and receipt["revision"] != args.revision:
                 raise ValueError("The publication differs from the requested --revision.")
