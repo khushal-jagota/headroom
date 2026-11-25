@@ -960,6 +960,32 @@ them into the decision body. An approval with pictures but no words still carrie
 the note's draft identity. An applied receipt clears them unless they changed since;
 a refusal keeps them with the note.
 
+## Video attachments
+
+The shared Attach sheet accepts video from Photo Library, Camera, and Files in
+conversations and in Review and Ticket notes. The phone copies the source into its
+persistent store before the picker releases it. Drafts and outgoing work keep file
+references instead of base64 video bytes.
+
+Clips up to 250 MiB keep their original encoding. Larger clips use the system video
+export at 1080p with HEVC, or H.264 when HEVC export is unavailable. The attachment
+shows preparation progress. A failed export or an output above 250 MiB leaves an
+error on the attachment and retains the draft. Remove or replace it before Send.
+
+The outbox streams the saved file through the same upload service as the web.
+A relaunch retains local files and upload checkpoints. Interrupted transfers start
+again with a fresh reservation. Once a message or decision submits, retries retain
+its identity and final upload references. Decision notes save their captured intent
+before upload, then freeze the request before submission. An applied receipt clears
+only the captured note. Finished-work expiry releases unowned local files.
+
+Host coverage reuses the offline transport fixture for interrupted transfer and lost
+reply recovery. `VideoPreparationTests` covers original preservation, compression,
+and an output that still exceeds the limit. The one-off `VideoAttachmentTests` walk
+uses the existing conversation fixture and `PanelsReview` scheme. It imports a short
+video into the owned Simulator library and verifies offline Send, relaunch, and one
+delivery after reconnect. It does not prove physical camera capture.
+
 ## Text entry and navigation
 
 Each visible screen owns focus for its conversation fields and decision notes.

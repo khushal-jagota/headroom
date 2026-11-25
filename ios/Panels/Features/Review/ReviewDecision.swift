@@ -215,6 +215,7 @@ struct ReviewCardExit: Equatable {
             ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text,
             draftID: guidance?.draftID ?? (attachments.isEmpty ? nil : revisionDraftID), decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionConversationID = ticket.conversationId
         work.decisionAttachments = attachments.isEmpty ? nil : attachments
         return enqueue(work, api: api)
     }
@@ -225,6 +226,7 @@ struct ReviewCardExit: Equatable {
         var work = PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
             ticketID: ticket.id, proposal: proposal, guidance: message, draftID: revisionDraftID,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionConversationID = ticket.conversationId
         work.decisionAttachments = attachments.isEmpty ? nil : attachments
         return enqueue(work, api: api)
     }
