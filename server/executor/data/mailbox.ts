@@ -737,7 +737,21 @@ export async function prepare_fetch(
           outcomes.set(
             key,
             attempt(() => {
-              const result = settlement_result(command.value, disposition, reason);
+              const settled = settlement_result(command.value, disposition, reason);
+              const result =
+                key === 'recipient_changed' && settled.child_outcome != null
+                  ? {
+                      ...settled,
+                      child_outcome: {
+                        ...settled.child_outcome,
+                        result: {
+                          ...settled.child_outcome.result,
+                          error_type: 'PromptWriteRefused',
+                          error_message: 'Recipient target or attempt changed before dispatch',
+                        },
+                      },
+                    }
+                  : settled;
               return { result, text: outcome_json(result) };
             }),
           );
@@ -1190,7 +1204,7 @@ export function late_steers_left_by_a_restart(
   const uncertain = sql.all<{ conversation_id: string; sequence: string; payload: string }>(
     "SELECT e.conversation_id,CAST(e.sequence AS TEXT) AS sequence,e.payload FROM conversation_events AS e WHERE e.kind='prompt_delivery_uncertain' " +
       'AND EXISTS(SELECT 1 FROM executor_commands own WHERE own.conversation_id=e.conversation_id AND own.machine_id=?) ' +
-      "AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
+      "AND NOT EXISTS (SELECT 1 FROM recipient_deliveries r WHERE r.conversation_id=e.conversation_id AND json_extract(r.payload,'$.sender_message_id')=json_extract(e.payload,'$.sender_message_id')) AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
       "AND later.sequence>e.sequence AND later.kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
       "AND json_extract(later.payload,'$.sender_message_id')=json_extract(e.payload,'$.sender_message_id')) ORDER BY e.conversation_id,e.sequence",
     [machine_id],

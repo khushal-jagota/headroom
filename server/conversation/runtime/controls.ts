@@ -1,5 +1,8 @@
+import { reconcile_recipient_message } from '../../message_delivery/recovery.ts';
 import {
   mark_recipient_attempt,
+  finish_recipient_delivery,
+  recipient_attempts_for,
   with_recipient_attempts,
 } from '../../message_delivery/data/recipient_deliveries.ts';
 import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
@@ -431,6 +434,10 @@ async function attempt_steer(
     adapter_error,
   };
 }
+const late_steer_messages = new WeakMap<Promise<void>, string | null>();
+export function late_steer_owns_message(state: ConversationState, id: string | null): boolean {
+  return [...state.late_steers].some((task) => late_steer_messages.get(task) === id);
+}
 export function watch_late_steer(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -451,6 +458,8 @@ export function watch_late_steer(
       );
     }
     if (host.shutting_down || generation !== state.late_steer_generation) return;
+    state.settlement_tasks.add(task);
+    void task.finally(() => state.settlement_tasks.delete(task)).catch(() => {});
     if (never_arrived) {
       await state.lock.run(() => {
         if (host.shutting_down || generation !== state.late_steer_generation) return;
@@ -458,18 +467,31 @@ export function watch_late_steer(
           message.sender_message_id === null ||
           !state.held_prompts.some((held) => held.sender_message_id === message.sender_message_id)
         ) {
-          host.hold_prompt(
+          const fate = host.hold_prompt(
             state,
             { ...message, recording_receipt: null, queue_reason: PromptQueueReason.steer_refused },
             position_after(state, held_before),
           );
+          for (const attempt of recipient_attempts_for(
+            host.options.store.start_admission_database,
+            state.record.conversation_id,
+            [message],
+          ))
+            finish_recipient_delivery(host.options.store.start_admission_database, attempt, fate);
         }
       });
     }
     state.late_steers.delete(task);
+    if (!never_arrived && !host.shutting_down)
+      await reconcile_recipient_message(
+        host,
+        state.record.conversation_id,
+        message.sender_message_id,
+      );
     if (!host.shutting_down && generation === state.late_steer_generation)
       await host.drain_held_prompts(state);
   })();
+  late_steer_messages.set(task, message.sender_message_id);
   state.late_steers.add(task);
   void task.finally(() => state.late_steers.delete(task)).catch(() => {});
 }

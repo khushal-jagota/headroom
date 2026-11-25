@@ -142,7 +142,7 @@ async function remote_fixture(early_result = false) {
   const prompts: WireValue<'ChildCommand'>[] = [];
   let steer = async (
     _command: WireValue<'ChildCommand'>,
-  ): Promise<WireValue<'CommandOutcome'> | null> => {
+  ): Promise<WireValue<'CommandOutcome'> | import('./vps_remote_child.ts').LateSteer | null> => {
     throw new Error('unexpected steer');
   };
   let may_have_sent = false;
@@ -187,6 +187,7 @@ async function remote_fixture(early_result = false) {
     })),
   });
   let retained_pending: WireValue<'ChildCommand'> | null = null;
+  let retained_turn: WireValue<'TurnToken'> = { conversation_id: 'core', turn_number: 0 };
   const proxy = new MacRemoteChild(reference, commands, skill_snapshot);
   const factory = Object.assign(() => proxy, {
     recover: () =>
@@ -194,7 +195,7 @@ async function remote_fixture(early_result = false) {
     retained_runs: () => [
       new RetainedBackendRun({
         reference,
-        turn: retained_pending?.turn ?? { conversation_id: 'core', turn_number: 0 },
+        turn: retained_pending?.turn ?? retained_turn,
         pending_prompt: retained_pending,
         delivery_uncertain: false,
         retirement_confirmed: false,
@@ -266,14 +267,17 @@ async function remote_fixture(early_result = false) {
   };
   return {
     ...f,
-    restore: () => {
-      retained_pending = command;
-      return setup({
+    restore: (pending = true) => {
+      retained_pending = pending ? command : null;
+      retained_turn = command.turn!;
+      const restarted = setup({
         restart_of: f.database,
         core: {
           backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
         },
       });
+      runs.conversations = restarted.core;
+      return restarted;
     },
     reference,
     proxy,
@@ -954,6 +958,102 @@ test('a late result after recovery settles its original submission without anoth
         ]),
       )?.state,
     ).toBe('delivered');
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 2 });
+    await f.close();
+  }
+});
+
+// A steer can outlive the Home observer without a pending first-prompt reservation.
+// Its exact command link must settle the original input after reconstruction.
+test('a recovered steer settles from its exact late native result without resending', async () => {
+  const { LateSteer } = await import('./vps_remote_child.ts');
+  const { link_recipient_command } =
+    await import('../message_delivery/data/recipient_deliveries.ts');
+  const { resume_recipient_deliveries } = await import('../message_delivery/recovery.ts');
+  const { text_message_content } = await import('../conversation/message_content.ts');
+  const f = await remote_fixture();
+  await f.finish({
+    command_id: f.command.command_id,
+    child: f.reference,
+    disposition: 'succeeded',
+    result: {
+      kind: 'prompt_accepted',
+      composed_content_delivered: true,
+      agent_acceptance_proven: true,
+    },
+  });
+  let steer_command: WireValue<'ChildCommand'> | null = null;
+  let calls = 0;
+  f.on_steer(async (command) => {
+    calls++;
+    steer_command = command;
+    const envelope = {
+      command_id: command.command_id,
+      command_sequence: 2,
+      created_at_vps_ms: 2,
+      child_command: command,
+    };
+    f.database.write((tx) => {
+      tx.run(
+        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id) VALUES(?,?,'steer','core',?,1,?,'delivered',2,?)",
+        [
+          command.command_id,
+          f.reference.executor_incarnation,
+          f.reference.child_id,
+          JSON.stringify(envelope),
+          ORIGINAL_MAC_MACHINE_ID,
+        ],
+      );
+      link_recipient_command(tx, command.command_id, 'steer');
+    });
+    return new LateSteer(new Promise(() => {}));
+  });
+  expect(
+    (
+      await f.core.send('core', text_message_content('late correction'), {
+        sender_label: 'Owner',
+        sender_message_id: 'recovered-steer',
+        mode: 'steer',
+      })
+    ).constructor.name,
+  ).toBe('PromptDeliveryUncertain');
+  const command = steer_command!;
+  const restarted = f.restore(false);
+  try {
+    resume_recipient_deliveries(restarted.core);
+    expect(f.mailbox.late_steers_left_by_a_restart()).toEqual([]);
+    const outcome = {
+      command_id: command.command_id,
+      child: f.reference,
+      disposition: 'succeeded' as const,
+      result: { kind: 'steer_accepted', composed_content_delivered: true },
+    };
+    const result = { command_id: command.command_id, child_outcome: outcome, model_list: null };
+    f.database.write((tx) =>
+      tx.run("UPDATE executor_commands SET state='finished',outcome_json=? WHERE command_id=?", [
+        JSON.stringify(result),
+        command.command_id,
+      ]),
+    );
+    await f.mailbox.publish_settlements([
+      [
+        {
+          command_id: command.command_id,
+          command_sequence: 2,
+          created_at_vps_ms: 2,
+          child_command: command,
+        },
+        result,
+      ],
+    ]);
+    await vi.waitFor(() =>
+      expect(restarted.store.sender_message_outcome('core', 'recovered-steer')?.payload.kind).toBe(
+        'prompt',
+      ),
+    );
+    expect(calls).toBe(1);
+    expect(f.prompts).toHaveLength(1);
   } finally {
     await restarted.core.shutdown({ deadline: performance.now() / 1000 + 2 });
     await f.close();

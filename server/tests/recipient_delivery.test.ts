@@ -16,6 +16,7 @@ test('durable admission releases two senders and another recipient before a nati
   const child = await f.child;
   await child.wait_for_barrier('native');
   try {
+    const duplicate = lock.run(() => f.send('first', 'first'));
     expect(await lock.run(() => f.send('second', 'second'))).toBeInstanceOf(PromptDeliveryQueued);
     expect(
       f.database
@@ -43,7 +44,7 @@ test('durable admission releases two senders and another recipient before a nati
     await independent;
     expect((await f.children[1].inspect()).delivered_text).toEqual(['independent']);
     await child.release('native');
-    await first;
+    await Promise.all([first, duplicate]);
     expect((await child.inspect()).delivered_text).toEqual(['Role\n\nfirst']);
   } finally {
     await child.release('native');
@@ -58,6 +59,14 @@ test('restart restores held prompts in order and delivers their real content onc
   await f.send('running');
   await f.send('held one', 'one');
   await f.send('held two', 'two');
+  f.database.write((tx) => {
+    tx.run(
+      "UPDATE recipient_deliveries SET state='dispatching',native_transport='mailbox' WHERE submission_id='core:one'",
+    );
+    tx.run(
+      "UPDATE conversation_held_prompts SET dispatching=1,dispatch_turn=2 WHERE json_extract(payload,'$.sender_message_id')='one'",
+    );
+  });
   await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   const restarted = setup({ restart_of: f.database });
   try {
@@ -194,9 +203,11 @@ test.each([
       );
     } else {
       expect(restarted.children).toHaveLength(0);
-      expect(restarted.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
-        state === 'local_failure' ? 'prompt_delivery_refused' : 'prompt_delivery_uncertain',
-      ]);
+      await vi.waitFor(() =>
+        expect(restarted.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+          state === 'local_failure' ? 'prompt_delivery_refused' : 'prompt_delivery_uncertain',
+        ]),
+      );
     }
     resume_recipient_deliveries(restarted.core);
     expect(restarted.children).toHaveLength(

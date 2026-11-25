@@ -1,3 +1,4 @@
+import { reconcile_recipient_native_result } from '../../message_delivery/recovery.ts';
 import { recipient_messages_for_command } from '../../message_delivery/data/recipient_deliveries.ts';
 import { prompt_row, refused_row, uncertain_row } from './messages.ts';
 import { PromptDeliveryRefusalReason } from '../contracts.ts';
@@ -159,6 +160,7 @@ export async function reconcile_remote_command(
     !same_reference(command.child, outcome.child)
   )
     return;
+  if (command.operation === 'steer') await reconcile_recipient_native_result(host, command);
   const failed_prompt =
     command.operation === 'write_prompt' &&
     outcome.disposition !== 'succeeded' &&

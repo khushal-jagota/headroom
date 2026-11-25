@@ -141,6 +141,7 @@ async function send_owned(
       state.record.conversation_id,
       message,
     );
+    state.admitted_sender_messages.get(message.sender_message_id!)?.admitted?.resolve();
     release_admission_leases();
     host.start_admission.handoff(message.sender_message_id);
     await host.ensure_local_custody(state);
@@ -252,6 +253,7 @@ async function send_owned(
       await state.lock.run(() => {
         const admission = state.admitted_sender_messages.get(message.sender_message_id!);
         state.admitted_sender_messages.delete(message.sender_message_id!);
+        admission?.admitted?.resolve();
         admission?.settled.resolve();
       });
     }
@@ -266,6 +268,7 @@ async function admit_sender(
   const identity = message.sender_message_id;
   if (identity === null) return null;
   while (true) {
+    if (host.shutting_down) throw new DOMException('Recipient observation stopped.', 'AbortError');
     const observation = await state.lock.run(() => {
       const admission =
         state.sender_messages_being_delivered.get(identity) ??
@@ -273,8 +276,10 @@ async function admit_sender(
       if (admission) {
         if (!same_message(message, admission.message))
           throw new Error('sender_message_id already names a different message');
+        const committing = admission.admitted !== undefined && !admission.admitted.settled;
+        if (!committing) release_admission_leases();
         return {
-          wait: admission.settled.promise,
+          wait: committing ? admission.admitted!.promise : admission.settled.promise,
           fate: null,
           sequence: state.record.latest_sequence,
         };
@@ -313,7 +318,11 @@ async function admit_sender(
         state.held_prompts.some((held) => held.sender_message_id === identity)
       )
         return false;
-      state.admitted_sender_messages.set(identity, { message, settled: new Deferred<void>() });
+      state.admitted_sender_messages.set(identity, {
+        message,
+        admitted: new Deferred<void>(),
+        settled: new Deferred<void>(),
+      });
       return true;
     });
     if (admitted) return null;
