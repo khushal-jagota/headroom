@@ -46,7 +46,7 @@ extension APIClient {
         request.setValue(status.appSha, forHTTPHeaderField: "X-Panels-App-SHA")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let detail = object["detail"] as? String {
             throw APIError(status: http.statusCode, message: detail)

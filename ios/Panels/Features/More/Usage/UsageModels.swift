@@ -191,7 +191,7 @@ extension APIClient {
         var request = try self.request(try url(path))
         request.httpMethod = "POST"
         request.timeoutInterval = 120
-        return try await session.data(for: request)
+        return try await self.data(for: request)
     }
 }
 

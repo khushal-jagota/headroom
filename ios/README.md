@@ -52,7 +52,7 @@ Control Center or a notification pull-down, keeps the streams. A stream with no 
 for 35 seconds fails; the server's heartbeat every 15 seconds keeps a good one open.
 A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
-then 8 seconds and show Reconnecting. Then saved work drains, as before.
+then 8 seconds. Short interruptions stay quiet. A sustained loss of server contact shows the native full-screen cover described in [Saved data and interrupted connections](Offline.md). Then saved work drains, as before.
 
 Ordinary responses have one shared owner per server and exact resource key. Mounted
 screens acquire handles for their documents. A payload-free change signal probes
@@ -259,8 +259,8 @@ Use one-off Simulator reviews for appearance and visual polish.
 | `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
 | `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Chief and Review through the Sidebar, reply, and follow the conversation route. |
 | `ReviewMessagesTests/testSplitCardsSkipAndReturn` | Act on a Review item and return to skipped work. |
-| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once with no cover or status note. Try Again resends a refused message once. |
-| `ServerReachabilityTests/testUnreachableServerShowsNoCoverAndRecovers` | Lose the server: no cover appears, the app stays usable, and Review opens again without a relaunch. |
+| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once while transient failures stay quiet. Try Again resends a refused message once. |
+| `ServerReachabilityTests/testUnreachableServerShowsCoverAndRecovers` | A short loss stays quiet; sustained loss covers an open sheet. Continue offline retains saved work, and recovery clears the cover and sends queued work once. |
 
 Discover the native tests before a release run. Discovery must find all five
 methods. A selection that executes zero tests fails, even if Xcode returns success.
@@ -692,8 +692,8 @@ recording, shows it as done at once and sends it while the app is in the foregro
 Review, Chief, Orchestrator, Ticket and artifact lists share a labeled
 delayed block skeleton on the first load. The retry screen appears only when nothing
 has loaded and the server refused the read; a read that cannot reach the server
-keeps the skeleton. Failed refreshes keep the last content visible, including an
-empty result, with no note. Retry buttons remain disabled until their request
+keeps the skeleton until sustained loss requires the shared connection cover.
+Failed refreshes keep the last content visible, including an empty result, with no local note. Retry buttons remain disabled until their request
 finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull

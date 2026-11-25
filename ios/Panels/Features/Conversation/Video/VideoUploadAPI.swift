@@ -13,7 +13,7 @@ extension APIClient {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(Reservation(destination: destination, filename: video.fileName, byteCount: video.byteCount))
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(VideoUploadStatus.self, from: data)
     }
@@ -25,7 +25,7 @@ extension APIClient {
     func cancelVideoUpload(_ id: String) async throws {
         var request = try self.request(try url("/api/conversation/video-uploads/\(id)"))
         request.httpMethod = "DELETE"
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
     }
 
@@ -34,7 +34,7 @@ extension APIClient {
         request.httpMethod = "PUT"
         request.timeoutInterval = 300
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await session.upload(for: request, fromFile: video.fileURL)
+        let (data, response) = try await self.upload(for: request, fromFile: video.fileURL)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(VideoUploadStatus.self, from: data)
     }

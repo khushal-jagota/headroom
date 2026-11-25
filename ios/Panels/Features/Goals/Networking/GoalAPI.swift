@@ -27,7 +27,7 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(Response.self, from: data)
     }

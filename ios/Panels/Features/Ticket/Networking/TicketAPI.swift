@@ -44,7 +44,7 @@ extension APIClient {
         request.httpBody = try JSONEncoder().encode(body)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return data
     }
