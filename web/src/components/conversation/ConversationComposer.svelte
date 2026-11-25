@@ -24,7 +24,7 @@
   import { AttachmentTransfers, pendingUploadsAsPieces, releaseLocalPreview, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
   import { rememberSentAttachments } from "../../lib/conversation/localSentMedia";
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
-  import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
+  import { LocalComposerSends, resumeLocalSendsAfterUpdate, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
   import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
   import { attachmentSurface } from "./composer/attachmentSurface";
@@ -301,6 +301,7 @@
   function videoChanged(): void {
     if (destroyed) return;
     const previousEntries = localSends;
+    resumeLocalSendsAfterUpdate(sendQueue.entries);
     pendingVideos = [...pendingVideos];
     localSends = [...sendQueue.entries];
     rememberCurrentUploadDraft();
@@ -317,6 +318,7 @@
     attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
     sendQueue.entries = recallLocalSends(localStorageKey);
     for (const entry of sendQueue.entries) reserveLocalSend(entry);
+    transfers.restore([...pendingVideos, ...sendQueue.entries.flatMap(entry => entry.attempt.draftBeforeSend.pendingVideos ?? [])]);
     videoChanged();
     for (const entry of [...sendQueue.entries]) {
       if (entry.phase !== "dispatching") continue;
@@ -332,7 +334,8 @@
       }
     }
     if (destroyed || restoringKey !== localStorageKey || restoringQueue !== sendQueue) return;
-    for (const video of pendingVideos) if (video.uploadId && video.phase === "validating") void transfers.validate(video);
+    for (const video of [...pendingVideos, ...sendQueue.entries.flatMap(entry => entry.attempt.draftBeforeSend.pendingVideos ?? [])])
+      if (video.uploadId && video.phase === "validating") void transfers.validate(video);
     videoChanged();
   }
 
@@ -1279,6 +1282,8 @@
   });
 
   onMount(() => {
+    const recoveredWrite = (): void => { void sendQueue.reconcileRestored(reconcileLocalSend); };
+    window.addEventListener("panels:update-write-recovered", recoveredWrite);
     void restoreLocalState();
     voiceSupported = voiceCaptureSupported();
     voice = createVoiceCapture({
@@ -1287,6 +1292,7 @@
     });
     return () => {
       destroyed = true;
+      window.removeEventListener("panels:update-write-recovered", recoveredWrite);
       transfers.dispose();
       sendQueue.dispose();
       onPendingSends?.([]);

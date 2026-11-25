@@ -19,6 +19,8 @@ import {
   ADDRESS_PAGE_HOST,
   ADDRESS_PAGE_URL,
   SCREENS_HOST,
+  SCREEN_RECOVERY_HOST,
+  SCREEN_RECOVERY_URL,
   SCREENS_URL,
   handleAppScheme,
   PACKED,
@@ -53,6 +55,7 @@ let startingFirstWindow = true;
 let preparingScreens = 0;
 let shellUpdates: ShellUpdates | undefined;
 let screens: ScreenController;
+let screenRecovery = false;
 let screenInterval: ReturnType<typeof setInterval> | undefined;
 
 function createWindow(): BrowserWindow {
@@ -106,7 +109,7 @@ function sendWindowState(window: BrowserWindow): void {
 
 function openWindow(url: string): BrowserWindow {
   mainWindow ??= createWindow();
-  void mainWindow.loadURL(url);
+  void mainWindow.loadURL(screenRecovery && new URL(url).host === SCREENS_HOST ? SCREEN_RECOVERY_URL : url);
   return mainWindow;
 }
 
@@ -119,7 +122,7 @@ async function openScreensWindow(url: string, reconnect = false): Promise<Browse
     if (reconnect) await screens.connect();
     else await screens.prepare();
     if (window.isDestroyed()) return null;
-    void window.loadURL(url);
+    void window.loadURL(screenRecovery ? SCREEN_RECOVERY_URL : url);
     return window;
   } finally { preparingScreens--; }
 }
@@ -207,7 +210,8 @@ function refuseLink(window: BrowserWindow, link: string, reason: string): void {
   void dialog.showMessageBox(window, { type: 'info', message: 'Panels could not open this link.', detail: `${link}\n\n${reason}` });
 }
 
-// Calls that act answer only the separate setup origin. An artifact can invoke the
+// Setup actions answer only the setup origin. Recovery retry has its own origin below.
+// An artifact can invoke the
 // parent's bridge as the top app frame, so a frame check alone is not sufficient.
 function fromAddressPage(event: IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
@@ -217,6 +221,13 @@ function fromAddressPage(event: IpcMainInvokeEvent): boolean {
 }
 
 function answerBridgeCalls(): void {
+  ipcMain.handle(bridgeChannel('retryScreens'), async (event) => {
+    const frame = event.senderFrame;
+    if (!frame || frame !== event.sender.mainFrame || new URL(frame.url).host !== SCREEN_RECOVERY_HOST
+      || new URL(frame.url).protocol !== 'panels:') throw new Error('Only recovery can retry screens.');
+    await screens.retry();
+    return !screens.recovery;
+  });
   ipcMain.handle(bridgeChannel('localServerAddress'), (event) => {
     if (!fromAddressPage(event)) throw new Error('Only setup can read the local address.');
     return localServerAddress();
@@ -346,7 +357,24 @@ void app.whenReady().then(async () => {
   if (app.isPackaged && process.platform === 'darwin') shellUpdates = startShellUpdates(serverAddress);
   screens = new ScreenController(new ScreenStore(join(app.getPath('userData'), 'screens'), PACKED), {
     address: serverAddress,
-    canActivate: () => startingFirstWindow || preparingScreens > 0 || (mainWindow !== null && isScreensDocument(mainWindow.webContents.getURL())),
+    canActivate: () => startingFirstWindow || preparingScreens > 0 || (mainWindow !== null && (isScreensDocument(mainWindow.webContents.getURL()) || new URL(mainWindow.webContents.getURL() || ADDRESS_PAGE_URL).host === SCREEN_RECOVERY_HOST)),
+    prepareActivation: async () => {
+      const window = mainWindow;
+      if (!window || !isScreensDocument(window.webContents.getURL())) return true;
+      try {
+        return await window.webContents.executeJavaScript('window.__panelsPrepareScreenReplacement?.()') !== false;
+      } catch (error) {
+        console.warn('Desktop screen handoff:', error);
+        return false;
+      }
+    },
+    cancelActivation: async () => {
+      const window = mainWindow;
+      if (!window || !isScreensDocument(window.webContents.getURL())) return;
+      try {
+        await window.webContents.executeJavaScript('window.__panelsCancelScreenReplacement?.()');
+      } catch (error) { console.warn('Desktop screen handoff cancellation:', error); }
+    },
     request: (path, signal) => {
       const url = new URL(path, SCREENS_URL);
       return forward(new Request(url, { signal }), url);
@@ -354,10 +382,19 @@ void app.whenReady().then(async () => {
     requireBridgeVersion: (required) => shellUpdates?.requireBridgeVersion(required) ?? Promise.resolve(required <= DESKTOP_BRIDGE_VERSION),
     present: (value, reload) => {
       selectScreenPresentation(value);
-      if (reload && mainWindow && new URL(mainWindow.webContents.getURL() || ADDRESS_PAGE_URL).host === SCREENS_HOST) {
-        // A reload, not loadURL: the screens route in the hash, and loading the same URL with
-        // a hash only moves within the old document, so the new copy would never start.
-        mainWindow.webContents.reload();
+      screenRecovery = value.screenRecovery;
+      if (!reload || !mainWindow) return;
+      const window = mainWindow;
+      const host = new URL(window.webContents.getURL() || ADDRESS_PAGE_URL).host;
+      if (![SCREENS_HOST, SCREEN_RECOVERY_HOST].includes(host)) return;
+      if (screenRecovery) {
+        // Recovery belongs to the native shell and survives a failed renderer.
+        void window.loadURL(SCREEN_RECOVERY_URL);
+      } else if (host === SCREEN_RECOVERY_HOST) {
+        void window.loadURL(lastScreenUrl());
+      } else {
+        // The route lives in the hash. A same-URL load would not replace the document.
+        window.webContents.reload();
       }
     },
   });

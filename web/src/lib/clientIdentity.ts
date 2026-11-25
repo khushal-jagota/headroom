@@ -1,11 +1,14 @@
 import type { ClientIdentity } from '../../../server/client_versions/contracts';
 import { REQUEST_LIMIT_MS } from './requestLimit/config';
 import { signalWithLimit } from './requestLimit/limit';
+import { get } from 'svelte/store';
+import { noteUpdateRefusal, updatePause, updateRefusal, waitForUpdateWrites } from './updates/writePause';
+import { isUpdateScreenReplacement, retainRefusedWrite, settleRefusedWrite } from './updates/handoff';
 
 const DEVICE_KEY = 'panels.client-device-id';
 let transientDeviceId: string | null = null;
 
-function newDeviceId(): string {
+export function randomClientId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
@@ -14,11 +17,11 @@ function deviceId(): string {
   try {
     const stored = localStorage.getItem(DEVICE_KEY);
     if (stored) return stored;
-    const id = transientDeviceId ??= newDeviceId();
+    const id = transientDeviceId ??= randomClientId();
     localStorage.setItem(DEVICE_KEY, id);
     return id;
   } catch {
-    return transientDeviceId ??= newDeviceId();
+    return transientDeviceId ??= randomClientId();
   }
 }
 
@@ -42,8 +45,7 @@ export function clientIdentityHeaders(headers?: HeadersInit): Record<string, str
  * Every request has a time limit. A request that names no limit gets the ordinary one.
  * At the limit the request ends with a `RequestLimitError`.
  */
-export function clientFetch(input: string, init: RequestInit = {}, limitMs = REQUEST_LIMIT_MS): Promise<Response> {
-  init = { ...init, signal: signalWithLimit(limitMs, init.signal) };
+export async function clientFetch(input: string, init: RequestInit = {}, limitMs = REQUEST_LIMIT_MS): Promise<Response> {
   const relative = /^\/(api|files)(\/|$)/.test(input);
   const sameServer = typeof location !== 'undefined' && (() => {
     try {
@@ -51,5 +53,46 @@ export function clientFetch(input: string, init: RequestInit = {}, limitMs = REQ
       return url.origin === location.origin && /^\/(api|files)(\/|$)/.test(url.pathname);
     } catch { return false; }
   })();
-  return fetch(input, relative || sameServer ? { ...init, headers: clientIdentityHeaders(init.headers) } : init);
+  const local = relative || sameServer;
+  return withUpdateWritePause(input, init, () => fetch(input, {
+    ...init,
+    signal: signalWithLimit(limitMs, init.signal),
+    ...(local ? { headers: clientIdentityHeaders(init.headers) } : {})
+  }));
+}
+
+/** Fetch and progress uploads share one admission boundary. Transport failures never retry. */
+export async function withUpdateWritePause(input: string, init: RequestInit, dispatch: () => Promise<Response>): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  let path = input;
+  let local = /^\/(api|files)(\/|$)/.test(input);
+  if (!local && typeof location !== "undefined") {
+    try {
+      const url = new URL(input, location.href);
+      path = url.pathname;
+      local = url.origin === location.origin && /^\/(api|files)(\/|$)/.test(path);
+    } catch { /* External requests do not wait on Panels admission. */ }
+  }
+  const updateWrite = local && !["GET", "HEAD", "OPTIONS"].includes(method)
+    && !path.startsWith("/api/updates") && !path.startsWith("/api/executor/");
+  let retained: string | null = null;
+  try {
+    for (;;) {
+      if (updateWrite && (get(updatePause).blocked || isUpdateScreenReplacement())) {
+        retained ??= await retainRefusedWrite(input, init);
+        await waitForUpdateWrites(init.signal);
+      }
+      // Remove before dispatch: a network failure after this point has an uncertain outcome.
+      if (retained !== null) { await settleRefusedWrite(retained); retained = null; }
+      const response = await dispatch();
+      const refusal = updateWrite ? await updateRefusal(response) : null;
+      if (refusal === null) return response;
+      noteUpdateRefusal(refusal);
+      retained = await retainRefusedWrite(input, init);
+      await waitForUpdateWrites(init.signal);
+    }
+  } catch (error) {
+    if (retained !== null && !isUpdateScreenReplacement()) await settleRefusedWrite(retained);
+    throw error;
+  }
 }

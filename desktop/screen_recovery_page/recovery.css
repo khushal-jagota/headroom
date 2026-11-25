@@ -1,0 +1,6 @@
+.window-top-row { position: fixed; inset: 0 0 auto; height: var(--window-top-row); -webkit-app-region: drag; }
+main { position: absolute; inset: var(--window-top-row) 0 0; display: grid; place-items: center; padding: var(--space-6); }
+section { width: min(var(--desktop-update-width), 100%); text-align: center; }
+h1 { font-size: var(--type-page-title); font-weight: var(--weight-page-title); color: var(--tone-strong); margin: 0; }
+p { color: var(--tone-secondary); margin: var(--space-3) 0 var(--space-5); }
+#result { font-size: var(--type-small); }

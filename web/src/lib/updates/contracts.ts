@@ -12,6 +12,8 @@ export type AvailableUpdate = { app_sha: string; compatibility?: ClientCompatibi
 export type UpdateAttempt = UpdateAttemptView;
 
 export type UpdateStatus = {
+  /** The server admits ordinary writes, including conversation sends. */
+  writes_admitted?: boolean;
   client_versions: readonly ClientIdentity[];
   machines: readonly MachineUpdateState[];
   available_machines: readonly MachineUpdateState[];

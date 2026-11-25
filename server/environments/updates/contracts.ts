@@ -120,6 +120,8 @@ export interface MachineUpdateMachine {
   identity: ExecutorIdentity | null;
 }
 export interface UpdateStatus {
+  /** Both ordinary writes and new sends are admitted. */
+  writes_admitted: boolean;
   machines: readonly MachineUpdateState[];
   available_machines: readonly MachineUpdateState[];
   interruption: UpdateInterruption;

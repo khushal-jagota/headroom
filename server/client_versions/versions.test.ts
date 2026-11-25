@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,8 @@ import { CLIENT_COMPATIBILITY, supported_machine_versions } from './policy.ts';
 import { parse_client_identity } from './identity.ts';
 import { client_version_meta } from './meta.ts';
 import { list_client_versions } from './data.ts';
+import { UpdateBarrier } from '../environments/update_barrier.ts';
+import { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 
 // Distinct risk: a native forward without Origin bypasses compatibility, or a rejected
 // declaration disappears from diagnostics. Reuse Fastify inject and the schema seed.
@@ -27,7 +30,9 @@ test('declared versions gate incompatible reads and writes and accepted device v
     PLAN_APP_SHA: 'a'.repeat(40),
   });
   const clock = buildClock(config);
-  installMiddleware(app, config, undefined, undefined, undefined, { database, clock });
+  const barrier = new UpdateBarrier(join(root, 'barrier'));
+  const admission = new WorkspaceAdmission();
+  installMiddleware(app, config, admission, undefined, barrier, { database, clock });
   await registerCoreRoutes(
     app,
     config,
@@ -40,6 +45,26 @@ test('declared versions gate incompatible reads and writes and accepted device v
   app.post('/api/write', async () => {
     writes++;
     return { ok: true };
+  });
+  let close_during_content = false;
+  let escaped_start: (() => boolean) | null = null;
+  app.post('/api/chief/conversation/send', async () => {
+    // Cross the real boundary: admission closes after the handler accepts the send.
+    if (close_during_content) {
+      await Promise.resolve();
+      admission.close_starts();
+    }
+    const retained_context = AsyncLocalStorage.snapshot();
+    escaped_start = () =>
+      retained_context(() => admission.operation((admitted) => admitted, { starts: true }));
+    return admission.operation(
+      (admitted) => {
+        if (!admitted) throw admission.refusal();
+        writes++;
+        return { ok: true };
+      },
+      { starts: true },
+    );
   });
   app.get('/api/ticket-status', async () => ({ ticket_status: 'agent_owned' }));
   const identity = {
@@ -168,6 +193,37 @@ test('declared versions gate incompatible reads and writes and accepted device v
       headers: { 'x-panels-app-sha': 'b'.repeat(40) },
     });
     expect(old_page.statusCode).toBe(409);
+    expect(old_page.headers['x-panels-write-admitted']).toBe('false');
+    expect(old_page.json().error.code).toBe('screens_outdated');
+    // Only explicit pre-admission refusals permit the client to retain and retry a write.
+    const before_refusals = writes;
+    admission.close_starts();
+    const draining = await app.inject({ method: 'POST', url: '/api/chief/conversation/send' });
+    expect(draining.statusCode).toBe(503);
+    expect(draining.headers['x-panels-write-admitted']).toBe('false');
+    expect(draining.json().error.code).toBe('update_in_progress');
+    expect(writes).toBe(before_refusals);
+    admission.reopen();
+    close_during_content = true;
+    const accepted = await app.inject({ method: 'POST', url: '/api/chief/conversation/send' });
+    expect(accepted.statusCode).toBe(200);
+    expect(writes).toBe(before_refusals + 1);
+    // An inherited async scope must not authorize a start after the handler settles.
+    expect(escaped_start!()).toBe(false);
+    admission.reopen();
+    barrier.close();
+    const frozen = await app.inject({ method: 'POST', url: '/api/write' });
+    expect(frozen.statusCode).toBe(503);
+    expect(frozen.headers['x-panels-write-admitted']).toBe('false');
+    expect(frozen.json().error.code).toBe('update_in_progress');
+    barrier.reopen();
+    admission.seal();
+    const sealed = await app.inject({ method: 'POST', url: '/api/write' });
+    expect(sealed.statusCode).toBe(503);
+    expect(sealed.headers['x-panels-write-admitted']).toBe('false');
+    expect(sealed.json().error.code).toBe('update_in_progress');
+    expect(writes).toBe(before_refusals + 1);
+    admission.reopen();
   } finally {
     await app.close();
     database.close();
