@@ -56,7 +56,10 @@ export async function send(
   return host.workspace_admission.operation(
     async (admitted) => {
       if (!admitted)
-        throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
+        throw new PlannerError(
+          'update_in_progress',
+          'Workspace admission is closed for an owner update.',
+        );
       if (options.record_refusal && options.sender_message_id == null)
         throw new Error('record_refusal requires a sender_message_id');
       host.require_runtime_ownership();
@@ -543,7 +546,10 @@ export async function record_events_transaction<T>(
 ): Promise<T> {
   return host.workspace_admission.operation(async (admitted) => {
     if (!admitted)
-      throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
+      throw new PlannerError(
+        'update_in_progress',
+        'Workspace admission is closed for an owner update.',
+      );
     const state = host.conversation_state(conversation_id);
     if (!state) throw new Error('conversation is absent');
     return own_settlement(

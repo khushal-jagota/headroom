@@ -234,7 +234,10 @@ export class InMemoryConversationSystem implements ConversationSystem {
   }
   async start_conversation(request: ConversationStartRequest): Promise<void> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
+      throw new PlannerError(
+        'update_in_progress',
+        'Workspace admission is closed for an owner update.',
+      );
     const resolved = resolve_conversation_start_request(request);
     if (this._conversations.has(resolved.conversation_id))
       throw new ConversationAlreadyStarted(resolved.conversation_id);
@@ -262,7 +265,10 @@ export class InMemoryConversationSystem implements ConversationSystem {
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
+      throw new PlannerError(
+        'update_in_progress',
+        'Workspace admission is closed for an owner update.',
+      );
     require_message_content(content);
     const {
       sender_label,

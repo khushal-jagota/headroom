@@ -45,7 +45,10 @@ export async function start_conversation(
   return host.workspace_admission.operation(
     async (admitted) => {
       if (!admitted)
-        throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
+        throw new PlannerError(
+          'update_in_progress',
+          'Workspace admission is closed for an owner update.',
+        );
       host.require_runtime_ownership();
       const refusal = host.execution_refusal(request.conversation_id);
       if (refusal !== null) throw refusal;
