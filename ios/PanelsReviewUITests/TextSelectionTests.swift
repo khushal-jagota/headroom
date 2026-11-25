@@ -84,8 +84,15 @@ final class TextSelectionTests: XCTestCase {
         // A deliberate swipe outside the text still skips the proposal card.
         let card = app.descendants(matching: .any).matching(identifier: "review-content").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5))
-        let swipeStart = card.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.65))
-        let swipeEnd = card.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.65))
+        let reviewRecap = readable("Offline recovery proof", in: app)
+        XCTAssertTrue(reviewRecap.waitForExistence(timeout: 5))
+        // The gesture belongs to the content stack, not the empty ScrollView below it.
+        // Use the midpoint of its existing 18-point gap after the recap.
+        let swipeY = reviewRecap.frame.maxY + 9 - card.frame.minY
+        let swipeStart = card.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: card.frame.width * 0.92, dy: swipeY))
+        let swipeEnd = card.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: card.frame.width * 0.12, dy: swipeY))
         swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
         let unread = readable("First unread message", in: app)
         XCTAssertTrue(unread.waitForExistence(timeout: 8), "The ordinary Review swipe must remain available")
