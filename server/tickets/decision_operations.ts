@@ -52,11 +52,21 @@ function holder(value: unknown): DecisionHolder | null {
     throw validation(`${value.kind} principal id must be ${value.kind}`);
   return { kind: value.kind as DecisionHolder['kind'], id: value.id };
 }
+/** The command body keeps whole numbers as JsonNumber; a piece's size is read as a plain number. */
+function with_plain_sizes(piece: unknown): unknown {
+  if (!is_record(piece)) return piece;
+  const plain = { ...piece };
+  for (const side of ['width', 'height']) {
+    const number = plain[side];
+    if (number instanceof JsonNumber && number.kind === 'integer') plain[side] = number.value;
+  }
+  return plain;
+}
 /** Pictures and files that travel with a decision, in the same pieces a conversation message uses. */
 function attachments(value: unknown): void {
   if (!Array.isArray(value)) throw validation('attachments must be a list of pictures and files');
   const sent: SentPiece[] = value.map((piece: unknown) => {
-    const upload = sent_upload_piece(piece);
+    const upload = sent_upload_piece(with_plain_sizes(piece));
     if (upload) return upload;
     if (
       !is_record(piece) ||
