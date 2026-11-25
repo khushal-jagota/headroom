@@ -7,7 +7,7 @@ struct ReviewView: View {
     let session: ReviewSession
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active }
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.contentCovered }
     /// How many cards are read before they reach the screen, the shown one included.
     private static let readAhead = 3
     @Environment(AppStore.self) private var store

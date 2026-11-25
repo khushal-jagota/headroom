@@ -16,7 +16,7 @@ struct NativePushAPI: NativePushRegistering {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(device)
         request.timeoutInterval = 25
-        let (data, response) = try await client.session.data(for: request)
+        let (data, response) = try await client.data(for: request)
         try APIClient.validate(response, data: data)
     }
 }

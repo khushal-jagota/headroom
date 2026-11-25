@@ -17,8 +17,8 @@ struct ServerReadFailure: LocalizedError, Sendable {
     /// cancel. TLS, ATS and malformed URL or response errors do not pass by themselves.
     let cannotReach: Bool
     let message: String
-    /// What a screen may say about a failed read. The app shows no connection
-    /// state, so a read that could not reach the server says nothing.
+    /// A failed read emits no local connection note. The shared connection owner
+    /// decides whether sustained loss requires the full-screen cover.
     var note: String? { cannotReach ? nil : message }
     /// The host lookups are here too: the server is reached over Tailscale, and when
     /// Tailscale drops, its MagicDNS name stops resolving. That is the same as offline.
@@ -48,6 +48,7 @@ struct ServerReadFailure: LocalizedError, Sendable {
 struct APIClient: Sendable {
     let baseURL: URL
     var session: URLSession = .shared
+    var serverConnection: ServerConnection? = nil
 
     static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
@@ -73,6 +74,7 @@ struct APIClient: Sendable {
             throw APIError(status: 426, message: NativeBuildGate.message)
         }
         var request = URLRequest(url: target)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue(NativeBuildGate.build, forHTTPHeaderField: "X-Panels-iOS-Build")
         request.setValue(try NativeClientIdentity.header(), forHTTPHeaderField: "X-Panels-Client")
         return request
@@ -87,11 +89,41 @@ struct APIClient: Sendable {
         return value
     }
 
+    /// All ordinary transports announce actual network contact before decoding or
+    /// HTTP validation. Saved responses never pass through this boundary.
+    func data(for request: URLRequest, navigation: Bool = false) async throws -> (Data, URLResponse) {
+        let attempt = await serverConnection?.attempt(server: baseURL)
+        do {
+            let result = try await session.data(for: request)
+            await serverConnection?.answered(attempt, response: result.1)
+            return result
+        } catch {
+            if navigation, !Task.isCancelled { await serverConnection?.failed(error, attempt: attempt) }
+            throw error
+        }
+    }
+
+    func download(for request: URLRequest) async throws -> (URL, URLResponse) {
+        let attempt = await serverConnection?.attempt(server: baseURL)
+        let result = try await session.download(for: request)
+        await serverConnection?.answered(attempt, response: result.1)
+        return result
+    }
+
+    func bytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse, ServerConnection.Attempt?) {
+        let attempt = await serverConnection?.attempt(server: baseURL)
+        let (bytes, response) = try await session.bytes(for: request)
+        await serverConnection?.answered(attempt, response: response)
+        // A redirected stream cannot use its later lines as contact with this server.
+        let sameServer = response.url.map { LocalStore.server($0) == LocalStore.server(baseURL) } == true
+        return (bytes, response, response is HTTPURLResponse && sameServer ? attempt : nil)
+    }
+
     func responseData(_ path: String, query: [URLQueryItem] = []) async throws -> (Data, URL) {
         var request = try self.request(try url(path, query: query))
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 25
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return (data, request.url!)
     }
@@ -187,7 +219,7 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(Body(ticketId: id))
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(TicketBackendCatalog.self, from: data)
     }
@@ -199,7 +231,7 @@ extension APIClient {
     func driverIcon(_ target: URL) async throws -> Data {
         var request = try self.request(target)
         request.timeoutInterval = 25
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return data
     }

@@ -88,7 +88,7 @@ struct ReviewArtifactDock: ViewModifier {
             let decision = session.messageDecisions.decision(for: item, savedWork: savedWork)
             // A refused reply shows its reason in its composer; a refused Mark read here.
             if let refusal, decision.attempt?.state != .failed { notes { ReviewInlineNote(tone: .refused, title: "Refused", text: refusal) } }
-            ReviewMessageDock(item: item, isActive: scenePhase == .active, decision: decision, actions: messageActions,
+            ReviewMessageDock(item: item, isActive: scenePhase == .active && !store.contentCovered, decision: decision, actions: messageActions,
                               markReadAllowed: !readUnshownRun,
                               onSkip: { skip(item, session: session) },
                               onResolve: { resolve(item, session: session, afterExit: $0) })
@@ -104,7 +104,7 @@ struct ReviewArtifactDock: ViewModifier {
                     }
                 }
             }
-            ReviewProposalDock(isActive: scenePhase == .active, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
+            ReviewProposalDock(isActive: scenePhase == .active && !store.contentCovered, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
                                sheet: $sheet, busyAction: $busyAction, onSkip: { skip(item, session: session) },
                                onHold: { held = item; session.resolve(item) },
                                onResolve: { resolve(item, session: session, afterExit: $0) })

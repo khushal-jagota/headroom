@@ -440,7 +440,7 @@ extension APIClient {
         var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/snapshot", request))
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.timeoutInterval = 25
-        let (data, response) = try await session.data(for: urlRequest)
+        let (data, response) = try await self.data(for: urlRequest, navigation: true)
         try Self.validate(response, data: data)
         guard case .snapshot(let snapshot) = try Self.decoder().decode(ViewFrame.self, from: data), Self.supported(snapshot)
         else { throw APIError(status: 0, message: "The server sent an unsupported navigation view.") }
@@ -461,11 +461,12 @@ extension APIClient {
                     // An idle limit that each server heartbeat (every 15 s) resets: two
                     // missed heartbeats and a margin, so a silent socket is replaced.
                     urlRequest.timeoutInterval = 35
-                    let (bytes, response) = try await session.bytes(for: urlRequest)
+                    let (bytes, response, contact) = try await self.bytes(for: urlRequest)
                     try Self.validate(response)
                     let decoder = Self.decoder()
                     for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
+                        await serverConnection?.answered(contact)
                         guard let payload = NavigationViewEventParser.data(line) else { continue }
                         let data = Data(payload.utf8)
                         let frame = try decoder.decode(ViewFrame.self, from: data)

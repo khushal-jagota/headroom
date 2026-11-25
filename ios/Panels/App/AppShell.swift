@@ -51,21 +51,9 @@ struct AppShell: View {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
-        .overlay {
-            if updateRequired {
-                VStack(spacing: 16) {
-                    Image(systemName: "arrow.down.app").font(.largeTitle)
-                    Text(NativeBuildGate.message).font(.title2)
-                    Text("Your drafts and pending messages stay on this device.").font(.body)
-                    Link("Open TestFlight", destination: URL(string: "itms-beta://")!)
-                }
-                .multilineTextAlignment(.center)
-                .padding(32)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(PanelsTheme.surface)
-                .accessibilityIdentifier("ios-update-required")
-            }
-        }
+        .background(ServerConnectionCoverPresenter(store: store, updateRequired: updateRequired))
+        .allowsHitTesting(!store.contentCovered)
+        .accessibilityHidden(store.contentCovered)
         // An artifact opened from a Review card docks that card's own controls, on the
         // same session and saved work as the card.
         .environment(savedReviewWork)
