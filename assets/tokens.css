@@ -298,6 +298,9 @@
   --type-prose-lg: var(--type-body);
   /* The page title: the page system's title size, --type-page-title. */
   --type-display: var(--type-page-title);
+  --type-review-hero: 44px;
+  --type-review-hero-compact: 31px;
+  --tracking-review-hero: -0.025em;
   --type-hero: var(--type-page-title);
   /* Inline code and other monospace runs inside text: Small size, so a mono run never looks
    * larger than the sans text around it. */

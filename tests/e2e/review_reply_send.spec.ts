@@ -3,7 +3,7 @@
  *
  * A reply used to draw a second copy of itself with "Sending…" and "Sent" under the message,
  * and the page that follows the last card said "1 thing awaits review." for a moment before it
- * said "Nothing needs you right now.", drawn twice and fading over each other. The copy under
+ * said "All clear. Nothing to review.", drawn twice and fading over each other. The copy under
  * the message is a matter of what the live card holds, and the stale count and the double
  * drawing are a matter of the real queue count, layout and animation timing, so only a real
  * browser on a real server can show them. The test reads the page on every frame.
@@ -68,7 +68,7 @@ test('test_review_reply_keeps_one_steady_result_while_a_slow_send_arrives', asyn
   // The words leave the box at once, and the send button works while the answer is slow.
   await expect(page.locator('[data-review-reply]')).toHaveValue('');
   await expect(page.locator('[data-review-send]')).toHaveAttribute('aria-busy', 'true');
-  await expect(page.locator('[data-review-final-status]')).toHaveText('Nothing needs you right now.');
+  await expect(page.locator('[data-review-final-status]')).toHaveText('All clear. Nothing to review.');
   await page.waitForTimeout(600);
   const seen = await page.evaluate(() => {
     const value = (window as unknown as { __seen: { outgoing: number; finalTexts: Set<string>; finals: Set<Element>; busy: boolean } }).__seen;
@@ -76,7 +76,7 @@ test('test_review_reply_keeps_one_steady_result_while_a_slow_send_arrives', asyn
   });
   expect(seen.busy, 'the send button spun while the answer was on its way').toBe(true);
   expect(seen.outgoing, 'no second copy of the reply was drawn on any frame').toBe(0);
-  expect(seen.finalTexts, 'the page after the card never said that something waits').toEqual(['Nothing needs you right now.']);
+  expect(seen.finalTexts, 'the page after the card never said that something waits').toEqual(['All clear. Nothing to review.']);
   expect(seen.finals, 'the page after the card was drawn once').toBe(1);
 });
 

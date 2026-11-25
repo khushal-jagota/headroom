@@ -394,15 +394,24 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
       (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
     ),
   ).toBe(true);
-  // Receipt admission clears the editor, but the current card still owns the held reply.
-  const heldReply = card.locator('[data-conversation-held-stack] [data-conversation-held-row]');
-  await expect(heldReply).toContainText('The reply reaches this conversation once.');
-  await expect(heldReply.locator('[data-conversation-held-more]')).toBeEnabled();
+  // Review clears the editor without a held row or a second copy of the reply.
+  await expect(card.locator('[data-conversation-held-row]')).toHaveCount(0);
+  await expect(card.locator('[data-review-outgoing]')).toHaveCount(0);
   await expect(card.locator('[data-review-reply]')).toHaveValue('');
-  await captureSuccess(page, 'review-reply-held.png');
+  await captureSuccess(page, 'review-reply-queued.png');
+  // The agent's own conversation owns the queue. Keep Review alive in its existing tab.
+  // The dock shows held replies at rest, without marking the newer transcript as read.
+  const agentPage = await openPage(context, server, `#/workspace/${identity}`,
+    '[data-conversation-pane][data-conversation-state="rest"] [data-conversation-held-row]');
+  const heldReply = agentPage.locator('[data-conversation-held-stack] [data-conversation-held-row]')
+    .filter({ hasText: 'The reply reaches this conversation once.' });
+  await expect(heldReply).toBeVisible();
+  await captureSuccess(agentPage, 'conversation-review-reply-held.png');
+  await agentPage.close();
+  await page.bringToFront();
   await post(server, `/api/test/signals/${conversation}/finish`);
   // The card can now advance to the newer message, which the original receipt did not read.
-  await expect(heldReply).toHaveCount(0);
+  await expect(card.locator('[data-conversation-held-row]')).toHaveCount(0);
   await expect(page.locator('[data-deck-leaving]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(card.locator('.review-message-run')).toHaveText('This newer message stays unread.');
