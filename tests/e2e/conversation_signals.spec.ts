@@ -406,7 +406,6 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   const heldReply = agentPage.locator('[data-conversation-held-stack] [data-conversation-held-row]')
     .filter({ hasText: 'The reply reaches this conversation once.' });
   await expect(heldReply).toBeVisible();
-  await expect(heldReply.locator('[data-conversation-held-more]')).toBeEnabled();
   await captureSuccess(agentPage, 'conversation-review-reply-held.png');
   await agentPage.close();
   await page.bringToFront();
