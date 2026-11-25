@@ -8,7 +8,7 @@ Review is Khushal's queue: one pass through everything that is waiting on him, o
 - **Unread messages to Khushal** from any agent conversation: a Worker, a Manager, or Chief.
 - **Asks waiting for his answer.** A running turn can stop on a question or a permission ask that only he can answer. The ask stays until it is answered or the turn ends.
 
-Items about one Ticket share a card. A Manager's or Chief's ask is a card of its own. A card is as old as its oldest item, and an ask is as old as the moment it was raised. Messages and asks drop out when their Ticket is Done or backlogged, or when their Manager is [settled](managers.md). Proposals stay until they are decided.
+Items about one Ticket share a card. A Manager's or Chief's ask is a card of its own. A card is as old as its oldest item, and an ask is as old as the moment it was raised. Messages and asks drop out when their Ticket is Done or backlogged, or when their Manager is [settled](managers.md). Proposals stay until they are decided, except that a Ticket behind an unfinished blocker is not waiting on him yet: its parked proposal leaves the queue and its count, and comes back when the last blocker is Done. Its messages and asks stay.
 
 ## How it works
 
@@ -55,4 +55,4 @@ The Ticket page follows the same rule. A file linked from its proposal opens wit
 - `web/src/lib/review/deckMotion.ts`: the moves, and `web/src/components/ReviewDeck.svelte`, which holds the one thing on screen.
 - `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-25._

@@ -187,7 +187,7 @@ export function derive(
     if (!['none', 'out', 'errored'].includes(t.worker_step_claim))
       throw new Error('invalid worker-step claim');
     let status =
-      t.pending_proposal !== null
+      t.pending_proposal !== null && !live
         ? 'awaiting_approval'
         : t.worker_step_claim === 'errored'
           ? 'errored'

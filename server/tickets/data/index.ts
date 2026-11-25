@@ -165,15 +165,17 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     workflow.fields.map((f) => f.id),
   );
   const pending = codec.proposal_from_json(r.pending_proposal);
-  const status = pending
-    ? 'awaiting_approval'
-    : r.worker_step_claim === 'errored'
-      ? 'errored'
-      : r.worker_step_claim === 'out'
-        ? 'agent_owned'
-        : r.has_live_blocker
-          ? 'blocked'
-          : 'empty';
+  // A live blocker outranks a parked proposal: the proposal waits until the blockers are done.
+  const status =
+    pending && !r.has_live_blocker
+      ? 'awaiting_approval'
+      : r.worker_step_claim === 'errored'
+        ? 'errored'
+        : r.worker_step_claim === 'out'
+          ? 'agent_owned'
+          : r.has_live_blocker
+            ? 'blocked'
+            : 'empty';
   return {
     id: r.id,
     title: r.title,

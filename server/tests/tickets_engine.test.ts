@@ -238,7 +238,7 @@ test('every_creation_blocker_holds_until_the_last_one_is_done', () => {
   advance(db, blockers[1]!);
   expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent_owned');
 });
-test('a_parked_brief_outranks_a_creation_blocker_until_it_is_settled', () => {
+test('a_creation_blocker_outranks_a_parked_brief', () => {
   const db = fixture(),
     blocker = create(db),
     t = create(db, {
@@ -247,7 +247,8 @@ test('a_parked_brief_outranks_a_creation_blocker_until_it_is_settled', () => {
       blocked_by_ticket_ids: [blocker.id],
     });
   expect(t.stage).toBe('needs_brief');
-  expect(t.ticket_status).toBe('awaiting_approval');
+  expect(t.pending_proposal).not.toBeNull();
+  expect(t.ticket_status).toBe('blocked');
   expect(accept(db, t, 'brief', 'needs_what_changes').ticket_status).toBe('blocked');
   expect(claim(db, t.id)).toBeNull();
 });
