@@ -81,8 +81,8 @@
     max-width: 100%;
     min-width: 0;
     height: 32px;
-    margin: 0;
-    padding: 0 var(--cv-s2);
+    margin-inline: 0;
+    padding: 0;
     border: 0;
     border-radius: var(--cv-r-pill);
     background: transparent;
