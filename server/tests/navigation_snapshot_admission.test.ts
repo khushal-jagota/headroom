@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
-import { create, fixture } from './ticket_fixture.ts';
+import { advance, create, fixture, propose } from './ticket_fixture.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import { createSignalNavigationRuntime } from '../navigation/index.ts';
 import { registerArea } from '../core/authority/register.ts';
@@ -375,6 +375,49 @@ test('a Ticket admitted before Review still carries its waiting ask', async () =
     expect(await pendingAsk({ kind: 'ticket', id: f.ticketId }, [review])).toEqual(expected);
     const rail = window('rail_tickets', { kind: 'chief', id: 'chief' });
     expect(await pendingAsk(null, [rail, review])).toEqual(expected);
+  } finally {
+    await f.app.close();
+    f.navigation.close();
+  }
+});
+
+// Distinct risk: the Review queue is a stored projection, so only the real projection can show
+// that a parked proposal on a Ticket behind an unfinished blocker is left out of the queue and its
+// count, and that finishing the blocker brings it in again. Reuses this fixture: no browser or
+// second host. The Ticket read, the notification flag and the Review member share one blocker rule.
+test('a parked proposal on a blocked Ticket joins Review only when its blocker is done', async () => {
+  const f = await setup();
+  try {
+    const blocker = create(f.database, { title: 'Blocker' });
+    const blocked = propose(
+      f.database,
+      create(f.database, {
+        title: 'Blocked',
+        settle_kickoff: false,
+        stated_ceiling: 'needs_what_changes',
+        blocked_by_ticket_ids: [blocker.id],
+      }),
+      'Success proposal',
+    );
+    expect(blocked.pending_proposal).not.toBeNull();
+    expect(blocked.ticket_status).toBe('blocked');
+    expect(f.database.read(review_body)).toEqual({ available: true, total: 0, cards: [] });
+    const flag = () =>
+      f.database.read(
+        (sql) =>
+          sql.get<{ active: number }>(
+            "SELECT active FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+            [blocked.id],
+          )?.active,
+      );
+    expect(flag()).toBe(0);
+    advance(f.database, blocker);
+    expect(f.database.read(review_body)).toMatchObject({
+      available: true,
+      total: 1,
+      cards: [{ kind: 'ticket', id: blocked.id, waits: ['proposal'] }],
+    });
+    expect(flag()).toBe(1);
   } finally {
     await f.app.close();
     f.navigation.close();

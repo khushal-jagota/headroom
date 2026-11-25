@@ -304,6 +304,12 @@ export function record_attention(
     [subject_kind, subject_id, notification_type, Number(active), generation],
   );
 }
+export function has_live_blocker(sql: ReadSql, id: string): boolean {
+  return !!sql.get(
+    "SELECT 1 FROM ticket_blocks b JOIN tickets blocker ON blocker.id=b.blocking_ticket_id WHERE b.blocked_ticket_id=? AND blocker.stage != 'done'",
+    [id],
+  );
+}
 export function capture_ticket_attention(
   sql: TransactionSql,
   id: string,
@@ -334,9 +340,10 @@ export function capture_ticket_attention(
   const flags = {
     awaiting_reply: conversation.unread_message,
     awaiting_answer: conversation.pending_ask && !row.is_backlogged,
-    // Errored claims outrank proposals. Blockers do not affect these two status predicates.
+    // Errored claims outrank proposals. A live blocker holds a proposal out of the owner's queue.
     awaiting_approval:
       row.worker_step_claim !== 'errored' &&
+      !has_live_blocker(sql, id) &&
       row.pending_proposal !== null &&
       JSON.parse(row.ceiling_holder).kind === 'owner' &&
       !row.is_backlogged,
