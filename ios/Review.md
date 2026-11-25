@@ -14,24 +14,24 @@ run, then the ask. The badge still counts entries, as the server does. A saved v
 keeps no runtime facts, so there an ask shows only where a window member has
 nothing else waiting.
 
-The shell owns Review's session and keeps it current wherever Khushal is. The card on
+The shell owns Review's session and keeps it current wherever the owner is. The card on
 screen is always in the latest window: when the window drops it, because it was
 read, decided or answered elsewhere, the next card shows. A later window that adds
 older work leaves the shown card in place. Only three things keep a card the window
 no longer holds:
 
-- its own exit, while the card fades after Khushal handled it here;
+- its own exit, while the card fades after the owner handled it here;
 - a refused decision, which comes back to the front with the server's reason and
   the saved note, even when its proposal now waits for someone else. Outside the
   window it comes back only while the view shows that exact proposal still waiting.
   Each refusal comes forward once; Skip moves on;
 - a proposal that moved to another reviewer while on screen. It stays as a notice
   that says who reviews it now, its actions are off, and Skip or the swipe moves on.
-  A move Khushal makes from the card's own Reviewer sheet takes the card away.
+  A move the owner makes from the card's own Reviewer sheet takes the card away.
 
 A card handled here stays hidden until its saved work or the window hides it, so it
 never shows again before then; a refusal brings it back. A refusal or a move that
-happens while Khushal is elsewhere just waits for the summary screen.
+happens while the owner is elsewhere just waits for the summary screen.
 
 Skip is per card and local, like the web. When every card of one Ticket or one
 conversation is skipped, its key goes to the server in `review_skipped_keys`. The
@@ -43,7 +43,7 @@ last for one app run.
 
 The summary shows at launch, after the last card, after a visit to another Sidebar
 destination, and on a return to the app when the card that was open left the window
-meanwhile. Otherwise leaving and returning to the app keeps Khushal on the same card,
+meanwhile. Otherwise leaving and returning to the app keeps the owner on the same card,
 and a page or artifact opened from a card returns to it. Offline, nothing fresh
 arrives, so he stays where he was.
 
@@ -86,7 +86,7 @@ The next cards are read ahead, three at a time with the shown one: a proposal wi
 worker manifest, a message with its unread run, an ask with its wording. Each read is
 also saved on the phone. Offline, a message or ask card uses that saved copy, so Mark
 read and an answer still save. A card this phone never read acts on the review window
-instead. Each conversation in the window carries its newest message to Khushal and the
+instead. Each conversation in the window carries its newest message to the owner and the
 ask its turn waits on, if that ask is 4 KB or less. A message card then shows only its
 title and recap. Its Mark read reads through that newest message, so a later message
 stays unread. This is a deliberate exception to "Mark read acknowledges only the
@@ -106,7 +106,7 @@ and the reviewer (`You ⌄`) on the right; the reviewer opens the shared Reviewe
 sheet. Below it the dock holds the note for the worker with its Attach button and
 microphone, then Skip, Return and Approve in one equal-width row. Attach uses the
 shared Attach sheet, paste and attachment tray; pictures are prepared as a message's
-are, and kept beside the note under the same draft identity. Nothing in it is editable: Khushal returns
+are, and kept beside the note under the same draft identity. Nothing in it is editable: the owner returns
 a proposal with a note. Return is absent for briefs; with no existing worker
 conversation it is off and says why. An empty Return focuses the note. Links resolve
 against the server address; a managed file opens the in-app viewer and other links

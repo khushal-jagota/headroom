@@ -540,7 +540,7 @@ async function review(inv: Invocation): Promise<CommandResult> {
   }
   if (inv.values.as_json) return emit(data, true, '');
   const cards: Body[] = data.cards;
-  if (!cards.length) return raw('Nothing waits on Khushal.\n');
+  if (!cards.length) return raw('Nothing waits on the owner.\n');
   const label = (card: Body) =>
     card.kind === 'chief'
       ? 'Chief'
@@ -556,8 +556,8 @@ async function review(inv: Invocation): Promise<CommandResult> {
   const total = data.total ?? cards.length;
   const head =
     numeric_value(total) === 1
-      ? '1 card waits on Khushal, oldest first.'
-      : `${scalar(total)} cards wait on Khushal, oldest first.`;
+      ? '1 card waits on the owner, oldest first.'
+      : `${scalar(total)} cards wait on the owner, oldest first.`;
   return raw([head, ...table].join('\n') + '\n');
 }
 async function recap(inv: Invocation): Promise<CommandResult> {

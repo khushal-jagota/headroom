@@ -19,7 +19,11 @@ export function seed_home_machine_row(tx: TransactionSql): void {
   );
 }
 
-export function bootstrap_application(tx: TransactionSql, initialized_at: number): void {
+export function bootstrap_application(
+  tx: TransactionSql,
+  initialized_at: number,
+  owner_time_zone?: string,
+): void {
   const epoch = randomUUID();
   seed_home_machine_row(tx);
   tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
@@ -39,9 +43,10 @@ export function bootstrap_application(tx: TransactionSql, initialized_at: number
       DEFAULT_LAUNCH.employee_launch_reasoning_effort,
     ],
   );
-  tx.run('INSERT INTO attention_history_metadata(singleton,started_at) VALUES(1,?)', [
-    initialized_at,
-  ]);
+  tx.run(
+    'INSERT INTO attention_history_metadata(singleton,started_at,owner_time_zone) VALUES(1,?,?)',
+    [initialized_at, owner_time_zone ?? null],
+  );
   seed_shipped_notification_preferences(tx);
   const navigation = createNavigationRegistry();
   navigation.rebuild(tx);

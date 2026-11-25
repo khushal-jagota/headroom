@@ -134,7 +134,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('expected_revision', '--expected-revision <INTEGER>', integer(1), { required: true }),
     json_output(),
   ]);
-  command('credential request', 'Ask Khushal for a named API key in this conversation.', [
+  command('credential request', 'Ask the owner for a named API key in this conversation.', [
     option('request_id', '--request-id <UUID>', uuid, { required: true }),
     option('name', '--name <TEXT>', text, { required: true }),
     option('provider', '--provider <TEXT>', text, { required: true }),
@@ -712,7 +712,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   });
   command(
     'review',
-    'Show what waits on Khushal, oldest first, as Review shows it.',
+    'Show what waits on the owner, oldest first, as Review shows it.',
     [json_output()],
     {
       audience: 'supervisor',
@@ -724,9 +724,9 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   });
   command(
     'send-message',
-    'Send one message to Khushal, the Chief, a Ticket, or a Manager.',
+    'Send one message to the owner, the Chief, a Ticket, or a Manager.',
     [
-      option('owner', '--owner', boolean, { default: false, description: 'Send to Khushal.' }),
+      option('owner', '--owner', boolean, { default: false, description: 'Send to the owner.' }),
       option('chief', '--chief', boolean, {
         default: false,
         description: 'Send to the Chief of Staff.',
@@ -834,7 +834,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
     json_output(),
   ]);
-  command('ticket complete', 'Complete a Stage that Khushal owns with its value.', [
+  command('ticket complete', 'Complete a Stage that the owner owns with its value.', [
     TICKET_ID(),
     argument('field', '<FIELD>', text, {}),
     ...text_input('value'),

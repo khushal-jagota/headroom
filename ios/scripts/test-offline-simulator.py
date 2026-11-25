@@ -1404,7 +1404,7 @@ def main() -> int:
                             body="Show what waits, in two tones, with one quiet return button.")
                         tickets["offline-new"] = arrival
                 elif REVIEW_QUEUE and name.startswith("review-move/"):
-                    # The proposal now waits on Chief: it leaves Khushal's window.
+                    # The proposal now waits on Chief: it leaves the owner's window.
                     with lock:
                         ticket = tickets[name.split("/", 1)[1]]
                         ticket["ceiling_holder"] = {"kind": "chief", "id": "chief"}

@@ -76,13 +76,14 @@ export async function production_home_dependencies(
       await admit_runtime(app, manifest, scope.child_processes);
       assert_release_execution(scope);
     },
-    initialize_database: (app, path, scope, machine_root) =>
+    initialize_database: (app, path, scope, machine_root, owner_time_zone) =>
       initialize_candidate_home_database(
         app,
         path,
         scope,
         join(app, 'node/bin/node'),
         machine_root,
+        owner_time_zone,
       ),
     prepare_machine: prepare_first_machine,
     machine_healthy: (request, scope, started_ms) =>

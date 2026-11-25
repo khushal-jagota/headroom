@@ -4,4 +4,4 @@
 
 The file is the source of truth. Its colour, radius, space and font values match `assets/tokens.css`. The one departure is the marketing headline and subline, which use display type outside the app's type scale.
 
-The "Get Panels" button links to `#get`, a placeholder, until the install destination is chosen. Hosting is not decided.
+The "Get Panels" button opens the official installation guide.

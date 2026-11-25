@@ -7,7 +7,7 @@ A Worker type is a way of paying attention. Coding, research, debugging, and des
 - **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, follow-up Tickets, bookkeeping, and a report. The final decision authorizes this follow-through. The ceiling holder reviews its verified report before the Ticket reaches Done. Deployment stays a separate owner action. The stages between are the type's own argument for how that kind of work should unfold.
 - **Stage ownership.** A worker-owned stage is the Worker's to draft. A user-owned stage is collaborative: the Worker gets one automatic opening turn, then the person and the Worker continue in the same conversation until the gate is filled. Ownership does not decide whether a proposal waits. The [ceiling](tickets.md) does.
 - **A specialist skill**, the instructions this kind of Worker reads on top of the shared Worker skill. See [Skills](skills.md).
-- **Launch defaults**: the backend, model, and reasoning a new Ticket copies as its starting setup. Khushal can change them in Settings. A change affects future Tickets only.
+- **Launch defaults**: the backend, model, and reasoning a new Ticket copies as its starting setup. The owner can change them in Settings. A change affects future Tickets only.
 
 ## The shipped types
 
@@ -25,7 +25,7 @@ User-owned stages are marked with `*`.
 | New worker | Designing and landing another Worker type | Purpose and Boundaries\*, Stages, What Good Looks Like at Each Stage, Model and Effort\*, Drafting |
 | Amend worker | Changing an existing type in place | Amendment\*, Drafting |
 
-The user-owned stages are where the person's view is the product. Exploration does not race ahead of a shared picture, and does not declare its answer alone. Planning settles open questions with Khushal before Tickets are proposed. On types with no user-owned stage, a person stays involved through the ceiling, for example by stopping a coding Ticket at What Changes.
+The user-owned stages are where the person's view is the product. Exploration does not race ahead of a shared picture, and does not declare its answer alone. Planning settles open questions with the owner before Tickets are proposed. On types with no user-owned stage, a person stays involved through the ceiling, for example by stopping a coding Ticket at What Changes.
 
 A few retired types remain readable on old Tickets. They cannot be used for new work. Automatic report settlement does not grant permission for their human-owned work.
 

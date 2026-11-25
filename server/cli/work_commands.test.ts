@@ -369,9 +369,7 @@ test('manager show defaults to the caller and names the visible page', async () 
     expect(request.mock.lastCall?.[3]).toEqual({ params: { detail: 'full', id: 'si_me' } });
     expect(own.stdout).toContain('  visible_page: held goal Grow (goal_1)\n');
     expect(own.stdout).toContain('  page_edit: panels goal edit goal_1\n');
-    expect(own.stdout).toContain(
-      `  tickets: 1 Khushal: approve, 2 ${WORKER_STATUS_LABEL}; 4 done\n`,
-    );
+    expect(own.stdout).toContain(`  tickets: 1 Owner: approve, 2 ${WORKER_STATUS_LABEL}; 4 done\n`);
     expect(own.stdout).toContain('parts:\n  recap:\n    value: Recap');
     const page = await run(['manager', 'show', 'si_me', 'page'], SERVER);
     expect(page.stderr).toContain('Use: panels page show --manager MANAGER_ID');

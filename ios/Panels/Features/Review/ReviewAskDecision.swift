@@ -22,7 +22,7 @@ extension APIClient {
     var error: String?
     /// Chosen labels per question.
     var selected: [String: [String]] = [:]
-    /// The answer in Khushal's own words, in the shared composer. It answers the first
+    /// The answer in the owner's own words, in the shared composer. It answers the first
     /// question that takes words, and its draft is kept per conversation.
     let composer = ConversationModel()
     private var loading = false

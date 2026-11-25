@@ -91,28 +91,27 @@ import SwiftUI
     private var viewReading = false
     private var viewReadsStarted = 0
 
-    init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
+    init(baseURL: URL, session: URLSession = .shared) {
         self.session = session
-        defer { restore() }
-        baseURL = suppliedBaseURL ?? Self.configuredBaseURL
+        self.baseURL = baseURL
+        restore()
     }
 
     /// The same selected origin is available before SwiftUI creates a scene.
-    nonisolated static var configuredBaseURL: URL {
+    nonisolated static var configuredBaseURL: URL? {
 #if DEBUG
         if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
-           let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
+           let local = SettingsServerAddress.fixtureOrigin(ProcessInfo.processInfo.arguments[at + 1]) {
             // A SpringBoard notification response does not retain XCTest's
             // launch arguments. Persist this explicit DEBUG fixture selection.
-            UserDefaults.standard.set(local.absoluteString, forKey: "panels.baseURL")
+            SettingsServerAddress.save(local)
             return local
         }
         if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
             return URL(string: "http://127.0.0.1:1")!
         }
 #endif
-        let saved = UserDefaults.standard.string(forKey: "panels.baseURL")
-        return saved.flatMap(URL.init(string:)) ?? APIClient.defaultBaseURL
+        return SettingsServerAddress.saved()
     }
 
     func configure(baseURL: URL) {
@@ -122,7 +121,7 @@ import SwiftUI
         self.baseURL = baseURL
         updateActions.reset()
         resources.configure(api: client)
-        UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
+        SettingsServerAddress.save(baseURL)
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]; viewFreshAt = nil
         errors = [:]

@@ -3,15 +3,30 @@ import { PlannerError } from '../core/contracts.ts';
 import type { SummaryRequest } from './contracts.ts';
 import { load_evidence } from './data.ts';
 import { build_summary, periods } from './logic/summary.ts';
-export function read_summary(sql: ReadSql, request: SummaryRequest, now: number) {
+import { LEGACY_OWNER_TIME_ZONE } from './configuration.ts';
+
+export function owner_time_zone(sql: ReadSql): string {
+  return (
+    sql.get<{ owner_time_zone: string | null }>(
+      'SELECT owner_time_zone FROM attention_history_metadata WHERE singleton=1',
+    )?.owner_time_zone ?? LEGACY_OWNER_TIME_ZONE
+  );
+}
+
+export function read_summary(
+  sql: ReadSql,
+  request: SummaryRequest,
+  now: number,
+  zone = owner_time_zone(sql),
+) {
   let current, previous;
   try {
-    [current, previous] = periods(request, now);
+    [current, previous] = periods(request, now, zone);
   } catch (error) {
     throw new PlannerError('validation', error instanceof Error ? error.message : String(error));
   }
   const evidence = load_evidence(sql, previous.start_at, current.end_at);
-  const result = build_summary(request, evidence, now);
+  const result = build_summary(request, evidence, now, zone);
   if (request.scope.kind !== 'goal') return result;
   const goal = evidence.destinations.find(
     (item) => item.kind === 'goal' && item.id === request.scope.id,
@@ -23,6 +38,7 @@ export function read_summary(sql: ReadSql, request: SummaryRequest, now: number)
           { ...request, scope: { kind: 'project', id: goal.project_id } },
           evidence,
           now,
+          zone,
         ).totals,
         limitation:
           'Shared Project context overlaps across goals and is not direct goal consumption.',

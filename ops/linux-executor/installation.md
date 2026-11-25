@@ -2,19 +2,19 @@
 
 A Linux executor runs Workers for one home. It holds private credentials, workspaces, journals, and output, but no home database.
 
-The archive supports the same Linux x86_64 hosts as the Linux home: Debian 13 and Ubuntu 24.04 with the declared processor features. Host Node 22.18.0 or newer, `python3` for the join script, an authenticated GitHub CLI, and a systemd user manager are prerequisites. Provider sign-ins belong to this Linux account.
+The archive supports the same Linux x86_64 hosts as the Linux home: Debian 13 and Ubuntu 24.04 with the declared processor features. Install Node 22.18.0 or newer, Python 3.11.8 or newer, `curl`, and a systemd user manager. Sign in to Tailscale on this machine. Provider sign-ins belong to this Linux account.
 
 Each release publication builds the archive in `publish-typescript-release.yml` with `server/environments/linux_executor/build_main.ts`. The publication holds `panels-linux-executor.tar.gz` and `linux-executor-publication.json`. The receipt records the exact revision, digest, size, and executor target. The archive uses the host Node. It holds no private Node.
 
-On the home, register the machine and print its join command:
+In Settings → Machines on the home, add the extra machine. From a terminal with owner authority, use:
 
 ```sh
 panels machine join-command "Linux server" --home https://HOME_ADDRESS
 ```
 
-Settings → Machines issues the same command. The home must run a released build. The output holds the command, the private credential, and a cleanup step. The executor reports its platform when it authenticates, so registration needs no platform choice.
+The home must run a released build. The output holds the command, the private credential, and a cleanup step. The executor reports its platform when it authenticates, so registration needs no platform choice.
 
-On the Linux machine, run the printed command. It downloads `scripts/panels_install.py` at the home's revision and runs it with `python3`. Paste the credential at the private prompt. Keep the credential out of command arguments and shell history. Then remove the temporary script as the output says.
+On the Linux machine, run the printed command. It downloads the official public `scripts/panels_install.py` at the home's revision and runs it with `python3`. Paste the credential at the private prompt. Keep the credential out of command arguments and shell history. Then remove the temporary script as the output says.
 
 The join script checks the host, the archive, and the release target before it reads the credential. It installs the runtime under `${XDG_DATA_HOME:-$HOME/.local/share}/panels/executor-typescript`. The `data/` folder holds the credential and executor state. The `installation/releases/` folder holds versioned runtimes. It installs and enables `panels-executor-typescript.service`, then waits for the executor to reach the home. A failed attempt removes only its own files.
 
