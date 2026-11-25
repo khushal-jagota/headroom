@@ -1,4 +1,3 @@
-import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../../updates/configuration.ts';
 /** Execute the normal owner action against the previously installed home and its existing machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -16,6 +15,7 @@ import {
   check_committed_views,
 } from './large_conversation.ts';
 import { published_mac_home_fault } from './mac_home_machine_fault.ts';
+import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../../updates/configuration.ts';
 import { healthy } from '../../updates/installer/health.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';

@@ -1,3 +1,4 @@
+import { read_home_trial } from '../environments/updates/home_trial.ts';
 import Fastify from 'fastify';
 import { install_request_lifetime } from './http/lifetime.ts';
 import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
@@ -586,6 +587,14 @@ export class ServerServices {
         idle: () => true,
         require_idle: false,
       });
+    if (read_home_trial(this.update_barrier, this.config.app_sha)) {
+      // Older installers accept the first successful health response. Prepare priority views
+      // before listening, after the service selects this release and acquires its database.
+      const views_ready = begin_startup_phase('active conversation views');
+      await this.areas.prepareActiveViews();
+      views_ready();
+      this.assert_startup_open();
+    }
     let normal_started = false;
     let normal_starting: Promise<void> | undefined;
     const release_normal_work = (): Promise<void> => {
