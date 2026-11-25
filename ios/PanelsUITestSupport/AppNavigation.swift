@@ -2,6 +2,13 @@ import XCTest
 
 /// Moves through the app as the owner does: the Sidebar for destinations, the native bar for Back.
 extension XCUIApplication {
+    /// UIKit exposes read-only text as a value; SwiftUI exposes it as a label.
+    func readableText(_ text: String) -> XCUIElement {
+        readableTexts.matching(NSPredicate(
+            format: "identifier == %@ OR label == %@ OR value == %@", text, text, text
+        )).firstMatch
+    }
+
     var sidebarButton: XCUIElement { buttons["sidebar-button"] }
     /// The system Back button: the first button of a pushed page's bar. Its label is the
     /// previous page's title, or "Back" when that page has none.
@@ -39,4 +46,19 @@ extension XCUIApplication {
         sidebarButton.tap()
         XCTAssertTrue(buttons["sidebar-review"].waitForExistence(timeout: timeout), "The Sidebar did not open", file: file, line: line)
     }
+}
+
+/// Read the same visible prose from either native read-only accessibility role.
+extension XCUIElement {
+    /// Read-only prose can use native selectable text or SwiftUI static text.
+    /// Keep one lazy query so a wait can observe either accessibility role.
+    var readableTexts: XCUIElementQuery {
+        descendants(matching: .any).matching(NSPredicate(
+            format: "elementType == %lu OR elementType == %lu",
+            XCUIElement.ElementType.staticText.rawValue,
+            XCUIElement.ElementType.textView.rawValue
+        ))
+    }
+
+    var readableContent: String { label.isEmpty ? (value as? String ?? "") : label }
 }

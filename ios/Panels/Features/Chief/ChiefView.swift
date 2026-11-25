@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ChiefView: View {
     let editOwner: PageSessionRoute
@@ -60,11 +61,11 @@ struct HolderTickets: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-            Text("Tickets").font(PanelsTheme.TypeScale.heading).foregroundStyle(PanelsTheme.muted)
+            PanelsSelectableText("Tickets", font: .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .title3).pointSize, weight: .semibold), color: UIColor(PanelsTheme.muted))
                 .accessibilityAddTraits(.isHeader)
             if let active {
                 if active.tickets.isEmpty {
-                    Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
+                    Text("No active workers").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
                 } else {
                     WorkerSections(tickets: store.withLiveMarks(active.tickets), showHistory: false)
                 }

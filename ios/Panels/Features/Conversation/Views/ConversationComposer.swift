@@ -234,10 +234,9 @@ struct ConversationAttachmentTray: View {
                 }
                 ForEach(preparingVideos) { video in
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(video.fileName).lineLimit(1).truncationMode(.middle)
+                        Text(video.fileName).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                         ProgressView(value: video.progress).frame(width: 150)
-                        Text(video.progress > 0 ? "Compressing video… \(Int(video.progress * 100))%" : "Preparing video…")
-                            .foregroundStyle(PanelsTheme.muted)
+                        PanelsSelectableText(video.progress > 0 ? "Compressing video… \(Int(video.progress * 100))%" : "Preparing video…", font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
                     }.font(PanelsTheme.TypeScale.small).padding(10)
                         .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
                         .accessibilityIdentifier("conversation-video-preparing")
@@ -246,8 +245,8 @@ struct ConversationAttachmentTray: View {
                     HStack(spacing: 8) {
                         RingSpinner(size: .compact)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name).lineLimit(1).truncationMode(.middle)
-                            Text("Preparing photo…").foregroundStyle(PanelsTheme.muted)
+                            Text(name).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                            Text("Preparing photo…").textSelection(.enabled).foregroundStyle(PanelsTheme.muted)
                         }.font(PanelsTheme.TypeScale.small)
                     }
                     .padding(10).background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
@@ -280,15 +279,15 @@ struct ConversationAttachmentTile: View {
                 .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 HStack(spacing: 8) {
-                    Text(kind)
+                    Text(kind).textSelection(.enabled)
                         .font(PanelsTheme.TypeScale.caption.weight(.semibold)).foregroundStyle(PanelsTheme.muted)
                         .frame(width: 40, height: 40).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
-                        Text(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file))
+                        Text(name).textSelection(.enabled).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
+                        Text(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)).textSelection(.enabled)
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                         if let error = piece.preparationError ?? piece.localVideo?.preparationError {
-                            Text(error).font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.muted)
+                            PanelsSelectableText(error, font: .preferredFont(forTextStyle: .caption2), color: UIColor(PanelsTheme.muted))
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("conversation-video-error")
                         }
@@ -301,7 +300,7 @@ struct ConversationAttachmentTile: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(PanelsTheme.border))
         .overlay(alignment: .bottom) {
             if preparing {
-                Text("Preparing photo…").font(PanelsTheme.TypeScale.caption)
+                Text("Preparing photo…").textSelection(.enabled).font(PanelsTheme.TypeScale.caption)
                     .padding(3).background(PanelsTheme.surface)
             }
         }

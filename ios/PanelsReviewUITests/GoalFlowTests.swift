@@ -141,16 +141,16 @@ final class GoalFlowTests: XCTestCase {
         app.openReviewCards(timeout: 15)
         let evidence = app.links["Open table evidence"]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10)); evidence.tap()
-        XCTAssertTrue(app.staticTexts["Table artifact proof"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Table artifact proof").waitForExistence(timeout: 10))
         XCTAssertFalse(app.sidebarButton.exists, "A pushed artifact shows Back, not the Sidebar button")
         capture("review-artifact-sidebar-hidden")
         let nested = app.links["Next artifact"]
         XCTAssertTrue(nested.waitForExistence(timeout: 5)); nested.tap()
-        XCTAssertTrue(app.staticTexts["Nested artifact proof"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Nested artifact proof").waitForExistence(timeout: 10))
         XCTAssertFalse(app.sidebarButton.exists)
         capture("nested-artifact-sidebar-hidden")
         backFromArtifact()
-        XCTAssertTrue(app.staticTexts["Table artifact proof"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.readableText("Table artifact proof").waitForExistence(timeout: 5))
         XCTAssertFalse(app.sidebarButton.exists)
         backFromArtifact()
         XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 5)); XCTAssertTrue(app.sidebarButton.isHittable)
@@ -161,13 +161,13 @@ final class GoalFlowTests: XCTestCase {
         for scrolled in [false, true] {
             let table = element("goal-table-scroll-proof")
             XCTAssertTrue(table.waitForExistence(timeout: 10))
-            let caption = app.staticTexts["Table scroll proof"]
+            let caption = app.readableText("Table scroll proof")
             XCTAssertTrue(caption.waitForExistence(timeout: 5))
             let header = element("table-column-scroll-proof-1")
             let cell = element("table-cell-scroll-proof-0-1")
             XCTAssertTrue(header.exists); XCTAssertTrue(cell.exists)
-            let missingDataError = app.staticTexts.matching(NSPredicate(
-                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@", "data", "missing"
+            let missingDataError = app.readableTexts.matching(NSPredicate(
+                format: "(label CONTAINS[c] %@ AND label CONTAINS[c] %@) OR (value CONTAINS[c] %@ AND value CONTAINS[c] %@)", "data", "missing", "data", "missing"
             )).firstMatch
             XCTAssertFalse(missingDataError.exists, "The fixture must supply a complete Chief readings response")
             let pageX = caption.frame.minX
@@ -278,12 +278,12 @@ final class GoalFlowTests: XCTestCase {
         XCTAssertTrue(firstCircle.isHittable)
         firstCircle.tap()
         capture("goals-checklist-after-tick")
-        XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Explain the change.").waitForExistence(timeout: 8))
         capture("goals-checklist-next-item")
         let checklistWrites = try await writes()
         XCTAssertTrue(checklistWrites.contains { ($0["path"] as? String) == "/api/goals/release" })
         app.buttons["goal-check-next"].tap()
-        XCTAssertTrue(app.staticTexts["All items done"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.readableText("All items done").waitForExistence(timeout: 5))
         capture("goals-checklist-completed")
         app.backButton.tap()
         XCTAssertTrue(goalScreen.waitForNonExistence(timeout: 5))
@@ -329,10 +329,10 @@ final class GoalFlowTests: XCTestCase {
         let filter = app.textFields["Goal contains"]
         XCTAssertTrue(filter.waitForExistence(timeout: 3)); filter.tap(); filter.typeText("release")
         app.buttons["Apply"].tap()
-        XCTAssertTrue(app.staticTexts["Release the app"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.staticTexts["Write 1,000 words"].exists)
+        XCTAssertTrue(app.readableText("Release the app").waitForExistence(timeout: 3))
+        XCTAssertFalse(app.readableText("Write 1,000 words").exists)
         app.buttons["Goal"].tap(); app.buttons["Clear"].tap(); app.buttons["Apply"].tap()
-        XCTAssertTrue(app.staticTexts["Write 1,000 words"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.readableText("Write 1,000 words").waitForExistence(timeout: 3))
         app.backButton.tap()
         app.openDestination("sidebar-chief")
         XCTAssertTrue(chiefScreen.waitForExistence(timeout: 10))

@@ -63,6 +63,7 @@ final class ServerReachabilityTests: XCTestCase {
         try await state("offline")
         XCUIDevice.shared.press(.home)
         app.activate()
+
         XCTAssertTrue(retry.waitForExistence(timeout: 30))
         XCTAssertTrue(retry.isHittable)
         XCTAssertTrue(app.buttons["server-unreachable.tailscale"].isHittable)
@@ -95,6 +96,7 @@ final class ServerReachabilityTests: XCTestCase {
         app.activate()
         for _ in 0..<10 {
             XCTAssertFalse(retry.exists, "A background return must preserve Continue offline")
+
             try await Task.sleep(for: .seconds(1))
         }
 

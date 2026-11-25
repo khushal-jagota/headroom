@@ -11,7 +11,7 @@ struct ReviewChiefMessage: View {
                 placeholder: "Message Chief…", sendReply: { await message.send() }, statusNote: message.note)
                 .disabled(message.blocked)
             if let error = message.storageError ?? message.error {
-                Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+                Text(error).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
             }
         }
         .accessibilityIdentifier("review.chief")

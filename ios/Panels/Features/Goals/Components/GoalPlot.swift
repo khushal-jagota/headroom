@@ -38,6 +38,7 @@ struct GoalLineInspection: UIViewRepresentable {
     let changed: (CGPoint) -> Void
     let ended: (Bool) -> Void
     let scrolling: () -> Void
+    let copyText: String
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UIView {
         let view = UIView(); view.backgroundColor = .clear
@@ -45,23 +46,32 @@ struct GoalLineInspection: UIViewRepresentable {
         press.minimumPressDuration = 0; press.allowableMovement = .greatestFiniteMagnitude
         press.cancelsTouchesInView = false; press.delegate = context.coordinator
         view.addGestureRecognizer(press)
+        SystemTextCopyInteraction.install(on: view, text: copyText) { [weak coordinator = context.coordinator] in
+            coordinator?.copiedReadout = true
+        }
         return view
     }
-    func updateUIView(_ view: UIView, context: Context) { context.coordinator.owner = self }
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.owner = self
+        SystemTextCopyInteraction.install(on: view, text: copyText) { [weak coordinator = context.coordinator] in
+            coordinator?.copiedReadout = true
+        }
+    }
     @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var owner: GoalLineInspection
         private var origin = CGPoint.zero
         private var isScrolling = false
+        var copiedReadout = false
         init(_ owner: GoalLineInspection) { self.owner = owner }
         @objc func touch(_ press: UILongPressGestureRecognizer) {
             let point = press.location(in: press.view)
             switch press.state {
             case .began:
-                origin = point; isScrolling = false; owner.changed(point)
+                origin = point; isScrolling = false; copiedReadout = false; owner.changed(point)
             case .changed:
                 if abs(point.y - origin.y) > 12 && abs(point.y - origin.y) > abs(point.x - origin.x) { isScrolling = true }
                 if isScrolling { owner.scrolling() } else { owner.changed(point) }
-            case .ended: owner.ended(!isScrolling)
+            case .ended: owner.ended(!isScrolling && !copiedReadout)
             case .cancelled, .failed: owner.ended(false)
             default: break
             }
@@ -216,7 +226,7 @@ struct GoalPlot: View {
                 let fraction = (bounds.1 - tick) / (bounds.1 - bounds.0)
                 Group {
                     Rectangle().fill(PanelsTheme.Goal.grid).frame(height: 1).offset(y: geometry.size.height * fraction)
-                    Text(GoalChartPresentation.axisTick(block, tick))
+                    Text(GoalChartPresentation.axisTick(block, tick)).textSelection(.enabled)
                         .font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).frame(width: 30, alignment: .leading)
                         .offset(x: geometry.size.width + 6, y: geometry.size.height * fraction - 6)
                 }
@@ -225,10 +235,10 @@ struct GoalPlot: View {
     }
     private var axisLabels: some View {
         HStack {
-            Text(data.first?.label ?? "")
+            Text(data.first?.label ?? "").textSelection(.enabled)
             Spacer()
-            if data.count > 2 { Text(data[data.count / 2].label); Spacer() }
-            if data.count > 1 { Text(data.last?.label ?? "") }
+            if data.count > 2 { Text(data[data.count / 2].label).textSelection(.enabled); Spacer() }
+            if data.count > 1 { Text(data.last?.label ?? "").textSelection(.enabled) }
         }.font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).lineLimit(1)
     }
     private var bars: some View {
@@ -278,13 +288,13 @@ struct GoalPlot: View {
     }
     private func inspection(_ datum: GoalChartDatum) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(datum.label).fontWeight(.medium)
+            Text(datum.label).textSelection(.enabled).fontWeight(.medium)
             ForEach(Array(keys.enumerated()), id: \.element) { index, key in
                 HStack(spacing: 6) {
                     Circle().fill(color(key, index: index, datum: datum)).frame(width: 5, height: 5)
-                    Text(key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : "Current")
+                    Text(key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : "Current").textSelection(.enabled)
                     Spacer(minLength: 8)
-                    Text(GoalChartPresentation.format(block, datum.values[key])).monospacedDigit()
+                    Text(GoalChartPresentation.format(block, datum.values[key])).textSelection(.enabled).monospacedDigit()
                 }
             }
         }.font(.system(size: 10)).foregroundStyle(PanelsTheme.text)
@@ -306,7 +316,7 @@ struct GoalPlot: View {
                     Capsule().fill(color(key, index: index)).frame(width: 14, height: 2)
                     Text(key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : "Current")
                 }.font(.system(size: 10)).foregroundStyle(PanelsTheme.Goal.faint).opacity(hidden.contains(key) ? 0.4 : 1)
-            }.buttonStyle(.plain).accessibilityValue(hidden.contains(key) ? "Hidden" : "Visible")
+            }.buttonStyle(.plain).systemCopyText(key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : "Current").accessibilityValue(hidden.contains(key) ? "Hidden" : "Visible")
         }
     }
 }

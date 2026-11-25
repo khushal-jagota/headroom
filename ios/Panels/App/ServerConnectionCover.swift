@@ -117,9 +117,11 @@ private struct ServerConnectionCoverRoot: View {
                 Group {
                     if updateRequired {
                         ContentUnavailableView {
-                            Label(NativeBuildGate.message, systemImage: "arrow.down.app")
+                            Label {
+                                MoreUnavailableText(text: NativeBuildGate.message)
+                            } icon: { Image(systemName: "arrow.down.app") }
                         } description: {
-                            Text("Your drafts and pending messages stay on this device.")
+                            MoreUnavailableText(text: "Your drafts and pending messages stay on this device.", secondary: true)
                         } actions: {
                             Link("Open TestFlight", destination: URL(string: "itms-beta://")!)
                                 .buttonStyle(.borderedProminent)
@@ -146,9 +148,11 @@ private struct ServerUnreachableView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label("Panels can’t reach the server.", systemImage: "network.slash")
+            Label {
+                MoreUnavailableText(text: "Panels can’t reach the server.")
+            } icon: { Image(systemName: "network.slash") }
         } description: {
-            Text("Check that Tailscale is connected.")
+            MoreUnavailableText(text: "Check that Tailscale is connected.", secondary: true)
         } actions: {
             VStack(spacing: 12) {
                 Button {

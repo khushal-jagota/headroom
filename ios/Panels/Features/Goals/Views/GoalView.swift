@@ -60,7 +60,7 @@ struct GoalDocumentContent: View {
                         GoalChart(block: chart, session: session, integrated: true).modifier(GoalPanel(padding: 20, radius: PanelsTheme.Goal.panelRadius))
                     }
                     ForEach(Array((session.readings?.sources.filter { $0["health"].text != "healthy" } ?? []).enumerated()), id: \.offset) { _, source in
-                        Text(source["source_name"].text + ": " + source["health"].text).font(.caption).foregroundStyle(PanelsTheme.Goal.attention)
+                        Text(source["source_name"].text + ": " + source["health"].text).textSelection(.enabled).font(.caption).foregroundStyle(PanelsTheme.Goal.attention)
                     }
                     GoalPageBlocks(blocks: GoalPresentation.withoutChecklist(goal.page["blocks"].array, id: GoalPresentation.primaryChecklist(goal)?.id), session: session).padding(.top, 12)
                     if let legacy = goal.legacyConversationId, let holder = goal.holder {
@@ -90,14 +90,14 @@ struct GoalDocumentContent: View {
             ForEach(projects, id: \.id) { project in
                 Button(project["name"].text) { Task { await session.save(["project_id": .string(project.id)], revision: goal.revision) } }
             }
-        } label: { Text(projects.first { $0.id == goal.projectId }?["name"].string ?? (goal.projectId == "project_personal" ? "Personal" : "…")) }.accessibilityLabel("Project")
+        } label: { Text(projects.first { $0.id == goal.projectId }?["name"].string ?? (goal.projectId == "project_personal" ? "Personal" : "…")) }.accessibilityLabel("Project").systemCopyText(projects.first { $0.id == goal.projectId }?["name"].string ?? (goal.projectId == "project_personal" ? "Personal" : "…"))
         GoalDateControl(value: goal.deadline, label: "Goal deadline", tone: GoalPresentation.deadlineTone(goal.deadline, completed: goal.completed, today: goal.statusDate), revision: goal.revision) { value, revision in
             await session.save(["deadline": value.map(GoalJSON.string) ?? .null], revision: revision)
         }
         Menu {
             Button("Active") { Task { await session.save(["active": .bool(true)], revision: goal.revision) } }
             Button("Inactive") { Task { await session.save(["active": .bool(false)], revision: goal.revision) } }
-        } label: { Text(goal.active ? "Active" : "Inactive") }.accessibilityLabel("State")
+        } label: { Text(goal.active ? "Active" : "Inactive") }.accessibilityLabel("State").systemCopyText(goal.active ? "Active" : "Inactive")
     }
     private func loadProjects() async {
         let handle = store.resources.handle(GoalResources.projects); projectsHandle = handle

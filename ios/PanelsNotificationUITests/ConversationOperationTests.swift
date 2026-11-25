@@ -17,7 +17,7 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 8))
         line.tap()
         XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["The plan is ready. What should I work on next?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.readableText("The plan is ready. What should I work on next?").waitForExistence(timeout: 5))
         let input = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
@@ -53,9 +53,9 @@ final class ConversationOperationTests: XCTestCase {
         capture(app, "chat-canceled-back-keeps-editing")
         app.buttons["Send message"].tap()
         XCTAssertTrue(attachment.waitForNonExistence(timeout: 5))
-        let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Please check this image.")).firstMatch
+        let sent = app.readableTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Please check this image.", "Please check this image.")).firstMatch
         XCTAssertTrue(sent.waitForExistence(timeout: 8))
-        let reply = thread.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "I’ll keep the conversation steady as messages arrive.")).firstMatch
+        let reply = thread.readableTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "I’ll keep the conversation steady as messages arrive.", "I’ll keep the conversation steady as messages arrive.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 8), "The server did not accept the send and return its reply")
         app.backButton.tap()
         XCTAssertTrue(line.waitForExistence(timeout: 5))

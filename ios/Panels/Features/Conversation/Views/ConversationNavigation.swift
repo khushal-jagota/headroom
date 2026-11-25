@@ -260,10 +260,10 @@ private struct ConversationSurface: View {
             header
             if isPage, model.machineLocale == "macos" {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                    TicketMachineLabel(locale: model.machineLocale, machineId: model.presentedMachineId)
+                    TicketMachineLabel(locale: model.machineLocale, machineId: model.presentedMachineId, selectable: true)
                     if TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
-                        Text(TicketMachine.unknownActivityText(model.machineLocale, machineId: model.presentedMachineId, machines: store.machines))
-                        Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
+                        PanelsSelectableText(TicketMachine.unknownActivityText(model.machineLocale, machineId: model.presentedMachineId, machines: store.machines), font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
+                        PanelsSelectableText(store.executorHealth?.contactSentence ?? "Last contact: unknown.", font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
                     }
                 }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
@@ -272,7 +272,7 @@ private struct ConversationSurface: View {
                 ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active && !store.contentCovered)
             }
             if readOnly {
-                Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
+                Text("Historical conversation · read only").textSelection(.enabled).font(PanelsTheme.TypeScale.small)
                     .foregroundStyle(PanelsTheme.faint).padding()
             } else {
                 bottom.fixedSize(horizontal: false, vertical: true)
@@ -312,6 +312,7 @@ private struct ConversationSurface: View {
             .buttonStyle(.plain)
             .accessibilityLabel(model.compactPreview)
             .accessibilityIdentifier("conversation-line")
+            .systemCopyText(model.compactPreview)
             .frame(minHeight: ConversationLayout.lineHeight)
             .foregroundStyle(PanelsTheme.faint)
             .accessibilityElement(children: .contain)
@@ -325,9 +326,9 @@ private struct ConversationSurface: View {
                 VStack(spacing: 4) {
                     ForEach(model.heldPrompts, id: \.heldPromptId) { held in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(held.text).lineLimit(2)
+                            Text(held.text).textSelection(.enabled).lineLimit(2)
                             HStack {
-                                Text(held.note).foregroundStyle(PanelsTheme.faint)
+                                Text(held.note).textSelection(.enabled).foregroundStyle(PanelsTheme.faint)
                                 Spacer(minLength: 8)
                                 Button("Steer in") { changeQueue(held, discard: false) }
                                 Button { changeQueue(held, discard: true) } label: {
@@ -415,12 +416,12 @@ struct ConversationThread: View {
                             if row.own, let note = row.note { refusedMark(note: note, retryID: readOnly ? nil : row.retryID) }
                             VStack(alignment: .leading, spacing: 6) {
                                 if let sender = row.senderLabel {
-                                    Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                                    Text(sender).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                                 }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
                                     Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
                                     if let error = model.bodyErrors[item.key] {
-                                        Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+                                        Text(error).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
                                     }
                                 } else if !row.text.isEmpty {
                                     PanelsMarkdown(source: row.text, baseURL: store.baseURL)
@@ -429,7 +430,7 @@ struct ConversationThread: View {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
                                 }
                                 if !row.own, let note = note(row) {
-                                    Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
+                                    PanelsSelectableText(note, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.faint)).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                                 // Code, tables and charts take what they are offered; the spacer keeps only its minimum.
@@ -642,7 +643,7 @@ struct ConversationModelSheet: View {
                 if !efforts.isEmpty {
                     Section("Reasoning") { Picker("Reasoning", selection: $effort) { ForEach(efforts, id: \.self) { Text($0.capitalized).tag($0) } }.pickerStyle(.segmented) }
                 }
-                if let error { Text(error).foregroundStyle(PanelsTheme.error) }
+                if let error { Text(error).textSelection(.enabled).foregroundStyle(PanelsTheme.error) }
                 Button {
                     model.backendKey = backend; model.selectedModel = selection; model.reasoningEffort = effort.isEmpty ? nil : effort
                     Haptics.selection(); dismiss()

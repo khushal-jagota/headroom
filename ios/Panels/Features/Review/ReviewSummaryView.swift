@@ -15,10 +15,10 @@ struct ReviewSummaryView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(summary.headline).panelsScaledFont(size: 31, relativeTo: .largeTitle, weight: .bold)
+                    Text(summary.headline).textSelection(.enabled).panelsScaledFont(size: 31, relativeTo: .largeTitle, weight: .bold)
                         .foregroundStyle(PanelsTheme.Web.strong)
                         .accessibilityIdentifier("review.summary.headline")
-                    Text(summary.detail).panelsScaledFont(size: 31, relativeTo: .largeTitle, weight: .semibold)
+                    Text(summary.detail).textSelection(.enabled).panelsScaledFont(size: 31, relativeTo: .largeTitle, weight: .semibold)
                         .foregroundStyle(PanelsTheme.Web.heroMuted).padding(.top, 2)
                         .accessibilityIdentifier("review.summary.detail")
                     if let title = summary.returnTitle {
@@ -42,7 +42,7 @@ struct ReviewSummaryView: View {
             .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .overlay(alignment: .bottomLeading) {
                 if workingCount > 0 {
-                    Text("\(workingCount) \(workingCount == 1 ? "agent" : "agents") working right now")
+                    Text("\(workingCount) \(workingCount == 1 ? "agent" : "agents") working right now").textSelection(.enabled)
                         .panelsScaledFont(size: 13.5).monospacedDigit().foregroundStyle(PanelsTheme.Web.tertiary)
                         .padding(.leading, 20).padding(.bottom, 12)
                         .accessibilityIdentifier("review.summary.working")

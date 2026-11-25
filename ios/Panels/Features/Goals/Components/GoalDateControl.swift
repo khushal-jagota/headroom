@@ -16,7 +16,7 @@ struct GoalDateControl: View {
         } label: {
             Text(value == nil || value == "" ? "No deadline" : GoalPresentation.date(value)).foregroundStyle(PanelsTheme.Goal.tone(tone))
                 .frame(minHeight: 32)
-        }.buttonStyle(.plain).accessibilityLabel(label + ", " + GoalPresentation.date(value))
+        }.buttonStyle(.plain).systemCopyText(value == nil || value == "" ? "No deadline" : GoalPresentation.date(value)).accessibilityLabel(label + ", " + GoalPresentation.date(value))
             .sheet(isPresented: $opened) {
                 NavigationStack {
                     DatePicker(label, selection: $date, displayedComponents: .date).datePickerStyle(.graphical).environment(\.timeZone, TimeZone(secondsFromGMT: 0)!).padding()
@@ -24,7 +24,7 @@ struct GoalDateControl: View {
                             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { opened = false } }
                             ToolbarItem(placement: .confirmationAction) { Button("Done") { let chosen = GoalPresentation.day(date); opened = false; Task { await save(chosen, capturedRevision) } } }
                             ToolbarItem(placement: .bottomBar) { Button("No deadline") { opened = false; Task { await save(nil, capturedRevision) } } }
-                        }.navigationTitle(label).navigationBarTitleDisplayMode(.inline)
+                        }.panelsNavigationTitle(label).navigationBarTitleDisplayMode(.inline)
                 }.presentationDetents([.medium, .large]).preferredColorScheme(.dark)
             }
     }

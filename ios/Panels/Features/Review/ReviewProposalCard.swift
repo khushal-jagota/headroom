@@ -50,7 +50,7 @@ struct ReviewProposalCard: View {
                     ScreenLoadingView(title: "review").frame(height: cardHeight)
                 }
                 if let error = decision.error, refusal == nil, decision.proposal == nil || decision.changed {
-                    Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
+                    Text(error).textSelection(.enabled).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
                     Button(decision.changed ? "Reload proposal" : "Try again") {
                         Task { await store.refresh(); await decision.load(item: item, api: store.client, discardDraft: decision.changed) }
                     }.disabled(decision.busy).panelsScaledFont(size: 13)

@@ -22,7 +22,7 @@ struct ReviewAskCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 if let permission = decision.permission {
                     askCard(label: "Permission ask") {
-                        Text(permission.title).panelsScaledFont(size: 15, weight: .medium).foregroundStyle(PanelsTheme.Web.strong)
+                        Text(permission.title).textSelection(.enabled).panelsScaledFont(size: 15, weight: .medium).foregroundStyle(PanelsTheme.Web.strong)
                             .fixedSize(horizontal: false, vertical: true)
                         if let detail = permission.detail, !detail.isEmpty {
                             ScrollView(.horizontal) {
@@ -43,7 +43,7 @@ struct ReviewAskCard: View {
                     ScreenLoadingView(title: "question")
                 }
                 if let error = decision.error {
-                    Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
+                    Text(error).textSelection(.enabled).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
                     if !decision.loaded { Button("Try again") { Task { await decision.load(item: item, api: store.client, viewFreshAt: store.viewFreshAt) } }.panelsScaledFont(size: 13) }
                 }
             }
@@ -86,8 +86,8 @@ struct ReviewAskCard: View {
     private func askCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Text(label).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
-                Text("· From \(from)").foregroundStyle(PanelsTheme.Web.tertiary)
+                Text(label).textSelection(.enabled).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
+                Text("· From \(from)").textSelection(.enabled).foregroundStyle(PanelsTheme.Web.tertiary)
             }.panelsScaledFont(size: 13, weight: .medium)
             content()
         }
@@ -100,9 +100,9 @@ struct ReviewAskCard: View {
     @ViewBuilder private func questionView(_ question: ReviewAskState.Question) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let header = question.header, !header.isEmpty {
-                Text(header).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary)
+                Text(header).textSelection(.enabled).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary)
             }
-            Text(question.question).panelsScaledFont(size: 15, weight: .medium).foregroundStyle(PanelsTheme.Web.strong)
+            Text(question.question).textSelection(.enabled).panelsScaledFont(size: 15, weight: .medium).foregroundStyle(PanelsTheme.Web.strong)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 4)
             ForEach(question.options, id: \.label) { option in
@@ -131,6 +131,7 @@ struct ReviewAskCard: View {
                 .disabled(finished || !decision.available)
                 .accessibilityAddTraits(chosen ? .isSelected : [])
                 .accessibilityIdentifier("review.ask.option.\(option.label)")
+                .systemCopyText([option.label, option.description].compactMap { $0 }.joined(separator: "\n"))
             }
         }
     }

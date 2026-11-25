@@ -1,84 +1,62 @@
 import SwiftUI
+import UIKit
 
+/// Current field values and recaps share separate native text and disclosure controls.
 struct TicketExpandableText: View {
     let text: String
     let emptyText: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = false
-    @State private var fullHeight: CGFloat = 0
-    @State private var collapsedHeight: CGFloat = 0
-    private var truncated: Bool { fullHeight > collapsedHeight + 1 }
-    private var rendered: AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
-    }
     var body: some View {
-        Text(text.isEmpty ? AttributedString(emptyText) : rendered)
-            .lineLimit(expanded ? nil : 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                Text(rendered).lineLimit(8).fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }
-                    .hidden()
-            }
-            .background {
-                Text(rendered).fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
-                    .hidden()
-            }
-            .mask {
-                VStack(spacing: 0) {
-                    Rectangle()
-                    LinearGradient(colors: [.black, truncated && !expanded ? .clear : .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: PanelsTheme.Space.xl)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard truncated || expanded else { return }
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow)) { expanded.toggle() }
-            }
-            .accessibilityAddTraits(truncated ? .isButton : [])
-            .accessibilityHint(truncated ? (expanded ? "Tap to collapse recap" : "Tap to expand recap") : "")
-            .accessibilityIdentifier("ticket-recap")
-            .font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.muted)
-            .onChange(of: text) { _, _ in expanded = false }
+        TicketReadOnlyText(text: text.isEmpty ? emptyText : text, collapsedLines: 8,
+            font: .preferredFont(forTextStyle: .body), color: UIColor(PanelsTheme.muted), lineSpacing: 0)
     }
 }
 
-/// Recap disclosure matches the phone design. The text stays selectable.
 struct TicketRecapText: View {
     let text: String
+    @ScaledMetric private var size = PanelsTheme.Web.bodySize
+    var body: some View {
+        TicketReadOnlyText(text: text, collapsedLines: 3, font: .systemFont(ofSize: size),
+            color: UIColor(PanelsTheme.Web.text), lineSpacing: 5)
+            .accessibilityIdentifier("ticket-recap")
+    }
+}
+
+private struct TicketReadOnlyText: View {
+    let text: String
+    let collapsedLines: Int
+    let font: UIFont
+    let color: UIColor
+    let lineSpacing: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
     @State private var fullHeight: CGFloat = 0
     @State private var collapsedHeight: CGFloat = 0
-    private var truncated: Bool { fullHeight > collapsedHeight + 1 }
     private var rendered: AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(rendered)
-                .lineLimit(expanded ? nil : 3)
+            PanelsSelectableText(rendered, font: font, color: color,
+                lineSpacing: lineSpacing, lineLimit: expanded ? nil : collapsedLines)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background {
-                    Text(rendered).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }.hidden()
+                    Text(rendered).font(Font(font)).lineSpacing(lineSpacing)
+                        .lineLimit(collapsedLines).fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }
+                        .hidden().accessibilityHidden(true)
                 }
                 .background {
-                    Text(rendered).fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }.hidden()
+                    Text(rendered).font(Font(font)).lineSpacing(lineSpacing)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+                        .hidden().accessibilityHidden(true)
                 }
-                .textSelection(.enabled)
-            if truncated || expanded {
+            if fullHeight > collapsedHeight + 1 || expanded {
                 Button(expanded ? "Show less" : "Show more") {
                     withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
                 }.buttonStyle(.plain).panelsScaledFont(size: PanelsTheme.Web.smallSize)
                     .foregroundStyle(PanelsTheme.Web.secondary)
             }
-        }.panelsScaledFont(size: PanelsTheme.Web.bodySize)
-            .lineSpacing(5).foregroundStyle(PanelsTheme.Web.text)
-            .accessibilityIdentifier("ticket-recap")
-            .onChange(of: text) { _, _ in expanded = false }
+        }.onChange(of: text) { _, _ in expanded = false }
     }
 }

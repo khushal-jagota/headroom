@@ -51,7 +51,7 @@ final class UpdateFlowTests: XCTestCase {
         hierarchy.name = "updates-initial-accessibility-hierarchy"
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
-        XCTAssertTrue(app.staticTexts["This update stops your agents"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("This update stops your agents").waitForExistence(timeout: 10))
         capture("updates-offer-and-machine-rows")
 
         let retry = app.buttons["updates.retry-machine.machine-failed"]
@@ -83,7 +83,7 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertTrue(retry.waitForNonExistence(timeout: 10))
         let studio = app.descendants(matching: .any)["updates.machine.machine-failed"]
         XCTAssertTrue(studio.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Updating…"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Updating…").firstMatch.waitForExistence(timeout: 10))
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 2)
         XCTAssertEqual(writes[1]["path"] as? String, writes[0]["path"] as? String)
@@ -93,8 +93,8 @@ final class UpdateFlowTests: XCTestCase {
         reveal(install)
         install.tap()
         XCTAssertTrue(install.waitForNonExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Updating…"].firstMatch.waitForExistence(timeout: 10))
-        reveal(app.staticTexts["This update stops your agents"], upward: false)
+        XCTAssertTrue(app.readableText("Updating…").firstMatch.waitForExistence(timeout: 10))
+        reveal(app.readableText("This update stops your agents"), upward: false)
         capture("updates-progress-retains-press-snapshot")
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 3)
@@ -111,7 +111,7 @@ final class UpdateFlowTests: XCTestCase {
         capture("updates-server-failure")
         serverRetry.tap()
         XCTAssertTrue(serverRetry.waitForNonExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Updating…"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Updating…").firstMatch.waitForExistence(timeout: 10))
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 4)
         XCTAssertEqual(writes[3]["path"] as? String, "/api/updates/attempts/server-attempt/retry")
@@ -121,7 +121,7 @@ final class UpdateFlowTests: XCTestCase {
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
         openSettings()
-        XCTAssertTrue(app.staticTexts["This update stops your agents"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("This update stops your agents").waitForExistence(timeout: 10))
         capture("updates-large-text-card-top")
         reveal(app.buttons["updates.install"])
         capture("updates-large-text-card-actions")
@@ -142,18 +142,18 @@ final class UpdateFlowTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         openSettings()
-        XCTAssertTrue(app.staticTexts["Updating…"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Updating…").firstMatch.waitForExistence(timeout: 10))
         try await connection("offline")
         XCTAssertFalse(app.buttons["server-unreachable.retry"].exists)
         capture("updates-progress-during-expected-restart")
-        XCTAssertTrue(app.staticTexts["Can't reach Panels"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.readableText("Can't reach Panels").waitForExistence(timeout: 30))
         XCTAssertFalse(app.buttons["server-unreachable.retry"].exists)
         let tryNow = app.buttons["Try now"]
         XCTAssertTrue(tryNow.exists)
         capture("updates-deadline-card-cannot-reach")
         try await connection("online")
         tryNow.tap()
-        XCTAssertTrue(app.staticTexts["Can't reach Panels"].waitForNonExistence(timeout: 15))
+        XCTAssertTrue(app.readableText("Can't reach Panels").waitForNonExistence(timeout: 15))
         XCTAssertTrue(app.descendants(matching: .any)["updates.card"].waitForExistence(timeout: 10))
         capture("updates-reconnected-without-write-replay")
         writes = try await updateWrites()
@@ -164,11 +164,11 @@ final class UpdateFlowTests: XCTestCase {
         app.terminate()
         app.launch()
         openSettings(capturing: "none")
-        XCTAssertTrue(app.staticTexts["Up to date"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Up to date").firstMatch.waitForExistence(timeout: 10))
         // The last attempt keeps its press snapshot, but with nothing offered or running
         // the card names no impact and no agents.
-        XCTAssertFalse(app.staticTexts["This update stops your agents"].exists)
-        XCTAssertFalse(app.staticTexts["Release reviewer"].exists)
+        XCTAssertFalse(app.readableText("This update stops your agents").exists)
+        XCTAssertFalse(app.readableText("Release reviewer").exists)
         capture("updates-screen-none")
     }
 }

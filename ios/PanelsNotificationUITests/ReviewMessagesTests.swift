@@ -18,22 +18,23 @@ final class ReviewMessagesTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         // The app opens on the summary, not straight into a card.
-        let summary = app.staticTexts["review.summary.headline"]
+        let summary = app.readableText("review.summary.headline")
         XCTAssertTrue(summary.waitForExistence(timeout: 12))
-        XCTAssertEqual(summary.label, "3 new.")
+        XCTAssertEqual(summary.readableContent, "3 new.")
         let back = app.buttons["review.return"]
         XCTAssertEqual(back.label, "Back to review")
         back.tap()
         // The proposal is its own card, with Skip, Return and Approve in one row.
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
+
         // The real Sidebar action must leave an open card, even while Review is already
         // selected. Model tests cannot prove selection through the shell's NavigationStack.
         let selectionProofStart = Date()
         app.openDestination("sidebar-review")
         XCTAssertTrue(summary.waitForExistence(timeout: 8))
         XCTAssertEqual(summary.label, "3 new.")
-        XCTAssertEqual(app.staticTexts["review.summary.detail"].label, "Ready to review.")
+        XCTAssertEqual(app.readableText("review.summary.detail").label, "Ready to review.")
         XCTAssertFalse(approve.exists)
         capture(app, "review-selection-from-card")
         // A repeated tap stays on the summary. A trip through Chief does the same.
@@ -54,7 +55,8 @@ final class ReviewMessagesTests: XCTestCase {
         print("Review selection proof: \(Date().timeIntervalSince(selectionProofStart)) seconds")
         back.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
-        let message = app.staticTexts["First unread message"]
+        let message = app.readableText("First unread message")
+
         XCTAssertFalse(message.exists, "The message is a card of its own")
         let note = app.textFields["review.revision"].firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 8))
@@ -87,13 +89,13 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(message.waitForExistence(timeout: 8))
         XCTAssertEqual(reply.value as? String, "Keep this Review reply")
         skip.tap()
-        let historical = app.staticTexts["Historical message"]
+        let historical = app.readableText("Historical message")
         XCTAssertTrue(historical.waitForExistence(timeout: 8))
         skip.tap()
         // Every card skipped: the summary offers them again.
         XCTAssertTrue(summary.waitForExistence(timeout: 8))
-        XCTAssertEqual(summary.label, "3 skipped.")
-        XCTAssertEqual(app.staticTexts["review.summary.detail"].label, "Nothing new.")
+        XCTAssertEqual(summary.readableContent, "3 skipped.")
+        XCTAssertEqual(app.readableText("review.summary.detail").readableContent, "Nothing new.")
         XCTAssertEqual(back.label, "Review skipped")
         back.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
@@ -147,7 +149,7 @@ final class ReviewMessagesTests: XCTestCase {
         let reviewReturn = app.buttons["review.return"]
         XCTAssertTrue(reviewReturn.waitForExistence(timeout: 12))
         reviewReturn.tap()
-        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.readableText("First unread message").waitForExistence(timeout: 12))
         let input = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
@@ -164,15 +166,15 @@ final class ReviewMessagesTests: XCTestCase {
         let skip = app.buttons["review.skip"]
         XCTAssertTrue(skip.waitForExistence(timeout: 8))
         skip.tap()
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10))
         let openConversation = app.buttons["review.openConversation"]
         XCTAssertTrue(openConversation.waitForExistence(timeout: 8))
         openConversation.tap()
-        XCTAssertTrue(app.staticTexts["Historical transcript"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Historical conversation · read only"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Historical transcript").waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Historical conversation · read only").waitForExistence(timeout: 8))
         // The conversation opens on top of Review, so Back returns to the card.
         back.tap()
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         let writes = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
         let sends = writes.filter { $0["sender_message_id"] != nil }

@@ -84,7 +84,7 @@ private struct ChiefGoalCard: View {
                     HStack { Text(project); Text("·"); Text(goal.deadline.map { "By " + GoalPresentation.date($0) } ?? "No deadline").foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(goal.deadline, completed: goal.completed, today: goal.statusDate))) }.font(.system(size: 12)).foregroundStyle(PanelsTheme.Goal.faint)
                     Text(goal.title).panelsScaledFont(size: 22, weight: .semibold).foregroundStyle(PanelsTheme.strong)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(PanelsTheme.raised)
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plain).systemCopyText(goal.title)
             if let accepted = session.goal {
                 VStack(alignment: .leading, spacing: 16) {
                     if let checklist = GoalPresentation.primaryChecklist(accepted) { GoalChecklist(block: checklist, session: session) }

@@ -105,8 +105,8 @@ struct ReviewInlineNote: View {
     let text: String
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).panelsScaledFont(size: 13, weight: .semibold)
-            Text(text).panelsScaledFont(size: 13).fixedSize(horizontal: false, vertical: true)
+            Text(title).textSelection(.enabled).panelsScaledFont(size: 13, weight: .semibold)
+            Text(text).textSelection(.enabled).panelsScaledFont(size: 13).fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(tone == .refused ? PanelsTheme.Web.errorText : PanelsTheme.accentText)
         .padding(.horizontal, 13).padding(.vertical, 11)
@@ -132,7 +132,7 @@ struct DecisionProposalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text(fieldLabel).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
+                Text(fieldLabel).textSelection(.enabled).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
                 Spacer(minLength: 0)
                 Button(action: onReviewer) {
                     HStack(spacing: 4) { Text(reviewer); Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)) }
@@ -140,6 +140,7 @@ struct DecisionProposalCard: View {
                         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
                         .frame(minHeight: 32)
                 }.buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
+                    .systemCopyText(reviewer)
                     .disabled(!reviewerEnabled)
                     .accessibilityLabel("Reviewer, \(reviewer)")
                     .accessibilityIdentifier("decision.reviewer")
@@ -189,7 +190,7 @@ struct DecisionNoteActions: View {
                         .padding(.top, 6)
                 }
                 if let error = attachments?.error {
-                    Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error)
+                    Text(error).textSelection(.enabled).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error)
                 }
                 HStack(alignment: .bottom, spacing: 4) {
                     if attachments != nil {
@@ -227,11 +228,11 @@ struct DecisionNoteActions: View {
                     .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
             }
             if showsSendBack && !canReturn {
-                Text("No existing Worker conversation to return it to.")
+                Text("No existing Worker conversation to return it to.").textSelection(.enabled)
                     .panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let error {
-                Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
+                Text(error).textSelection(.enabled).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("review.decisionError")
             }
         }

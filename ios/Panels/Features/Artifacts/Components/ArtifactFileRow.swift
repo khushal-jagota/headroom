@@ -52,6 +52,7 @@ struct ArtifactFileRow: View {
             }.frame(minHeight: target?.kind == .image ? 56 : 48).contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(target == nil)
+        .systemCopyText(entry.label)
         .listRowBackground(Color.clear).listRowSeparatorTint(PanelsTheme.border)
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .accessibilityElement(children: .ignore)

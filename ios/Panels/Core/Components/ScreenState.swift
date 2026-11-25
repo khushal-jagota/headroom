@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ScreenPlaceholder: View {
     let title: String
@@ -15,7 +16,7 @@ struct LoadErrorView: View {
     let retry: () async -> Void
     var body: some View {
         HStack(alignment: .center, spacing: PanelsTheme.Space.md) {
-            Text(message).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            Text(message).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ScreenRetryButton(retry: retry)
                 .accessibilityIdentifier("screen-refresh-error.retry")
@@ -73,7 +74,7 @@ private struct ScreenLoadState: ViewModifier {
                         ContentUnavailableView {
                             Label("Couldn’t load \(title)", systemImage: "exclamationmark.circle")
                         } description: {
-                            Text(error)
+                            Text(error).textSelection(.enabled)
                         } actions: {
                             ScreenRetryButton(retry: retry).buttonStyle(.bordered)
                         }
@@ -185,10 +186,15 @@ extension View {
 struct TicketMachineLabel: View {
     let locale: String?
     var machineId: String? = nil
+    var selectable = false
     @Environment(AppStore.self) private var store
     var body: some View {
         let name = TicketMachine.name(locale, machineId: machineId, machines: store.machines)
-        Label(name, systemImage: locale == "macos" ? "laptopcomputer" : "server.rack")
+        Label {
+            if selectable {
+                PanelsSelectableText(name, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
+            } else { Text(name) }
+        } icon: { Image(systemName: locale == "macos" ? "laptopcomputer" : "server.rack") }
             .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
             .accessibilityLabel("Runs on \(name)")
     }

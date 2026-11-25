@@ -29,7 +29,7 @@ struct TicketWorkerSetup: View {
                 }) { dismiss() }
             }
         }) {
-            TicketMachineLabel(locale: ticket.locale, machineId: ticket.machineId)
+            TicketMachineLabel(locale: ticket.locale, machineId: ticket.machineId, selectable: true)
             if backends.isEmpty && loadError == nil { RingSpinner("Loading models…") }
             Picker("Backend", selection: $backend) {
                 ForEach(backends) { item in Text(store.backendLabel(item.id)).tag(item.id).disabled(!item.installed) }
@@ -44,7 +44,7 @@ struct TicketWorkerSetup: View {
                     ForEach(efforts, id: \.self) { Text($0.capitalized).tag($0) }
                 }
             }
-            if let loadError { Text(loadError).foregroundStyle(PanelsTheme.error) }
+            if let loadError { Text(loadError).textSelection(.enabled).foregroundStyle(PanelsTheme.error) }
         }
             .task {
                 do { let catalog = try await store.client.conversationBackends(owner: .ticket(ticket.id)); backends = catalog.backends }
