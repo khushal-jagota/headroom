@@ -33,7 +33,7 @@
         </div>
       </div>
     </div>
-    <ReviewChiefMessage waiting={waitingCount !== null && waitingCount > 0} onBusy={value => messageBusy = value} />
+    <ReviewChiefMessage onBusy={value => messageBusy = value} />
     {#if canReturn}
       <div class="return-slot">
         <button type="button" class:primary={waitingCount !== null && waitingCount > 0} data-review-return disabled={returning || messageBusy} onclick={onReturn}>{returnLabel}</button>

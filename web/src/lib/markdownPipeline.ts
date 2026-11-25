@@ -341,6 +341,12 @@ function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownT
     element.decoding = "async";
   }
   applySanitizedProperties(element, node.properties || {});
+  // A web link opens in its own tab or window, so Panels keeps its place and Back stays
+  // inside Panels. The desktop app sends that new window to the default browser.
+  if (element instanceof HTMLAnchorElement && /^https?:\/\//i.test(element.getAttribute("href") ?? "")) {
+    element.target = "_blank";
+    element.rel = "noopener noreferrer";
+  }
   // Attached before its children, so a text inside code, pre or a link can see it is there.
   parent.appendChild(element);
   const children = node.children || [];
