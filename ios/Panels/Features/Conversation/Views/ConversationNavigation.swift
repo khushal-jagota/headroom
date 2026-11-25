@@ -397,7 +397,8 @@ struct ConversationThread: View {
     private func note(_ row: ConversationRow) -> String? {
         guard let item = row.item, let body = model.expandedBodies[item.key] ?? item.body?.value else { return row.note }
         let name = store.machines.first { $0.machineId == model.presentedMachineId }?.name
-        return body.answerSentence(machineName: name) ?? row.note
+        guard let generic = body.answerSentence, let specific = body.answerSentence(machineName: name) else { return row.note }
+        return row.note?.replacingOccurrences(of: generic, with: specific) ?? specific
     }
     /// The server refused this message. Like Messages: a red mark that offers Try Again.
     private func refusedMark(note: String, retryID: String?) -> some View {
