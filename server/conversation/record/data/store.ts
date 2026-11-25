@@ -1089,11 +1089,12 @@ export class ConversationStore
   transact_events<T>(
     conversation_id: string,
     work: (tx: TransactionSql) => EventMutation<T>,
+    options: AppendOptions = {},
   ): EventTransactionResult<T> {
     return this.#write((tx) => {
       this.#require_record(tx, conversation_id);
       const result = synchronously(() => work(tx));
-      const written = this.append_in_transaction(tx, conversation_id, result.payloads);
+      const written = this.append_in_transaction(tx, conversation_id, result.payloads, options);
       return {
         value: { value: result.value, written },
         payloads: written.map((row) => row.payload),

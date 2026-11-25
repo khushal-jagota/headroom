@@ -14,6 +14,7 @@ import { empty_attachments_step } from './ts_0012_empty_attachments.ts';
 import { owner_send_receipts_step } from './ts_0013_owner_send_receipts.ts';
 import { work_move_operations_step } from './ts_0014_work_move_operations.ts';
 import { owner_time_zone_step } from './ts_0015_owner_time_zone.ts';
+import { agent_message_acceptances_step } from './ts_0016_agent_message_acceptances.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -52,6 +53,7 @@ export const SCHEMA_STEPS: readonly SchemaStep[] = [
   owner_send_receipts_step,
   work_move_operations_step,
   owner_time_zone_step,
+  agent_message_acceptances_step,
 ];
 
 /** The steps a database at `current` still needs to reach `head`. */
