@@ -830,8 +830,14 @@ import UniformTypeIdentifiers
 
     /// The open tail's cursor and the first order of its window, both from its last snapshot.
     private var tailCoverage: Int?
+    private var tailTranscript: Bool?
     private var tailFirstOrder: ConversationCursor.Order?
     var tailAfterSequence: Int? { tailCoverage }
+    func tailAfterSequence(transcript: Bool) -> Int? {
+        // A dock cursor proves status admission only. Changing demand needs a new
+        // snapshot; an unchanged row will never be resent after that status cursor.
+        tailTranscript == transcript ? tailCoverage : nil
+    }
     @discardableResult func beginTail(resuming: Bool = false) -> Int {
         tailGeneration += 1
         if !resuming { tailCoverage = nil; tailFirstOrder = nil }
@@ -869,6 +875,7 @@ import UniformTypeIdentifiers
                 try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: readerGeneration, streamGeneration: generation, using: service)
                 guard generation == tailGeneration, id == conversationID, lens == requestedLens else { return false }
                 tailCoverage = snapshot.coverage?.throughSequence
+                tailTranscript = transcript
                 tailFirstOrder = snapshot.page.items.first?.order
                 // A genuinely fresh snapshot resets server subscriptions to timeline.
                 // Refresh retained scopes, then reconnect once with this live cursor.
@@ -894,6 +901,8 @@ import UniformTypeIdentifiers
                 displayByteSizes.merge(sizes) { _, new in new }
                 if status != changes.status { status = changes.status }
                 if !transcript {
+                    scopedTranscriptGeneration = nil
+                    tailTranscript = false
                     applyReceipts(receipts)
                     tailCoverage = changes.coverage.throughSequence
                     error = nil
@@ -944,6 +953,7 @@ import UniformTypeIdentifiers
                 applyLive(changes.status.liveOutput, text: liveText, id: id)
                 applyReceipts(receipts)
                 tailCoverage = changes.coverage.throughSequence
+                tailTranscript = true
                 saveDisplay()
                 let invalidated = changes.invalidatedScopes.filter { $0.kind != "timeline" && scopeKeys[$0] != nil }
                 for scope in invalidated {
@@ -1003,6 +1013,7 @@ import UniformTypeIdentifiers
             reconcileItems()
             scopedTranscriptGeneration = generation
         }
+        if !transcript { scopedTranscriptGeneration = nil }
         if transcript { applyLive(snapshot.status.liveOutput, text: liveText, id: id) }
         applyReceipts(receipts)
         if transcript { saveDisplay() }

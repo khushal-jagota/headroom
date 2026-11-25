@@ -988,6 +988,26 @@ import UniformTypeIdentifiers
         XCTAssertEqual(model.compactPreview, "You: Unsent local message")
         let reads = await service.liveReads
         XCTAssertEqual(reads, 0, "Status-only demand never downloads transcript live output")
+        // Dock status can advance past unchanged transcript rows. Opening the page
+        // must fetch them in a fresh snapshot rather than resume that dock cursor.
+        var dockSnapshot = reply
+        dockSnapshot.coverage = .init(throughSequence: 30)
+        let dockAdmitted = await model.applyTail(.snapshot(dockSnapshot), transcript: false, generation: generation, using: service)
+        XCTAssertTrue(dockAdmitted)
+        let dockDelta = ConversationTailChanges(lens: "focus", fromSequence: 30, coverage: .init(throughSequence: 31), upserts: [], scopeChanges: [], removedKeys: [], invalidatedScopes: [], status: reply.status)
+        let dockChanged = await model.applyTail(.changes(dockDelta), transcript: false, generation: generation, using: service)
+        XCTAssertTrue(dockChanged)
+        XCTAssertEqual(model.tailAfterSequence(transcript: false), 31)
+        XCTAssertNil(model.tailAfterSequence(transcript: true))
+        XCTAssertFalse(model.scopeReaderReady)
+        let pageGeneration = model.beginTail()
+        var pageSnapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([Self.item("fresh", kind: "agent_message", text: "Completed reply")]).utf8))
+        pageSnapshot.coverage = .init(throughSequence: 31)
+        let pageAdmitted = await model.applyTail(.snapshot(pageSnapshot), transcript: true, generation: pageGeneration, using: service)
+        XCTAssertTrue(pageAdmitted)
+        XCTAssertEqual(model.items.map(\.key), ["fresh"])
+        XCTAssertEqual(model.tailAfterSequence(transcript: true), 31)
+        XCTAssertTrue(model.scopeReaderReady)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ConversationRequestStub.self]
         let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))

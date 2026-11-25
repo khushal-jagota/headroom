@@ -202,7 +202,7 @@ private struct ConversationSurface: View {
             guard active, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
-                let after = model.tailAfterSequence
+                let after = model.tailAfterSequence(transcript: isPage)
                 let generation = model.beginTail(resuming: after != nil)
                 defer { model.endTail(generation: generation) }
                 var applied = false, failed = false
