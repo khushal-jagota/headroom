@@ -2,6 +2,8 @@
 
 Extra machines let Workers use files, apps, provider sign-ins, and permissions away from the home. The home keeps the authoritative Tickets, conversations, and work record. An extra machine does not become another Panels server.
 
+Linux x86_64 and Apple Silicon can each host the full Panels home or join another home as a machine. The same message and attachment delivery contract applies with either kind of home.
+
 Several machines can pull work from one home. Each Ticket names its destination. Each other conversation, such as the Chief or a Manager, records its machine when it starts, and a new conversation keeps the machine of the one it replaces. At install that machine is the server's machine. Every conversation runs through the machine code of its machine, and the server's own machine is no exception: its machine code holds the home identity, so the work that points at the home is its work. A machine receives only work for its destination. If that machine is away, its work waits. There is no fallback destination and no direct path.
 
 Apple Silicon and Linux x86_64 machine code use the same pull link and Worker supervisor. The first-install command sets up the server and separate machine code at one revision. It connects the first machine automatically through the local executor link, with the home identity. The join command adds another machine through its own credential. Enrollment screens remain outside this system.

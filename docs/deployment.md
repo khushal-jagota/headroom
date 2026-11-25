@@ -2,6 +2,8 @@
 
 Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. The pull request into main qualifies sealed packages on disposable hosted machines. The main push promotes the packages from that run after it verifies that the Git trees match. Panels downloads that release in the background and checks it, but nothing changes until the owner presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
+Linux x86_64 and Apple Silicon are equally supported as full homes. Panels has no default home platform. The release gate upgrades an installed home on each platform. On both, a machine that joined before the upgrade must receive a message with a file and complete an agent turn. The browser must open large inherited Chief, Manager and Ticket conversations and display new messages from their live streams. A failure on either home blocks publication.
+
 ```text
 staging PR or push → server and web suites
 PR into main → candidate packages → native Linux and Apple Silicon boots
