@@ -3,10 +3,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-offline-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
+touch "$build/.metadata_never_index"
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
 cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Networking/ResourceVersions.swift ios/Panels/Core/Networking/ResourceOwner.swift ios/Panels/Core/Networking/ResourceRead.swift ios/Panels/Core/Networking/ChangeStream.swift ios/Panels/Core/State/AppStore.swift ios/Panels/Core/Navigation/*.swift ios/Panels/Core/Persistence/*.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/Conversation/Models/*.swift ios/Panels/Features/Conversation/Networking/*.swift \
-  ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/Video/*.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
+  ios/Panels/Features/Conversation/Logic/*.swift ios/Panels/Features/Conversation/Video/VideoContracts.swift ios/Panels/Features/Conversation/Video/VideoAttachments.swift ios/Panels/Features/Conversation/Video/VideoUploadAPI.swift ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift ios/Panels/Features/Review/ReviewMessageDecision.swift ios/Panels/Features/Review/ReviewAskDecision.swift ios/Panels/Features/Review/ReviewSession.swift ios/Panels/Features/Review/ReviewChiefMessageModel.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/Goals/Models/*.swift ios/Panels/Features/Goals/Logic/*.swift ios/Panels/Features/Goals/Networking/*.swift ios/Panels/Features/Goals/State/*.swift ios/Panels/Features/Artifacts/Logic/ArtifactTarget.swift ios/Panels/Features/Artifacts/Networking/ArtifactReader.swift ios/Panels/Features/Notifications/NotificationContracts.swift ios/Panels/Features/Notifications/NotificationController.swift ios/Panels/Features/Notifications/Networking/NativePushAPI.swift ios/Panels/Features/Notifications/Logic/*.swift "$build/Sources/Panels/"
 cp ios/Panels/Features/More/Updates/UpdateModels.swift ios/Panels/Features/More/Updates/UpdateAPI.swift ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"
