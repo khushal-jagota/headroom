@@ -2,8 +2,8 @@
  * published runtime's launcher generator, as that release built its launcher at join. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { mac_installation_paths } from '../platform.ts';
@@ -49,7 +49,7 @@ export async function native_launcher_trial(
   const helper = pathToFileURL(
     join(paths.supervisor, 'server/executor/mac/runtime/launcher_trial.ts'),
   ).href;
-  for (const result of ['rollback', 'commit']) {
+  for (const result of ['rollback', 'damaged-backup', 'commit']) {
     const id = 'rehearsal-' + result,
       key = createHash('sha256').update(id).digest('hex');
     const job = 'gui/' + process.getuid!() + '/' + paths.job + '.update.' + key;
@@ -68,10 +68,37 @@ export async function native_launcher_trial(
         paths.supervisor,
       ]);
       assert.equal(await digest_machine_build(paths.app), candidate);
+      const staged = join(dirname(paths.app), '.' + paths.job + '.update.' + key + '.app');
+      const retained = staged + '.fixture-copy';
       if (result === 'rollback') await run(['/bin/launchctl', 'kill', 'SIGKILL', job]);
-      else atomic_write_json(selection, { request_id: id, runtime_path: paths.supervisor });
+      if (result === 'damaged-backup') {
+        await rename(staged, retained);
+        await mkdir(staged);
+      }
+      if (result === 'commit')
+        atomic_write_json(selection, { request_id: id, runtime_path: paths.supervisor });
       await rm(join(updates, 'pending.json'));
       const signal = AbortSignal.timeout(60_000);
+      if (result === 'damaged-backup') {
+        while ((await run(['/bin/launchctl', 'print', job], undefined, true)).code === 0)
+          await delay(200, undefined, { signal });
+        const journal = JSON.parse(await readFile(join(updates, 'launcher-trial.json'), 'utf8'));
+        assert.match(journal.error, /Cannot identify the previous signed Mac launcher/);
+        assert.equal(await digest_machine_build(paths.app), candidate);
+        assert.equal(await digest_machine_build(retained), old);
+        await assert.rejects(
+          readFile(join(dirname(paths.plist), job.split('/').at(-1) + '.plist')),
+          { code: 'ENOENT' },
+        );
+        // Repair only this disposable fault and ask the real helper to finish rollback.
+        await rm(staged, { recursive: true });
+        await rename(retained, staged);
+        await run([
+          paths.node,
+          join(paths.supervisor, 'server/executor/mac/runtime/launcher_trial_main.ts'),
+          id,
+        ]);
+      }
       for (;;) {
         if (
           !(await readFile(join(updates, 'launcher-trial.json')).then(
@@ -99,12 +126,15 @@ export async function native_launcher_trial(
     '--input-type=module',
     '-e',
     `import { execFileSync } from 'node:child_process';
+     import { writeFileSync } from 'node:fs';
      const {enter_signed_runtime} = await import(process.argv[1]);
-     enter_signed_runtime(process.argv[2], process.env);
+     await enter_signed_runtime(process.argv[2], process.env, async () => writeFileSync(process.argv[3], 'admitted', {flag:'wx'}));
      console.log(execFileSync('/bin/ps', ['-p', String(process.ppid), '-o', 'comm='], {encoding:'utf8'}).trim());`,
     helper,
     paths.state,
+    join(root, 'requester-admission'),
   ]);
+  assert.equal(await readFile(join(root, 'requester-admission'), 'utf8'), 'admitted');
   assert.equal(requester.stdout.trim(), paths.app_executable);
   return {
     active_requester: requester.stdout.trim(),
@@ -112,6 +142,8 @@ export async function native_launcher_trial(
     previous_launcher_sha256: old,
     candidate_launcher_sha256: candidate,
     forced_rollback: true,
+    stopped_after_damaged_backup: true,
+    requester_admissions: 1,
     committed: true,
   };
 }

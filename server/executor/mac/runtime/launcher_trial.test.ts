@@ -27,7 +27,7 @@ test('preserves explicit and implied macOS signing requirements', () => {
   expect(() => mac_designated_requirement('Signature=adhoc\nCDHash=invalid')).toThrow();
 });
 
-test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
+test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash', 'damaged-backup'] as const)(
   'signed launcher transaction: %s',
   async (result) => {
     const home = await mkdtemp(join(tmpdir(), 'machine-launcher-'));
@@ -59,10 +59,11 @@ test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
         );
         await rm(join(root, 'pending.json'));
       }
+      const unregister = vi.fn(async () => {});
       const done = supervise_launcher(id, {
         home,
         runtime,
-        unregister: async () => {},
+        unregister,
         stage: async (src, dst) => {
           await cp(src, dst, { recursive: true });
           return true;
@@ -73,7 +74,7 @@ test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
         },
       });
       let recovered: Promise<string> | undefined;
-      if (result === 'keep' || result === 'revert') {
+      if (result === 'keep' || result === 'revert' || result === 'damaged-backup') {
         await vi.waitFor(async () =>
           expect(JSON.parse(await readFile(receipt, 'utf8')).ready).toBe(true),
         );
@@ -83,11 +84,20 @@ test.each(['keep', 'revert', 'bad-probe', 'resume-after-crash'] as const)(
             join(root, 'selection.json'),
             JSON.stringify({ request_id: id, runtime_path: runtime }),
           );
+        if (result === 'damaged-backup') await writeFile(join(staged, 'binary'), 'unrecognized');
         await rm(join(root, 'pending.json'));
         if (result === 'revert')
           recovered = wait_for_launcher_recovery(install.state).then(() =>
             readFile(join(install.app, 'binary'), 'utf8'),
           );
+      }
+      if (result === 'damaged-backup') {
+        await expect(done).rejects.toThrow('Cannot identify the previous signed Mac launcher');
+        expect(unregister).toHaveBeenCalledOnce();
+        expect(JSON.parse(await readFile(receipt, 'utf8')).error).toContain('Cannot identify');
+        await expect(wait_for_launcher_recovery(install.state)).rejects.toThrow('Cannot identify');
+        expect(await readFile(join(staged, 'binary'), 'utf8')).toBe('unrecognized');
+        return;
       }
       await done;
       if (recovered) expect(await recovered).toBe('old');

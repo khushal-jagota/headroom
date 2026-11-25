@@ -93,10 +93,15 @@ async function probe(app: string) {
     throw new Error('The installed Mac app did not start a Worker.');
 }
 
+export class MacLauncherRecoveryBlocked extends Error {}
+
 export async function wait_for_launcher_recovery(root: string): Promise<void> {
   const journal = join(root, 'updates/launcher-trial.json');
   const deadline = performance.now() + MAC_RUNTIME_READY_TIMEOUT_SECONDS * 1000;
-  while (await read(journal)) {
+  for (;;) {
+    const trial = await read(journal);
+    if (!trial) return;
+    if (trial.error) throw new MacLauncherRecoveryBlocked(trial.error);
     if (performance.now() >= deadline)
       throw new Error('Still restoring the signed Mac app before starting its machine.');
     await delay(100);
@@ -107,12 +112,17 @@ export async function wait_for_launcher_recovery(root: string): Promise<void> {
  * requester in its signed Worker mode, which starts this exact Node and forwards
  * signals. The older launchd job can remain loaded while the new runtime and all
  * its work start under the new signed application. */
-export function enter_signed_runtime(root: string, environment: Readonly<NodeJS.ProcessEnv>): void {
+export async function enter_signed_runtime(
+  root: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  prepare: () => Promise<void>,
+): Promise<void> {
   const installed = mac_installation_paths(userInfo().homedir);
   if (root !== installed.state || environment.PANELS_MACHINE_REQUESTER_PID === String(process.ppid))
     return;
   if (!process.execve)
     throw new Error('The bundled Node cannot start the signed machine requester.');
+  await prepare();
   const env = copy_environment(environment);
   env.PANELS_MACHINE_REQUESTER_PID = String(process.pid);
   process.execve(
@@ -220,10 +230,12 @@ export async function supervise_launcher(
   const t = transaction(id, options.home);
   const next = join(runtime, MAC_RUNTIME_LAUNCHER_APP);
   const app = t.install.app;
-  const lock = await open(join(t.root, 'launcher.lock'), 'a+', 0o600);
+  let lock: Awaited<ReturnType<typeof open>> | undefined;
+  let intent: RecordFields | null = null;
   try {
+    lock = await open(join(t.root, 'launcher.lock'), 'a+', 0o600);
     if (flock(lock.fd, 'exclusive') !== 0) throw new Error('Cannot lock Mac launcher activation.');
-    let intent = await read(t.journal);
+    intent = await read(t.journal);
     if (intent !== null && intent.request_id !== id)
       throw new Error('A previous Mac launcher trial still needs recovery.');
     const pending = () => read(join(t.root, 'pending.json'));
@@ -289,10 +301,20 @@ export async function supervise_launcher(
       await fsync_path(t.root);
     }
     await rm(t.staged, { recursive: true, force: true });
-    await rm(t.plist_path, { force: true });
-    await fsync_path(dirname(t.plist_path));
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    const error = `${detail} Launcher: ${app}. Retained copy: ${t.staged}.`;
+    if (intent?.request_id === id) atomic_write_json(t.journal, { ...intent, error });
+    atomic_write_json(t.receipt, { error });
+    throw new Error(error, { cause });
   } finally {
-    await lock.close();
+    try {
+      await lock?.close();
+      await rm(t.plist_path, { force: true });
+      await fsync_path(dirname(t.plist_path));
+    } finally {
+      // A handled error is terminal. An external crash still leaves the job for launchd to restart.
+      await options.unregister(t.domain, t.label);
+    }
   }
-  await options.unregister(t.domain, t.label);
 }
