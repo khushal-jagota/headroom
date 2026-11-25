@@ -2,9 +2,9 @@ name: Publish TypeScript server release
 
 on:
   push:
-    branches: [staging, main]
+    branches: [main]
   pull_request:
-    branches: [staging, main, feature/server-and-machine-code, feature/update-rework]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/staging' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

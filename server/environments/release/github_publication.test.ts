@@ -204,3 +204,24 @@ test('changed checked ZIP leaves the release as a draft and never publishes', as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('staging runs fast suites and only the main release path schedules installed upgrades', async () => {
+  async function workflow(name: string) {
+    return parse(
+      await readFile(new URL(`../../../.github/workflows/${name}.yml`, import.meta.url), 'utf8'),
+    );
+  }
+  const release = await workflow('publish-typescript-release');
+  const staging = await workflow('typescript-backend');
+  for (const event of ['pull_request', 'push']) {
+    expect(release.on[event].branches).toEqual(['main']);
+    expect(staging.on[event].branches).toContain('staging');
+  }
+  for (const suite of ['server-suite', 'web-suite']) {
+    expect(staging.jobs[suite].uses).toEqual(release.jobs[suite].uses);
+  }
+  expect(release.jobs['release-gate'].needs).toEqual(
+    expect.arrayContaining(['linux-upgrade', 'mac-upgrade']),
+  );
+  expect(staging.jobs['mac-upgrade']).toBeUndefined();
+});
