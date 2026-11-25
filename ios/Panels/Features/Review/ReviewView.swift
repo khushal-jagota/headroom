@@ -214,12 +214,14 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
                         .tracking(-0.37).fixedSize(horizontal: false, vertical: true)
                         .foregroundStyle(PanelsTheme.Web.strong).frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityAddTraits(.isHeader)
+                        .modifier(DecisionForegroundFade())
                     if let recap, !recap.isEmpty {
                         Text((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap))
                             .panelsScaledFont(size: 14).lineSpacing(5).foregroundStyle(PanelsTheme.Web.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                             .padding(.top, 8)
                             .accessibilityLabel("Recap").accessibilityValue(recap)
+                            .modifier(DecisionForegroundFade())
                     }
                     content.padding(.top, 18)
                 }
@@ -248,6 +250,7 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
             .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(motion.leaving)
+            .modifier(DecisionScrollViewport())
             .safeAreaInset(edge: .bottom, spacing: 0) { dock.opacity(motion.leaving ? 0 : 1).allowsHitTesting(!motion.leaving) }
             .panelsRefreshable { [store, refresh] in await store.refresh(); await refresh?() }
         }

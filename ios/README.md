@@ -157,7 +157,10 @@ with bold h1/h4–h6 and semibold h2/h3, and code 12.5 points.
 
 Review and Ticket share a read-only proposal card, with the stage on the left and
 the reviewer on the right, and a docked note with Return and Approve in one
-equal-width row. Review adds Skip to that row and keeps dictation; its Open ticket
+equal-width row. Proposal text fades across the scroll viewport above the note,
+into the card background. The dock has a continuous opaque background. Review
+artifact previews use the same fade at their dock boundary.
+Review adds Skip to that row and keeps dictation; its Open ticket
 sits in Review's top bar. An empty Return note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 Approve opens a standard grouped Form sheet. Approved until lists only the stages

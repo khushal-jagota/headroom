@@ -44,6 +44,7 @@ REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
 # The docks under an opened artifact, and the one Markdown display, for the one-off walk:
 # a proposal and a message that link artifacts, and a long conversation with block Markdown.
 ARTIFACT_DOCK_SMOKE = os.environ.get("PANELS_ARTIFACT_DOCK_SMOKE") == "1"
+FADE_REVIEW = os.environ.get("PANELS_FADE_REVIEW") == "1"
 REVIEW_MESSAGES = (
     os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
     or ARTIFACT_DOCK_SMOKE
@@ -529,6 +530,13 @@ def main() -> int:
         manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
         tickets["offline-1"]["pending_proposal"]["body"] = (
             "The proof is in the [dock evidence](/files/tickets/offline-1/dock-proof.md)."
+        )
+    if FADE_REVIEW:
+        # One-off appearance evidence, reused for the before and after captures.
+        tickets["offline-1"]["pending_proposal"]["body"] += "\n\n" + "\n\n".join(
+            f"Fade boundary paragraph {index}. Read the proposal, add a note, then review and merge. "
+            "This repeated text must disappear smoothly above the pinned note bar."
+            for index in range(1, 19)
         )
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
@@ -1481,7 +1489,7 @@ def main() -> int:
                             break
                 elif name == "stop":
                     stop_clip()
-                elif REVIEW_QUEUE and name.startswith("screenshot/"):
+                elif (REVIEW_QUEUE or FADE_REVIEW) and name.startswith("screenshot/"):
                     # The one-off Review walk names each screen; simctl captures the device.
                     if not native_control_allowed():
                         self.respond({"error": "An owned device and active turn are required"}, 409)
@@ -1615,7 +1623,11 @@ def main() -> int:
                 content = (
                     ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
                      + "\n[Nested dock artifact](nested-dock.md)\n"
-                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")).encode()
+                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")
+                     + ("\n\n" + "\n\n".join(
+                         f"Artifact boundary paragraph {index}. The preview scrolls beneath its shared note dock."
+                         for index in range(1, 19)
+                     ) if FADE_REVIEW else "")).encode()
                     if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)

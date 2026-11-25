@@ -4,6 +4,7 @@ import UIKit
 enum ReviewStyle {
     static let gutter: CGFloat = 20
     static let actionHeight: CGFloat = 46
+    static let contentFadeHeight: CGFloat = 22
     static let enter = 0.32
     static let fadeOut = PanelsTheme.Motion.exit
     static let fadeIn = 0.20
@@ -32,19 +33,57 @@ struct ReviewButtonStyle: ButtonStyle {
     }
 }
 
-/// A card's bottom controls, above the keyboard and the home indicator, with the page
-/// fading in behind them.
+/// The visible scroll boundary, after the dock and keyboard consume the bottom safe area.
+private struct DecisionScrollBottomKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+private extension EnvironmentValues {
+    var decisionScrollBottom: CGFloat? {
+        get { self[DecisionScrollBottomKey.self] }
+        set { self[DecisionScrollBottomKey.self] = newValue }
+    }
+}
+
+struct DecisionScrollViewport: ViewModifier {
+    var enabled = true
+    func body(content: Content) -> some View {
+        GeometryReader { geometry in
+            content.environment(\.decisionScrollBottom, enabled
+                ? geometry.frame(in: .global).maxY - geometry.safeAreaInsets.bottom : nil)
+        }
+    }
+}
+
+/// Mask the foreground before its card background, so text fades into that exact fill.
+struct DecisionForegroundFade: ViewModifier {
+    @Environment(\.decisionScrollBottom) private var bottom
+    @ViewBuilder func body(content: Content) -> some View {
+        if let bottom {
+            content.mask {
+                GeometryReader { geometry in
+                    let fadeStart = bottom - geometry.frame(in: .global).minY - ReviewStyle.contentFadeHeight
+                    VStack(spacing: 0) {
+                        Color.black.frame(height: max(0, fadeStart))
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: ReviewStyle.contentFadeHeight)
+                        Color.clear
+                    }
+                    .offset(y: min(0, fadeStart))
+                }
+            }
+        } else { content }
+    }
+}
+
+/// A continuous opaque surface below the scroll fade, above the keyboard and home indicator.
 struct ReviewDock<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         VStack(spacing: 10) { content }
             .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 12)
-            .background {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [PanelsTheme.Web.surface.opacity(0), PanelsTheme.Web.surface], startPoint: .top, endPoint: .bottom).frame(height: 22).offset(y: -22)
-                    PanelsTheme.Web.surface
-                }.ignoresSafeArea(.container, edges: .bottom)
-            }
+            .frame(maxWidth: .infinity)
+            .background(PanelsTheme.Web.surface.ignoresSafeArea(.container, edges: .bottom))
     }
 }
 
@@ -108,6 +147,7 @@ struct DecisionProposalCard: View {
             PanelsMarkdown(source: text, baseURL: baseURL, emphasizesFirstParagraph: true)
         }.padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(DecisionForegroundFade())
             .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
             .reviewArtifactLinks(dock: dock)
     }
