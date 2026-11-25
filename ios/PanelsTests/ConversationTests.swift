@@ -13,10 +13,10 @@ import UniformTypeIdentifiers
         try handle.truncate(atOffset: 20_000_001)
         try handle.close()
         let model = ConversationModel()
-        let attached = await model.attachFile(source, type: .data) { _ in
+        let attached = await model.attachFile(source, type: .data, read: { _ in
             XCTFail("An oversized Files pick must be refused before reading its bytes")
             return Data()
-        }
+        })
         XCTAssertFalse(attached)
         XCTAssertEqual(model.attachments.count, 1)
         XCTAssertEqual(model.attachments.first?.fileName, source.lastPathComponent)
