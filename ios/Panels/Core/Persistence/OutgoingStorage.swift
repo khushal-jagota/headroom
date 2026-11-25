@@ -35,6 +35,7 @@ import SwiftData
     var proposalField: String?
     var proposalRevision: Int?
     var proposalCreatedAt: Double?
+    var videoDelivery: Data? = nil
 
     init(key: String, server: String, work: PendingWork, sequence: Int64) {
         let owner = work.owner.map(Self.ownerKey)
@@ -44,7 +45,7 @@ import SwiftData
         case .askAnswer: destination = work.askAnswer?.conversationID; through = nil
         default: destination = work.message?.conversationId; through = work.message?.ownerReadThroughSequence
         }
-        let command = work.protectedDecisionBody.flatMap { try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }
+        let command = work.decisionIntent ?? work.protectedDecisionBody.flatMap { try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }
         self.key = key; self.server = server
         identity = work.id
         ownerKey = owner
@@ -235,6 +236,8 @@ import SwiftData
         var work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
         work.state = PendingWork.State(rawValue: metadata.state) ?? .failed
         work.note = metadata.note; work.completed = metadata.completed
+        work.videoDelivery = try metadata.videoDelivery.map { try JSONDecoder().decode(VideoDeliveryState.self, from: $0) }
+        if let frozen = work.videoDelivery?.frozenDecisionBody { work.protectedDecisionBody = frozen }
         // A message saved before its conversation existed takes the conversation the first
         // message created, before it is ever sent. Every send of it is then the same body.
         if let message = work.message, metadata.conversationID != message.conversationId {
@@ -253,6 +256,26 @@ import SwiftData
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.audioFile == file })
         query.fetchLimit = 1
         return try context.fetch(query).isEmpty
+    }
+
+    /// A saved draft or outgoing action on any home can own this local copy.
+    func videoIsUnowned(_ filePath: String) throws -> Bool {
+        let kinds = ["attachments", "outbox"]
+        let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { kinds.contains($0.kind) }))
+        for row in rows {
+            if row.kind == "attachments" {
+                let pieces = try JSONDecoder().decode([ConversationSend.Piece].self, from: row.payload)
+                if pieces.contains(where: { $0.localVideo?.filePath == filePath }) { return false }
+            } else {
+                let work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
+                if Self.videoFiles(work).contains(filePath) { return false }
+            }
+        }
+        return true
+    }
+    private static func videoFiles(_ work: PendingWork) -> Set<String> {
+        let pieces = (work.message?.content ?? []) + (work.decisionIntent?.attachments ?? []) + (work.decisionAttachments ?? [])
+        return Set(pieces.compactMap { $0.localVideo?.filePath })
     }
 
     // MARK: Drafts
@@ -366,6 +389,25 @@ import SwiftData
                 readConversationID: conversationID, readThroughSequence: through), server: server)
         }
     }
+    /// Upload checkpoints commit before a PUT or submit can use their identity.
+    func saveVideoDelivery(_ delivery: VideoDeliveryState, server: String, id: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "waiting" else { throw StoreError.invalidTransition }
+            guard !row.attempted else { throw StoreError.invalidTransition }
+            row.videoDelivery = try JSONEncoder().encode(delivery)
+        }
+    }
+
+    /// Only a server status that proves no upload admission permits a new wire body.
+    /// The caller reads a decision receipt first and keeps every admitted/linked token.
+    func restartUnadmittedVideos(_ delivery: VideoDeliveryState, server: String, id: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "waiting" else { throw StoreError.invalidTransition }
+            row.videoDelivery = try JSONEncoder().encode(delivery)
+            row.attempted = false
+        }
+    }
+
     /// Saved before each send, so a relaunch knows the item may have reached the server.
     func beginAttempt(server: String, id: String) throws {
         try transaction(server) {
@@ -466,8 +508,12 @@ import SwiftData
         let due = try context.fetch(query)
         guard !due.isEmpty else { return [] }
         return try transaction(server) {
-            let files = Set(due.compactMap(\.audioFile))
+            var files = Set(due.compactMap(\.audioFile))
             for row in due {
+                if let payload = try raw(server, "outbox", row.identity),
+                   let work = try? JSONDecoder().decode(PendingWork.self, from: payload.payload) {
+                    files.formUnion(Self.videoFiles(work))
+                }
                 if let payload = try raw(server, "outbox", row.identity) { context.delete(payload) }
                 context.delete(row)
             }

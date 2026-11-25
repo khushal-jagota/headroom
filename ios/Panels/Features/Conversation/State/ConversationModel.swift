@@ -29,7 +29,7 @@ import UniformTypeIdentifiers
         recoversConversationIDFromOutbox = recoverConversationID
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         composerConfigurationGeneration += 1
-        preparingPhotos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
+        preparingPhotos = [:]; preparingVideos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
         outgoing = []; retryAliases = [:]; supersededIDs = []; clearedPhotoDrafts = [:]
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
@@ -315,12 +315,19 @@ import UniformTypeIdentifiers
         var retryable = false
         var attachments: [ConversationSend.Piece] = []
     }
+    struct VideoPreparation: Identifiable {
+        let id: UUID
+        let fileName: String
+        var progress: Double = 0
+    }
+    private(set) var preparingVideos: [UUID: VideoPreparation] = [:]
+    var failedVideo: String? { attachments.compactMap { $0.localVideo?.preparationError }.first }
     private(set) var preparingPhotos: [UUID: String] = [:]
     private var draftPreparationID: UUID?
     var preparingDraftPhotos: Bool { draftPreparationID != nil }
     private(set) var preparingOutgoingID: String?
     private var outgoingPreparationID: UUID?
-    var preparingPhoto: Bool { !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
+    var preparingPhoto: Bool { !preparingVideos.isEmpty || !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
     private var preparedAttachments: [ConversationSend.Piece] = []
     var deliveryMode = "steer"
     /// The conversation's backend can join a running turn, as the server last said.
@@ -329,7 +336,15 @@ import UniformTypeIdentifiers
         didSet {
             composerRevision += 1
             guard !restoring, let api = persistenceAPI else { return }
-            do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
+            do {
+                try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments))
+                let retained = Set(attachments.compactMap { $0.localVideo?.filePath })
+                for path in Set(oldValue.compactMap { $0.localVideo?.filePath }).subtracting(retained) where !path.isEmpty {
+                    if try LocalStore.shared.outgoing.videoIsUnowned(path) {
+                        try? FileManager.default.removeItem(atPath: path)
+                    }
+                }
+            }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
         }
     }
@@ -346,6 +361,39 @@ import UniformTypeIdentifiers
         guard let bytes else { error = ConversationImagePreparation.Failure.unreadable.localizedDescription; return false }
         preparingPhotos.removeValue(forKey: identity)
         return await attach(bytes, type: .jpeg, fileName: fileName)
+    }
+    /// The source stays alive until its file is copied into the persistent video store.
+    @discardableResult func attachVideo(fileName: String, load: () async throws -> URL,
+                                       release: (URL) -> Void = { _ in }) async -> Bool {
+        let generation = composerConfigurationGeneration
+        let identity = UUID()
+        preparingVideos[identity] = VideoPreparation(id: identity, fileName: fileName)
+        defer { preparingVideos.removeValue(forKey: identity) }
+        do {
+            let source = try await load()
+            defer { release(source) }
+            let video = try await VideoAttachments.importFile(source, fileName: fileName) { [weak self] progress in
+                Task { @MainActor in
+                    guard let self, self.composerConfigurationGeneration == generation else { return }
+                    self.preparingVideos[identity]?.progress = progress
+                }
+            }
+            guard generation == composerConfigurationGeneration else {
+                try? FileManager.default.removeItem(at: video.fileURL)
+                return false
+            }
+            attachments.append(.init(piece: "attachment_upload",
+                                     mediaType: UTType(filenameExtension: (video.fileName as NSString).pathExtension)?.preferredMIMEType ?? "video/mp4",
+                                     fileName: video.fileName, localVideo: video))
+            return video.preparationError == nil
+        } catch {
+            if generation == composerConfigurationGeneration {
+                let failed = SavedVideo(id: identity.uuidString, fileName: fileName, filePath: "", byteCount: 0,
+                                        preparationError: error.localizedDescription)
+                attachments.append(.init(piece: "attachment_upload", fileName: fileName, localVideo: failed))
+            }
+            return false
+        }
     }
     @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) async -> Bool {
         let image = type?.conforms(to: .image) == true
@@ -384,6 +432,7 @@ import UniformTypeIdentifiers
         }
     }
     func preparedContent() async throws -> [ConversationSend.Piece] {
+        if let failedVideo { throw NSError(domain: "VideoAttachment", code: 1, userInfo: [NSLocalizedDescriptionKey: failedVideo]) }
         guard !preparingPhoto else { throw CancellationError() }
         let revision = composerRevision
         let generation = composerConfigurationGeneration

@@ -69,7 +69,11 @@ import Observation
                 command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision,
                     message: work.guidance, attachments: work.decisionAttachments)
             } else { throw OutgoingStore.StoreError.invalidTransition }
-            frozen.protectedDecisionBody = try APIClient.encodeReviewDecision(command)
+            if command.attachments?.contains(where: { $0.localVideo != nil }) == true {
+                frozen.decisionIntent = command
+            } else {
+                frozen.protectedDecisionBody = try APIClient.encodeReviewDecision(command)
+            }
             if work.kind == .sendBack, let draftID = work.draftID, let note = command.message,
                let captured = try store.outgoing.captureDraft(server: LocalStore.server(api.baseURL), id: draftID).text,
                captured.payload == Data(note.utf8) {
@@ -163,7 +167,13 @@ import Observation
     }
     private func expire(_ server: String, now: Date = .now) throws {
         let files = try store.outgoing.expire(server: server, now: now)
-        for file in files where try store.outgoing.audioIsUnowned(file) { try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file)) }
+        for file in files {
+            if file.hasPrefix("/") {
+                if try store.outgoing.videoIsUnowned(file) { try? FileManager.default.removeItem(at: URL(fileURLWithPath: file)) }
+            } else if try store.outgoing.audioIsUnowned(file) {
+                try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file))
+            }
+        }
     }
     @discardableResult
     func clearFinished(_ server: String, now: Date = .now) -> [PendingWork] {
@@ -340,12 +350,32 @@ import Observation
     }
 
     private func processMessage(_ work: PendingWork, api: APIClient, server: String) async {
-        guard let message = work.message, let owner = work.owner else { return }
+        guard var message = work.message, let owner = work.owner else { return }
         if case .goal = owner {
             try? store.outgoing.settle(server: server, id: work.id, state: .failed, note: "Goal conversations are retired. Open the goal to talk to its holder.")
             return
         }
         do {
+            if message.content.contains(where: { $0.localVideo != nil }) {
+                var delivery = work.videoDelivery ?? VideoDeliveryState()
+                if delivery.frozenContent != nil, try await expiredUnadmittedVideos(delivery, api: api) {
+                    delivery.frozenContent = nil
+                    try store.outgoing.restartUnadmittedVideos(delivery, server: server, id: work.id)
+                }
+                let content: [ConversationSend.Piece]
+                if let frozen = delivery.frozenContent { content = frozen }
+                else {
+                    content = try await resolveVideos(message.content, workID: work.id, owner: owner,
+                        conversationID: message.conversationId, delivery: &delivery, api: api, server: server)
+                    delivery.frozenContent = content
+                    try store.outgoing.saveVideoDelivery(delivery, server: server, id: work.id)
+                }
+                message = ConversationSend(conversationId: message.conversationId, content: content,
+                    senderLabel: message.senderLabel, mode: message.mode, backendKey: message.backendKey,
+                    model: message.model, reasoningEffort: message.reasoningEffort, reasoningEffortIsSet: message.reasoningEffortIsSet,
+                    senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
+                    ownerReadThroughSequence: message.ownerReadThroughSequence)
+            }
             try store.outgoing.beginAttempt(server: server, id: work.id)
             let result = try await api.sendConversation(owner, message: message)
             // A refused first message leaves no conversation behind, so later messages keep
@@ -365,6 +395,67 @@ import Observation
             settleFailure(Self.classify(error), id: work.id, server: server,
                 restorePhotoDraft: (error as? APIError)?.status == 422 && message.content.contains(where: { $0.piece == "image" }))
         }
+    }
+
+    /// Admission pins all uploads atomically. An expired or cancelled token cannot
+    /// belong to an accepted or uncertain send. Admitted/linked tokens never expire.
+    private func expiredUnadmittedVideos(_ delivery: VideoDeliveryState, api: APIClient) async throws -> Bool {
+        var expired = false
+        for uploadID in delivery.uploads.values {
+            do {
+                let status = try await api.videoUploadStatus(uploadID)
+                if ["admitted", "linked"].contains(status.state) { return false }
+                if ["failed", "cancelled"].contains(status.state) || status.expiresAt <= now().timeIntervalSince1970 { expired = true }
+            } catch let error as APIError where error.status == 404 { expired = true }
+        }
+        return expired
+    }
+
+    /// Only an unfinished transfer or proof of expired, unadmitted uploads reaches
+    /// this resolver. A ready token for accepted or uncertain delivery stays unchanged.
+    private func resolveVideos(_ pieces: [ConversationSend.Piece], workID: String, owner: ConversationOwner,
+                               conversationID: String?, delivery: inout VideoDeliveryState,
+                               api: APIClient, server: String) async throws -> [ConversationSend.Piece] {
+        let kind: String, destinationID: String
+        switch owner {
+        case .chief: kind = "chief"; destinationID = "chief"
+        case .manager(let id): kind = "manager"; destinationID = id
+        case .ticket(let id): kind = "ticket"; destinationID = id
+        case .goal: throw APIError(status: 0, message: "Goal conversations are retired.")
+        }
+        let destination = VideoUploadDestination(kind: kind, id: destinationID, expectedConversationId: conversationID)
+        var resolved: [ConversationSend.Piece] = []
+        for piece in pieces {
+            guard let video = piece.localVideo else { resolved.append(piece); continue }
+            if let error = video.preparationError { throw APIError(status: 0, message: error) }
+            var status: VideoUploadStatus?
+            if let uploadID = delivery.uploads[video.id] {
+                do { status = try await api.videoUploadStatus(uploadID) }
+                catch let error as APIError where error.status == 404 { status = nil }
+            }
+            if let previous = status, previous.destination != destination {
+                throw APIError(status: 0, message: "This video's destination changed. Remove it and attach it again.")
+            }
+            // The service cannot resume bytes. A transferring row belongs to a lost PUT.
+            if let previous = status,
+               !["reserved", "ready"].contains(previous.state) || previous.expiresAt <= now().timeIntervalSince1970 {
+                if !["failed", "cancelled"].contains(previous.state) { try await api.cancelVideoUpload(previous.uploadId) }
+                status = nil
+            }
+            if status == nil {
+                status = try await api.reserveVideoUpload(video, destination: destination)
+                delivery.uploads[video.id] = status!.uploadId
+                try store.outgoing.saveVideoDelivery(delivery, server: server, id: workID)
+            }
+            if status!.state == "reserved" {
+                status = try await api.uploadVideo(video, uploadID: status!.uploadId)
+            }
+            guard let ready = status, ready.state == "ready" else {
+                throw APIError(status: 0, message: status?.error ?? "The video upload did not finish. Try again.")
+            }
+            resolved.append(.init(piece: "attachment_upload", uploadId: ready.uploadId))
+        }
+        return resolved
     }
 
     private func processVoice(_ work: PendingWork, api: APIClient, server: String) async {
@@ -454,8 +545,7 @@ import Observation
 
     private func processDecision(_ fact: OutgoingStore.Summary, work: PendingWork, api: APIClient, server: String) async {
         guard let ticketID = fact.ticketID, let field = fact.proposalField, let revision = fact.proposalRevision,
-              let body = work.protectedDecisionBody,
-              let command = try? APIClient.decoder().decode(DecisionCommand.self, from: body) else {
+              let captured = work.decisionIntent ?? work.protectedDecisionBody.flatMap({ try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }) else {
             try? store.outgoing.settle(server: server, id: fact.id, state: .failed, note: "This saved decision could not be read. Review again.")
             return
         }
@@ -467,6 +557,31 @@ import Observation
             if let existing = try await api.lookupReviewDecision(ticketID: ticketID, operationID: fact.id, command: identity) {
                 receipt = existing
             } else {
+                let body: Data
+                let command: DecisionCommand
+                var delivery = work.videoDelivery ?? VideoDeliveryState()
+                var frozenBody = work.protectedDecisionBody
+                if work.decisionIntent != nil, frozenBody != nil, try await expiredUnadmittedVideos(delivery, api: api) {
+                    // The absent receipt and unadmitted expired tokens prove that the
+                    // original decision did not commit. Its captured intent and ID stay.
+                    delivery.frozenDecisionBody = nil
+                    frozenBody = nil
+                    try store.outgoing.restartUnadmittedVideos(delivery, server: server, id: fact.id)
+                }
+                if let frozen = frozenBody {
+                    body = frozen
+                    command = try APIClient.decoder().decode(DecisionCommand.self, from: frozen)
+                } else {
+                    let attachments = try await resolveVideos(captured.attachments ?? [], workID: fact.id,
+                        owner: .ticket(ticketID), conversationID: work.decisionConversationID, delivery: &delivery, api: api, server: server)
+                    command = DecisionCommand(decision: captured.decision, field: captured.field,
+                        expectedProposalRevision: captured.expectedProposalRevision, editedBody: captured.editedBody,
+                        nextCeiling: captured.nextCeiling, nextHolder: captured.nextHolder,
+                        message: captured.message, attachments: attachments)
+                    body = try APIClient.encodeReviewDecision(command)
+                    delivery.frozenDecisionBody = body
+                    try store.outgoing.saveVideoDelivery(delivery, server: server, id: fact.id)
+                }
                 try store.outgoing.beginAttempt(server: server, id: fact.id)
                 receipt = try await api.submitReviewDecision(ticketID: ticketID, operationID: fact.id, command: command, frozenBody: body)
             }
@@ -485,7 +600,7 @@ import Observation
     private func settleDecision(_ receipt: DecisionReceipt, id: String, work: PendingWork, server: String) throws {
         if receipt.outcome == "applied" {
             var draft: (id: String, text: String, updated: Date)?
-            let command = try work.protectedDecisionBody.map { try APIClient.decoder().decode(DecisionCommand.self, from: $0) }
+            let command = try work.decisionIntent ?? work.protectedDecisionBody.map { try APIClient.decoder().decode(DecisionCommand.self, from: $0) }
             if let draftID = work.draftID, let updated = work.decisionDraftUpdatedAt, let text = command?.message {
                 draft = (id: draftID, text: text, updated: updated)
             }
