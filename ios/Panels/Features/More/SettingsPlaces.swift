@@ -6,19 +6,20 @@ struct SettingsPlaces: View {
     @Environment(AppStore.self) private var store
     var body: some View {
         Section {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let state = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: context.date)
-                HStack(spacing: PanelsTheme.Space.md) {
-                    Image(systemName: state == .problem ? "exclamationmark.triangle" : "server.rack")
-                        .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.accent)
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                        MoreSelectableText("Panels server", color: PanelsTheme.strong)
-                        MoreSelectableText([state?.rawValue ?? "Up to date", store.deployment?.detail, store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), style: .footnote, color: state == .problem ? PanelsTheme.error : PanelsTheme.faint)
-                    }
-                }.padding(.vertical, PanelsTheme.Space.xs)
-                .accessibilityIdentifier("settings.deployment")
-                .accessibilityElement(children: .contain)
+            LabeledContent {
+                let sha = store.updateStatus?.appSha ?? ""
+                MoreSelectableText(store.connection == "Following changes"
+                     ? (sha.isEmpty ? "Connected" : "Running \(sha.prefix(7))")
+                     : store.connection, style: .footnote, color: Color(uiColor: .secondaryLabel))
+            } label: {
+                Label {
+                    MoreSelectableText("Panels server")
+                } icon: {
+                    Image(systemName: "server.rack")
+                }
             }
+            .accessibilityIdentifier("settings.deployment")
+            .accessibilityElement(children: .contain)
             updatesRow
         }.listRowBackground(PanelsTheme.raised)
         Section {
@@ -31,7 +32,7 @@ struct SettingsPlaces: View {
     /// The one place that tells of a server update: a short line while one is offered or running.
     private var updatesRow: some View {
         let status = store.updateStatus
-        let detail = status.map(\.title).flatMap { ["Up to date", "Update complete"].contains($0) ? nil : $0 }
+        let detail = status.map(\.title).flatMap { $0 == "Up to date" ? nil : $0 }
         return NavigationLink(value: AppRoute.updates) {
             HStack(spacing: PanelsTheme.Space.md) {
                 Label("Updates", systemImage: "arrow.triangle.2.circlepath")
@@ -43,6 +44,7 @@ struct SettingsPlaces: View {
             }.padding(.vertical, PanelsTheme.Space.xs)
         }
         .accessibilityIdentifier("settings.updates")
+        .systemCopyText(["Updates", detail].compactMap { $0 }.joined(separator: " · "))
     }
 
     private func place(_ title: String, symbol: String, route: AppRoute) -> some View {
@@ -51,6 +53,7 @@ struct SettingsPlaces: View {
                 .padding(.vertical, PanelsTheme.Space.xs)
         }
         .listRowBackground(PanelsTheme.raised)
+        .systemCopyText(title)
     }
 }
 

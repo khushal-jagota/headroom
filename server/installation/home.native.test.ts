@@ -25,6 +25,7 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
+import { crash_restart_jobs } from './testing/home_fixture.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { HOME_COMMAND } from './configuration.ts';
@@ -33,13 +34,14 @@ import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts
 import { observe_promise } from '../core/promise_observer.ts';
 import { run_release_command } from '../environments/release/process.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { atomic_write_json } from '../environments/updates/attempts.ts';
 import { read_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import { authenticate_loaded_job } from '../environments/updates/darwin/logic/launchd.ts';
 import { MAC_HOME } from '../environments/release/contracts.ts';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
-import { build_native_mini_homes, native_copied_updates } from './testing/darwin_home.native.ts';
+import { build_native_mini_homes, native_retained_updates } from './testing/darwin_home.native.ts';
 import type { AppManifest, ReleaseExecution } from '../environments/release/contracts.ts';
 import { process_inspector } from '../previews/platform.ts';
 import { DarwinWorkerProcesses } from '../platform_runtime/darwin/worker_processes.ts';
@@ -48,6 +50,7 @@ import type { WorkerProcess } from '../worker_supervision/contracts.ts';
 
 const admitted =
   process.env.GITHUB_ACTIONS === 'true' && process.env.PANELS_NATIVE_HOME_TEST === '1';
+const MINI_BUILD_MS = 360_000;
 const revision = 'a'.repeat(40);
 const supervisor = fileURLToPath(new URL('../lifecycle/supervisor.ts', import.meta.url));
 const paths = fileURLToPath(new URL('../lifecycle/paths.ts', import.meta.url));
@@ -106,11 +109,14 @@ test.skipIf(!admitted)(
 
     const report: Record<string, unknown> = {
       system,
+      fixture_root: base,
       architecture: process.arch,
       boundary:
         'Actual installer and native services; injected mini-app extraction, admission and database initialization. No sealed-package claim.',
       cases: [],
     };
+    const save_report = () =>
+      atomic_write_json(join(evidence, `first-home-${system}.json`), report);
     const cases = report.cases as Record<string, unknown>[];
     const original_environment = service_environment.home_service_environment;
     const hostile_path =
@@ -132,17 +138,18 @@ test.skipIf(!admitted)(
       if (system === 'darwin') {
         mini_builds = await build_native_mini_homes(base, {
           child_processes: build_processes,
-          signal: AbortSignal.timeout(360_000),
-          deadline: performance.now() / 1000 + 360,
+          signal: AbortSignal.timeout(MINI_BUILD_MS),
+          deadline: (performance.now() + MINI_BUILD_MS) / 1000,
         });
         report.mini_builds = mini_builds;
         report.boundary =
-          'Real sealed mini-home archives, candidate database initialization, admission, launchd and copied updater. Production archive foreground proof is separate.';
+          'Sealed mini-home archives exercise database initialization, package admission, launchd and the retained installer. The package build also boots the full production archive.';
       }
       for (const fault of ['none', 'health', 'auxiliary'] as const) {
         const started = performance.now(),
           record: Record<string, unknown> = { fault };
         cases.push(record);
+        save_report();
         const token = randomUUID().replaceAll('-', ''),
           // Keep Linux's root-local Unix socket within its native pathname limit.
           root = join(base, token.slice(0, 12)),
@@ -273,7 +280,12 @@ test.skipIf(!admitted)(
           command,
           service: async (value, host) => {
             plan = await (system === 'darwin'
-              ? create_darwin_home_service(value, host)
+              ? create_darwin_home_service(
+                  value,
+                  host,
+                  true,
+                  fault === 'none' ? crash_restart_jobs : undefined,
+                )
               : create_linux_home_service(value, host));
             if (system === 'darwin') {
               const job = JSON.parse(plan.files[0]!.content);
@@ -427,7 +439,7 @@ test.skipIf(!admitted)(
               ).toBe(true);
               record.crash_recovery_seconds = (performance.now() - began) / 1000;
               try {
-                await native_copied_updates({
+                await native_retained_updates({
                   root,
                   account,
                   label: service_name,
@@ -531,6 +543,7 @@ test.skipIf(!admitted)(
             expect(case_children_settled).toBe(true);
             record.seconds = (performance.now() - started) / 1000;
             record.resource_paths = [...retained.keys()];
+            save_report();
             if (system === 'darwin')
               await cp(join(root, 'logs'), join(evidence, 'home-logs-' + token), {
                 recursive: true,
@@ -569,12 +582,7 @@ test.skipIf(!admitted)(
         throw error;
       } finally {
         hostile_path?.mockRestore();
-        report.fixture_root = base;
-        await mkdir(evidence, { recursive: true });
-        await writeFile(
-          join(evidence, `first-home-${system}.json`),
-          JSON.stringify(report, null, 2) + '\n',
-        );
+        save_report();
         // Failed proofs also leave their retired inputs accessible after children settle.
         if (system === 'darwin' && case_children_settled && !report.build_cleanup_error)
           for (const name of [
@@ -593,5 +601,5 @@ test.skipIf(!admitted)(
       }
     }
   },
-  600_000,
+  600_000 + (process.platform === 'darwin' ? MINI_BUILD_MS : 0),
 );

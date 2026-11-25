@@ -15,7 +15,10 @@ Review opens on its summary once the app has a home address. There is no tab bar
 Chief, each Manager and Settings. Only the current destination is on screen and
 mounted, in its own navigation stack. The shell keeps each destination's page path,
 so you can return to the page you left, for example after a notification opens another
-page. Drafts survive every switch because they are saved per owner and reload
+page. A tap on Sidebar Review always clears Review’s page path and opens its summary,
+even when Review is already selected or a card’s exit runs. It does not refresh or
+open cards. Ordinary Back from a page or artifact still returns to its card.
+Drafts survive every switch because they are saved per owner and reload
 when a page mounts. Scroll position and a view's in-memory state do not.
 
 A slide-over Sidebar replaces the tab bar; see [Sidebar](#sidebar). Every page uses
@@ -52,7 +55,7 @@ Control Center or a notification pull-down, keeps the streams. A stream with no 
 for 35 seconds fails; the server's heartbeat every 15 seconds keeps a good one open.
 A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
-then 8 seconds and show Reconnecting. Then saved work drains, as before.
+then 8 seconds. Short interruptions stay quiet. A sustained loss of server contact shows the native full-screen cover described in [Saved data and interrupted connections](Offline.md). Then saved work drains, as before.
 
 Ordinary responses have one shared owner per server and exact resource key. Mounted
 screens acquire handles for their documents. A payload-free change signal probes
@@ -157,7 +160,10 @@ with bold h1/h4–h6 and semibold h2/h3, and code 12.5 points.
 
 Review and Ticket share a read-only proposal card, with the stage on the left and
 the reviewer on the right, and a docked note with Return and Approve in one
-equal-width row. Review adds Skip to that row and keeps dictation; its Open ticket
+equal-width row. Proposal text fades across the scroll viewport above the note,
+into the card background. The dock has a continuous opaque background. Review
+artifact previews use the same fade at their dock boundary.
+Review adds Skip to that row and keeps dictation; its Open ticket
 sits in Review's top bar. An empty Return note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 Approve opens a standard grouped Form sheet. Approved until lists only the stages
@@ -259,8 +265,8 @@ Use one-off Simulator reviews for appearance and visual polish.
 | `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
 | `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Chief and Review through the Sidebar, reply, and follow the conversation route. |
 | `ReviewMessagesTests/testSplitCardsSkipAndReturn` | Act on a Review item and return to skipped work. |
-| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once with no cover or status note. Try Again resends a refused message once. |
-| `ServerReachabilityTests/testUnreachableServerShowsNoCoverAndRecovers` | Lose the server: no cover appears, the app stays usable, and Review opens again without a relaunch. |
+| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once while transient failures stay quiet. Try Again resends a refused message once. |
+| `ServerReachabilityTests/testUnreachableServerShowsCoverAndRecovers` | A short loss stays quiet; sustained loss covers an open sheet. Continue offline retains saved work, and recovery clears the cover and sends queued work once. |
 
 Discover the native tests before a release run. Discovery must find all five
 methods. A selection that executes zero tests fails, even if Xcode returns success.
@@ -692,8 +698,8 @@ recording, shows it as done at once and sends it while the app is in the foregro
 Review, Chief, Orchestrator, Ticket and artifact lists share a labeled
 delayed block skeleton on the first load. The retry screen appears only when nothing
 has loaded and the server refused the read; a read that cannot reach the server
-keeps the skeleton. Failed refreshes keep the last content visible, including an
-empty result, with no note. Retry buttons remain disabled until their request
+keeps the skeleton until sustained loss requires the shared connection cover.
+Failed refreshes keep the last content visible, including an empty result, with no local note. Retry buttons remain disabled until their request
 finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
@@ -824,7 +830,7 @@ Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility
 
-Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. An unknown or missing machine identity cannot authorize a working mark. Worker rows on Manager pages
+Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. Ticket and conversation labels use the stored machine name from the shared machines read. A rename reaches open screens through the ordinary resource refresh. Missing names retain the legacy locale label. Historical conversations use their own machine identity before the Ticket's current destination. An unknown or missing machine identity cannot authorize a working mark. Worker rows on Manager pages
 use the machine catalogue for identity and scoped health for current activity. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full
 conversation and Settings show the last measured contact, rather than treating a
@@ -867,9 +873,12 @@ Each Sidebar card shows the status tag of its worst active goal. Chief and Manag
 show their own goals with working checklists and manual charts. A binary goal without
 a checklist offers Mark done or Mark not done. Manual charts offer their configured
 increments, such as Add 100 words. A Manager with one goal displays that goal
-under the Manager's name; multiple goals use cards. Holder documents use the same
-native page renderer, including Tickets blocks; when none is authored the page
-keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+under the Manager's name; multiple goals use cards. Chief and Manager pages put
+their labeled, paged Tickets list immediately after the title and recap, before
+goals and authored content. Goal cards have no section heading. Pages omit absent
+goals and empty authored documents, including their section spacing. Tickets stay in one
+fixed place and old authored Tickets blocks do not render. All goals remains in
+Settings and includes inactive goals and column filters.
 Goal screens share a full project catalogue read for labels, filters and editing.
 
 A goal page opens its holder's conversation. Previous goal transcripts use the
@@ -959,6 +968,32 @@ Approve and Return prepare them first, with the note locked, and the outbox free
 them into the decision body. An approval with pictures but no words still carries
 the note's draft identity. An applied receipt clears them unless they changed since;
 a refusal keeps them with the note.
+
+## Video attachments
+
+The shared Attach sheet accepts video from Photo Library, Camera, and Files in
+conversations and in Review and Ticket notes. The phone copies the source into its
+persistent store before the picker releases it. Drafts and outgoing work keep file
+references instead of base64 video bytes.
+
+Clips up to 250 MiB keep their original encoding. Larger clips use the system video
+export at 1080p with HEVC, or H.264 when HEVC export is unavailable. The attachment
+shows preparation progress. A failed export or an output above 250 MiB leaves an
+error on the attachment and retains the draft. Remove or replace it before Send.
+
+The outbox streams the saved file through the same upload service as the web.
+A relaunch retains local files and upload checkpoints. Interrupted transfers start
+again with a fresh reservation. Once a message or decision submits, retries retain
+its identity and final upload references. Decision notes save their captured intent
+before upload, then freeze the request before submission. An applied receipt clears
+only the captured note. Finished-work expiry releases unowned local files.
+
+Host coverage reuses the offline transport fixture for interrupted transfer and lost
+reply recovery. `VideoPreparationTests` covers original preservation, compression,
+and an output that still exceeds the limit. The one-off `VideoAttachmentTests` walk
+uses the existing conversation fixture and `PanelsReview` scheme. It imports a short
+video into the owned Simulator library and verifies offline Send, relaunch, and one
+delivery after reconnect. It does not prove physical camera capture.
 
 ## Text entry and navigation
 

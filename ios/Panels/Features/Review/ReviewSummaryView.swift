@@ -36,6 +36,8 @@ struct ReviewSummaryView: View {
                 .frame(minHeight: geometry.size.height, alignment: .top)
                 .accessibilityElement(children: .contain)
             }
+            .modifier(DecisionForegroundFade())
+            .modifier(DecisionScrollViewport())
             .scrollDismissesKeyboard(.interactively)
             .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .overlay(alignment: .bottomLeading) {

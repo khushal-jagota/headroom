@@ -8,12 +8,11 @@ struct ReviewView: View {
     let session: ReviewSession
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active }
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.contentCovered }
     /// How many cards are read before they reach the screen, the shown one included.
     private static let readAhead = 3
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.reviewVisit) private var reviewVisit
     @Environment(\.openRoute) private var openRoute
     @State private var cardHeight: CGFloat = 180
     private var server: String { LocalStore.server(store.baseURL) }
@@ -26,9 +25,8 @@ struct ReviewView: View {
                 content
             }
         }
-        .onAppear { appeared = true; session.visit(reviewVisit) }
+        .onAppear { appeared = true }
         .onDisappear { appeared = false }
-        .onChange(of: reviewVisit) { _, visit in session.visit(visit) }
         .onChange(of: savedWork.key) { _, _ in restoreSavedWork() }
         .onChange(of: active) { _, active in if active { restoreSavedWork() } }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.note) { await store.refresh() }
@@ -43,7 +41,7 @@ struct ReviewView: View {
     @ViewBuilder private var content: some View {
         if savedWork.key?.server != server { Color.clear }
         else if let item = session.shown {
-            ReviewCardScreen(item: item, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
+            ReviewCardScreen(item: item, presentation: session.exits, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
                 .id("\(item.id)#\(session.exits)").transition(.identity)
         } else if session.loaded {
             ReviewSummaryView(summary: session.summary, workingCount: session.runningWorkerCount, isActive: active) {
@@ -124,6 +122,7 @@ struct ReviewView: View {
 /// it, its entrance and its exit.
 private struct ReviewCardScreen: View {
     let item: ReviewItem
+    let presentation: Int
     let session: ReviewSession
     let savedWork: ReviewSavedWork
     let isActive: Bool
@@ -142,12 +141,13 @@ private struct ReviewCardScreen: View {
         default:
             ReviewProposalCard(item: item, isActive: isActive, savedWork: savedWork, decision: session.decisions.decision(for: item),
                                refusal: session.refusalNotes[item.id], notice: session.notice?.item.id == item.id ? session.notice : nil,
-                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onHold: { session.resolve(item) }, onResolve: resolve)
+                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onHold: { if session.presents(item, at: presentation) { session.resolve(item) } }, onResolve: resolve)
         }
     }
 
     private func skip(_ swipeWidth: CGFloat?) {
         motion.leave(swipeWidth: swipeWidth) {
+            guard session.presents(item, at: presentation) else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { session.skip(item, store: store) }
@@ -157,10 +157,11 @@ private struct ReviewCardScreen: View {
     /// Handled here: the card leaves at once, and the next one follows its exit.
     private func resolve(_ afterExit: (() -> Void)?) {
         // A card already leaving by Skip finishes that exit instead.
-        guard !motion.leaving else { return }
+        guard session.presents(item, at: presentation), !motion.leaving else { afterExit?(); return }
         session.resolve(item)
         motion.leave(swipeWidth: nil) {
             afterExit?()
+            guard session.presents(item, at: presentation) else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { session.finishExit(item) }
@@ -219,12 +220,14 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
                         color: UIColor(PanelsTheme.Web.strong), tracking: -0.37)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityAddTraits(.isHeader)
+                        .modifier(DecisionForegroundFade())
                     if let recap, !recap.isEmpty {
                         PanelsSelectableText((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap),
                             font: .systemFont(ofSize: recapSize), color: UIColor(PanelsTheme.Web.secondary), lineSpacing: 5)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 8)
                             .accessibilityLabel("Recap").accessibilityValue(recap)
+                            .modifier(DecisionForegroundFade())
                     }
                     content.padding(.top, 18)
                 }
@@ -257,6 +260,7 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
             .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(motion.leaving)
+            .modifier(DecisionScrollViewport())
             .safeAreaInset(edge: .bottom, spacing: 0) { dock.opacity(motion.leaving ? 0 : 1).allowsHitTesting(!motion.leaving) }
             .panelsRefreshable { [store, refresh] in await store.refresh(); await refresh?() }
         }

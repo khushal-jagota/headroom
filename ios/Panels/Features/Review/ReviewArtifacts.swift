@@ -43,6 +43,7 @@ struct ReviewArtifactDock: ViewModifier {
     @Environment(\.closeArtifacts) private var closeArtifacts
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
+    @State private var presentation: Int?
     @State private var sheet: DecisionSheet?
     @State private var busyAction: String?
     @State private var messageActions = ReviewMessageActions()
@@ -56,10 +57,12 @@ struct ReviewArtifactDock: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .modifier(DecisionForegroundFade())
+            .modifier(DecisionScrollViewport(enabled: visible && item != nil))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if visible, let session, let savedWork, let item { dock(item, session: session, savedWork: savedWork) }
             }
-            .onAppear { visible = true }
+            .onAppear { visible = true; presentation = session?.exits }
             .onDisappear {
                 visible = false
                 // Removed under an open sheet after the save: the card still leaves.
@@ -88,7 +91,7 @@ struct ReviewArtifactDock: ViewModifier {
             let decision = session.messageDecisions.decision(for: item, savedWork: savedWork)
             // A refused reply shows its reason in its composer; a refused Mark read here.
             if let refusal, decision.attempt?.state != .failed { notes { ReviewInlineNote(tone: .refused, title: "Refused", text: refusal) } }
-            ReviewMessageDock(item: item, isActive: scenePhase == .active, decision: decision, actions: messageActions,
+            ReviewMessageDock(item: item, isActive: scenePhase == .active && !store.contentCovered, decision: decision, actions: messageActions,
                               markReadAllowed: !readUnshownRun,
                               onSkip: { skip(item, session: session) },
                               onResolve: { resolve(item, session: session, afterExit: $0) })
@@ -104,9 +107,12 @@ struct ReviewArtifactDock: ViewModifier {
                     }
                 }
             }
-            ReviewProposalDock(isActive: scenePhase == .active, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
+            ReviewProposalDock(isActive: scenePhase == .active && !store.contentCovered, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
                                sheet: $sheet, busyAction: $busyAction, onSkip: { skip(item, session: session) },
-                               onHold: { held = item; session.resolve(item) },
+                               onHold: {
+                                   guard session.presents(item, at: presentation ?? -1) else { return }
+                                   held = item; session.resolve(item)
+                               },
                                onResolve: { resolve(item, session: session, afterExit: $0) })
         }
     }
@@ -118,7 +124,7 @@ struct ReviewArtifactDock: ViewModifier {
     }
 
     private func skip(_ item: ReviewItem, session: ReviewSession) {
-        guard !left else { return }
+        guard !left, session.presents(item, at: presentation ?? -1) else { return }
         left = true
         closeArtifacts()
         withoutAnimation { session.skip(item, store: store) }
@@ -127,7 +133,7 @@ struct ReviewArtifactDock: ViewModifier {
     /// Handled here, in the card's order within one turn: the queue holds the card, the
     /// viewers close, then its exit finishes, so the card below never acts on it as well.
     private func resolve(_ item: ReviewItem, session: ReviewSession, afterExit: (() -> Void)?) {
-        guard !left else { return }
+        guard !left, session.presents(item, at: presentation ?? -1) else { afterExit?(); return }
         left = true
         session.resolve(item)
         closeArtifacts()

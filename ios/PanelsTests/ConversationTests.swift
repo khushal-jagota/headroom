@@ -5,6 +5,102 @@ import UniformTypeIdentifiers
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testOversizedFilesPickShowsItemErrorWithoutReadingBytes() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bin")
+        defer { try? FileManager.default.removeItem(at: source) }
+        FileManager.default.createFile(atPath: source.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: 20_000_001)
+        try handle.close()
+        let model = ConversationModel()
+        let attached = await model.attachFile(source, type: .data, read: { _ in
+            XCTFail("An oversized Files pick must be refused before reading its bytes")
+            return Data()
+        })
+        XCTAssertFalse(attached)
+        XCTAssertEqual(model.attachments.count, 1)
+        XCTAssertEqual(model.attachments.first?.fileName, source.lastPathComponent)
+        XCTAssertNotNil(model.attachments.first?.preparationError)
+        XCTAssertNil(model.attachments.first?.data)
+        do { _ = try await model.preparedContent(); XCTFail("Failed item must block sending") }
+        catch { XCTAssertNotNil(model.failedAttachment) }
+    }
+
+    func testFilesImageOverNonImageLimitUsesBoundedImageIOPreparation() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Self.jpegPhoto(size: 32).write(to: source)
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: 20_000_001)
+        try handle.close()
+        let model = ConversationModel()
+        let attached = await model.attachFile(source, type: .jpeg, read: { _ in
+            XCTFail("Files images must use ImageIO's URL path, not the whole-file reader")
+            return Data()
+        })
+        XCTAssertTrue(attached, "The 20 MB non-image limit does not refuse a Files photo")
+        let piece = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(piece.piece, "image")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data))).count,
+                                 ConversationImagePreparation.maximumImageBytes)
+        XCTAssertNotNil(try Self.readJPEG(piece))
+    }
+
+    func testFilesPickWithUnknownMetadataSizeIsNotRefusedForMissingSize() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data("note".utf8).write(to: source)
+        let model = ConversationModel()
+        let attached = await model.attachFile(source, type: .plainText, fileSize: { _ in nil })
+        XCTAssertTrue(attached)
+        XCTAssertEqual(model.attachments.first?.data, Data("note".utf8).base64EncodedString())
+        XCTAssertNil(model.failedAttachment)
+    }
+
+    func testVideoIntakeFinishesInStartingDraftAfterOwnerAndDraftSwitch() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data([1, 2, 3]).write(to: source)
+        let api = APIClient(baseURL: URL(string: "https://video-draft-\(UUID().uuidString).invalid")!)
+        let model = ConversationModel()
+        model.restore(owner: .ticket("starting-ticket"), api: api, draftID: "starting-note")
+        model.draft = "Keep my note"
+        let attached = await model.attachVideo(fileName: "clip.mov", load: {
+            model.restore(owner: .manager("other-manager"), api: api, draftID: "other-note")
+            return source
+        })
+        XCTAssertTrue(attached)
+        XCTAssertTrue(model.attachments.isEmpty, "Completion must not join the new draft")
+        model.restore(owner: .ticket("starting-ticket"), api: api, draftID: "starting-note")
+        XCTAssertEqual(model.draft, "Keep my note")
+        let video = try XCTUnwrap(model.attachments.first?.localVideo)
+        XCTAssertEqual(try Data(contentsOf: video.fileURL), Data([1, 2, 3]))
+        try? FileManager.default.removeItem(at: video.fileURL)
+    }
+
+    func testRemovingVideoFromSharedDraftDoesNotDeleteOtherLiveModelsFile() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data([4, 5, 6]).write(to: source)
+        let api = APIClient(baseURL: URL(string: "https://shared-video-\(UUID().uuidString).invalid")!)
+        let review = ConversationModel()
+        review.restore(owner: .ticket("ticket"), api: api, draftID: "shared-note")
+        let attached = await review.attachVideo(fileName: "clip.mov", load: { source })
+        XCTAssertTrue(attached)
+        let ticket = ConversationModel()
+        ticket.restore(owner: .ticket("ticket"), api: api, draftID: "shared-note")
+        let video = try XCTUnwrap(ticket.attachments.first?.localVideo)
+        defer { try? FileManager.default.removeItem(at: video.fileURL) }
+        review.attachments = []
+        XCTAssertNotNil(ticket.attachments.first?.localVideo)
+        XCTAssertEqual(try Data(contentsOf: video.fileURL), Data([4, 5, 6]),
+                       "Saving removal in Review must not invalidate the Ticket page's live reference")
+        ticket.attachments.append(.init(piece: "file", data: "YQ==", fileName: "another.txt"))
+        let restored = ConversationModel()
+        restored.restore(owner: .ticket("ticket"), api: api, draftID: "shared-note")
+        XCTAssertEqual(restored.attachments.first?.localVideo, video)
+    }
+
     func testPreviewStatusDecodesPendingRequestsElapsedStartAndBackgroundWork() throws {
         let json = #"{"authority":"current","turn_running":false,"rest":{"plan_progress":{},"latest_turn":{"started_at_unix_milliseconds":1234}},"pending_permission":{"kind":"permission","request_id":"p","row_key":"row","source_sequence":1},"pending_user_input":{"kind":"user_input","request_id":"u","row_key":"input","source_sequence":2},"background_tasks":[{"task_id":"task","task_description":"Build"}]}"#
         let status = try APIClient.decoder().decode(ConversationStatus.self, from: Data(json.utf8))
@@ -27,6 +123,11 @@ import UniformTypeIdentifiers
             let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
             let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(json.utf8))
             XCTAssertTrue(body.answerSentence?.contains(text) == true, "Wrong evidence for \(fate)")
+            switch fate {
+            case "saved": XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), "The home saved your answer. Delivery to Mac 1 is pending.")
+            case "applied": XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), "Mac 1 applied your answer.")
+            default: XCTAssertEqual(body.answerSentence(machineName: "Mac 1"), body.answerSentence)
+            }
         }
     }
 
@@ -543,6 +644,20 @@ import UniformTypeIdentifiers
         model.items = [try APIClient.decoder().decode(ConversationItem.self, from: Data(#"{"kind":"row","key":"row-1","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}"#.utf8))]
         model.reportReadFailure(URLError(.secureConnectionFailed))
         XCTAssertNil(model.error, "With content on screen a failed refresh stays silent")
+    }
+
+    // Risk: a historical conversation inherits the Ticket's current destination.
+    // The existing decoder/model host proves conversation identity takes precedence.
+    func testConversationMachineIdentityPrecedesCurrentTicket() throws {
+        let model = ConversationModel()
+        model.machineId = "current-ticket-machine"
+        XCTAssertEqual(model.presentedMachineId, "current-ticket-machine")
+        let data = Data(#"{"backend_key":"codex","machine_id":"historical-machine"}"#.utf8)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: data))
+        XCTAssertEqual(model.presentedMachineId, "historical-machine")
+        let older = Data(#"{"backend_key":"codex"}"#.utf8)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: older))
+        XCTAssertEqual(model.presentedMachineId, "current-ticket-machine", "Older records retain the Ticket fallback")
     }
 
     func testHeldPromptRecoveredWithoutDuplicatingLocalQueue() async throws {

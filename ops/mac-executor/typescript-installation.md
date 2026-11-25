@@ -62,7 +62,7 @@ The publication proof checks the signature of the unpacked copy. The join copies
 macOS keys folder permissions on the designated requirement of the app.
 For a team signature, that requirement names the bundle identity and the team. For an ad-hoc signature, it names the exact code hash.
 Folder permission decisions can remain valid when later releases keep that designated requirement stable.
-The launcher is not notarized. The join downloads it through the GitHub API, so it carries no quarantine flag, and Gatekeeper does not assess it.
+On the release from main, Apple must accept the Developer ID launcher for notarization before publication. The release records the notarization submission ID.
 
 The hosted rehearsal `typescript-mac-executor.yml` signs its launcher ad hoc, because a pull request build has no release identity.
 Its join case runs the server's own join command on a clean runner with a local release.

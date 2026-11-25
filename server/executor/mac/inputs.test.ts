@@ -112,6 +112,17 @@ describe('MacInputs.download_inputs', () => {
     expect(readFileSync(store.path_of('c', 'f_file'))).toEqual(served.get('f_file'));
   });
 
+  test('a failed attachment settles and the next prompt can receive its file', async () => {
+    const { inputs, requests, served, store } = world();
+    served.delete('f_image');
+    await expect(
+      inputs.download_inputs(write_prompt([image]), AbortSignal.timeout(6000)),
+    ).rejects.toThrow(/f_image.*3 attempts/);
+    expect(requests).toHaveLength(3);
+    await inputs.download_inputs(write_prompt([file]), new AbortController().signal);
+    expect(readFileSync(store.path_of('c', 'f_file'))).toEqual(served.get('f_file'));
+  }, 10000);
+
   test('a text-only prompt downloads nothing', async () => {
     const { inputs, requests } = world();
     await inputs.download_inputs(

@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { public_event } from '../../conversation/http/record.ts';
+import { recorded_failure_detail } from '../../conversation/logic/backend_events.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
@@ -25,6 +26,7 @@ export interface SmokeState {
   conversation_id: string;
   goal_id: string;
   stored_file_id: string;
+  file_url: string;
   events: Event[];
   model: string;
 }
@@ -39,17 +41,39 @@ function client(base: string) {
   assert.ok(url.port && url.port !== '0');
   assert.equal(url.username + url.password + url.search + url.hash, '');
   assert.equal(url.pathname, '/');
-  return async <T = Json>(path: string, body?: unknown, headers = {}): Promise<T> => {
-    const response = await fetch(url.origin + path, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-    });
-    const output = await response.text();
-    assert.ok(response.ok, `${path}: ${response.status}: ${output}`);
-    return JSON.parse(output) as T;
+  return async <T = Json>(
+    path: string,
+    body?: unknown,
+    headers = {},
+    recovered_create = false,
+  ): Promise<T> => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const deadline = recovered_create ? performance.now() + 8_000 : null;
+    for (;;) {
+      const response = await fetch(url.origin + path, {
+        method: payload === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        ...(payload === undefined ? {} : { body: payload }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(
+          deadline === null ? 15_000 : Math.max(1, Math.ceil(deadline - performance.now())),
+        ),
+      });
+      const output = await response.text();
+      // This 503 comes from the predecessor's write barrier before the route is invoked.
+      if (
+        deadline !== null &&
+        performance.now() + 250 < deadline &&
+        path === '/api/conversation/conversations' &&
+        response.status === 503 &&
+        output === '{"detail":"Owner update in progress."}'
+      ) {
+        await delay(250);
+        continue;
+      }
+      assert.ok(response.ok, `${path}: ${response.status}: ${output}`);
+      return JSON.parse(output) as T;
+    }
   };
 }
 async function cli_ticket(base: string, id: string, environment: NodeJS.ProcessEnv): Promise<Json> {
@@ -106,12 +130,12 @@ async function review_gate(base: string, ticket_id: string): Promise<void> {
     (attention) => attention.rows.some((row) => row.id === ticket_id),
   );
 }
-async function download(base: string, conversation: string, file: string): Promise<void> {
+async function verify_smoke_file(base: string, path: string): Promise<void> {
   client(base);
-  const response = await fetch(
-    `${new URL(base).origin}/api/conversation/conversations/${conversation}/files/${file}`,
-    { redirect: 'error', signal: AbortSignal.timeout(15_000) },
-  );
+  const response = await fetch(new URL(base).origin + path, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
   assert.equal(response.status, 200);
   assert.ok(response.headers.get('content-type')?.startsWith('text/plain'));
   assert.equal(await response.text(), attachment);
@@ -126,7 +150,12 @@ export async function smoke_before_restart(
   const populated = await api<{ tickets: Json[] }>('/api/tickets?detail=summary&limit=5');
   assert.ok(populated.tickets.length > 0, 'Expected the populated synthetic seed');
   step('01 populated production reads');
-  const ticket = await api('/api/tickets', { title, worker_type: 'coding', locale: 'vps' });
+  const ticket = await api('/api/tickets', {
+    title,
+    worker_type: 'coding',
+    employee_launch_model: options.model,
+    locale: 'vps',
+  });
   assert.ok(typeof ticket.id === 'string');
   const ticket_id = ticket.id;
   await cli_ticket(base, ticket_id, environment);
@@ -151,14 +180,68 @@ export async function smoke_before_restart(
   await review_gate(base, ticket_id);
   step('03 proposal opens owner review notification and attention');
 
+  const { conversation_id, stored_file_id, file_url, events } = await smoke_file_turn(
+    base,
+    options,
+  );
+  assert.ok(stored_file_id);
+  const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
+  assert.ok(typeof project.id === 'string');
+  const goal = await api('/api/goals', {
+    title: 'Production smoke goal',
+    project_id: project.id,
+    kind: 'binary',
+    primary_checklist_block_id: null,
+  });
+  assert.ok(typeof goal.id === 'string');
+  const goal_id = goal.id;
+  step('07 create goal', { goal_id });
+  return {
+    ticket_id,
+    conversation_id,
+    goal_id,
+    stored_file_id,
+    file_url,
+    events,
+    model: options.model,
+  };
+}
+export async function smoke_file_turn(
+  base: string,
+  options: Pick<SmokeOptions, 'model' | 'reply' | 'workspace' | 'step'> & {
+    after_rollback?: boolean;
+    worker_artifact?: 'before-update' | 'after-rollback';
+  },
+  machine_id?: string,
+) {
+  const api = client(base);
+  const step = options.step ?? log;
+  const artifact = options.worker_artifact;
+  const prompt = artifact
+    ? `Write the Worker artifact ${artifact}.txt.`
+    : 'Production smoke prompt.';
+  const content: Json[] = [{ piece: 'text', text: prompt }];
+  if (!artifact)
+    content.push({
+      piece: 'file',
+      file_name: 'smoke.txt',
+      media_type: 'text/plain',
+      data: Buffer.from(attachment).toString('base64'),
+    });
   const conversation_id = 'smoke-' + randomUUID();
   const conversation = `/api/conversation/conversations/${conversation_id}`;
-  const started = await api('/api/conversation/conversations', {
-    conversation_id,
-    backend_key: DEFAULT_BACKEND_INSTANCE_ID,
-    model: options.model,
-    workspace_folder: options.workspace,
-  });
+  const started = await api(
+    '/api/conversation/conversations',
+    {
+      conversation_id,
+      backend_key: DEFAULT_BACKEND_INSTANCE_ID,
+      model: options.model,
+      workspace_folder: options.workspace,
+      ...(machine_id ? { machine_id } : {}),
+    },
+    {},
+    options.after_rollback,
+  );
   assert.equal(started.model, options.model);
   step('04 manual conversation through production adapter', { conversation_id });
   const events = await (async () => {
@@ -201,19 +284,25 @@ export async function smoke_before_restart(
       })();
       void live_reply.catch(() => {});
       const sent = await api(conversation + '/send', {
-        content: [
-          { piece: 'text', text: 'Production smoke prompt.' },
-          {
-            piece: 'file',
-            file_name: 'smoke.txt',
-            media_type: 'text/plain',
-            data: Buffer.from(attachment).toString('base64'),
-          },
-        ],
+        content,
         sender_label: 'Owner',
         sender_message_id: 'smoke-send',
       });
-      assert.equal(sent.fate, 'started');
+      if (sent.fate !== 'started') {
+        const replay = await api<{ events: Event[] }>(conversation + '/events');
+        const refusal = replay.events.findLast((event) => event.kind === 'prompt_delivery_refused');
+        const detail = refusal?.payload.refusal_detail;
+        throw new Error(
+          'Smoke send ' +
+            conversation_id +
+            ': ' +
+            JSON.stringify({
+              fate: sent.fate,
+              reason: sent.refusal_reason,
+              detail: typeof detail === 'string' ? recorded_failure_detail(detail) : null,
+            }),
+        );
+      }
       await live_reply;
       const completed = await poll(
         async () => {
@@ -237,38 +326,37 @@ export async function smoke_before_restart(
       reader?.releaseLock();
     }
   })();
-  step('05 combined text/file send has live reply and completed recorded turn');
+  step(
+    artifact
+      ? '05 text send has live reply and completed recorded turn'
+      : '05 combined text/file send has live reply and completed recorded turn',
+  );
   const uploaded = events.find(
     (event) => event.kind === 'prompt' && event.payload.sender_message_id === 'smoke-send',
   );
   assert.ok(uploaded);
+  if (artifact) {
+    assert.equal(uploaded.payload.text, prompt);
+    assert.equal(uploaded.payload.content, undefined);
+    const file_url = `/files/tickets/t_update_qualification/artifacts/${artifact}.txt`;
+    await verify_smoke_file(base, file_url);
+    step('06 Worker-written artifact bytes round trip', { file_url });
+    return { conversation_id, file_url, stored_file_id: null, events };
+  }
   const pieces = uploaded.payload.content as Json[];
-  assert.ok(
-    pieces.some((piece) => piece.piece === 'text' && piece.text === 'Production smoke prompt.'),
-  );
+  assert.ok(pieces.some((piece) => piece.piece === 'text' && piece.text === prompt));
   const file = pieces.find((piece) => piece.piece === 'file' && piece.file_name === 'smoke.txt');
   assert.ok(file && typeof file.stored_file_id === 'string');
   const stored_file_id = file.stored_file_id;
-  await download(base, conversation_id, stored_file_id);
+  const file_url = conversation + '/files/' + stored_file_id;
+  await verify_smoke_file(base, file_url);
   step('06 uploaded file bytes round trip', { stored_file_id });
-  const project = await api('/api/projects', { name: 'Production smoke', summary: '' });
-  assert.ok(typeof project.id === 'string');
-  const goal = await api('/api/goals', {
-    title: 'Production smoke goal',
-    project_id: project.id,
-    kind: 'binary',
-    primary_checklist_block_id: null,
-  });
-  assert.ok(typeof goal.id === 'string');
-  const goal_id = goal.id;
-  step('07 create goal', { goal_id });
-  return { ticket_id, conversation_id, goal_id, stored_file_id, events, model: options.model };
+  return { conversation_id, file_url, stored_file_id, events };
 }
-export async function smoke_after_restart(
+
+export async function verify_smoke_history(
   base: string,
-  state: SmokeState,
-  environment: NodeJS.ProcessEnv,
-  step: Step = log,
+  state: Pick<SmokeState, 'conversation_id' | 'file_url' | 'events' | 'model'>,
 ): Promise<void> {
   const api = client(base);
   const conversation = `/api/conversation/conversations/${state.conversation_id}`;
@@ -277,8 +365,18 @@ export async function smoke_after_restart(
   assert.equal(persisted.is_running, false);
   const replay = await api<{ events: Event[] }>(conversation + '/events');
   assert.deepEqual(replay.events.slice(0, state.events.length), state.events);
+  await verify_smoke_file(base, state.file_url);
+}
+
+export async function smoke_after_restart(
+  base: string,
+  state: SmokeState,
+  environment: NodeJS.ProcessEnv,
+  step: Step = log,
+): Promise<void> {
+  const api = client(base);
+  await verify_smoke_history(base, state);
   step('08 restart preserves conversation, prompt and completed turn');
-  await download(base, state.conversation_id, state.stored_file_id);
   const goal = await api(`/api/goals/${state.goal_id}`);
   assert.equal(goal.id, state.goal_id);
   assert.equal(goal.title, 'Production smoke goal');

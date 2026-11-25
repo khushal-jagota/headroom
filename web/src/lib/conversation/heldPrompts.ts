@@ -56,11 +56,12 @@ export function heldPromptRowActions(row: HeldPromptRow): readonly HeldPromptRow
   return [];
 }
 
-export function heldPromptRowLabel(row: HeldPromptRow): string {
-  const words = messageContentText(row.content);
+/** A queued message as one line: its words, or what it carries when it has none. */
+export function queuedMessageLabel(content: readonly (MessagePiece | SentMessagePiece)[]): string {
+  const words = messageContentText(content);
   if (words !== "") return words;
-  const imageCount = row.content.filter((piece) => piece.piece === "image").length;
-  const fileCount = row.content.filter((piece) => piece.piece === "file").length;
+  const imageCount = content.filter((piece) => piece.piece === "image").length;
+  const fileCount = content.filter((piece) => piece.piece === "file" || piece.piece === "video_upload" || piece.piece === "attachment_upload").length;
   if (imageCount > 0 && fileCount > 0) {
     return `${imageCount} image${imageCount === 1 ? "" : "s"} · ${fileCount} file${fileCount === 1 ? "" : "s"}`;
   }

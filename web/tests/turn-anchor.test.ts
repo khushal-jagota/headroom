@@ -51,9 +51,10 @@ describe("a turn's head", () => {
     }).body;
     expect(settled).not.toContain("data-conversation-live-mark");
     const unknown = render(TurnAnchor, {
-      props: { settled: false, activityUncertain: true, startedAtUnixMilliseconds: Date.now() }
+      props: { settled: false, activityUncertain: true, destinationName: "Mac 1", startedAtUnixMilliseconds: Date.now() }
     }).body;
     expect(unknown).not.toContain("data-conversation-live-mark");
+    expect(unknown).toContain("Current activity on Mac 1 is unknown.");
   });
 
   it("hangs its mark in the gutter live and settled, so settling moves nothing", () => {

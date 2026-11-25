@@ -472,6 +472,71 @@ final class ReviewFinalPageTests: XCTestCase {
         try await proof(base, "online")
     }
 
+    /// One-off fade evidence. Reuses the artifact host and changes no server decisions.
+    /// Run the same walk before and after the source change, under each system appearance.
+    @MainActor func testNoteDockFadeBoundary() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "review-owner/ticket-split")
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        func launch(large: Bool) {
+            app.launchArguments = ["--conversation-stub", base]
+            if large {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            app.openReviewCards()
+            XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 12))
+        }
+        func scroll(_ view: XCUIElement) {
+            view.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+                .press(forDuration: 0.05, thenDragTo: view.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.3)))
+        }
+        func shot(_ name: String) async throws {
+            capture(app, name)
+            try await proof(base, "screenshot/" + name)
+        }
+        func keyboardShot(_ name: String) async throws {
+            let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
+            XCTAssertTrue(note.waitForExistence(timeout: 5))
+            note.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let tip = app.buttons["Continue"]
+            if tip.exists { tip.tap() }
+            try await shot(name)
+        }
+        launch(large: false)
+        // The artifact link starts above the long body, so open it before the scroll.
+        let link = app.links["dock evidence"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 8)); link.tap()
+        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-artifact-normal")
+        app.backButton.tap()
+        XCTAssertTrue(app.buttons["review.openTicket"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews["review-content"])
+        try await shot("fade-review-normal")
+        try await keyboardShot("fade-review-keyboard")
+        // Navigation ends keyboard focus through the app's actual Open ticket action.
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-ticket-normal")
+        try await keyboardShot("fade-ticket-keyboard")
+        app.terminate()
+        launch(large: true)
+        scroll(app.scrollViews["review-content"])
+        try await shot("fade-review-largest")
+        try await keyboardShot("fade-review-largest-keyboard")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-ticket-largest")
+        try await keyboardShot("fade-ticket-largest-keyboard")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in

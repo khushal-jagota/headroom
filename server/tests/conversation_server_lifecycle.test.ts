@@ -396,7 +396,15 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     }
   });
   let ready = false;
-  let replay_checks = 0;
+  const coverage = (conversation_id: string) =>
+    f.database.read(
+      (sql) =>
+        sql.get<{ through_sequence: number }>(
+          'SELECT through_sequence FROM conversation_view_state WHERE conversation_id=?',
+          [conversation_id],
+        )?.through_sequence,
+    );
+  let begin_replay!: () => void;
   const rebuild_start = ConversationViewRebuilder.prototype.start;
   vi.spyOn(ConversationViewRebuilder.prototype, 'start').mockImplementation(function (
     this: ConversationViewRebuilder,
@@ -407,18 +415,18 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     expect(context.core).toBeDefined();
     context.publication.current_read();
     expect(context.core!.workspace_admission.active).toBe(false);
-    rebuild_start.call(this, database, () => {
-      replay_checks++;
-      if (replay_checks === 2) {
-        context.core!.workspace_admission.seal();
-        try {
-          return admission_closed!();
-        } finally {
-          context.core!.workspace_admission.reopen();
+    // Exercise the admission hold after the independent one-shot startup recovery.
+    // Both use the real workspace gate, so sealing it earlier also refuses that recovery.
+    begin_replay = () => {
+      let sealed_after_first = false;
+      rebuild_start.call(this, database, () => {
+        if (!sealed_after_first && coverage('replay-first') === 1) {
+          context.core!.workspace_admission.seal();
+          sealed_after_first = true;
         }
-      }
-      return admission_closed!();
-    });
+        return admission_closed!();
+      });
+    };
   });
   const create_app = application.createApp;
   vi.spyOn(application, 'createApp').mockImplementation(async (...args) => {
@@ -456,7 +464,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     environments: {
       dependencies: {
         application_root: dirname(f.path),
-        node_executable: process.execPath,
       },
       factory: async (value) => {
         context = value;
@@ -472,16 +479,12 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
             launch: async () => unavailable(),
           },
           create_mac: (mac_context) => ({
-            service: create_mac_update_composition(mac_context, null).service,
+            service: create_mac_update_composition(mac_context).service,
             operations: {
               machine_states: () => [],
               retry_machine: unavailable,
               prepare: async () => unavailable(),
-              phase: () => null,
-              reported_at: () => null,
-              configured: () => false,
             },
-            reads: { health_payload: () => null, status: async () => null },
           }),
           collect_status: async () => unavailable(),
         };
@@ -544,20 +547,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       }),
     });
   try {
-    await vi.waitFor(() => expect(replay_checks).toBe(2));
-    expect(
-      f.database.read((sql) =>
-        sql.get('SELECT through_sequence FROM conversation_view_state WHERE conversation_id=?', [
-          'replay-first',
-        ]),
-      ),
-    ).toEqual({ through_sequence: 1 });
-    expect(
-      f.database.read((sql) =>
-        sql.get('SELECT 1 FROM conversation_view_state WHERE conversation_id=?', ['replay-second']),
-      ),
-    ).toBeUndefined();
-    expect(context.core!.workspace_admission.closed).toBe(false);
     expect(context.core!.options.wait_registry).toBe(WAITS);
     expect(janitor).toHaveBeenCalledOnce();
     expect(tracked_waits).toHaveBeenCalled();
@@ -578,6 +567,12 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           .some((text) => text.includes(RECOVERY_PROMPT)),
       ).toBe(true),
     );
+    begin_replay();
+    await vi.waitFor(() => expect(context.core!.workspace_admission.closed).toBe(true));
+    expect(coverage('replay-first')).toBe(1);
+    expect(coverage('replay-second')).toBeUndefined();
+    context.core!.workspace_admission.reopen();
+    await vi.waitFor(() => expect(coverage('replay-second')).toBe(1), { timeout: 5000 });
     const recovered = registry.child('retained');
     await recovered.finish();
     await recovered.flush_events();

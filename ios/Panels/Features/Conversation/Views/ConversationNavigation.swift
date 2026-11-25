@@ -180,6 +180,7 @@ private struct ConversationSurface: View {
                 await ticket.refresh()
                 guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
                 model.machineLocale = ticket.value?.detail.locale
+                model.machineId = ticket.value?.detail.machineId
             }
             if checksCurrentConversation, store.currentConversationID(owner) == nil {
                 let generation = model.readerGeneration
@@ -259,16 +260,16 @@ private struct ConversationSurface: View {
             header
             if isPage, model.machineLocale == "macos" {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                    TicketMachineLabel(locale: model.machineLocale, selectable: true)
+                    TicketMachineLabel(locale: model.machineLocale, machineId: model.presentedMachineId, selectable: true)
                     if TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
-                        Text(TicketMachine.unknownActivityText(model.machineLocale)).textSelection(.enabled)
-                        Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.").textSelection(.enabled)
+                        PanelsSelectableText(TicketMachine.unknownActivityText(model.machineLocale, machineId: model.presentedMachineId, machines: store.machines), font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
+                        PanelsSelectableText(store.executorHealth?.contactSentence ?? "Last contact: unknown.", font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
                     }
                 }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active && !store.contentCovered)
             }
             if readOnly {
                 Text("Historical conversation · read only").textSelection(.enabled).font(PanelsTheme.TypeScale.small)
@@ -376,13 +377,18 @@ struct ConversationThread: View {
     @State private var appeared = false
     @State private var visibleRowIDs: Set<String> = []
     private var readBoundary: ConversationReadBoundary? {
-        model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
+        model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared && !store.contentCovered)
     }
     @Environment(AppStore.self) private var store
     @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
+    private func note(_ row: ConversationRow) -> String? {
+        guard let item = row.item, let body = model.expandedBodies[item.key] ?? item.body?.value else { return row.note }
+        let name = store.machines.first { $0.machineId == model.presentedMachineId }?.name
+        return body.answerSentence(machineName: name) ?? row.note
+    }
     /// The server refused this message. Like Messages: a red mark that offers Try Again.
     private func refusedMark(note: String, retryID: String?) -> some View {
         Button { refusedNote = (note, retryID) } label: {
@@ -423,8 +429,8 @@ struct ConversationThread: View {
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
                                 }
-                                if !row.own, let note = row.note {
-                                    Text(note).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
+                                if !row.own, let note = note(row) {
+                                    PanelsSelectableText(note, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.faint)).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                                 // Code, tables and charts take what they are offered; the spacer keeps only its minimum.
@@ -453,7 +459,7 @@ struct ConversationThread: View {
             .onChange(of: model.conversationID) { _, _ in visibleRowIDs = [] }
             .onChange(of: model.lens) { _, _ in visibleRowIDs = [] }
             .task(id: readBoundary) {
-                await model.acknowledgeVisibleRows(visibleRowIDs, active: active && appeared, using: store.client)
+                await model.acknowledgeVisibleRows(visibleRowIDs, active: active && appeared && !store.contentCovered, using: store.client)
             }
             .contentMargins(.top, 12, for: .scrollContent)
             .task {
@@ -689,6 +695,7 @@ struct ConversationDetailSmokeView: View {
 
 struct ConversationSmokeView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var refreshError: String?
     @State private var path: [AppRoute] = []
     var body: some View {
@@ -712,6 +719,9 @@ struct ConversationSmokeView: View {
                     }
                 }
         }
+        .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
+            if scenePhase == .active { await Outbox.shared.run(api: store.client) }
+        }
     }
     private func refresh() async {
         do { _ = try await store.client.chiefConversation(); refreshError = nil }
@@ -721,20 +731,36 @@ struct ConversationSmokeView: View {
 #endif
 
 struct ConversationCamera: UIViewControllerRepresentable {
-    let completed: (UIImage?) -> Void
+    enum Capture { case photo(UIImage), video(URL), failure(String) }
+    let completed: (Capture?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(completed: completed) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera; picker.delegate = context.coordinator
+        picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        picker.videoQuality = .typeHigh
         return picker
     }
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let completed: (UIImage?) -> Void
-        init(completed: @escaping (UIImage?) -> Void) { self.completed = completed }
+        let completed: (Capture?) -> Void
+        init(completed: @escaping (Capture?) -> Void) { self.completed = completed }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { completed(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            completed(info[.originalImage] as? UIImage)
+            if let video = info[.mediaURL] as? URL {
+                // Keep the picker open until its movie has a private copy.
+                let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension(video.pathExtension)
+                Task {
+                    do {
+                        try await Task.detached(priority: .userInitiated) {
+                            try FileManager.default.copyItem(at: video, to: destination)
+                        }.value
+                        completed(.video(destination))
+                    } catch { completed(.failure(error.localizedDescription)) }
+                }
+            } else if let image = info[.originalImage] as? UIImage { completed(.photo(image)) }
+            else { completed(nil) }
         }
     }
 }

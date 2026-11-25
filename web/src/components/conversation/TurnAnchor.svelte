@@ -23,10 +23,12 @@
     workedSentence
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
+  import { unknownActivityText } from "../../lib/ticketMachines";
   import SystemLine from "./SystemLine.svelte";
 
   let {
     activityUncertain = false,
+    destinationName,
     settled = false,
     stopped = false,
     startedAtUnixMilliseconds = null,
@@ -37,6 +39,7 @@
     onToggle
   }: {
     activityUncertain?: boolean;
+    destinationName?: string;
     settled?: boolean;
     stopped?: boolean;
     /** When the turn began, in unix milliseconds, so a reload counts from the truth. */
@@ -100,7 +103,7 @@
         {#if settled}
           <span data-conversation-turn-label>{foldLabel}</span>
         {:else if activityUncertain}
-          <span data-conversation-alive-word>Current activity on this machine is unknown.</span>
+          <span data-conversation-alive-word>{unknownActivityText(destinationName)}</span>
         {:else}
           <span data-conversation-alive-word>{elapsed.seconds === null ? "Working" : "Working for"}</span>{#if elapsed.seconds !== null}{" "}<span data-conversation-alive-clock>{formatDuration(elapsed.seconds)}</span>{/if}
         {/if}

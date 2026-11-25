@@ -9,11 +9,19 @@ publish:
     repo: headroom
 mac:
   icon: resources/icon.icns
-  # Each desktop release carries this ZIP and its matching latest-mac.yml.
+  # The ZIP and latest-mac.yml serve updates. The DMG serves first installation.
   artifactName: Panels-mac-${arch}.${ext}
   category: public.app-category.productivity
   target:
+    - target: dmg
+      arch: arm64
     - target: zip
       arch: arm64
   hardenedRuntime: true
   notarize: true
+dmg:
+  artifactName: Panels-mac-${arch}.${ext}
+  sign: true
+  # The signed workflow notarizes and staples the container after packaging.
+  # Keep updater metadata about the ZIP only, before the container changes.
+  writeUpdateInfo: false

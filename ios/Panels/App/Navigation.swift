@@ -48,8 +48,6 @@ struct CloseArtifactsAction {
 extension EnvironmentValues {
     @Entry var openRoute = OpenRouteAction { _ in }
     @Entry var closeArtifacts = CloseArtifactsAction {}
-    /// Changes each time Review becomes the destination.
-    @Entry var reviewVisit = 0
 }
 
 /// A NavigationStack whose pushes all go through one page path. A page and the full

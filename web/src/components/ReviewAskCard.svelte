@@ -23,6 +23,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { withinScreenWait } from "../lib/mutate";
   import type { ReviewAskItem } from "../lib/types";
+  import { machineName } from "../lib/ticketMachines";
   import { queries } from "../lib/queryCatalogue";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { reviewAskHref } from "../lib/review/asks";
@@ -61,6 +62,10 @@
   let error = $state<unknown>(null);
   let busy = $state(false);
   let note = $state<string | null>(null);
+  let noteSaved = $state(false);
+  const machines = createQuery(() => ({ ...queries.machines(), enabled: !!view?.machine_id }));
+  const destinationName = $derived(machineName(undefined, view?.machine_id, machines.data?.machines));
+  const displayedNote = $derived(noteSaved ? executorAnswerSentence("saved", destinationName) : note);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
   let draftRequestId = $state("");
   let attachmentDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>({});
@@ -127,13 +132,15 @@
    *  that, and a second press must not send a second answer. */
   let answered: string | null = null;
   function sentence(fate: "applied" | "saved" | "refused", refused: string): string | null {
-    return fate === "refused" ? refused : fate === "saved" ? executorAnswerSentence("saved") : null;
+    noteSaved = fate === "saved";
+    return fate === "refused" ? refused : null;
   }
   async function answerPermission(optionId: string): Promise<void> {
     const ask = permission;
     if (!ask || busy || !available || answered === ask.ask_id) return;
     busy = true;
     note = null;
+    noteSaved = false;
     try {
       const { fate } = await answerPermissionAsk(conversationId, ask.ask_id, optionId);
       if (fate !== "refused") answered = ask.ask_id;
@@ -152,6 +159,7 @@
     if (!request || !answers || busy || attachmentReadBusy || !available || answered === request.request_id) return;
     busy = true;
     note = null;
+    noteSaved = false;
     try {
       const { fate } = await answerUserInput(conversationId, request.request_id, answers);
       if (fate !== "refused") answered = request.request_id;
@@ -247,7 +255,7 @@
             <Button variant="secondary" data-review-ask-send disabled={busy || attachmentReadBusy || !available || !answers} onclick={() => void submitUserInput()}>Send answer</Button>
           </div>
         {/if}
-        {#if note}<p class="ask-note" data-review-ask-note>{note}</p>{/if}
+        {#if displayedNote}<p class="ask-note" data-review-ask-note>{displayedNote}</p>{/if}
         {#if error}<ErrorLine {error} />{/if}
       </section>
     {:else if error}

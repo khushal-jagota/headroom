@@ -30,7 +30,16 @@ export async function inspect_work_move(
     throw new Error('Cannot identify the published Ticket branch.');
   const published_branch = branch.stdout.trim();
   const published_revision = revision.stdout.trim();
-  if (advertised_refs.get(checkout)?.get(`refs/heads/${published_branch}`) !== published_revision)
+  // Recheck the captured HEAD against the same advertisement. The local branch
+  // can advance after the safety check, but it need not share a remote ref name.
+  const remote_revisions = [...new Set(advertised_refs.get(checkout)?.values() ?? [])];
+  if (!remote_revisions.length) throw new Error('Cannot verify the published Ticket revision.');
+  const unpublished = await git(
+    checkout,
+    ['rev-list', '-n', '1', published_revision, '--not', ...remote_revisions],
+    options,
+  );
+  if (unpublished.returncode || unpublished.stdout.trim())
     throw new Error('Push the current Ticket branch before the move.');
   return { published_branch, published_revision };
 }

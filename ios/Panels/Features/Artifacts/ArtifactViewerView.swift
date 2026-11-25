@@ -78,8 +78,8 @@ struct ArtifactViewerView: View {
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
-        .panelsScreen()
         .modifier(ArtifactDockSurface(dock: dock, conversationID: conversationID, textEntry: textEntry))
+        .panelsScreen()
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

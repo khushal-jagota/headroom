@@ -46,6 +46,7 @@ struct TicketView: View {
                 .padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
+        .modifier(DecisionScrollViewport(enabled: detail?.pendingProposal != nil))
         .navigationTitle("").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { ticketMenu } }
         .scrollContentBackground(.hidden).textCase(nil)
@@ -112,7 +113,7 @@ struct TicketView: View {
                 color: UIColor(PanelsTheme.Web.strong), lineSpacing: 1, tracking: -0.26)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("ticket-title")
-            TicketMachineLabel(locale: detail.locale, selectable: true)
+            TicketMachineLabel(locale: detail.locale, machineId: detail.machineId, selectable: true)
             if !detail.recap.isEmpty { TicketRecapText(text: detail.recap) }
             if let blockers = detail.blockerSummary?.blockedBy, !blockers.isEmpty {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {

@@ -10,6 +10,9 @@ import UniformTypeIdentifiers
         self.imageWorkStarted = imageWorkStarted
     }
     var machineLocale: String?
+    var machineId: String?
+    var conversationMachineId: String?
+    var presentedMachineId: String? { conversationMachineId ?? machineId }
     var conversationID: String? { didSet { if oldValue != conversationID { invalidateReader() } } }
     private var composerRevision = 0
     private var composerConfigurationGeneration = 0
@@ -29,7 +32,7 @@ import UniformTypeIdentifiers
         recoversConversationIDFromOutbox = recoverConversationID
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         composerConfigurationGeneration += 1
-        preparingPhotos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
+        preparingPhotos = [:]; preparingVideos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
         outgoing = []; retryAliases = [:]; supersededIDs = []; clearedPhotoDrafts = [:]
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
@@ -77,6 +80,7 @@ import UniformTypeIdentifiers
         guard conversationID != id else { return }
         saveDisplay(force: true)
         conversationID = id
+        conversationMachineId = nil
         items = []; expandedBodies = [:]; status = nil; older = nil
         loadedConversationID = nil; loadedLens = nil; pageProjectionVersion = nil
         visibleRows = []; rowOrder = []; liveRow = nil; liveReference = nil; liveTurnKey = nil
@@ -315,12 +319,19 @@ import UniformTypeIdentifiers
         var retryable = false
         var attachments: [ConversationSend.Piece] = []
     }
+    struct VideoPreparation: Identifiable {
+        let id: UUID
+        let fileName: String
+        var progress: Double = 0
+    }
+    private(set) var preparingVideos: [UUID: VideoPreparation] = [:]
+    var failedAttachment: String? { attachments.compactMap { $0.preparationError ?? $0.localVideo?.preparationError }.first }
     private(set) var preparingPhotos: [UUID: String] = [:]
     private var draftPreparationID: UUID?
     var preparingDraftPhotos: Bool { draftPreparationID != nil }
     private(set) var preparingOutgoingID: String?
     private var outgoingPreparationID: UUID?
-    var preparingPhoto: Bool { !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
+    var preparingPhoto: Bool { !preparingVideos.isEmpty || !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
     private var preparedAttachments: [ConversationSend.Piece] = []
     var deliveryMode = "steer"
     /// The conversation's backend can join a running turn, as the server last said.
@@ -329,7 +340,9 @@ import UniformTypeIdentifiers
         didSet {
             composerRevision += 1
             guard !restoring, let api = persistenceAPI else { return }
-            do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
+            do {
+                try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments))
+            }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
         }
     }
@@ -346,6 +359,100 @@ import UniformTypeIdentifiers
         guard let bytes else { error = ConversationImagePreparation.Failure.unreadable.localizedDescription; return false }
         preparingPhotos.removeValue(forKey: identity)
         return await attach(bytes, type: .jpeg, fileName: fileName)
+    }
+    /// The source stays alive until its file is copied into the persistent video store.
+    @discardableResult func attachVideo(fileName: String, load: () async throws -> URL,
+                                       release: (URL) -> Void = { _ in }) async -> Bool {
+        let generation = composerConfigurationGeneration
+        let originServer = persistenceAPI.map { LocalStore.server($0.baseURL) }
+        let originDraft = draftKey
+        let identity = UUID()
+        preparingVideos[identity] = VideoPreparation(id: identity, fileName: fileName)
+        defer { preparingVideos.removeValue(forKey: identity) }
+        do {
+            let source = try await load()
+            defer { release(source) }
+            let video = try await VideoAttachments.importFile(source, fileName: fileName) { [weak self] progress in
+                Task { @MainActor in
+                    guard let self, self.composerConfigurationGeneration == generation else { return }
+                    self.preparingVideos[identity]?.progress = progress
+                }
+            }
+            try retainAttachment(.init(piece: "attachment_upload",
+                                       mediaType: UTType(filenameExtension: (video.fileName as NSString).pathExtension)?.preferredMIMEType ?? "video/mp4",
+                                       fileName: video.fileName, localVideo: video),
+                                 originServer: originServer, originDraft: originDraft)
+            return video.preparationError == nil
+        } catch {
+            let failed = ConversationSend.Piece(piece: "file", fileName: fileName, preparationError: error.localizedDescription)
+            do { try retainAttachment(failed, originServer: originServer, originDraft: originDraft) }
+            catch { self.error = "Attachment could not be saved: \(error.localizedDescription)" }
+            return false
+        }
+    }
+    /// A picker belongs to the draft that opened it, even if navigation changes during intake.
+    private func retainAttachment(_ piece: ConversationSend.Piece, originServer: String?, originDraft: String) throws {
+        if originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
+            attachments.append(piece)
+        } else if let originServer {
+            let saved = try LocalStore.shared.record(server: originServer, kind: "attachments", id: originDraft)
+            var pieces = try saved.map { try JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) } ?? []
+            pieces.append(piece)
+            try LocalStore.shared.put(server: originServer, kind: "attachments", id: originDraft, data: JSONEncoder().encode(pieces))
+        } else {
+            // An unconfigured composer has no other durable destination to restore.
+            attachments.append(piece)
+        }
+    }
+    /// Non-image Files picks inspect metadata before allocating their contents.
+    /// Images use ImageIO's file-backed downsampling and the existing photo budget.
+    @discardableResult func attachFile(_ url: URL, type: UTType?,
+        fileSize: @escaping @Sendable (URL) throws -> Int? = { try $0.resourceValues(forKeys: [.fileSizeKey]).fileSize },
+        read: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }) async -> Bool {
+        let originServer = persistenceAPI.map { LocalStore.server($0.baseURL) }
+        let originDraft = draftKey
+        let image = type?.conforms(to: .image) == true
+        let identity = UUID()
+        if image { preparingPhotos[identity] = url.lastPathComponent }
+        defer { preparingPhotos.removeValue(forKey: identity) }
+        do {
+            if image {
+                let prepared = try await ConversationImagePreparation.prepareFile(url, imageWorkStarted: imageWorkStarted)
+                // Preserve the combined budget while allowing navigation during ImageIO.
+                while originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
+                    let previous = attachments
+                    let combined = try await ConversationImagePreparation.prepare(previous + [prepared],
+                        alreadyPrepared: preparedAttachments + [prepared], imageWorkStarted: imageWorkStarted)
+                    guard originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey else { break }
+                    guard attachments == previous else { continue }
+                    attachments = combined
+                    preparedAttachments = combined
+                    return true
+                }
+                try retainAttachment(prepared, originServer: originServer, originDraft: originDraft)
+            } else {
+                let piece = try await Task.detached(priority: .userInitiated) {
+                    if let size = try fileSize(url), size > 20_000_000 {
+                        throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+                    }
+                    let data = try read(url)
+                    guard data.count <= 20_000_000 else {
+                        throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+                    }
+                    return ConversationSend.Piece(piece: "file", data: data.base64EncodedString(),
+                        mediaType: type?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent)
+                }.value
+                try retainAttachment(piece, originServer: originServer, originDraft: originDraft)
+            }
+            return true
+        } catch {
+            do {
+                try retainAttachment(.init(piece: "file", fileName: url.lastPathComponent,
+                                           preparationError: error.localizedDescription),
+                                     originServer: originServer, originDraft: originDraft)
+            } catch { self.error = "Attachment could not be saved: \(error.localizedDescription)" }
+            return false
+        }
     }
     @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) async -> Bool {
         let image = type?.conforms(to: .image) == true
@@ -384,6 +491,7 @@ import UniformTypeIdentifiers
         }
     }
     func preparedContent() async throws -> [ConversationSend.Piece] {
+        if let failedAttachment { throw NSError(domain: "AttachmentPreparation", code: 1, userInfo: [NSLocalizedDescriptionKey: failedAttachment]) }
         guard !preparingPhoto else { throw CancellationError() }
         let revision = composerRevision
         let generation = composerConfigurationGeneration
@@ -502,6 +610,7 @@ import UniformTypeIdentifiers
         return heldPrompts.filter { received.contains($0.senderMessageId ?? $0.heldPromptId) }.count
     }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
+        conversationMachineId = configuration.machineId
         heldPrompts = configuration.heldPrompts
         if readPositionConversationID != conversationID {
             readPositionConversationID = conversationID

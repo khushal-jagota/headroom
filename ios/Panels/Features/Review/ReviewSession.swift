@@ -66,14 +66,11 @@ struct ReviewQueue: Equatable, Sendable {
     /// The card on screen when the app went to the background, and the connection
     /// session then. The first fresh window of a later session decides whether it is still there.
     private(set) var away: (cardID: String, session: Int)?
-    /// The last time Review became the destination that this queue has seen.
-    private(set) var seenVisit: Int?
 
     static func == (lhs: ReviewQueue, rhs: ReviewQueue) -> Bool {
         lhs.summary == rhs.summary && lhs.pinned == rhs.pinned && lhs.leaving == rhs.leaving && lhs.notice == rhs.notice
             && lhs.skipped == rhs.skipped && lhs.history == rhs.history && lhs.handled == rhs.handled
             && lhs.seenRefusals == rhs.seenRefusals && lhs.away?.cardID == rhs.away?.cardID && lhs.away?.session == rhs.away?.session
-            && lhs.seenVisit == rhs.seenVisit
     }
 
     /// The queue in order: refused decisions first, then the window's cards, with the
@@ -157,12 +154,13 @@ struct ReviewQueue: Equatable, Sendable {
         history.skipped = keys
     }
 
-    private mutating func showSummary() {
-        summary = true; pinned = nil; notice = nil; away = nil
+    mutating func showSummary() {
+        summary = true; pinned = nil; notice = nil; away = nil; leaving = nil
     }
 
     /// Skip is per card.
     mutating func skip(_ item: ReviewItem, in cards: [ReviewItem]) {
+        guard shown?.id == item.id else { return }
         skipped.insert(item.id)
         away = nil
         recordSkippedEntries(cards)
@@ -198,14 +196,6 @@ struct ReviewQueue: Equatable, Sendable {
         pinned = nil; notice = nil
     }
 
-    /// Each time Review becomes the destination again, it opens on the summary. A card
-    /// whose exit runs finishes it first, as after a return from the background: the
-    /// summary would remove the card and its sheet before the sheet reports closing.
-    mutating func visit(_ visit: Int) {
-        if let seenVisit, seenVisit != visit, leaving == nil { showSummary() }
-        seenVisit = visit
-    }
-
     /// The app went to the background during `session`. A card whose exit runs is
     /// handled, not the card the owner was on: its exit finishes on the return. Recorded,
     /// a fresh window would show the summary over the exit and remove the card's sheet
@@ -234,8 +224,8 @@ struct ReviewQueue: Equatable, Sendable {
     @ObservationIgnored private var refusals: [ReviewRefusal] = []
     @ObservationIgnored private var moved: (ReviewItem) -> String? = { _ in nil }
 
-    /// Counts finished exits. A card that comes back under the same identity, such as a
-    /// refused reply, is a fresh card on screen, not the one that faded out.
+    /// Identifies a card presentation after an exit or an explicit summary selection.
+    /// Old callbacks cannot act on a card reopened under the same identity.
     private(set) var exits = 0
     var shown: ReviewItem? { queue.shown }
     var notice: ReviewNotice? { queue.notice }
@@ -272,6 +262,7 @@ struct ReviewQueue: Equatable, Sendable {
     }
 
     func skip(_ item: ReviewItem, store: AppStore) {
+        guard shown?.id == item.id else { return }
         queue.skip(item, in: cards)
         // A card offered again reads its run again, as a freshly opened card does.
         if item.isMessage { messageDecisions.drop(item.id) }
@@ -292,7 +283,14 @@ struct ReviewQueue: Equatable, Sendable {
         reconcile()
         store.setReviewHistory(queue.history)
     }
-    func visit(_ visit: Int) { queue.visit(visit); reconcile() }
+    func showSummary() {
+        queue.showSummary()
+        exits += 1
+        reconcile()
+    }
+    func presents(_ item: ReviewItem, at presentation: Int) -> Bool {
+        exits == presentation && shown?.id == item.id
+    }
     func leaveApp(session: Int) { queue.leaveApp(session: session) }
 
     /// The shown card and the next few waiting ones, which are read ahead.

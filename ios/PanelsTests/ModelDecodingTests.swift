@@ -28,8 +28,6 @@ final class ModelDecodingTests: XCTestCase {
         let artifacts = try decode("artifacts", as: ArtifactPage.self)
         XCTAssertEqual(artifacts.entries.first?.directory, "artifacts")
         XCTAssertNil(artifacts.entries.first?.href)
-        let deployment = try decode("deployment", as: DeploymentStatus.self)
-        XCTAssertEqual(deployment.outcome, "succeeded")
     }
     func testChangeStreamIgnoresHeartbeatsAndRecognizesRefresh() {
         var parser = ChangeStreamParser()

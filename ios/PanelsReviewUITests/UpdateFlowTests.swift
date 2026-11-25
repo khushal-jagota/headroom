@@ -92,12 +92,6 @@ final class UpdateFlowTests: XCTestCase {
         let install = app.buttons["updates.install"]
         reveal(install)
         install.tap()
-        let confirm = app.buttons["sheet-confirm"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-        capture("updates-offer-confirmation")
-        reveal(confirm)
-        confirm.tap()
-        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
         XCTAssertTrue(install.waitForNonExistence(timeout: 10))
         XCTAssertTrue(app.readableText("Updating…").firstMatch.waitForExistence(timeout: 10))
         reveal(app.readableText("This update stops your agents"), upward: false)
@@ -131,11 +125,6 @@ final class UpdateFlowTests: XCTestCase {
         capture("updates-large-text-card-top")
         reveal(app.buttons["updates.install"])
         capture("updates-large-text-card-actions")
-        app.buttons["updates.install"].tap()
-        XCTAssertTrue(app.buttons["sheet-confirm"].waitForExistence(timeout: 5))
-        capture("updates-large-text-confirmation-top")
-        reveal(app.buttons["sheet-confirm"])
-        capture("updates-large-text-confirmation-actions")
         // Large text is a layout review only. It must not send another update.
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 4)

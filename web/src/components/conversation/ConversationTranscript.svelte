@@ -45,6 +45,7 @@
 
   let {
     activityUncertain = false,
+    destinationName,
     rows,
     visibleRows,
     lens,
@@ -64,6 +65,7 @@
      *  message while the turn is live), when the caller knows its turn. Null: told by toOwner. */
     narration?: boolean | null;
     activityUncertain?: boolean;
+    destinationName?: string;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -147,18 +149,18 @@
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
-    if (activityUncertain && row.state === "live") return "pending · availability on this machine unknown";
-    if (row.answerFate === "saved") return "Answer saved at home; delivery to the machine is pending";
-    if (row.answerFate === "unconfirmed") return "Answer was saved; application on the machine is unconfirmed";
+    if (activityUncertain && row.state === "live") return `pending · availability on ${destinationName ?? "the machine"} unknown`;
+    if (row.answerFate === "saved") return `Answer saved at home; delivery to ${destinationName ?? "the machine"} is pending`;
+    if (row.answerFate === "unconfirmed") return `Answer was saved; application on ${destinationName ?? "the machine"} is unconfirmed`;
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
 
   function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
-    if (activityUncertain && row.state === "live") return "pending · availability on this machine unknown";
-    if (row.answerFate === "saved") return "Answer saved at home; delivery to the machine is pending";
-    if (row.answerFate === "unconfirmed") return "Answer was saved; application on the machine is unconfirmed";
+    if (activityUncertain && row.state === "live") return `pending · availability on ${destinationName ?? "the machine"} unknown`;
+    if (row.answerFate === "saved") return `Answer saved at home; delivery to ${destinationName ?? "the machine"} is pending`;
+    if (row.answerFate === "unconfirmed") return `Answer was saved; application on ${destinationName ?? "the machine"} is unconfirmed`;
     if (row.state === "answered") return "answered";
     if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
@@ -175,7 +177,7 @@
       </ViewItem>
     {:else if item !== null}
     {#if item.kind === "turn"}
-      <TurnAnchor {activityUncertain}
+      <TurnAnchor {activityUncertain} {destinationName}
         settled={item.settled}
         stopped={item.stopped}
         startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}

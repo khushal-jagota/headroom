@@ -250,7 +250,7 @@ import UIKit
         XCTAssertEqual(editor.state?.writeRevision, 2)
     }
 
-    func testHolderPlacementAndNestedTicketsUseCurrentServerFields() throws {
+    func testHolderPlacementUsesCurrentServerFields() throws {
         let chiefGoal = try goal()
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         var fields = try JSONSerialization.jsonObject(with: encoder.encode(chiefGoal)) as! [String: Any]
@@ -265,9 +265,6 @@ import UIKit
         XCTAssertEqual(managed.holder?.conversationOwner, .manager("m"))
         XCTAssertEqual(chiefGoal.holder?.conversationOwner, .chief)
         XCTAssertEqual(chiefGoal.legacyConversationId, "c")
-        let page = try json(#"[{"type":"section","blocks":[],"views":[{"blocks":[{"type":"tickets","id":"t"}]}]}]"#)
-        XCTAssertTrue(PageDocumentPresentation.hasTickets(page.array))
-        XCTAssertFalse(PageDocumentPresentation.hasTickets(chiefGoal.page["blocks"].array))
     }
 
     func testHolderPageEditsUseHolderRevisionAndPreserveTheDocument() async throws {

@@ -90,7 +90,7 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25
         request.httpBody = frozenBody
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         let value = try Self.decoder().decode(DecisionOperationResponse.self, from: data)
         // A successful POST always confirms a terminal outcome. Null remains unknown.
@@ -154,7 +154,7 @@ extension APIClient {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return data
     }

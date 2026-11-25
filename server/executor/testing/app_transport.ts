@@ -84,8 +84,6 @@ function service_for(machine_id: string): MacUpdateServiceContract {
     prepare: unexpected,
     settled: () => Promise.resolve(),
     status: () => null,
-    phase: () => null,
-    reported_at: () => null,
     check: () => ({
       schema_version: 1,
       target: null,

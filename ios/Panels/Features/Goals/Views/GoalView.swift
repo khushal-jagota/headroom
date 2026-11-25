@@ -39,7 +39,6 @@ private struct GoalDetailContent: View {
             .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
             .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await session.follow() } }
-            .environment(\.pageTicketHolder, session.goal?.holder)
             .accessibilityIdentifier("goal-screen")
     }
 }

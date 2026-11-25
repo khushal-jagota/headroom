@@ -185,17 +185,18 @@ extension View {
 
 struct TicketMachineLabel: View {
     let locale: String?
+    var machineId: String? = nil
     var selectable = false
+    @Environment(AppStore.self) private var store
     var body: some View {
-        if let name = TicketMachine.name(locale) {
-            Label {
-                if selectable {
-                    PanelsSelectableText(name, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
-                } else { Text(name) }
-            } icon: { Image(systemName: locale == "macos" ? "laptopcomputer" : "server.rack") }
-                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                .accessibilityLabel("Runs on \(name)")
-        }
+        let name = TicketMachine.name(locale, machineId: machineId, machines: store.machines)
+        Label {
+            if selectable {
+                PanelsSelectableText(name, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
+            } else { Text(name) }
+        } icon: { Image(systemName: locale == "macos" ? "laptopcomputer" : "server.rack") }
+            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            .accessibilityLabel("Runs on \(name)")
     }
 }
 struct TicketActivityMark: View {

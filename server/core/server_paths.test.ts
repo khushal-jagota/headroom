@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -18,9 +18,25 @@ test('server paths and secrets follow the settings folder across relocation', as
     expect(config.logs_dir).toBe(join(state, 'logs'));
     expect(config.backup_dir).toBe(join(state, 'backups'));
     expect(config.dispatcher_lock_path).toBe(join(state, 'dispatcher.lock'));
+    const repository = { PLAN_UPDATE_REPOSITORY: 'owner/repo' };
+    const token = join(state, 'secrets/update-token');
+    expect(update_repository_configuration(repository, state)).toEqual({
+      repository: 'owner/repo',
+      token_file: null,
+    });
     expect(
-      update_repository_configuration({ PLAN_UPDATE_REPOSITORY: 'owner/repo' }, state)?.token_file,
-    ).toBe(join(state, 'secrets/update-token'));
+      update_repository_configuration({ ...repository, PLAN_UPDATE_TOKEN_FILE: token }, state)
+        ?.token_file,
+    ).toBeNull();
+    expect(
+      update_repository_configuration(
+        { ...repository, PLAN_UPDATE_TOKEN_FILE: 'other-token' },
+        state,
+      )?.token_file,
+    ).toBe(join(state, 'other-token'));
+    await mkdir(join(state, 'secrets'), { recursive: true });
+    await writeFile(token, 'configured');
+    expect(update_repository_configuration(repository, state)?.token_file).toBe(token);
     expect(loadConfig(settings, {}).apns).toBeNull();
     const override = loadConfig(settings, { PLAN_DB_PATH: root + '/other/../isolated/custom.db' });
     expect(override.logs_dir).toBe(join(root, 'isolated/logs'));

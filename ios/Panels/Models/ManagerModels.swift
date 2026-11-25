@@ -20,6 +20,7 @@ struct ConversationHistoryEntry: Codable, Sendable { let conversationId: String;
 struct ManagerTicket: Codable, Identifiable, Sendable {
     var integrityError: TicketIntegrityIssue? = nil
     var locale: String? = nil
+    var machineId: String? = nil
     let id: String
     let title: String
     let recap: String
@@ -38,7 +39,7 @@ struct ManagerTicket: Codable, Identifiable, Sendable {
     let assigned: Bool
     let activityAt: Double?
     var conversationSignal: ConversationSignal?
-    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, recap, recapPreview, stage, ticketStatus, workerType, isBacklogged, blocked, hasPendingProposal, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, agentState, assigned, activityAt, conversationSignal }
+    enum CodingKeys: String, CodingKey { case integrityError, locale, machineId, id, title, recap, recapPreview, stage, ticketStatus, workerType, isBacklogged, blocked, hasPendingProposal, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, agentState, assigned, activityAt, conversationSignal }
 }
 
 extension ManagerTicket {
@@ -51,6 +52,7 @@ extension ManagerTicket {
         }
         integrityError = issue
         locale = try c.decodeIfPresent(String.self, forKey: .locale)
+        machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
         id = try required(String.self, .id, broken: "")
         title = try required(String.self, .title, broken: "")
         recap = try required(String.self, .recap, broken: issue?.reason ?? "")

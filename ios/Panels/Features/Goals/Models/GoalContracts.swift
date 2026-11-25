@@ -138,11 +138,3 @@ struct HolderPage: Codable, Sendable {
     let page: GoalJSON?
     let pageRevision: Int
 }
-
-enum PageDocumentPresentation {
-    static func hasTickets(_ blocks: [GoalJSON]) -> Bool {
-        blocks.contains { block in
-            block.type == "tickets" || hasTickets(block["blocks"].array) || block["views"].array.contains { hasTickets($0["blocks"].array) }
-        }
-    }
-}

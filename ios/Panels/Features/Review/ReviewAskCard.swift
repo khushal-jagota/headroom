@@ -93,6 +93,7 @@ struct ReviewAskCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(DecisionForegroundFade())
         .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
     }
 

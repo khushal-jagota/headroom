@@ -13,13 +13,15 @@ export function executorAnswerAvailable(
   return !!pending && ("ask_id" in pending ? pending.ask_id : pending.request_id) === askId;
 }
 
-export function executorAnswerSentence(fate: "saved" | "applied" | "unconfirmed" | undefined): string | null {
-  if (fate === "saved") return "Answer saved at home; delivery to the machine is pending.";
+export function executorAnswerSentence(fate: "saved" | "applied" | "unconfirmed" | undefined, name = "the machine"): string | null {
+  if (fate === "saved") return `Answer saved at home; delivery to ${name} is pending.`;
   // Applied is the ordinary end of an answer, and the card already says "answered".
   // A line for every one of them only piles up.
   if (fate === "applied") return null;
-  if (fate === "unconfirmed") return "Answer saved at home; the original machine request is gone. Application is unconfirmed.";
+  if (fate === "unconfirmed") return `Answer saved at home; the original request on ${name} is gone. Application is unconfirmed.`;
   return null;
 }
 
-export const EXECUTOR_ASK_UNCERTAIN = "This request is still pending. Its current availability on this machine is unknown.";
+export function executorAskUncertain(name = "the machine"): string {
+  return `This request is still pending. Its current availability on ${name} is unknown.`;
+}
