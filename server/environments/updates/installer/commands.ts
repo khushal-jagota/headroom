@@ -1,3 +1,5 @@
+import { InstallationRecord } from './record.ts';
+import { release_path, selected_release } from './selection.ts';
 import type { ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -5,10 +7,7 @@ import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
-import { run_release_command } from '../../release/process.ts';
 import { AppValidationError } from '../../release/contracts.ts';
-import { INSTALLED_RUNTIME_CLASSIFIER_SOURCE } from '../../release/units.ts';
-import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../../release/process_configuration.ts';
 import { healthy } from './health.ts';
 import {
   assert_installer_path,
@@ -144,45 +143,11 @@ export async function run_installer_command(
     value.signal.removeEventListener('abort', abort);
   }
 }
-/** The installed application must classify as a Node version-2 runtime. */
-async function require_node_runtime(
-  request: InstallerRequest,
-  value: InstallerPhase,
-): Promise<void> {
-  assert_installer_path(request.current_root, value.environment);
-  assert_installer_path(join(request.current_root, 'app'), value.environment);
-  const argv = [
-    request.node_executable,
-    '--input-type=module',
-    '-e',
-    INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
-    join(request.current_root, 'app'),
-  ];
-  assert_phase(value, argv);
-  let result;
-  try {
-    result = await run_release_command(
-      argv,
-      { timeout_seconds: null, environment: { ...value.environment } },
-      value,
-    );
-  } catch (error) {
-    assert_phase(value, argv);
-    throw error;
-  }
-  assert_phase(value, argv);
-  if (result.stdout.trim() !== 'node-v2')
-    throw new AppValidationError('Unsupported installed runtime classification');
-}
-export function create_installer_effects(
+function darwin_installer_effects(
   request: InstallerRequest,
   execution: InstallerExecution,
-): InstallerEffects {
-  assert_installer_path(request.current_root, execution.environment);
-  assert_installer_path(request.database, execution.environment);
-  assert_installer_path(request.data_directory, execution.environment);
-  assert_installer_health_url(request.health_url, execution.environment);
-  const darwin = process.platform === 'darwin';
+  check_health: InstallerEffects['healthy'],
+) {
   let mac: Promise<import('../darwin/service.ts').DarwinHomeService> | undefined;
   const home = () =>
     (mac ??= import('../darwin/service.ts').then(({ create_darwin_home_io, DarwinHomeService }) => {
@@ -194,57 +159,93 @@ export function create_installer_effects(
           execution.environment,
         ),
       );
-      if (
-        realpathSync(request.node_executable) !==
-        realpathSync(
-          join(
-            request.data_directory,
-            'update-installer-' + request.attempt_id,
-            'runtime/node/bin/node',
-          ),
-        )
-      )
-        throw new AppValidationError('Installer Node differs from the Mac installation identity');
+      const attempt = new InstallationRecord(request).read();
+      const pinned = release_path(request.current_root, String(attempt.from_sha));
+      if (realpathSync(request.node_executable) !== join(pinned, 'node/bin/node'))
+        throw new AppValidationError('Installer Node differs from the retained installation');
       return service;
     }));
-  let effects:
-    | Promise<ReturnType<typeof import('../darwin/service.ts').create_darwin_installer_effects>>
-    | undefined;
-  const home_effects = () =>
-    (effects ??= import('../darwin/service.ts').then(({ create_darwin_installer_effects }) =>
-      create_darwin_installer_effects(home, (sha) =>
-        healthy(
-          request.health_url,
-          sha,
-          request.health_timeout_seconds,
-          execution.signal,
-          execution.environment,
-        ),
-      ),
-    ));
   return {
-    ...(darwin
-      ? {
-          async validate_service() {
-            await (await home_effects()).validate_service();
-          },
-          async recover_unchanged(sha: string) {
-            return (await home_effects()).recover_unchanged(sha);
-          },
-          async finish_success() {
-            return (await home_effects()).finish_success();
-          },
-          async finish_rollback() {
-            return (await home_effects()).finish_rollback();
-          },
-        }
-      : {}),
+    async resume_interrupted() {
+      // A resumed coordinator may find a stopped job. Every loaded job still authenticates.
+      (await home()).phase = 'stopped';
+    },
+    async validate_service() {
+      await (await home()).validate_running_home();
+    },
+    async service(action: 'stop' | 'start') {
+      const service = await home();
+      if (action === 'stop') await service.stop();
+      else await service.start();
+    },
+    async recover_unchanged(sha: string) {
+      const service = await home();
+      if (service.phase === 'stopped') return false;
+      await service.validate_running_home();
+      if (!(await check_health(sha)))
+        throw new Error('The unchanged home did not pass health after its stop failed');
+      await service.resume_auxiliaries();
+      return true;
+    },
+    async finish_success() {
+      const service = await home(),
+        errors: string[] = [];
+      try {
+        await service.provision_schedules();
+      } catch (error) {
+        errors.push(`schedule setup: ${String(error)}`);
+      }
+      try {
+        await service.resume_auxiliaries();
+      } catch (error) {
+        errors.push(String(error));
+      }
+      return errors.length
+        ? 'The release passed health, but its auxiliary jobs did not restart: ' + errors.join('; ')
+        : null;
+    },
+    async finish_rollback() {
+      try {
+        await (await home()).resume_auxiliaries();
+        return null;
+      } catch (error) {
+        return `Its auxiliary jobs did not restart: ${String(error)}`;
+      }
+    },
+  };
+}
+
+export function create_installer_effects(
+  request: InstallerRequest,
+  execution: InstallerExecution,
+): InstallerEffects {
+  assert_installer_path(request.current_root, execution.environment);
+  assert_installer_path(request.database, execution.environment);
+  assert_installer_path(request.data_directory, execution.environment);
+  assert_installer_health_url(request.health_url, execution.environment);
+  const check_health: InstallerEffects['healthy'] = (sha, prepared_attempt_id) => {
+    assert_installer_health_url(request.health_url, execution.environment);
+    return healthy(
+      request.health_url,
+      sha,
+      request.health_timeout_seconds,
+      execution.signal,
+      execution.environment,
+      false,
+      undefined,
+      prepared_attempt_id,
+    );
+  };
+  const mac =
+    process.platform === 'darwin'
+      ? darwin_installer_effects(request, execution, check_health)
+      : null;
+  return {
+    ...mac,
     async service(action) {
       if (installer_test_mode(execution.environment))
         throw new Error('Installer service actions are unavailable in tests');
-      if (darwin) {
-        return (await home_effects()).service(action);
-      }
+      if (mac) return mac.service(action);
       const value = phase(execution, SERVICE_COMMAND_TIMEOUT_SECONDS);
       await run_installer_command(['systemctl', '--user', action, request.service_unit], value, {
         check: true,
@@ -253,7 +254,6 @@ export function create_installer_effects(
     },
     async capture() {
       try {
-        await require_node_runtime(request, phase(execution, RUNTIME_PROBE_TIMEOUT_SECONDS));
         const app = join(request.current_root, 'app'),
           capture_id = randomUUID().replaceAll('-', ''),
           main = join(app, 'server/environments/updates/interruption_capture_main.ts');
@@ -289,7 +289,6 @@ export function create_installer_effects(
     },
     async snapshot(deployed_revision, lifetime_lock_fd) {
       const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
-      await require_node_runtime(request, value);
       const app = join(request.current_root, 'app'),
         main = join(app, 'server/environments/updates/snapshot_main.ts');
       for (const path of [request.database, request.backup_directory, app, main])
@@ -311,8 +310,11 @@ export function create_installer_effects(
     async restore(snapshot, lifetime_lock_fd) {
       assert_installer_path(snapshot, execution.environment);
       const value = phase(execution, DATABASE_RESTORE_TIMEOUT_SECONDS);
-      await require_node_runtime(request, value);
-      const app = join(request.current_root, 'app'),
+      const previous = release_path(
+        request.current_root,
+        String(new InstallationRecord(request).read().from_sha),
+      );
+      const app = previous,
         main = join(app, 'server/environments/updates/restore_main.ts');
       assert_installer_path(request.database, execution.environment);
       assert_installer_path(app, execution.environment);
@@ -326,27 +328,21 @@ export function create_installer_effects(
     },
     async schema_steps(lifetime_lock_fd, backup_taken) {
       const value = phase(execution, SCHEMA_STEP_TIMEOUT_SECONDS);
-      await require_node_runtime(request, value);
-      const app = join(request.current_root, 'app'),
-        main = join(app, 'server/environments/updates/schema_step_main.ts');
+      const app = selected_release(request.current_root);
+      const node =
+        app === join(request.current_root, 'app')
+          ? request.node_executable
+          : join(app, 'node/bin/node');
+      const main = join(app, 'server/environments/updates/schema_step_main.ts');
       assert_installer_path(request.database, execution.environment);
       assert_installer_path(app, execution.environment);
       assert_installer_path(main, execution.environment);
       await run_installer_command(
-        [request.node_executable, main, request.database, backup_taken ? 'backup' : 'no-backup'],
+        [node, main, request.database, backup_taken ? 'backup' : 'no-backup'],
         value,
         { check: true, output: 'inherit', lifetime_lock_fd },
       );
     },
-    healthy(sha) {
-      assert_installer_health_url(request.health_url, execution.environment);
-      return healthy(
-        request.health_url,
-        sha,
-        request.health_timeout_seconds,
-        execution.signal,
-        execution.environment,
-      );
-    },
+    healthy: check_health,
   };
 }

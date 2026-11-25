@@ -14,12 +14,15 @@ import { createReadAccess } from '../core/database/index.ts';
 test('generated collector runs in a real child with an explicit temporary read-only database path', async () => {
   const database = fixture(),
     path = fixture_path(database),
-    now = 1793793600,
+    now = 1793808000,
     ticket = create(database);
   const inside = relative(resolve(tmpdir()), resolve(path));
   expect(inside.startsWith('..') || isAbsolute(inside)).toBe(false);
   database.write((sql) => {
-    sql.run('UPDATE attention_history_metadata SET started_at=?', [now - 86400 * 20]);
+    sql.run('UPDATE attention_history_metadata SET started_at=?,owner_time_zone=?', [
+      now - 86400 * 20,
+      'Asia/Tokyo',
+    ]);
     sql.run(
       `INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at)
  VALUES ('attention-child','codex',?,'full',?)`,
@@ -86,16 +89,16 @@ test('generated collector runs in a real child with an explicit temporary read-o
         measure_id: measure_ids[metric]!,
         definition_revision: 1,
         kind: 'period_count',
-        timezone: 'Europe/Berlin',
+        timezone: 'Asia/Tokyo',
         period: 'day',
-        required_date: '2026-11-04',
+        required_date: '2026-11-05',
         period_interval: null,
       })),
       dataset_outputs: DAILY_METRICS.map((metric) => ({
         dataset_id: dataset_ids[metric]!,
         definition_revision: 1,
-        timezone: 'Europe/Berlin',
-        required_date: '2026-11-04',
+        timezone: 'Asia/Tokyo',
+        required_date: '2026-11-05',
         dimensions: [
           ['destination_kind', 'Destination kind'],
           ['destination_id', 'Destination'],
@@ -113,7 +116,7 @@ test('generated collector runs in a real child with an explicit temporary read-o
           },
         ],
       })),
-      history: { first_date: '2026-11-04', last_date: '2026-11-04' },
+      history: { first_date: '2026-11-05', last_date: '2026-11-05' },
       schedule_date: null,
       schedule_time: null,
       created_at: now,

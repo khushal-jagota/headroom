@@ -16,6 +16,7 @@ import type {
   FileOperationOptions,
   HeldFileLocation,
   InputFile,
+  InputFileReader,
   UploadSource,
   VpsFileInbox,
   VpsFilesOptions,
@@ -34,7 +35,7 @@ import {
   fsync_directory,
   held_path,
   install_verified,
-  regular_descriptor,
+  command_input_reader,
   remove_empty_directory_at,
   rename_at,
   safe_component,
@@ -570,7 +571,7 @@ export class VpsFiles {
       if (!allowed) throw absent;
       await this.inbox.runs.authority(command.child);
       check(signal);
-      let incoming: FileHandle | undefined;
+      let incoming: InputFileReader | undefined;
       try {
         try {
           safe_component(command.child.conversation_id);
@@ -582,8 +583,7 @@ export class VpsFiles {
         const path = this.message_files.path_of(command.child.conversation_id, stored_file_id);
         if (!path_is_within(join(this.message_root, command.child.conversation_id), path))
           throw absent;
-        await assert_file_support();
-        incoming = await regular_descriptor(path);
+        incoming = await command_input_reader(path);
         const [sha256, count] = await descriptor_hash(incoming, { signal });
         check(signal);
         const held = this.input_stream(incoming, path, sha256, count, signal);
@@ -612,7 +612,7 @@ export class VpsFiles {
     });
   }
   private input_stream(
-    incoming: FileHandle,
+    incoming: InputFileReader,
     path: string,
     sha256: string,
     count: number,

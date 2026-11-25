@@ -70,7 +70,7 @@ struct VPSView: View {
                 }
             } else if error == nil { RingSpinner("Reading the machine…") }
         }
-        .panelsNavigationTitle("VPS").panelsScreen()
+        .panelsNavigationTitle("Diagnostics").panelsScreen()
         .task(id: "\(store.baseURL):\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             await load()

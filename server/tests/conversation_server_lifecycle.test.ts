@@ -456,7 +456,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     environments: {
       dependencies: {
         application_root: dirname(f.path),
-        node_executable: process.execPath,
       },
       factory: async (value) => {
         context = value;
@@ -472,16 +471,12 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
             launch: async () => unavailable(),
           },
           create_mac: (mac_context) => ({
-            service: create_mac_update_composition(mac_context, null).service,
+            service: create_mac_update_composition(mac_context).service,
             operations: {
               machine_states: () => [],
               retry_machine: unavailable,
               prepare: async () => unavailable(),
-              phase: () => null,
-              reported_at: () => null,
-              configured: () => false,
             },
-            reads: { health_payload: () => null, status: async () => null },
           }),
           collect_status: async () => unavailable(),
         };

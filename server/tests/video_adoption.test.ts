@@ -4,7 +4,11 @@ import { expect, test } from 'vitest';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { video_send_admission } from '../conversation/video_send_admission.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
-import { MessageFile } from '../conversation/message_content.ts';
+import {
+  MessageFile,
+  message_content_from_stored,
+  message_content_json_entries,
+} from '../conversation/message_content.ts';
 import { PromptDeliveryStarted } from '../conversation/contracts.ts';
 import { OWNER } from '../core/contracts.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
@@ -163,7 +167,8 @@ test('multiple streamed rasters keep a bounded native image and readable excess 
   const destination = { kind: 'ticket' as const, id: 't_images', expected_conversation_id: null };
   const bytes = Buffer.alloc(2 * 1024 ** 2);
   Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
-  const refs: { piece: 'attachment_upload'; upload_id: string }[] = [];
+  const refs: { piece: 'attachment_upload'; upload_id: string; width?: number; height?: number }[] =
+    [];
   for (const filename of ['first.png', 'second.png']) {
     const upload = service.reserve({ destination, filename, byte_count: bytes.length });
     // Transfer is proved above. This admission case starts from completed sparse-image metadata.
@@ -176,6 +181,9 @@ test('multiple streamed rasters keep a bounded native image and readable excess 
     );
     refs.push({ piece: 'attachment_upload', upload_id: upload.upload_id });
   }
+  // Distinct risk: the size the browser measured is lost before the message is recorded,
+  // so the sent picture changes size again when the stored copy loads.
+  Object.assign(refs[0]!, { width: 1200, height: 800 });
   const files = new ConversationMessageFiles(db_path);
   const admission = video_send_admission(
     database,
@@ -200,6 +208,12 @@ test('multiple streamed rasters keep a bounded native image and readable excess 
   expect(content[0]).toBeInstanceOf(MessageImage);
   expect(content[1]).toBeInstanceOf(MessageFile);
   expect(content[2]).toBeInstanceOf(MessageFile);
+  const recorded = message_content_from_stored(message_content_json_entries(content));
+  expect(recorded.map((piece) => ('media_size' in piece ? piece.media_size : null))).toEqual([
+    null,
+    { width: 1200, height: 800 },
+    null,
+  ]);
   for (const piece of content)
     if ('stored_file_id' in piece)
       expect(Buffer.from(await files.read('image_pair', piece.stored_file_id)).equals(bytes)).toBe(

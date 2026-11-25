@@ -172,9 +172,14 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   agent_unconfirmed: "the agent did not confirm receipt"
 };
 
+/** A send the server has not answered yet, and that nothing has yet shown to have failed. */
+export function outgoingMessageIsSending(message: OutgoingMessage): boolean {
+  return message.knownFate === "nothing_yet" && message.sendTarget !== undefined && !message.accepted;
+}
+
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
 export function outgoingMessageNote(message: OutgoingMessage): string | null {
-  if (message.knownFate === "nothing_yet" && message.sendTarget && !message.accepted) return "sending…";
+  if (outgoingMessageIsSending(message)) return "sending…";
   return KNOWN_FATE_NOTES[message.knownFate] ?? null;
 }
 

@@ -5,13 +5,13 @@
   import { measuredContact, macPresenceLabel, macTicketActivityLabel, macVersionDescription, type MacStatus, type MacTicketFacts } from "../../lib/ticketMachines";
   import { workspaceAddress } from "../../lib/workspaceAddress";
   import { macUpdateLabel, macUpdateNeedsAttention } from "../../lib/machines/macUpdateStatus";
-  // `ticket`: the Mac Ticket this status sits on, so a Mac away also says what that Ticket is doing.
+  // Show what the Ticket is doing while its machine is away.
   let { health, ticket, machineId }: { health?: MacStatus; ticket?: MacTicketFacts; machineId?: string } = $props();
   const machines = createQuery(() => queries.machines(), () => queryClient);
   const name = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "Machine");
   const refusal = $derived(health?.presence === "refused" ? health.refusal ?? null : null);
-  const presenceLabel = $derived(macPresenceLabel(health)?.replace("The Mac", name));
-  const ticketLabel = $derived(ticket ? macTicketActivityLabel(health, ticket)?.replace("the Mac", name) : null);
+  const presenceLabel = $derived(macPresenceLabel(health, undefined, undefined, name));
+  const ticketLabel = $derived(ticket ? macTicketActivityLabel(health, ticket, name) : null);
   const update = $derived(health?.update);
   const cleanup = $derived(health?.cleanup_uncertainties ?? []);
   const cleanupTickets = createQueries(() => ({ queries: cleanup.map(item => queries.ticket(item.ticket_id)) }), () => queryClient);

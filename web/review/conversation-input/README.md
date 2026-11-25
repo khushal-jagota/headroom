@@ -3,7 +3,7 @@ This review artifact compiles the current conversation components into one HTML 
 Build from the repository root after `npm ci --prefix web`:
 
 ```sh
-node web/review/conversation-input/build.mjs /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/clarification/candidate/preview.html
+node web/review/conversation-input/build.mjs "${PLAN_TICKET_FILES_DIR:?}/artifacts/preview.html"
 ```
 
 Without an output argument, the builder writes `web/review-dist/conversation-input.html`. A sibling `.build.json` records the commit, dirty source status, hashes for the bundled repository source inputs, compiled CSS, JavaScript, and final HTML. The HTML embeds the same provenance except its own hash. Rebuild after the final commit to associate the artifact with that revision.

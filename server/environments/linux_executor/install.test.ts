@@ -1,8 +1,8 @@
 /** Admission and exclusive publication protect private state and foreign files. */
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { ReleaseExecution } from '../release/contracts.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { validate_app_manifest } from '../release/identity.ts';
@@ -13,6 +13,15 @@ import type { LinuxExecutorInstallation, LinuxExecutorInstallRequest } from './c
 import { LINUX_EXECUTOR_SERVICE_NAME } from './configuration.ts';
 import { install } from './install.ts';
 import { render_service } from './units.ts';
+
+// File-mode fixtures and assertions choose their own mask, independent of the runner.
+let inherited_mask: number;
+beforeEach(() => {
+  inherited_mask = process.umask(0o022);
+});
+afterEach(() => {
+  process.umask(inherited_mask);
+});
 
 vi.mock('./archive.ts', () => ({ extract_runtime: vi.fn() }));
 vi.mock('../release/identity.ts', async (original) => ({
@@ -106,7 +115,8 @@ test('late unit collision preserves foreign files, restores empty data, and perm
   try {
     await mkdir(config.installation);
     await writeFile(join(config.installation, 'keep'), 'foreign installation');
-    await mkdir(config.data, { mode: 0o755 });
+    await mkdir(config.data);
+    await chmod(config.data, 0o755);
     await mkdir(value.request.unit_directory);
     const unit = join(value.request.unit_directory, LINUX_EXECUTOR_SERVICE_NAME);
     const extract = vi.mocked(extract_runtime).getMockImplementation()!;

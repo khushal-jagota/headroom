@@ -682,6 +682,21 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): Promise<void> {
     return send.record_message_to_owner(this, conversation_id, content, options);
   }
+  has_pending_update_sends(): boolean {
+    if (this.workspace_admission.active) return true;
+    for (const state of this.conversations.values()) {
+      if (
+        state.held_prompts.length ||
+        state.reserved_turn ||
+        state.admitted_sender_messages.size ||
+        state.sender_messages_being_delivered.size ||
+        state.steer_settlements.size ||
+        state.late_steers.size
+      )
+        return true;
+    }
+    return false;
+  }
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     return queries.workspace_activity(this);
   }

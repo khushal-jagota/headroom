@@ -84,7 +84,7 @@ The writes are not yours to make. Hand them to the owner or Chief during this re
 
 ## Consequences
 
-Bring the repository in line through the ordinary branch and staging route. This has no effect on this Panels.
+Bring the repository in line through the repository’s documented integration route. This has no effect on this Panels.
 
 - Update the entry for the type in `server/worker_types/shipped_worker_types.json`, or remove it.
 - Update `server/skills/seeds/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.

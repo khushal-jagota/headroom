@@ -22,8 +22,8 @@
   let guideHost = $state<HTMLDivElement>();
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let guideObserver: MutationObserver | undefined;
-  const command = installation.match(/```sh\s*\n([\s\S]*?)\n```/)?.[1].trim() ?? "";
-  // The complete canonical guide ships offline. Supporting pages open in the browser.
+  const command = installation.match(/<!-- panels-desktop-install-command -->\s*```sh\s*\n([\s\S]*?)\n```/)?.[1].trim() ?? "";
+  // The guide ships offline. Supporting pages open from the official public product repository.
   const guide = installation.replace(/\]\((\.\.[^)]*)\)/g, (_, relative: string) =>
     `](${new URL(relative, "https://github.com/khushal-jagota/headroom/blob/main/ops/mac-home/installation.md").href})`);
   const canContinue = $derived(!busy && (step === "where" ? place !== null : step === "have" ? have !== null : step === "connect" ? address.trim().length > 0 : true));
@@ -144,7 +144,7 @@
                     {#if value === "local"}<rect x="5" y="6" width="18" height="12.5" rx="1.75" /><path d="M2.5 22h23" />{:else}<rect x="4" y="5" width="20" height="7" rx="1.75" /><rect x="4" y="16" width="20" height="7" rx="1.75" /><path d="M8.5 8.5h.01M8.5 19.5h.01" stroke-width="2.2" stroke-linecap="round" />{/if}
                   </svg>
                   {@render tickMark()}
-                  <strong>{value === "local" ? "On this Mac" : "On another machine"}</strong><span>{value === "local" ? "Keep this Mac on while your agents work." : "Connect through Tailscale, for example to a VPS."}</span>
+                  <strong>{value === "local" ? "On this Mac" : "On another machine"}</strong><span>{value === "local" ? "Keep this Mac on while your agents work." : "Connect over Tailscale to a Linux or Apple Silicon home."}</span>
                 </button>
               {/each}
             </div>
@@ -164,10 +164,10 @@
             </div>
           {:else if step === "install"}
             <h1 id="setup-title">Install Panels on {place === "local" ? "this Mac" : "the other machine"}</h1>
-            <p class="hint">{place === "local" ? "Sign in to the GitHub CLI, then run this in Terminal:" : "On that machine, sign in to the GitHub CLI, then run this:"}</p>
+            <p class="hint">{place === "local" ? "Run this command in Terminal:" : "Run this command on that machine:"}</p>
             <div class="command"><span>{command}</span><button type="button" class="button button--ghost copy" onclick={copy}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.5" /><path d="M3 10.5V4a1 1 0 011-1h6.5" /></svg>{copied ? "Copied" : "Copy"}</button></div>
             {#if copyProblem}<p class="problem" role="alert">{copyProblem}</p>{/if}
-            <p class="hint">{#if place === "local"}The installer prints the server’s address when it is ready.{:else}Then publish it with Tailscale. Follow <button type="button" class="inline-link" onclick={openGuideAtStepFour}>step 4 of the guide</button> before you continue.{/if}</p>
+            <p class="hint">{#if place === "local"}The installer prints the server’s address when it is ready.{:else}Set up trusted access through Tailscale. Follow <button type="button" class="inline-link" onclick={openGuideAtStepFour}>step 4 of the guide</button> before you continue.{/if}</p>
             <button type="button" class="button button--ghost disclose" aria-expanded={guideOpen} aria-controls="guide" onclick={() => guideOpen = !guideOpen}>
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>Installation guide
             </button>

@@ -17,7 +17,7 @@ describe("Mac presence", () => {
   it.each([
     ["asleep today", away("asleep"), "Asleep since 14:02"],
     ["not heard from on another day", { ...away("not_heard_from"), since_ms: Date.UTC(2026, 10, 7, 14, 2) }, "Not heard from since 7 Nov, 14:02"],
-    ["never connected", away("never"), "The Mac has not connected yet."],
+    ["never connected", away("never"), "The machine has not connected yet."],
     ["refused", refused, "Mac needs update"],
     ["present", present, null],
     ["unknown", { last_contact_at_ms: null }, null],
@@ -32,11 +32,11 @@ describe("Mac presence", () => {
     expect(macActivityKnown({ mode: "remote", last_contact_at_ms: 1 })).toBe(false);
   });
   it("says what a Mac Ticket is doing while the Mac is away", () => {
-    const working = { locale: "macos" as const, ticket_status: "agent", conversation_signal: { working: true } };
-    const held = { locale: "macos" as const, ticket_status: "agent", conversation_signal: { working: false } };
-    expect(macTicketActivityLabel(away("asleep"), working)).toBe("Paused: the Mac is away");
-    expect(macTicketActivityLabel(away("not_heard_from"), held)).toBe("Waiting for the Mac");
-    expect(macTicketActivityLabel(away("never"), { locale: "macos", agent_state: "working" })).toBe("Waiting for the Mac");
+    const working = { locale: "macos" as const, ticket_status: "agent_owned", conversation_signal: { working: true } };
+    const held = { locale: "macos" as const, ticket_status: "agent_owned", conversation_signal: { working: false } };
+    expect(macTicketActivityLabel(away("asleep"), working)).toBe("Paused: the machine is away");
+    expect(macTicketActivityLabel(away("not_heard_from"), held, "Build host")).toBe("Waiting for Build host");
+    expect(macTicketActivityLabel(away("never"), { locale: "macos", agent_state: "working" })).toBe("Waiting for the machine");
     expect(macTicketActivityLabel(away("asleep"), { locale: "macos", ticket_status: "owner" })).toBeNull();
     expect(macTicketActivityLabel(away("asleep"), { ...working, locale: "vps" })).toBeNull();
     expect(macTicketActivityLabel(present, working)).toBeNull();
@@ -63,7 +63,7 @@ describe("Mac version evidence", () => {
     expect(html).toContain("Server: new-server-r · protocol 19 · outbox 5");
   });
   it("shows a Mac Ticket paused while the Mac sleeps, not as an update refusal", () => {
-    const ticket = { locale: "macos" as const, ticket_status: "agent", conversation_signal: { working: true } };
+    const ticket = { locale: "macos" as const, ticket_status: "agent_owned", conversation_signal: { working: true } };
     const html = render(MacStatus, { props: { health: { ...away("asleep"), refusal: refused.refusal, since_ms: Date.now() }, ticket } }).body;
     expect(html).toContain("Paused: Machine is away");
     expect(html).toMatch(/Asleep since \d{2}:\d{2}</);

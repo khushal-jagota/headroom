@@ -1,3 +1,4 @@
+import { report_move_setup } from '../work_moves/operations.ts';
 /** Invocation-owned VPS executor. Request disconnects do not cancel admitted saves. */
 import { declare_worker_setup } from '../ticket_workspaces/worker_setup.ts';
 import type { FastifyInstance } from 'fastify';
@@ -177,9 +178,6 @@ export class VpsExecutor {
     this.updates = service;
     this.presence.update_check = () => service.check();
   }
-  configured(): boolean {
-    return true;
-  }
   open_runs() {
     const remote = this.runs.as_factory();
     return retained_open_runs([remote]);
@@ -317,15 +315,20 @@ export class VpsExecutor {
           if (report.child.executor_incarnation !== identity.executor_incarnation)
             throw new PlannerError('agent_forbidden', 'setup child belongs to another executor');
           const assignment = this.runs.store.open_child_assignment(tx, report.child);
-          if (assignment === null || assignment[0] !== 'ticket')
-            throw new PlannerError('agent_forbidden', 'setup child has no Ticket assignment');
+          if (assignment === null)
+            throw new PlannerError('agent_forbidden', 'setup child has no open assignment');
           // A report that arrives after its start settled, or from a start the Ticket has
           // since replaced, declares nothing.
           if (
-            !tx.get('SELECT 1 FROM tickets WHERE id=? AND conversation_id=?', [
-              assignment[1],
-              report.child.conversation_id,
-            ]) ||
+            !(assignment[0] === 'ticket'
+              ? tx.get('SELECT 1 FROM tickets WHERE id=? AND conversation_id=?', [
+                  assignment[1],
+                  report.child.conversation_id,
+                ])
+              : tx.get('SELECT 1 FROM agents WHERE agent_key=? AND conversation_id=?', [
+                  assignment[0] === 'chief' ? 'chief_of_staff' : `manager_${assignment[1]}`,
+                  report.child.conversation_id,
+                ])) ||
             !tx.get(
               "SELECT 1 FROM executor_commands WHERE machine_id=? AND executor_incarnation=? AND child_id=? AND conversation_id=? AND operation='start' AND state IN ('waiting','delivered')",
               [
@@ -337,13 +340,20 @@ export class VpsExecutor {
             )
           )
             return;
-          declare_worker_setup(tx, {
-            ticket_id: assignment[1],
-            conversation_id: report.child.conversation_id,
-            machine_id: this.machine_id,
-            step: report.step,
-            now: this.clock.nowUnix(),
-          });
+          report_move_setup(
+            tx,
+            report.child.conversation_id,
+            report.step,
+            this.clock.now().getTime(),
+          );
+          if (assignment[0] === 'ticket')
+            declare_worker_setup(tx, {
+              ticket_id: assignment[1],
+              conversation_id: report.child.conversation_id,
+              machine_id: this.machine_id,
+              step: report.step,
+              now: this.clock.nowUnix(),
+            });
         });
       },
       LIVE_READ_SERVER_LIMIT_SECONDS,

@@ -108,7 +108,13 @@
   let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'ticket' ? 'ticket' : 'address') && key.id===(item.review_item_type === 'ticket' ? item.ticket_id : item.address_id))) : review?.items ?? [])
     .map(undecided).filter((item): item is ReviewItem => item !== null));
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
-  let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
+  // The queue's count still holds what was answered on this screen until its refresh arrives.
+  // The final screen must not say that something waits for it.
+  let answeredHere = $derived((review?.items ?? []).filter(item => undecided(item) === null).length);
+  let waitingCount = $derived.by(() => {
+    const count = displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null;
+    return count === null ? null : Math.max(0, count - answeredHere);
+  });
   let finalLatched = $state(false);
   let returning = $state(false);
   let returnError = $state<unknown>(null);

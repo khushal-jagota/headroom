@@ -37,7 +37,7 @@ Screen trust stays with the selected server and its connection, as for the owner
 
 ## The server address
 
-First launch uses a step-by-step assistant that asks where the server lives: on this Mac or on another machine. The app never connects to a local server without that choice. The local path offers the default loopback address. The remote path asks for a Tailscale HTTPS address. Both paths ask whether Panels is installed, then offer a connection or the complete installation and first-setup guide, which ships offline from `ops/mac-home/installation.md`. The existing installer runs separately on the chosen machine. The app does not install or run a server.
+First launch uses a step-by-step assistant that asks where the server lives: on this Mac or on another machine. The app never connects to a local server without that choice. The local path offers the default loopback address. The remote path asks for a Tailscale HTTPS address. Both paths ask whether Panels is installed, then offer a connection or the complete installation and first-setup guide, which ships offline from `ops/mac-home/installation.md`. Copy the official install command from the assistant and run it on the chosen machine. Remote access requires Tailscale. The app does not install or run a server.
 
 The app checks the address before it stores it. HTTP works only on loopback. Remote addresses require HTTPS. An address cannot contain credentials, a path, a query, or a fragment. "Change Server…" opens the same flow, with Cancel to return to the current server.
 
@@ -51,6 +51,8 @@ A saved copy from another build of the screens is not used, because response sha
 
 ## Mac behavior
 
+The app uses the iPhone app’s blue bust on black, with macOS margins, rounded corners, and shadow. The signed bundle supplies the icon and the Panels name to macOS, including the Dock, Finder, About panel, and notifications.
+
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
 
 The window is never narrower than 900px, so the phone layout never appears in it. On macOS it has no system title bar. Its one top row, 52px tall with no fill, is where it is dragged: macOS draws the traffic lights there, then comes a button that hides and shows the sidebar (also ⌃⌘S; it is not kept across a restart). While the sidebar is hidden, the button shows the Review count. Each page's own top row (where it lives, and its actions) is pinned on the same line and stays while the page scrolls. A row too narrow for its actions shortens its context line first, then folds its last actions into a "•••" menu. The sidebar and the pages scroll under the row, behind a short fade. The preload marks the page `data-desktop-window`, and marks whether the window is inactive or in full screen; the screens draw all of this only when that mark is there, so a browser shows them as before. Other systems keep their own title bar, and the preload does not mark the page there.
@@ -61,7 +63,7 @@ The native side uses electron-updater to download the newest stable desktop rele
 
 The main process owns the restart dialog when new screens require a newer shell. New screens wait until the installed bridge meets their requirement. The dialog offers a restart only after a verified update meets that requirement. It adds no bridge action for artifact pages.
 
-The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
+Panels supports the publisher’s official desktop builds. The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
 
 ## Notifications
 

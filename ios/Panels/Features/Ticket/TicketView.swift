@@ -196,9 +196,12 @@ struct TicketView: View {
     }
 
     @ViewBuilder private var artifactRow: some View {
-        if let artifactError { LoadErrorView(message: artifactError) { await loadArtifacts() } }
-        if let artifacts, artifacts.total > 0 {
-            ArtifactsRow(owner: owner, count: artifacts.total)
+        // Until the server's list arrives, the list this phone read last, so saved artifacts
+        // open offline. It is read here, where the row draws, not handed over by a task.
+        let shown = artifacts ?? store.client.cachedArtifacts(owner: owner)
+        if let artifactError, shown == nil { LoadErrorView(message: artifactError) { await loadArtifacts() } }
+        if let shown, shown.total > 0 {
+            ArtifactsRow(owner: owner, count: shown.total)
                 .accessibilityIdentifier("ticket-artifacts")
         }
     }

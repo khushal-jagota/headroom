@@ -16,7 +16,7 @@
   import ShellStatus from "./components/ShellStatus.svelte";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
-  import { updatePresentation } from "./lib/updates/logic/presentation";
+  import { updateConfirmationUntil, updatePresentation } from "./lib/updates/logic/presentation";
   import { settleUpdateStarting, updateStarting } from "./lib/updates/api";
   import { mutateJson } from "./lib/mutate";
   import { savedSessionOnScreen } from "./lib/savedSession";
@@ -49,9 +49,9 @@
     settleUpdateStarting(status);
     updateClock = Date.now();
   });
-  // A lost connection stops counting as the update at the server's deadline.
+  // Advance either deadline even when no more changes arrive from the home.
   $effect(() => {
-    const deadline = Date.parse(updates.data?.deadline_at ?? "");
+    const deadline = updateConfirmationUntil(updates.data) ?? Date.parse(updates.data?.deadline_at ?? "");
     if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
     return atUpdateDeadline(deadline, () => { updateClock = Date.now(); });
   });
@@ -195,7 +195,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -230,7 +230,7 @@
 
 <!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
 {#snippet railStatus()}
-  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
+  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} />
 {/snippet}
 
 {#snippet destinationPane()}

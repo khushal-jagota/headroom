@@ -1,11 +1,11 @@
 # The product
 
-Headroom is an agent harness whose job is to reduce Khushal's mental load. Agents do the work. Khushal gives work, answers questions, reads results, and approves only the points he chose to keep, from a browser on a laptop or a phone. Priorities, conversations, plans, and approvals sit in one place, so his attention goes to deciding what is worth doing. The installation and its command still carry the old name, Panels.
+Headroom is a workspace for owners who direct agents. The owner gives work, answers questions, and approves results from a browser or an app. Priorities, conversations, plans, and approvals are available in one place. The installation and its command still carry the old name, Panels.
 
 ## Who is in it
 
-- **Khushal**, the owner. He stands above everything.
-- **Chief**, his top-level agent. It also stands above everything, creates and routes work, and sets [goals](goals.md).
+- **Owner**, the person who directs the workspace. The owner stands above everything.
+- **Chief**, the top-level agent. It also stands above everything, creates and routes work, and sets [goals](goals.md).
 - **Managers**, agents that each hold one direction and the Tickets that serve it. See [Managers and Chief](managers.md).
 - **Workers**, one agent per Ticket, doing that Ticket's work.
 - **Goal agents**, one per goal, keeping its page current.
@@ -24,21 +24,21 @@ Ticket under Chief or a Manager
       ├─ the Worker's only input is its conversation
       └─ Consequences, then Done
 
-Waits addressed to Khushal reach him in Review.
+Review shows what waits on the owner.
 Waits addressed to Chief or a Manager arrive in that agent's conversation.
 ```
 
 A possibility that is not yet work is a note the Chief keeps in its home folder. Panels does not store it. A [Ticket](tickets.md) is the committed unit: one piece of work for one Worker, with a ladder of stages that its [Worker type](worker-types.md) declares. People, Chief, and Managers create Tickets.
 
-When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is Khushal's queue of the waits addressed to him, together with messages that need him. The last approved decision authorizes Consequences: merges, follow-up Tickets, and a verified report. The ceiling holder reviews that report before the Ticket reaches Done. Installing a release stays Khushal's action. Done ends the ladder.
+When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is the queue of proposals and messages that need the owner. The last approved decision authorizes Consequences: merges, follow-up Tickets, and a verified report. The ceiling holder reviews that report before the Ticket reaches Done. The owner installs releases. Done ends the ladder.
 
 ## Where it runs
 
-One host, the VPS, holds the SQLite database, the server, and the loops that start work. Most agents run there too, using the logins already on that machine, and their providers' limits and billing still apply. A Ticket can instead be pinned to Khushal's Mac, where its agent runs while the VPS keeps the record. See [Mac execution](executor.md).
+One home holds the SQLite database, the server, and the loops that start work. The home runs on Linux x86_64 or Apple Silicon. Agents use the provider logins on the machine where they run. An extra machine can run a Ticket while the home keeps the record. See [Extra machines](executor.md).
 
 The server answers every request on one event loop, so work there holds up every request. A request's database work, and that of a worker step the readiness loop starts, therefore runs on a worker thread. A write that waits on the database lock, or a long read, then delays only its own request or step. Live conversation state stays on the loop, because it belongs to the loop. A few small reads inside routes that also talk to a conversation still run on the loop. A read does not wait on the write lock, so these stay short.
 
-The browser is the main surface: the Workspace with Chief, Managers, and Tickets; Review; and the pages for goals, measures, and settings. The `panels` command reaches the same records over HTTP, for Khushal and for the agents themselves. A phone [notification](notifications.md) arrives when something newly needs him.
+The browser is the main surface: the Workspace with Chief, Managers, and Tickets; Review; and the pages for goals, measures, and settings. The `panels` command reaches the same records over HTTP, for the owner and the agents. [Notifications](notifications.md) report new items that need the owner.
 
 ## Decisions that shape it
 

@@ -280,7 +280,7 @@ export function unidentifiedCommandRefusal(message_body: unknown): PlannerError 
   if (object(object(message_body).target).kind === 'chief') return null;
   return new PlannerError(
     'agent_forbidden',
-    'this request has no Panels identity, so it can only read and send a message to the Chief. For a direct API operation, use `panels api METHOD PATH --input-json -`; the CLI sends the conversation credential automatically. An agent without a launch credential resumes through its Panels conversation. Khushal uses the Panels web app or the iOS app.',
+    'this request has no Panels identity, so it can only read and send a message to the Chief. For a direct API operation, use `panels api METHOD PATH --input-json -`; the CLI sends the conversation credential automatically. An agent without a launch credential resumes through its Panels conversation. The owner uses the Panels web app or the iOS app.',
   );
 }
 export function requestAdmission(

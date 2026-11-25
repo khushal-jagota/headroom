@@ -3,7 +3,16 @@ name: First server and machine installation
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      replay_from: {description: "Earlier native release build run ID (optional)", type: string}
+      replay_to: {description: "Candidate native release build run ID (optional)", type: string}
+      replay_system:
+        description: "Native system for a manual replay"
+        type: choice
+        options: [both, linux, darwin]
+        default: both
   pull_request:
+    branches-ignore: [staging, main, feature/server-and-machine-code, feature/update-rework]
     paths:
       - "server/installation/**"
       - "server/environments/release/**"
@@ -11,11 +20,29 @@ on:
       - "server/environments/mac_executor/**"
       - ".github/workflows/typescript-first-install.yml"
 
+concurrency:
+  group: first-install-${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
+  replay:
+    if: github.event_name == 'workflow_dispatch' && (inputs.replay_from != '' || inputs.replay_to != '')
+    permissions: {contents: read, actions: read}
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ${{ fromJSON(inputs.replay_system == 'linux' && '["linux"]' || inputs.replay_system == 'darwin' && '["darwin"]' || '["linux","darwin"]') }}
+    uses: ./.github/workflows/installed-release-upgrade.yml
+    with:
+      system: ${{ matrix.system }}
+      replay_from: ${{ inputs.replay_from }}
+      replay_to: ${{ inputs.replay_to }}
+
   install:
+    if: github.event_name != 'workflow_dispatch' || (inputs.replay_from == '' && inputs.replay_to == '')
     name: Full bootstrap and second machine (${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -27,7 +54,6 @@ jobs:
       run:
         shell: bash
     env:
-      GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -157,7 +183,7 @@ jobs:
           # Reuse this runner and its prepared production inputs for the existing
           # sealed A-to-B update and failed-candidate rollback proof. Each phase
           # records elapsed time. No extra browser, machine or native host is added.
-          scripts/dev npm --prefix server run test -- installation/home.native.test.ts \
+          scripts/dev npm --prefix server run test -- installation/home.native.test.ts executor/command_input_reader.test.ts \
             --reporter=junit --outputFile "$NATIVE_EVIDENCE/update.xml"
       - name: Preserve only proof evidence and build receipts
         if: always()

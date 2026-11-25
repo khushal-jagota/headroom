@@ -7,6 +7,9 @@ export interface HomeInstall {
   readonly service: string;
   readonly port: number;
   readonly isolated_providers: boolean;
+  readonly owner_time_zone?: string;
+  /** Leave the account command untouched for a separately addressed test home. */
+  readonly skip_command_link?: boolean;
 }
 export interface HomeInstallRequest extends HomeInstall {
   readonly archive: string;
@@ -15,7 +18,7 @@ export interface HomeInstallRequest extends HomeInstall {
 }
 /** The installer's stdin request. Only the update token file receives the credential; services see the request without it. */
 export interface HomeInstallSubmission extends HomeInstallRequest {
-  readonly update_token: string;
+  readonly update_token?: string;
 }
 export interface HomeInstallationFile {
   readonly path: string;
@@ -74,6 +77,7 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     path: string,
     execution: ReleaseExecution,
     machine_root?: string,
+    owner_time_zone?: string,
   ) => Promise<void>;
   readonly prepare_machine: (
     app: string,

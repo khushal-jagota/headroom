@@ -1,21 +1,42 @@
 /** Hosted proof of the real bootstrap, native services, and a second isolated machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
 import { LinuxWorkerProcesses } from '../../platform_runtime/linux/worker_processes.ts';
 import type { WorkerProcess } from '../../worker_supervision/contracts.ts';
+import { record_native_processes } from './native_process_births.ts';
 import { check_home_port } from '../home.ts';
+import { RELEASE_REPOSITORY } from '../../environments/release/source.ts';
 import { run_release_command } from '../../environments/release/process.ts';
 import type { ReleaseExecution } from '../../environments/release/contracts.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { accepted_lease } from '../../environments/linux_executor/logic/lease.ts';
 import { executor_link_socket_path } from '../../core/http/executor_link.ts';
 import { mac_installation_paths } from '../../executor/mac/platform.ts';
+import { installed_mac_launcher } from '../../environments/release/testing/installed_mac_launcher.ts';
+import { qualify_installed_upgrade } from '../../environments/release/testing/installed_upgrade.ts';
+import {
+  DEFAULT_BACKEND_PEER_REPLY,
+  write_default_backend_peer,
+} from '../../tools/smoke/codex_peer.ts';
+import { smoke_file_turn } from '../../tools/smoke/steps.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'This proof requires a disposable hosted runner');
@@ -29,7 +50,10 @@ assert.ok(base && base.startsWith(process.env.RUNNER_TEMP!));
 const evidence = join(base, 'evidence');
 await mkdir(evidence, { recursive: true });
 const source = process.env.GITHUB_WORKSPACE!;
-const revision = process.env.GITHUB_SHA!;
+const qualifying = process.env.QUALIFY_PREVIOUS_RELEASE === '1';
+const revision = qualifying
+  ? (await readFile(join(base, 'predecessor.sha'), 'utf8')).trim()
+  : process.env.GITHUB_SHA!;
 const root = join(base, 'installed');
 const service = 'com.panels.first-install-proof';
 const home = homedir();
@@ -65,9 +89,16 @@ await writeFile(
   ),
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
-for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
-// Retain the runner's tools but exclude every PATH entry named node. This proves the
-// downloaded Python bootstrap and native server jobs do not need a host Node.
+for (const key of Object.keys(environment))
+  if (key.startsWith('PLAN_') || key === 'GH_TOKEN' || key === 'GITHUB_TOKEN')
+    delete environment[key];
+if (qualifying) {
+  // The public predecessor compares its entry URL with argv literally.
+  const temporary = join(base, 'tmp');
+  await mkdir(temporary, { recursive: true, mode: 0o700 });
+  environment.TMPDIR = await realpath(temporary);
+}
+// Only historical bootstraps can need gh to read a credential. Fresh installs have neither gh nor Node.
 const no_node_bin = join(base, 'host-without-node');
 await mkdir(no_node_bin);
 const linked = new Set<string>();
@@ -80,7 +111,7 @@ for (const directory of (environment.PATH ?? '').split(':').filter(Boolean)) {
     throw error;
   }
   for (const name of names) {
-    if (name === 'node' || linked.has(name)) continue;
+    if (name === 'node' || (!qualifying && name === 'gh') || linked.has(name)) continue;
     await symlink(join(directory, name), join(no_node_bin, name));
     linked.add(name);
   }
@@ -106,8 +137,8 @@ const primitives =
     : new LinuxWorkerProcesses();
 const execution: ReleaseExecution = {
   child_processes: owner,
-  signal: AbortSignal.timeout(12 * 60_000),
-  deadline: performance.now() / 1000 + 12 * 60,
+  signal: AbortSignal.timeout((qualifying ? 35 : 12) * 60_000),
+  deadline: performance.now() / 1000 + (qualifying ? 35 : 12) * 60,
 };
 const phases: Record<string, number> = {};
 const report: Record<string, unknown> = {
@@ -118,7 +149,10 @@ const report: Record<string, unknown> = {
   boundary:
     'Real sealed candidate archives, the Python bootstrap, native service managers, first machine local socket, and second machine credential enrollment on the same clean runner account.',
   exclusions:
-    'No provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
+    'No provider login, physical sleep or macOS permission consent. The installed qualification uses a local release feed.',
+  ...(system === 'darwin'
+    ? { launcher_signature: qualifying ? process.env.MAC_LAUNCHER_QUALIFICATION : 'ad-hoc' }
+    : {}),
   phases_seconds: phases,
 };
 const run = async (
@@ -189,6 +223,20 @@ async function absent(path: string) {
   }
   throw new Error('The clean-runner destination already exists: ' + path);
 }
+const births = new Map<string, WorkerProcess>();
+async function capture_processes(roots: Iterable<number>, required: ReadonlySet<number>) {
+  try {
+    record_native_processes(
+      births,
+      await primitives.snapshot(performance.now() / 1000 + 10),
+      roots,
+      required,
+    );
+  } catch (error) {
+    report.process_capture_error = String(error);
+    throw error;
+  }
+}
 const started_ms = Date.now();
 try {
   await absent(root);
@@ -197,12 +245,19 @@ try {
     ? [linux_join_root]
     : [mac.install, mac.app, mac.state, mac.plist])
     await absent(path);
+  const bin = join(home, '.local/bin');
+  await mkdir(bin, { recursive: true });
+  await mkdir(join(home, '.codex'), { recursive: true, mode: 0o700 });
+  await write_default_backend_peer(base, source, bin);
+  const bootstrap = qualifying
+    ? join(base, 'predecessor-install.py')
+    : join(source, 'scripts/panels_install.py');
   install_attempted = true;
-  await run(
+  const installed = await run(
     'first-install',
     [
       'python3',
-      join(source, 'scripts/panels_install.py'),
+      bootstrap,
       'home',
       '--root',
       root,
@@ -210,6 +265,7 @@ try {
       service,
       '--port',
       String(port),
+      ...(qualifying ? [] : ['--time-zone', 'Asia/Tokyo']),
       '--archive',
       archive,
       '--receipt',
@@ -218,8 +274,27 @@ try {
       revision,
       '--isolated-providers',
     ],
-    no_node_environment,
+    qualifying ? { ...no_node_environment, GH_TOKEN: 'local-qualification' } : no_node_environment,
   );
+  assert.ok(
+    installed.includes('Installed Panels at ' + root + '.'),
+    'The native home installer returned without reporting the installation',
+  );
+  if (!qualifying) {
+    await absent(join(root, 'data/secrets/update-token'));
+    const record = new DatabaseSync(join(root, 'data/planner.db'), { readOnly: true });
+    try {
+      assert.equal(
+        record.prepare('SELECT owner_time_zone FROM attention_history_metadata').get()
+          ?.owner_time_zone,
+        'Asia/Tokyo',
+      );
+    } finally {
+      record.close();
+    }
+    report.install_defaults =
+      'The selected reporting time zone was saved and no update token was written.';
+  }
   // The native package can boot while its shared styles are absent. Check the
   // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
   const styles_started = performance.now();
@@ -246,6 +321,12 @@ try {
   await run('cli-with-incompatible-host-node', [panels, '--help'], incompatible_environment);
   await absent(host_node_used);
   report.incompatible_host_node = 'CLI succeeds without invoking the incompatible host Node';
+  // A shipped predecessor negotiates the protocol compiled into its own package.
+  const installedProtocol = qualifying
+    ? (await import(pathToFileURL(join(root, 'app/server/execution_configuration.ts')).href))
+        .PROTOCOL_VERSION
+    : undefined;
+  if (qualifying) assert.ok(Number.isSafeInteger(installedProtocol) && installedProtocol > 0);
   const health = JSON.parse(
     await run('first-machine-health', [panels, 'executor', 'health'], {
       ...environment,
@@ -253,10 +334,11 @@ try {
     }),
   );
   assert.ok(
-    accepted_lease(health, revision, started_ms),
+    accepted_lease(health, revision, started_ms, installedProtocol),
     'The first machine needs an accepted lease from this installation',
   );
   report.first_machine = health;
+  if (health.process_id) await capture_processes([health.process_id], new Set([health.process_id]));
   const cli_environment = {
     ...environment,
     PLAN_SERVER_URL: `http://127.0.0.1:${port}`,
@@ -274,6 +356,15 @@ try {
   const command = output.split('\n').find((line) => line.startsWith('panels_join_script='));
   const credential = output.split('\n').find((line) => /^[A-Za-z0-9_-]{43}$/.test(line));
   assert.ok(command && credential, 'The actual join command must supply a private credential');
+  // The public predecessor fetched the same pinned script through the GitHub contents API.
+  const historical_api = qualifying && command.includes(' && gh api ');
+  const script_source = historical_api
+    ? `repos/${RELEASE_REPOSITORY}/contents/scripts/panels_install.py?ref=${revision}`
+    : `https://raw.githubusercontent.com/${RELEASE_REPOSITORY}/${revision}/scripts/panels_install.py`;
+  assert.ok(
+    command.includes(shell_quote(script_source) + (historical_api ? ' > ' : ' && python3 ')),
+  );
+  if (!historical_api) assert.match(command, / && curl /);
   const private_input = join(base, 'join-credential');
   await writeFile(private_input, credential + '\n', { flag: 'wx', mode: 0o600 });
   join_attempted = true;
@@ -290,7 +381,12 @@ try {
           shell_quote(machine_receipt) +
           ' < "$FIRST_INSTALL_CREDENTIAL"',
       ],
-      { ...environment, FIRST_INSTALL_CREDENTIAL: private_input },
+      {
+        // A separate Linux machine joins with its own compatible host Node.
+        ...environment,
+        ...(historical_api ? { GH_TOKEN: process.env.GH_TOKEN } : {}),
+        FIRST_INSTALL_CREDENTIAL: private_input,
+      },
     );
   } finally {
     await rm(private_input, { force: true });
@@ -303,10 +399,11 @@ try {
     }),
   );
   assert.ok(
-    accepted_lease(second, revision, started_ms),
+    accepted_lease(second, revision, started_ms, installedProtocol),
     'The second machine needs an accepted credentialed lease',
   );
   report.second_machine = second;
+  if (second.process_id) await capture_processes([second.process_id], new Set([second.process_id]));
   const machines = JSON.parse(
     await run('server-machine-list', [panels, 'machine', 'list', '--json'], cli_environment),
   );
@@ -346,6 +443,30 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
+  await capture_processes(pids, new Set(pids));
+  if (qualifying) {
+    await Promise.all([rm(archive), rm(machine_archive)]);
+    const launcher = system === 'darwin' ? await installed_mac_launcher(base, mac) : undefined;
+    await qualify_installed_upgrade({
+      base,
+      port,
+      service,
+      machine_id: named[0].machine_id,
+      joined_state,
+      predecessor: revision,
+      verify_rollback: launcher?.verify_rollback,
+    });
+    await launcher?.verify_current();
+  } else {
+    const workspace = join(base, 'conversation-workspace');
+    await mkdir(workspace, { mode: 0o700 });
+    const { conversation_id, stored_file_id } = await smoke_file_turn(
+      `http://127.0.0.1:${port}`,
+      { workspace, model: 'TEST', reply: DEFAULT_BACKEND_PEER_REPLY },
+      named[0].machine_id,
+    );
+    report.joined_file_turn = { machine_id: named[0].machine_id, conversation_id, stored_file_id };
+  }
   if (system === 'darwin') {
     // The requested screenshot uses the real installed package on this existing
     // native host. It adds no preview server, browser host, or permanent test case.
@@ -394,6 +515,31 @@ try {
     deadline: performance.now() / 1000 + 240,
   };
   try {
+    if (failed && qualifying && system === 'linux') {
+      await run_release_command(
+        [
+          'journalctl',
+          '--user',
+          '--unit',
+          service + '.service',
+          '--no-pager',
+          '-o',
+          'cat',
+          '-n',
+          '25',
+          '--grep',
+          'Update prefetch|Update did not start|AppValidationError',
+        ],
+        { environment, timeout_seconds: 10, allow_nonzero: true },
+        cleanup_execution,
+      )
+        .then((messages) =>
+          writeFile(join(evidence, 'installed-update-errors.log'), messages.stdout),
+        )
+        .catch((error: unknown) => {
+          report.journal_error = String(error);
+        });
+    }
     // Stop only the exact jobs whose installers this proof attempted. Absence is valid after rollback.
     const jobs =
       system === 'linux'
@@ -407,7 +553,6 @@ try {
                 ]
               : []),
           ];
-    const births = new Map<number, WorkerProcess>();
     try {
       const pids = new Set<number>();
       const required_pids = new Set<number>();
@@ -429,43 +574,14 @@ try {
           }
         }
       }
-      for (const value of [report.first_machine, report.second_machine]) {
-        const runtime = value as { process_id?: number } | undefined;
-        if (runtime?.process_id) {
-          pids.add(runtime.process_id);
-          required_pids.add(runtime.process_id);
-        }
-      }
-      const snapshot = await primitives.snapshot(performance.now() / 1000 + 10);
-      for (const pid of pids) {
-        const birth = snapshot.get(pid);
-        // An auxiliary oneshot can finish between the job query and this snapshot.
-        // Persistent jobs and health-reported runtimes must still have native birth evidence.
-        if (!birth) {
-          assert.ok(
-            !required_pids.has(pid),
-            'Cannot capture the native birth of an installed process: ' + pid,
-          );
-          continue;
-        }
-        births.set(pid, birth);
-      }
-      // Include runtime children and any commands that were still in flight at the snapshot.
-      let expanded = true;
-      while (expanded) {
-        expanded = false;
-        for (const birth of snapshot.values()) {
-          if (births.has(birth.parent) && !births.has(birth.pid)) {
-            births.set(birth.pid, birth);
-            expanded = true;
-          }
-        }
-      }
-      report.process_births = [...births.values()];
+      // The upgrade may have retired the original healthy processes. Capture this
+      // generation under the native job manager and keep earlier birth identities.
+      await capture_processes(pids, required_pids);
     } catch (error) {
       report.process_capture_error = String(error);
       failed = new AggregateError([failed, error].filter(Boolean), 'Proof process capture failed');
     }
+    report.process_births = [...births.values()];
     for (const job of jobs) {
       if (system === 'linux') {
         const stopped = await run_release_command(
@@ -521,8 +637,9 @@ try {
     }
     assert.ok(retired, 'An installed process or captured descendant survives service stop');
     await check_home_port(port);
-    report.cleanup =
-      'all attempted jobs stopped, captured native process births retired, server port free';
+    report.cleanup = report.process_capture_error
+      ? 'Jobs stopped and port free; process capture was incomplete.'
+      : 'all attempted jobs stopped, captured native process births retired, server port free';
   } catch (error) {
     report.cleanup = String(error);
     failed = new AggregateError([failed, error].filter(Boolean), 'Proof cleanup failed');

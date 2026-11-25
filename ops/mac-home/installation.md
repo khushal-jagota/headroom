@@ -5,15 +5,18 @@ The server holds the record. Machine code runs as a separate service on the same
 The installer connects the two through the local executor link, without a credential prompt. The Mac home runs in your graphical login session.
 Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
 Linux setup requires user lingering so that the home and its backup stay available after logout.
-Tailscale supplies remote HTTPS access.
+Panels requires Tailscale for supported use from other devices and for extra machines.
 A release home runs the TypeScript server and supports updates and rollback.
 The home supplies native previews, metrics, maintenance, and stall alarms.
 One Panels instance can own the account skills in one OS account.
 Use a separate OS account for another instance, including an executor with a different record.
+A disposable test home can share an account with `--isolated-providers --skip-command-link`, a separate root, service prefix, and port.
+Use only its private provider folders. Use its absolute `ROOT/app/bin/panels` command.
+The test home does not create, replace, or remove the account command.
 
 ## Install with one command
 
-The server release carries its own Node. No separate Node installation is required. The download script needs Python 3.11.8 or newer. The Mac requires macOS 15 or newer.
+The server release carries its own Node. The installer needs `curl` and Python 3.11.8 or newer. The Mac requires macOS 15 or newer.
 Linux requires x86_64, an active systemd user manager, and user lingering.
 If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
 The sealed release also checks its native runtime requirements before the service starts.
@@ -21,20 +24,22 @@ The sealed release also checks its native runtime requirements before the servic
 Mac release jobs use bundled tools, resolved provider CLI directories, common user bins, and standard system directories.
 The bundled Node directory precedes provider directories.
 Jobs do not inherit the entire installation shell PATH. Direct use of the packaged installer preserves an explicit `PLAN_CLAUDE_EXECUTABLE`.
+On Linux, use the machine account's `~/.local/bin` or the system bin directories for provider commands you install yourself.
 
-Authenticate the GitHub CLI for the release repository, then run this command:
+Setup uses the host's time zone for attention and daily measures. To choose a different IANA time zone, add an option like `--time-zone Asia/Tokyo` after `home` in the command.
 
+<!-- panels-desktop-install-command -->
 ```sh
-panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/panels_install.py --header 'Accept: application/vnd.github.raw+json' > "$panels_setup" && python3 "$panels_setup" home
+(panels_setup=$(mktemp) && trap 'rm -f -- "$panels_setup"' EXIT && curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$panels_setup" 'https://raw.githubusercontent.com/khushal-jagota/headroom/main/scripts/panels_install.py' && python3 "$panels_setup" home)
 ```
 
-The command selects a successful publication from the trusted release workflow on `main`.
+The command uses the official public releases. Anyone can download them without a GitHub login.
+It selects a publication from the trusted release workflow on `main`.
 It checks the publication identity, target, and archive checksum before it executes the sealed installer.
 It refuses an existing installation root, service name, or occupied port.
 It starts only the new server and machine code.
 It checks the exact release health and an accepted machine connection before it reports its address.
-A private repository requires GitHub access to its Release assets. Legacy update attempts also require access to Actions artifacts.
-The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then writes a small `panels` command there that runs the installed app.
+It refuses an existing `~/.local/bin/panels`, then writes a small command there that runs the installed app.
 
 The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
@@ -48,12 +53,12 @@ The machine state stays under `machine/data` in the installation root.
 Its runtime snapshot stays under `machine/runtime`, separate from the server app and data.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
-Updates copy their installer and bundled Node outside the app that they replace. No manual Node step is required.
+The installer runs with the bundled Node from the retained release. Its service can restore that release if the new home fails its trial.
 
-For an already downloaded, trusted publication, use the same command with local files:
+For an already downloaded publication you trust, download the installer to a file. Run it with the local archive and receipt:
 
 ```sh
-python3 "$panels_setup" home --archive /private/panels-app.tar.gz --receipt /private/publication.json
+python3 ./panels_install.py home --time-zone America/New_York --archive /path/to/panels-app.tar.gz --receipt /path/to/publication.json
 ```
 
 Use the Mac home publication on Mac and the Linux home publication on Linux.
@@ -101,16 +106,17 @@ The installer puts `panels` in `~/.local/bin`. If the installer said that this f
 
 Make the first project before step 4. After step 4, the home trusts only the Tailscale login, and a terminal on this machine is no longer the owner. Then ask the Chief to make each new project.
 
+For a private Project repository, configure Git access for each machine account that runs its Tickets. Check that account's access with `git ls-remote` before starting a Ticket. Configure push access only on machines that need it for approved work.
+
 ### 4. Reach the home from a different device
 
-The home listens only on this machine. Panels uses Tailscale Serve for HTTPS from your other devices. Tailscale also tells the home who is calling.
+The home listens on loopback. Tailscale Serve supplies HTTPS and the caller's login from your other devices.
 
-Do not open the home to other devices before you set the allowed login. Without these settings, every caller is the owner.
+Configure owner access before you start Serve. Until the settings take effect, the server treats loopback callers as the owner.
 
-1. Install Tailscale and sign in. Turn on HTTPS certificates for your tailnet in the Tailscale admin console.
-2. Publish the home: `tailscale serve --bg http://127.0.0.1:8767`. Use your port if you chose one.
-3. Read the address with `tailscale serve status`. It looks like `https://MACHINE.TAILNET.ts.net`.
-4. Add three settings to `data/config.yaml` in the installation root. The file is JSON, so keep it valid JSON:
+1. Install Tailscale and sign in. Turn on MagicDNS and [HTTPS certificates](https://tailscale.com/docs/how-to/set-up-https-certificates) for your tailnet.
+2. Find the home's full DNS name in the Tailscale admin console. Use `https://` and that name as the origin.
+3. Add the following entries inside the JSON object in the installation's `data/config.yaml`. Keep the existing entries.
 
    ```json
    "trusted_ingress_provider": "tailscale",
@@ -118,20 +124,30 @@ Do not open the home to other devices before you set the allowed login. Without 
    "trusted_ingress_canonical_origin": "https://MACHINE.TAILNET.ts.net"
    ```
 
-   The allowed login is your Tailscale login name. Only that login is the owner.
-5. Restart the home. On Linux, run `systemctl --user restart com.panels.home.service`. On a Mac, use the stop and start steps below.
+   Set the allowed login to the exact Tailscale login for the owner.
+4. Restart the home. On Linux, run `systemctl --user restart com.panels.home.service` with your home service name. On Mac, use the stop and start steps below.
+5. Check that the owner-only endpoint below returns HTTP 403 on loopback. The empty request cannot create a machine.
 
-Open the HTTPS address on a different device to check it. See [authority](../../docs/authority.md) for what the login decides.
+   ```sh
+   curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
+     --header 'Content-Type: application/json' --data '{}' \
+     http://127.0.0.1:8767/api/machines/join-command
+   ```
+
+   Use your home port if it differs. If the result differs from 403, keep the route closed and check the settings.
+6. Run `tailscale serve --bg http://127.0.0.1:8767` with your home port. Check the origin with `tailscale serve status`.
+
+Open the HTTPS address on a different device signed in to the allowed login. See [authority](../../docs/authority.md) for what the login decides.
 
 ### 5. Updates
 
-Updates are on from the install. The installer keeps the GitHub CLI token in `data/secrets/update-token` with private access, and the home uses it to read new releases. When a release is ready, the app shows **Update available**. Only the owner presses **Update**. See [deployment](../../docs/deployment.md).
-
-If you sign out of the GitHub CLI or the token expires, the home cannot see new releases. Sign in again, then run `gh auth token > data/secrets/update-token` from the installation root.
+Only the owner can press **Update** when the app shows a release. A fresh install supplies no GitHub credential. It needs a home release with public update support to fetch updates anonymously. See [deployment](../../docs/deployment.md).
 
 ### 6. Add a second machine
 
-A second machine runs Workers for this home. It needs step 4 first, because it reaches the home at its HTTPS address. Open Settings → Machines and add the machine, or run:
+A second machine runs Workers for this home. Finish step 4 first. Sign in to Tailscale on the second machine. On the home, open Settings → Machines and add the machine.
+
+From a terminal with owner authority, the equivalent command is:
 
 ```sh
 panels machine join-command "Second machine" --home https://MACHINE.TAILNET.ts.net

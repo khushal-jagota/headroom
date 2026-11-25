@@ -2,6 +2,7 @@ name: TypeScript Mac executor rehearsal
 
 on:
   pull_request:
+    branches-ignore: [staging, main, feature/server-and-machine-code, feature/update-rework]
     paths:
       - "server/executor/**"
       - "server/conversation/**"
@@ -18,13 +19,15 @@ on:
       - ".github/workflows/typescript-mac-executor.yml"
       - ".github/workflows/publish-typescript-release.yml"
       - "scripts/panels_install.py"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: mac-executor-${{ github.event.pull_request.number || github.ref }}
+  group: mac-executor-${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -79,6 +82,22 @@ jobs:
             -config "$native_root/tls/request.cnf" \
             -keyout "$native_root/tls/key.pem" -out "$native_root/tls/cert.pem"
           printf '{}\n' > "$native_root/config/config.yaml"
+      - name: Fetch the previous published Mac runtime for the launcher transition
+        if: matrix.script == 'native_join_rehearsal.ts'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/mac-executor-rehearsal"
+          pin=server/environments/release/machine_baselines.json
+          artifact=$(jq -r '.previous.darwin.artifact_id' "$pin")
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$root/previous.zip"
+          echo "$(jq -r '.previous.darwin.zip_sha256' "$pin")  $root/previous.zip" | shasum -a 256 -c -
+          unzip -p "$root/previous.zip" panels-mac-runtime.tar.gz > "$root/previous.tar.gz"
+          echo "$(jq -r '.previous.darwin.archive_sha256' "$pin")  $root/previous.tar.gz" | shasum -a 256 -c -
+          mkdir "$root/previous"
+          tar -xzf "$root/previous.tar.gz" -C "$root/previous"
       - name: Rehearse the sealed package without real provider credentials
         shell: bash
         env:

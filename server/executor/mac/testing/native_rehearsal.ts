@@ -140,7 +140,7 @@ try {
   process.env.PLAN_TRUSTED_INGRESS_PROVIDER = 'tailscale';
   process.env.PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN = 'rehearsal@example.invalid';
   process.env.PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN = origin;
-  const { start_native_server } = await import('./native_server.ts');
+  const { start_native_server, NATIVE_CODEX_MODEL } = await import('./native_server.ts');
   server = await start_native_server();
   proxy_target = server.address;
   steps.local_server = 'passed';
@@ -215,7 +215,11 @@ try {
     [
       'codex',
       'codex/testing/scripted_app_server.ts',
-      { UNIT17_TRACE: join(evidence, 'codex.jsonl'), UNIT17_CORE_PROOF: '1' },
+      {
+        UNIT17_TRACE: join(evidence, 'codex.jsonl'),
+        UNIT17_CORE_PROOF: '1',
+        UNIT17_CATALOG_MODEL: NATIVE_CODEX_MODEL,
+      },
     ],
   ] as const) {
     const text = `#!${paths.node}\nObject.assign(process.env, ${JSON.stringify(extra)});\nawait import(${JSON.stringify(new URL(`../../../drivers/${script}`, import.meta.url).href)});\n`;

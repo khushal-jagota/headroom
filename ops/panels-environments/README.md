@@ -1,7 +1,7 @@
-# Panels single-user operating inputs
+# Existing Linux deployment
 
-These checked-in files describe the Linux operating surface. They do not
-modify a host by themselves.
+These files belong to the existing publisher deployment and recovery runner.
+For a fresh home, use the [installer and its generated services](../mac-home/installation.md).
 
 The VPS has one Panels identity: the existing UID-1000 `vps` user. Source lives at
 `~/projects/Panels/Panels`; the deployed app and live state live at
@@ -41,7 +41,7 @@ Worker checks use temporary databases and scratch servers, never the live databa
 `panels-stall-watchdog.timer` runs `panels stalls watchdog` every 30 seconds, outside the
 live service, so a stuck server can still raise an alarm. Each run opens the live
 database read-only, alarms once on each stall the server's checker has recorded and on
-a checker heartbeat older than 90 seconds, pushes to Khushal's subscribed browsers and
+a checker heartbeat older than 90 seconds, pushes to the owner's subscribed browsers and
 devices unless the Panels "Stalled work" notification is switched off, and messages the
 Chief through the live server (best effort, 10 seconds). Its record of what it has
 already alarmed on is `data/stall-watchdog/stall-watchdog-state.json`. Native push needs
@@ -204,10 +204,10 @@ data/
   skills/                     skill files and disk-only supporting files
   secrets/
     apns-key.p8                private push key
-    update-token               private update token
+    update-token               optional release token
 ```
 
-Keep `secrets/` at mode 0700 and its files at mode 0600. The native installer creates the directory privately. Put the push key and update token there before activation. Set the APNs key ID, team ID, bundle IDs, and update repository in the service environment. Without their metadata, those features stay disabled. Relative `PLAN_APNS_KEY_PATH` and `PLAN_UPDATE_TOKEN_FILE` overrides resolve from the server state folder. Absolute overrides still support existing installations. Before a full-state move, place those secrets inside `secrets/` and remove external overrides.
+Keep `secrets/` at mode 0700 and its files at mode 0600. The native installer creates the directory privately. Set the update repository in the service environment. Public releases need no token. To use authenticated reads, place an authorized token in `secrets/update-token` before the service starts. For push notifications, add the push key and set the APNs key ID, team ID and bundle IDs. Relative `PLAN_APNS_KEY_PATH` and `PLAN_UPDATE_TOKEN_FILE` overrides resolve from the server state folder. Absolute overrides still support existing installations. Before a full-state move, place those secrets inside `secrets/` and remove external overrides.
 
 Write `config.yaml` again on the destination. For a settings file beside the database, use:
 

@@ -1,6 +1,8 @@
 /** Persisted and in-process update contracts. */
 import type {
   UpdateMode,
+  UpdateState,
+  UpdateAction,
   UpdateAttemptState,
   MachineUpdateState,
   UpdateInterruption,
@@ -8,6 +10,8 @@ import type {
 } from './view_contracts.ts';
 export type {
   UpdateMode,
+  UpdateState,
+  UpdateAction,
   UpdateAttemptState,
   MachineUpdateState,
   UpdateInterruption,
@@ -19,9 +23,6 @@ import type { Database } from '../../core/database/contracts.ts';
 import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
-export type UpdateExperienceState =
-  'up_to_date' | 'available' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
-export type UpdateAction = 'update' | 'retry' | 'retry_mac';
 
 export interface RuntimePlatform {
   distribution: string;
@@ -122,7 +123,7 @@ export interface UpdateStatus {
   machines: readonly MachineUpdateState[];
   available_machines: readonly MachineUpdateState[];
   interruption: UpdateInterruption;
-  state: UpdateExperienceState;
+  state: UpdateState;
   allowed_actions: readonly UpdateAction[];
   activity: UpdateActivity;
   available: PublishedUpdate | null;
@@ -131,30 +132,14 @@ export interface UpdateStatus {
   detail: string | null;
   deadline_at: string | null;
 }
-export interface DeploymentStatus {
-  state: 'idle' | 'preparing' | 'restarting' | 'problem' | 'back_up';
-  deployed_sha: string | null;
-  target_sha: string | null;
-  outcome: 'failed' | 'succeeded' | null;
-  detail: string | null;
-  valid_until: string | null;
-  success_display_until: string | null;
-}
 export type UpdateExperience = readonly [
-  UpdateExperienceState,
+  UpdateState,
   readonly UpdateAction[],
   string | null,
   string | null,
 ];
-export interface UpdateExperienceOptions {
-  mac_applies: boolean;
-  mac_phase: string | null;
-  mac_reported_at: string | null;
-  mac_report_seconds: number;
-  now: string;
-}
 export interface UpdateProvider {
-  available(): Promise<PublishedUpdate | null>;
+  available(proof_artifact_id?: number): Promise<PublishedUpdate | null>;
   download_artifact(
     artifact_id: number,
     destination: string,
@@ -186,9 +171,7 @@ export interface MacUpdateOperations {
   machine_states(release?: PublishedUpdate | null): MachineUpdateState[];
   retry_machine(machine_id: string, attempt_id: string): void;
   prepare(release: PublishedUpdate): Promise<void>;
-  phase(attempt_id: string): string | null;
-  reported_at(attempt_id: string): number | null;
-  configured(): boolean;
+  prepare_home?(release: PublishedUpdate): Promise<void>;
 }
 export interface UpdateRuntimeContext {
   database: Database;

@@ -98,6 +98,7 @@ struct NavigationReviewMessage: Equatable, Sendable {
     let waitingSince: Double
     let recap: String
     let ownerReadThroughSequence: Int
+    var latestOwnerMessageSequence: Int? = nil
 }
 /// An ask that stops the owner's running turn. Only the owner's current conversation can wait on one.
 struct NavigationReviewAsk: Equatable, Sendable {
@@ -107,6 +108,7 @@ struct NavigationReviewAsk: Equatable, Sendable {
     let title: String
     let recap: String
     let waitingSince: Double
+    var pendingAsk: ViewPendingAsk? = nil
 }
 /// One review-window entry, keyed as the window keys it: a Ticket, or a Manager's or the
 /// Chief's conversation address.
@@ -252,7 +254,8 @@ struct NavigationPresentation: Sendable {
             }
             let message = NavigationReviewMessage(conversationId: address.conversationId, addressId: addressId, addressCurrent: address.current,
                 ownerKind: address.ownerKind, ownerId: address.ownerId, title: title, waitingSince: waiting, recap: recap,
-                ownerReadThroughSequence: conversation.ownerReadThroughSequence)
+                ownerReadThroughSequence: conversation.ownerReadThroughSequence,
+                latestOwnerMessageSequence: conversation.latestOwnerMessageSequence)
             if address.ownerKind == "ticket" {
                 if reviewTickets[address.ownerId] == nil {
                     reviewTicketOrder.append(address.ownerId)
@@ -276,7 +279,8 @@ struct NavigationPresentation: Sendable {
             guard awaiting != false else { return }
             // An ask raised before the record held its time waits last, as on the server.
             let ask = NavigationReviewAsk(conversationId: conversationId, ownerKind: kind, ownerId: id, title: title, recap: recap,
-                                          waitingSince: conversation.latestAskAt ?? ReviewItem.unknownAskTime)
+                                          waitingSince: conversation.latestAskAt ?? ReviewItem.unknownAskTime,
+                                          pendingAsk: conversation.pendingAsk)
             let member: RecordKey
             if kind == "ticket" { member = RecordKey(kind: "ticket", id: id) }
             else {

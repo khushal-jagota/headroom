@@ -1,8 +1,15 @@
+import { has_home_credential } from '../../machines/executor_credentials.ts';
+import { require_snapshot_space } from './installer/snapshot_space.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
+import { with_installer_lock } from '../update_barrier.ts';
+import { release_path, selected_release } from './installer/selection.ts';
+import { request_control } from '../../lifecycle/control.ts';
+import { assert_installer_path } from './installer/configuration.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { resolved_path } from '../paths.ts';
 import type { UpdateBarrier } from '../update_barrier.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
@@ -11,14 +18,19 @@ import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
-import { FileUpdateAttemptStore, UpdateConflict, utc_now } from './attempts.ts';
-import { add_seconds, instant, resolve, settle } from './logic/experience.ts';
+import {
+  FileUpdateAttemptStore,
+  SETTLED_ATTEMPT_STATES,
+  UpdateConflict,
+  utc_now,
+} from './attempts.ts';
+import { add_seconds, instant, resolve } from './logic/experience.ts';
 import {
   ATTEMPT_OBSERVER_SECONDS,
-  MAC_UPDATE_REPORT_SECONDS,
   STAGED_APP_PREFIX,
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
+  UPDATE_SEND_DRAIN_SECONDS,
 } from './configuration.ts';
 import { install_deadline_seconds } from './logic/install_deadline.ts';
 import type {
@@ -60,7 +72,6 @@ export interface UpdateServiceOptions {
   install_refusal?: () => string | null;
   /** Tells the owner about a failed update. It must not throw. */
   notify_failure?: (attempt: UpdateAttempt) => void;
-  can_refresh?: () => boolean;
   now?: () => number;
   record_now?: () => string;
 }
@@ -80,7 +91,7 @@ export async function installed_update_root(
     resolved_path(app_root),
   ]);
   const current_root = dirname(dirname(canonical_database));
-  return canonical_app === join(current_root, 'app') ? current_root : null;
+  return canonical_app === selected_release(current_root) ? current_root : null;
 }
 export function validate_release(release: PublishedUpdate): void {
   if (release.manifest.runtime_contract === null)
@@ -132,6 +143,7 @@ export class UpdateService {
   private readonly record_now: () => string;
   private ready: PublishedUpdate | null = null;
   private last_checked = 0;
+  private discovery: 'not_checked' | 'check_unavailable' | 'up_to_date' = 'not_checked';
   private last_state: string | null = null;
   private running = false;
   private incarnation = 0;
@@ -160,23 +172,58 @@ export class UpdateService {
   installer_observed(attempt_id: string): void {
     if (this.installer_starting?.attempt_id === attempt_id) this.installer_starting = null;
   }
-  recover_orphaned_attempt(attempt_id: string, generation: number): number | null {
+  async recover_orphaned_attempt(attempt_id: string, generation: number): Promise<number | null> {
     const barrier = this.options.update_barrier;
     const current = this.attempts.read();
     if (
       barrier === undefined ||
       barrier.generation !== generation ||
+      (current === null && existsSync(this.attempts.path)) ||
       (current?.attempt_id ?? '') !== attempt_id ||
-      this.owns_preparation(attempt_id)
+      this.owns_preparation(attempt_id) ||
+      current?.steps.rollback_failed !== undefined
     )
       return null;
-    if (current !== null && !states('done', 'failed').has(current.state)) {
+    let recovery_detail = 'The previous update did not complete. Try again.';
+    if (current?.state === 'installing') {
+      const started = current.steps.installer_started !== undefined;
+      if (current.steps.coordinator_registered !== undefined) {
+        const revision = this.current_app_sha;
+        if (
+          !revision ||
+          (revision !== current.from_sha && revision !== current.to_sha) ||
+          readFileSync(barrier.path, 'utf8').trim() !== attempt_id ||
+          selected_release(this.options.current_root) !==
+            release_path(this.options.current_root, revision)
+        )
+          return null;
+        if (
+          started &&
+          revision === current.from_sha &&
+          current.steps.rollback_app_restored !== undefined
+        ) {
+          // This live server owns the database. Only its real retained-home trial may reopen it.
+          if (barrier.prepared_home_attempt !== attempt_id) return null;
+          recovery_detail =
+            'The installer stopped. Panels restored and checked the previous version.';
+        } else if (started) {
+          // Restart this APP through its own supervisor. The next startup can restore before opening SQLite.
+          const socket = process.env.PLAN_SERVER_CONTROL_SOCKET;
+          if (!socket) throw new Error('The interrupted update needs its home supervisor');
+          assert_installer_path(socket);
+          await request_control(socket, { version: 1, operation: 'restart' });
+          return null;
+        } else if (revision !== current.from_sha) return null;
+        else recovery_detail = 'The installer did not start. The previous version kept running.';
+      } else if (started) return null;
+    }
+    if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) {
       this.attempts.change(attempt_id, states(current.state), (record) => ({
         ...record,
         state: 'failed',
         detail: states('waiting', 'preparing').has(record.state)
           ? RESTARTED_DETAIL
-          : 'The previous update did not complete. Try again.',
+          : recovery_detail,
       }));
     }
     const released = barrier.reopen_if_current(generation);
@@ -208,15 +255,9 @@ export class UpdateService {
       : staged_app_path(this.options.current_root, release.manifest.app_sha);
   }
   refresh_available(options: { force?: boolean } = {}): void {
-    if (
-      !this.running ||
-      this.options.provider === null ||
-      !(this.options.can_refresh?.() ?? true) ||
-      this.prefetching !== null
-    )
-      return;
+    if (!this.running || this.options.provider === null || this.prefetching !== null) return;
     const current = this.attempts.read();
-    if (current !== null && !states('done', 'failed').has(current.state)) return;
+    if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) return;
     if (!options.force && this.now() - this.last_checked < UPDATE_AVAILABILITY_REFRESH_SECONDS)
       return;
     this.last_checked = this.now();
@@ -231,6 +272,14 @@ export class UpdateService {
     const incarnation = this.incarnation;
     const flight = Promise.resolve()
       .then(() => this.prefetch_release(incarnation))
+      .catch((error: unknown) => {
+        if (this.active(incarnation)) {
+          this.discovery = 'check_unavailable';
+          this.ready = null;
+          this.options.changes.emit();
+        }
+        throw error;
+      })
       .finally(() => {
         if (this.prefetching === flight) this.prefetching = null;
         this.work.delete(flight);
@@ -246,12 +295,46 @@ export class UpdateService {
     const provider = this.options.provider;
     if (!this.active(incarnation) || provider === null) return;
     const release = await provider.available();
+    if (!this.active(incarnation)) return;
+    const applied = this.attempts.read();
+    // Earlier Darwin homes recorded the home archive but discarded its signed machine package.
     if (
-      !this.active(incarnation) ||
-      release === null ||
-      release.manifest.app_sha === this.current_app_sha
-    )
+      applied?.state === 'done' &&
+      applied.to_sha === this.current_app_sha &&
+      applied.release.manifest.runtime_contract?.system === 'darwin' &&
+      applied.release.mac === null &&
+      applied.release.parts?.machines['darwin-arm64']
+    ) {
+      const saved = applied.release;
+      const published =
+        release?.proof_artifact_id === saved.proof_artifact_id
+          ? release
+          : await provider.available(saved.proof_artifact_id);
+      if (!this.active(incarnation)) return;
+      if (
+        published?.mac &&
+        published.proof_artifact_id === saved.proof_artifact_id &&
+        published.publication_run_id === saved.publication_run_id &&
+        published.manifest.app_sha === applied.to_sha &&
+        published.archive_sha256 === saved.archive_sha256 &&
+        published.mac.archive_sha256 === saved.parts!.machines['darwin-arm64']!.archive_sha256 &&
+        this.attempts.read()?.attempt_id === applied.attempt_id
+      ) {
+        const repaired = this.attempts.change(applied.attempt_id, states('done'), (current) => ({
+          ...current,
+          mac_attempt_id: current.mac_attempt_id ?? current.attempt_id,
+          release: { ...current.release, mac: published.mac },
+        }));
+        await this.options.mac.prepare(repaired.release);
+        if (!this.active(incarnation)) return;
+      }
+    }
+    if (release === null || release.manifest.app_sha === this.current_app_sha) {
+      this.ready = null;
+      this.discovery = 'up_to_date';
+      this.options.changes.emit();
       return;
+    }
     validate_release(release);
     if (JSON.stringify(release) === JSON.stringify(this.ready)) return;
     const staged = await this.options.staging.stage(provider, release, this.options.current_root);
@@ -259,33 +342,19 @@ export class UpdateService {
     // Admission only. The install decides on the backup when it starts.
     await this.options.installer.node_schema_steps_pending(this.options.database, staged);
     if (!this.active(incarnation)) return;
-    await this.options.mac.prepare(release);
-    if (!this.active(incarnation)) return;
+    this.discovery = 'up_to_date';
     this.ready = release;
     this.options.changes.emit();
-  }
-  private settled_attempt(): UpdateAttempt | null {
-    const attempt = this.attempts.read();
-    if (attempt === null) return null;
-    if (this.options.update_barrier?.frozen) return attempt;
-    const ended = settle(attempt, this.current_app_sha, timestamp(this.now()));
-    if (ended === null) return attempt;
-    this.options.runtime.assert_database_owned();
     try {
-      return this.attempts.change(attempt.attempt_id, states('installing'), (current) => ({
-        ...current,
-        state: ended.state,
-        detail: ended.detail,
-        steps: { ...current.steps, settled: this.record_now() },
-      }));
+      await this.options.mac.prepare(release);
     } catch (error) {
-      if (!(error instanceof UpdateConflict)) throw error;
-      return this.attempts.read();
+      if (this.active(incarnation))
+        console.warn('Machine archive preparation did not complete', error);
     }
   }
   status(): UpdateStatus {
     this.refresh_available();
-    const attempt = this.running ? this.settled_attempt() : this.attempts.read();
+    const attempt = this.attempts.read();
     const system = this.options.runtime.conversation();
     const activity = system?.workspace_activity() ?? 'unknown';
     const available = this.ready_release();
@@ -295,18 +364,7 @@ export class UpdateService {
       available === null
         ? { stops_agents: false, agents: [], machine_ids: [] }
         : this.interruption(available_machines);
-    const [state, allowed_actions, resolved_detail, deadline_at] = resolve(
-      attempt,
-      available,
-      this.current_app_sha,
-      {
-        mac_applies: false,
-        mac_phase: null,
-        mac_reported_at: null,
-        mac_report_seconds: MAC_UPDATE_REPORT_SECONDS,
-        now: timestamp(this.now()),
-      },
-    );
+    const [state, allowed_actions, resolved_detail, deadline_at] = resolve(attempt, available);
     let detail = resolved_detail;
     // Information only. Running work never refuses or delays an update.
     const interrupted = state === 'available' ? interruption.agents : [];
@@ -316,7 +374,7 @@ export class UpdateService {
       machines,
       available_machines,
       interruption,
-      state,
+      state: state === 'up_to_date' ? this.discovery : state,
       allowed_actions,
       activity,
       available,
@@ -352,6 +410,13 @@ export class UpdateService {
   /** A press always starts the update. Running work is never asked. */
   install(app_sha: string): UpdateAttempt {
     this.require_running();
+    const pending = this.attempts.read();
+    if (pending?.to_sha === app_sha && states('preparing', 'installing').has(pending.state))
+      return pending;
+    if (pending?.steps.rollback_failed !== undefined && this.options.update_barrier?.frozen)
+      throw new UpdateConflict(
+        'Finish recovering the interrupted installation before starting another update.',
+      );
     const release = this.ready_release();
     if (release === null || release.manifest.app_sha !== app_sha)
       throw new UpdateConflict('This update is no longer ready. Refresh and try again.');
@@ -476,6 +541,8 @@ export class UpdateService {
     const attempt = this.attempts.read();
     if (attempt?.state !== 'preparing') return;
     const attempt_id = (this.preparation_attempt_id = attempt.attempt_id);
+    const conversation = this.options.runtime.conversation();
+    let owns_send_admission = false;
     let barrier_closed = false;
     try {
       this.options.runtime.assert_database_owned();
@@ -505,6 +572,8 @@ export class UpdateService {
       const staged = staged_app_path(this.options.current_root, attempt.to_sha);
       if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
         throw new Error('the staged release is missing');
+      await this.options.mac.prepare_home?.(attempt.release);
+      if (!this.active(incarnation)) return;
       const database_bytes = database_file_bytes(this.options.database);
       const steps_pending = await this.options.installer.node_schema_steps_pending(
         this.options.database,
@@ -513,7 +582,23 @@ export class UpdateService {
       if (!this.active(incarnation)) return;
       // Pending steps need a snapshot. A Mac home takes one on every trial.
       // The installer takes it after it stops the service, when no writer remains.
-      const snapshot_required = steps_pending || this.options.installer.requires_snapshot === true;
+      const snapshot_required =
+        steps_pending ||
+        this.options.installer.requires_snapshot === true ||
+        !this.options.runtime.database.read(has_home_credential);
+      if (snapshot_required)
+        await require_snapshot_space(this.options.database, this.options.backup_directory);
+      if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+      if (conversation) {
+        owns_send_admission = conversation.workspace_admission.close_starts();
+        if (!owns_send_admission) throw new Error('Send admission is already closed.');
+      }
+      // Startup records any undelivered owner messages when the installer restarts the home.
+      const send_deadline = AbortSignal.timeout(UPDATE_SEND_DRAIN_SECONDS * 1000);
+      while (!send_deadline.aborted && conversation?.has_pending_update_sends()) {
+        await delay(ATTEMPT_OBSERVER_SECONDS * 1000);
+        if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+      }
       const command = this.options.installer.prepare({
         current_root: this.options.current_root,
         database: this.options.database,
@@ -555,13 +640,31 @@ export class UpdateService {
         !this.owns_attempt(attempt_id, 'preparing')
       )
         return;
-      console.error('Update did not start its installer', error);
-      this.fail(
-        attempt_id,
-        states('preparing', 'installing'),
-        `The update could not start, so nothing changed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      if (barrier_closed) this.release_barrier();
+      const fail_before_start = () => {
+        if (this.attempts.read()?.steps.installer_started !== undefined) return;
+        console.error('Update did not start its installer', error);
+        this.fail(
+          attempt_id,
+          states('preparing', 'installing'),
+          `The update could not start, so nothing changed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        if (barrier_closed) this.release_barrier();
+      };
+      // The OS can start the unit before its client disconnects or times out.
+      // Serialize the last check with the installer's claim before reopening.
+      if (barrier_closed)
+        await with_installer_lock(dirname(this.options.database), attempt_id, async () =>
+          fail_before_start(),
+        );
+      else fail_before_start();
+    } finally {
+      if (
+        owns_send_admission &&
+        this.active(incarnation) &&
+        !this.options.update_barrier?.frozen &&
+        !conversation?.workspace_admission.closed
+      )
+        conversation?.workspace_admission.reopen();
     }
   }
   /** Every failed update reaches the journal and the owner once. */

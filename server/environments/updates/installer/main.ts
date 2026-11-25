@@ -1,20 +1,18 @@
-/** Fixed external installer entry. Copy independence is a later packaging gate. */
-import { readFileSync, writeSync } from 'node:fs';
+/** Fixed external installer entry. Runs from the retained release. */
+import { writeSync } from 'node:fs';
+import { read_record_json } from '../attempts.ts';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { is_object } from '../codec.ts';
 import { create_installer_effects, error_detail } from './commands.ts';
 import { install } from './install.ts';
-import { InstallationRecord } from './record.ts';
 import { assert_installer_health_url, assert_installer_path } from './configuration.ts';
 import type { InstallerRequest } from './contracts.ts';
 
 function read_request(path: string): InstallerRequest {
   assert_installer_path(path);
-  const value: unknown = JSON.parse(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path)),
-  );
+  const value = read_record_json(path);
   if (!is_object(value)) throw new Error('Installer request must be an object');
   const text = (key: string): string => {
     const item = value[key];
@@ -55,7 +53,7 @@ function stderr(text: string): void {
 async function main(): Promise<0 | 1 | 2> {
   const child_processes = new ChildProcesses(),
     controller = new AbortController();
-  let interrupted: NodeJS.Signals | undefined, request: InstallerRequest | undefined;
+  let interrupted: NodeJS.Signals | undefined;
   const on_signal = (signal: NodeJS.Signals) => {
     if (interrupted) return;
     interrupted = signal;
@@ -81,7 +79,7 @@ async function main(): Promise<0 | 1 | 2> {
     const argv = process.argv.slice(2);
     if (argv.length !== 1) throw new Error('Expected one installer request file');
     controller.signal.throwIfAborted();
-    request = read_request(argv[0]!);
+    const request = read_request(argv[0]!);
     const effects = create_installer_effects(request, {
       child_processes,
       signal: controller.signal,
@@ -101,13 +99,7 @@ async function main(): Promise<0 | 1 | 2> {
     if (controller.signal.aborted) return 1;
     const original = error_detail(error),
       detail = `The update stopped unexpectedly (${original.name}: ${original.message}).`;
-    if (request) {
-      try {
-        new InstallationRecord(request).record('failed', 'failed', detail);
-      } catch (failure) {
-        stderr(`Could not record the failed update: ${error_detail(failure).message}\n`);
-      }
-    }
+    // Preserve the last durable step. The supervised retry still has to verify or restore the home.
     stderr(detail + '\n');
     return 1;
   } finally {

@@ -18,21 +18,33 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, vi } from 'vitest';
+import { afterEach, beforeEach, test, vi } from 'vitest';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { install_home, check_home_port } from './home.ts';
-import { home_install_fixture as fixture } from './testing/home_fixture.ts';
+import { crash_restart_jobs, home_install_fixture as fixture } from './testing/home_fixture.ts';
 import type { HomeInstallDependencies, HomeServicePlan } from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
-import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
+import {
+  create_darwin_home_io,
+  DarwinHomeService,
+} from '../environments/updates/darwin/service.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { create_linux_home_service } from './linux.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
+
+// File-mode fixtures and assertions choose their own mask, independent of the runner.
+let inherited_mask: number;
+beforeEach(() => {
+  inherited_mask = process.umask(0o022);
+});
+afterEach(() => {
+  process.umask(inherited_mask);
+});
 
 test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
   const f = await fixture(),
@@ -91,6 +103,78 @@ test('Mac job conversion refuses pre-existing and late hard links before either 
   }
 });
 
+test('Mac rollback boots out the authenticated failed candidate while launchd has no supervisor PID', async () => {
+  const f = await fixture();
+  try {
+    const { root, service: label } = f.request;
+    mkdirSync(join(root, 'app/node/bin'), { recursive: true });
+    writeFileSync(join(root, 'app/node/bin/node'), '', { mode: 0o700 });
+    const plan = await create_darwin_home_service(f.request, f.deps, false);
+    for (const file of plan.files) {
+      mkdirSync(dirname(file.path), { recursive: true });
+      writeFileSync(file.path, file.content, { mode: file.mode });
+    }
+    const target = `gui/${f.deps.uid}/${label}`;
+    const plist = join(root, 'agents', label + '.plist');
+    const program = join(root, 'app/bin/panels');
+    let loaded = true,
+      foreign = false,
+      bootouts = 0;
+    const ok = { code: 0, stdout: '', stderr: '' };
+    const io = create_darwin_home_io(f.deps.execution, f.deps.environment, {
+      processes: () => new Map(),
+      process: () => {
+        throw new Error('This launchd job has no process');
+      },
+      async command(argv) {
+        if (argv[0] === '/usr/bin/plutil')
+          return { ...ok, stdout: readFileSync(argv.at(-1)!, 'utf8') };
+        if (argv[1] === 'print') {
+          if (!loaded || argv[2] !== target)
+            return { code: 113, stdout: '', stderr: 'Could not find service' };
+          const fields = [
+            `path = ${plist}`,
+            `program = ${foreign ? '/foreign' : program}`,
+            `working directory = ${root}`,
+            'arguments = {',
+            program,
+            'serve',
+            '}',
+            'environment = {',
+            `PLAN_DB_PATH => ${root}/data/planner.db`,
+            `PLAN_CONFIG_PATH => ${root}/data/config.yaml`,
+            '}',
+          ];
+          return { ...ok, stdout: fields.join('\n') };
+        }
+        if (argv[1] === 'bootstrap') {
+          assert.equal(argv[3], plist);
+          loaded = true;
+          return ok;
+        }
+        assert.deepEqual(argv, ['/bin/launchctl', 'bootout', target]);
+        bootouts++;
+        loaded = false;
+        return ok;
+      },
+    });
+    const home = new DarwinHomeService(root, target, io);
+    await assert.rejects(home.validate_running_home(), /no running supervisor/);
+    await assert.rejects(home.stop(), /no running supervisor/);
+    loaded = false;
+    await home.start();
+    foreign = true;
+    await assert.rejects(home.stop(), /different program/);
+    assert.equal(bootouts, 0);
+    foreign = false;
+    await home.stop();
+    assert.equal(bootouts, 1);
+    assert.equal(loaded, false);
+  } finally {
+    await f.close();
+  }
+});
+
 test('fresh database initialization closes its child before activation and failed install cleanup retains foreign data', async () => {
   const f = await fixture();
   const candidate = fileURLToPath(new URL('../../', import.meta.url)),
@@ -118,6 +202,7 @@ test('fresh database initialization closes its child before activation and faile
       f.deps.execution,
       process.execPath,
       machine,
+      'Asia/Tokyo',
     );
     const identity = JSON.parse(readFileSync(join(machine, 'identity.json'), 'utf8'));
     const credential_file = join(machine, 'machine-credential.json');
@@ -130,6 +215,12 @@ test('fresh database initialization closes its child before activation and faile
     const reader = createReadAccess(path);
     try {
       reader.read((sql) => {
+        assert.equal(
+          sql.get<{ owner_time_zone: string }>(
+            'SELECT owner_time_zone FROM attention_history_metadata',
+          )?.owner_time_zone,
+          'Asia/Tokyo',
+        );
         // A fresh home starts with no projects.
         assert.deepEqual(sql.all('SELECT name FROM projects'), []);
         assert(
@@ -253,7 +344,8 @@ test('replacement root and changed service files retain their trees before any u
         ...darwin.deps,
         system: 'darwin',
         architecture: 'arm64',
-        service: async (request, host) => (plan = await create_darwin_home_service(request, host)),
+        service: async (request, host) =>
+          (plan = await create_darwin_home_service(request, host, true, crash_restart_jobs)),
         async command(argv) {
           if (argv[0] === '/usr/bin/plutil')
             return { code: 0, stdout: readFileSync(argv.at(-1)!, 'utf8'), stderr: '' };
@@ -291,6 +383,7 @@ test('replacement root and changed service files retain their trees before any u
     assert(existsSync(loaded));
     const path = loaded,
       bytes = readFileSync(path);
+    assert.deepEqual(JSON.parse(bytes.toString()).KeepAlive, { SuccessfulExit: false });
     const assert_owned = async (current: string) => {
       assert.equal(current, path);
       assert.deepEqual(readFileSync(current), bytes);
@@ -399,7 +492,7 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     assert.equal(statSync(dirname(token_file)).mode & 0o777, 0o700);
     const wrapper = `#!/bin/sh\nexec ${shell_quote(join(root, 'app/bin/panels'))} "$@"\n`;
     assert.equal(readFileSync(command_link, 'utf8'), wrapper);
-    assert.equal(statSync(command_link).mode & 0o777, 0o755);
+    assert.equal(statSync(command_link).mode & 0o777, 0o755 & ~process.umask());
     // A second home refuses the existing command before it writes anything.
     const second = { ...f.request, root: join(f.base, 'second'), service: 'com.panels.other' };
     await assert.rejects(
@@ -410,6 +503,44 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     assert.equal(readFileSync(command_link, 'utf8'), wrapper);
   } finally {
     await f.close();
+  }
+});
+
+test('a test home preserves the account command on success and first-machine rollback', async () => {
+  // Normal install coverage refuses a shared command. It does not prove the explicit
+  // opt-out leaves that command outside successful installation and failed cleanup.
+  for (const machine_failure of [false, true]) {
+    const f = await fixture();
+    try {
+      const command = join(f.account, '.local/bin/panels');
+      mkdirSync(dirname(command), { recursive: true });
+      writeFileSync(command, 'existing live command\n', { mode: 0o755 });
+      const before = statSync(command);
+      const install = install_home(
+        { ...f.request, skip_command_link: true },
+        {
+          ...f.deps,
+          healthy: async () => true,
+          machine_healthy: async () => {
+            if (machine_failure) throw new Error('test machine refused');
+          },
+        },
+      );
+      if (machine_failure) {
+        await assert.rejects(install, /test machine refused/);
+        assert(!existsSync(f.request.root));
+      } else {
+        assert.equal(await install, `http://127.0.0.1:${f.request.port}`);
+        assert(existsSync(f.request.root));
+      }
+      assert.equal(readFileSync(command, 'utf8'), 'existing live command\n');
+      const after = statSync(command);
+      assert.equal(after.ino, before.ino);
+      assert.equal(after.mode, before.mode);
+      assert.equal(after.mtimeMs, before.mtimeMs);
+    } finally {
+      await f.close();
+    }
   }
 });
 
@@ -507,6 +638,10 @@ test('shared health requires exact ready identity for homes while retaining the 
     assert.equal(await healthy(url, sha, 0, signal, {}, true, 'unattributed'), true);
     assert.equal(actors.at(-1), 'unattributed');
     assert(actors.slice(0, -1).every((actor) => actor === undefined));
+    body = { app_sha: sha, ready: true, prepared_attempt_id: 'previous' };
+    assert.equal(await healthy(url, sha, 0, signal, {}, false, undefined, 'current'), false);
+    body = { app_sha: sha, ready: true, prepared_attempt_id: 'current' };
+    assert.equal(await healthy(url, sha, 0, signal, {}, false, undefined, 'current'), true);
   } finally {
     await new Promise<void>((done, fail) =>
       server.close((error) => (error ? fail(error) : done())),
@@ -516,3 +651,26 @@ test('shared health requires exact ready identity for homes while retaining the 
     );
   }
 });
+
+test('a slowly streaming health response cannot extend the trial deadline', async () => {
+  const server = http_server((_request, response) => {
+    const tick = setInterval(() => response.write(' '), 10);
+    response.once('close', () => clearInterval(tick));
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const address = server.address();
+    assert(address && typeof address !== 'string');
+    assert.equal(
+      await healthy(
+        `http://127.0.0.1:${address.port}/api/health`,
+        'a'.repeat(40),
+        0.15,
+        new AbortController().signal,
+      ),
+      false,
+    );
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+}, 3000);

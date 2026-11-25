@@ -14,6 +14,7 @@ import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
 import { join_command, require_released_revision } from '../installation/join_command.ts';
 import { need_counts_display, need_display } from './needs.ts';
+import { ticketStatusLabel as ticket_status_label } from '../tickets/logic/status_presentation.ts';
 import { response_field } from './response_field.ts';
 import { CliFailure } from './errors.ts';
 import { require_current_server } from './current_server.ts';
@@ -210,15 +211,20 @@ const TICKET_HEADER_KEYS = [
   'ceiling_holder',
   'needs',
 ];
-/** The human header leads with the need; the JSON header keeps every raw field. */
+/** The human header leads with the work summary; JSON keeps its raw fields. */
 function ticket_headers(data: Body): [Body, Body] {
   const header = Object.fromEntries(
     TICKET_HEADER_KEYS.filter((key) => key in data).map((key) => [key, data[key]]),
   );
   if (data.worker_setup) header.setting_up = setting_up_text(data.worker_setup);
   const human: Body = {};
+  if ('title' in data) human.title = data.title;
+  human.recap = format_recap(data);
+  if ('ticket_status' in data) human.status = ticket_status_label(data.ticket_status);
+  if ('agent_state' in data) human.worker = data.agent_state;
+  if ('stage' in data) human.stage = data.stage;
   if ('needs' in data) human.needs = need_display(data.needs, data.ceiling_holder?.kind);
-  for (const key of ['stage', 'ceiling']) if (key in data) human[key] = data[key];
+  if ('ceiling' in data) human.ceiling = data.ceiling;
   if ('ceiling_holder' in data) human.ceiling_holder = principal_text(data.ceiling_holder);
   const blockers: Body[] = (data.blocker_summary?.blocked_by ?? []).filter(
     (blocker: Body) => blocker.active,
@@ -395,19 +401,17 @@ async function list_tickets(inv: Invocation): Promise<CommandResult> {
   const page: Body = data.page;
   const output: string[] = [];
   if (tickets.length) {
-    const table = columns([
-      ['ID', 'NEEDS', 'STAGE', 'TITLE'],
-      ...tickets.map((ticket) => [
-        scalar(ticket.id),
-        need_display(ticket.needs, ticket.ceiling_holder?.kind),
-        scalar(ticket.stage),
-        scalar(ticket.title) +
-          (ticket.worker_setup ? ` | setting up: ${setting_up_text(ticket.worker_setup)}` : '') +
-          (ticket.project ? ` | ${scalar(ticket.project)}` : ''),
-      ]),
-    ]);
-    output.push(table[0]);
-    tickets.forEach((ticket, index) => output.push(table[index + 1], `  ${format_recap(ticket)}`));
+    for (const ticket of tickets) {
+      output.push(
+        scalar(ticket.title),
+        `  ${format_recap(ticket)}`,
+        `  status: ${ticket_status_label(ticket.ticket_status)} | Worker: ${scalar(ticket.agent_state)}`,
+        `  stage: ${scalar(ticket.stage)} | needs: ${need_display(ticket.needs, ticket.ceiling_holder?.kind)}`,
+        `  id: ${scalar(ticket.id)}` +
+          (ticket.project ? ` | project: ${scalar(ticket.project)}` : ''),
+      );
+      if (ticket.worker_setup) output.push(`  setting up: ${setting_up_text(ticket.worker_setup)}`);
+    }
   } else if (numeric_value(page.match_count)) output.push('No results at this offset.');
   output.push(`${plural(page.match_count, ...SCOPE_NOUNS[scope])}.`);
   const backlog = numeric_value(page.not_shown?.backlog) ?? 0;
@@ -536,7 +540,7 @@ async function review(inv: Invocation): Promise<CommandResult> {
   }
   if (inv.values.as_json) return emit(data, true, '');
   const cards: Body[] = data.cards;
-  if (!cards.length) return raw('Nothing waits on Khushal.\n');
+  if (!cards.length) return raw('Nothing waits on the owner.\n');
   const label = (card: Body) =>
     card.kind === 'chief'
       ? 'Chief'
@@ -552,8 +556,8 @@ async function review(inv: Invocation): Promise<CommandResult> {
   const total = data.total ?? cards.length;
   const head =
     numeric_value(total) === 1
-      ? '1 card waits on Khushal, oldest first.'
-      : `${scalar(total)} cards wait on Khushal, oldest first.`;
+      ? '1 card waits on the owner, oldest first.'
+      : `${scalar(total)} cards wait on the owner, oldest first.`;
   return raw([head, ...table].join('\n') + '\n');
 }
 async function recap(inv: Invocation): Promise<CommandResult> {

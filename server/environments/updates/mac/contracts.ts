@@ -1,7 +1,6 @@
 /** Existing VPS/Mac update wire channel. */
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { MacUpdateOperations } from '../contracts.ts';
-import type { UpdateMacReads } from '../routes.ts';
 import type { PresenceJudgement, PresenceRecord } from '../../../executor/contracts.ts';
 import type { FileUpdateAttemptStore } from '../attempts.ts';
 import type {
@@ -13,7 +12,6 @@ import type {
 
 import type {
   MacUpdateCheck,
-  MacUpdatePhase,
   MacUpdateReport,
   MacUpdateStatus,
 } from '../../../executor/wire.generated.ts';
@@ -37,8 +35,7 @@ export interface MacUpdateCompositionContext {
   readonly archive_root?: string;
   readonly platform?: string;
   readonly platform_for?: (machine_id: string) => string;
-  readonly linux_registered?: () => boolean;
-  readonly machines?: () => readonly MachineUpdateMachine[];
+  readonly machines: () => readonly MachineUpdateMachine[];
   readonly attempts: FileUpdateAttemptStore;
   readonly provider: UpdateProvider | null;
   readonly current_app_sha: string | null;
@@ -55,8 +52,6 @@ export interface MacUpdateServiceContract {
   prepare(release: PublishedUpdate): Promise<void>;
   check(): MacUpdateCheck;
   status(): MacUpdateStatus | null;
-  phase(attempt_id: string): MacUpdatePhase | null;
-  reported_at(attempt_id: string): number | null;
   report(report: MacUpdateReport, health: MacUpdateHealthRead | null): MacUpdateStatus;
   archive(request_id: string): string;
   prefetch_archive(archive_sha256: string): string;
@@ -65,5 +60,4 @@ export interface MacUpdateServiceContract {
 export interface MacUpdateComposition {
   readonly service: MacUpdateServiceContract;
   operations: MacUpdateOperations;
-  reads: UpdateMacReads;
 }

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import type { Page } from '@playwright/test';
 import { REPO_ROOT, WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test, withDatabase } from '../support/fixtures.ts';
 import { launchDesktopApp, waitForScreens } from '../support/desktop.ts';
+import { createTicketConversation, post } from '../support/conversation.ts';
 
 type NativeRequest = { id: number; url: string; ended: boolean };
 type ForwardedRequest = { path: string; method: string; identity: string | null; origin: string | null };
@@ -175,7 +176,7 @@ test('the screens reach the server through the app, and links leave it', async (
         };
         return fetchDesktopCompatibility(address);
       }, server.base);
-      expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+      expect(compatibility).toEqual({ minimum_bridge_version: 2 });
     }, { timeout: WAIT_MS * 3 });
 
     await test.step('the native forward identifies API reads and files', async () => {
@@ -341,7 +342,7 @@ test('the screens reach the server through the app, and links leave it', async (
         return JSON.parse(request.identity!);
       });
       const nativeIdentity = identities[0];
-      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 2, device_id: expect.any(String) });
       for (const identity of identities) expect(identity).toEqual(nativeIdentity);
       // The server received and retained these facts, independent of the observation above.
       expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
@@ -360,6 +361,74 @@ test('the screens reach the server through the app, and links leave it', async (
   } finally {
     await test.step('close the desktop app', () => desktop.app.close(), { timeout: WAIT_MS * 3 });
     rmSync(appRoot, { recursive: true, force: true });
+  }
+});
+
+test('a link in a message opens in the browser, and a page of the connected server opens in the app', async ({ railServer }) => {
+  const server = railServer;
+  const conversationId = 'desktop-link-conversation';
+  const ticketId = await createTicketConversation(server, { conversationId, title: 'Ticket with links' });
+  const otherId = String((await api.post(server, '/api/tickets', newTicket('Ticket the link opens'))).id);
+  await post(server, `/api/test/signals/${conversationId}/message`, {
+    kind: 'ticket',
+    id: ticketId,
+    label: 'Proof Worker',
+    text: `A test copy runs at https://panels.example.org:8473, and [the ticket](${server.base}/#/workspace/${otherId}) is here.`,
+  });
+  const desktop = await launchDesktopApp({ localServerAddress: server.base });
+  try {
+    const page = desktop.window;
+    await connectLocal(page, server.base);
+    await waitForScreens(page, WORKSPACE);
+    await page.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
+    await page.locator('[data-conversation-expand]').dispatchEvent('click');
+    const links = page.locator('.markdown-block a');
+    await expect(links).toHaveCount(2, { timeout: WAIT_MS });
+    await desktop.app.evaluate(({ dialog }) => {
+      const shown: string[] = [];
+      (globalThis as { shownDialogs?: string[] }).shownDialogs = shown;
+      dialog.showMessageBox = (async (_window: unknown, options: { detail?: string }) => {
+        shown.push(options.detail ?? '');
+        return { response: 0, checkboxChecked: false };
+      }) as unknown as typeof dialog.showMessageBox;
+    });
+    // A press as the person makes it: the mouse at the link, not a call on the element.
+    // Playwright's own click waits for a navigation that the shell cancels, so it is not used.
+    const press = async (index: number) => {
+      const place = () => page.evaluate((i) => {
+        const link = document.querySelectorAll('.markdown-block a')[i]!;
+        link.scrollIntoView({ block: 'center' });
+        const { x, y, height } = link.getBoundingClientRect();
+        return { x, y, height, hit: document.elementFromPoint(x + 3, y + height / 2) === link };
+      }, index);
+      // The conversation is still moving into place when its first link appears.
+      let box = await place();
+      for (let settled = 0; settled < 3; ) {
+        await page.waitForTimeout(100);
+        const next = await place();
+        settled = next.x === box.x && next.y === box.y && next.hit ? settled + 1 : 0;
+        box = next;
+      }
+      await page.mouse.click(box.x + 3, box.y + box.height / 2);
+    };
+
+    await press(0);
+    await expect.poll(desktop.openedOutside, { timeout: WAIT_MS }).toEqual(['https://panels.example.org:8473/']);
+
+    // The connected server's own page opens in the app, not in the browser.
+    await press(1);
+    await expect.poll(() => pageUrl(page), { timeout: WAIT_MS }).toBe(`panels://app/#/workspace/${otherId}`);
+    await expect(page.locator('.ticket-title')).toHaveText('Ticket the link opens', { timeout: WAIT_MS });
+    expect(await desktop.openedOutside()).toEqual(['https://panels.example.org:8473/']);
+
+    // A link the app cannot open says so.
+    await page.evaluate(() => window.open('ftp://files.example.org/report', '_blank'));
+    await expect
+      .poll(() => desktop.app.evaluate(() => (globalThis as { shownDialogs?: string[] }).shownDialogs ?? []), { timeout: WAIT_MS })
+      .toEqual([expect.stringContaining('ftp://files.example.org/report')]);
+    expect(await desktop.openedOutside()).toEqual(['https://panels.example.org:8473/']);
+  } finally {
+    await desktop.app.close();
   }
 });
 

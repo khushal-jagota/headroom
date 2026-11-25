@@ -18,7 +18,7 @@ import type {
   Ticket,
 } from './contracts.ts';
 import * as data from './data/index.ts';
-import { validated_sent_files, type SentPiece } from '../conversation/http.ts';
+import { sent_upload_piece, validated_sent_files, type SentPiece } from '../conversation/http.ts';
 import { HttpError } from '../core/http/errors.ts';
 import type { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { completion_follows, consequences_follows } from './logic/machine.ts';
@@ -56,13 +56,8 @@ function holder(value: unknown): DecisionHolder | null {
 function attachments(value: unknown): void {
   if (!Array.isArray(value)) throw validation('attachments must be a list of pictures and files');
   const sent: SentPiece[] = value.map((piece: unknown) => {
-    if (
-      is_record(piece) &&
-      (piece.piece === 'attachment_upload' || piece.piece === 'video_upload') &&
-      typeof piece.upload_id === 'string' &&
-      Object.keys(piece).every((key) => ['piece', 'upload_id'].includes(key))
-    )
-      return piece as unknown as SentPiece;
+    const upload = sent_upload_piece(piece);
+    if (upload) return upload;
     if (
       !is_record(piece) ||
       (piece.piece !== 'image' && piece.piece !== 'file') ||

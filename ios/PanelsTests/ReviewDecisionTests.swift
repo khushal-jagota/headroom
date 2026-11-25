@@ -4,24 +4,6 @@ import UniformTypeIdentifiers
 
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
 @MainActor final class ReviewDecisionTests: XCTestCase {
-    // A stale deployment must never look healthy or reserve permanent screen space.
-    func testDeploymentStatusExpiresAndPreservesFailure() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        func status(_ state: String, expiry: String? = "1970-01-01T00:20:00Z", outcome: String? = nil) -> DeploymentStatus {
-            DeploymentStatus(state: state, deployedSha: nil, targetSha: nil, outcome: outcome, detail: nil, validUntil: expiry, successDisplayUntil: expiry)
-        }
-        func visible(_ value: DeploymentStatus, connected: Bool = true, at date: Date = Date(timeIntervalSince1970: 1_000)) -> DeploymentStatusPresentation? {
-            DeploymentStatusPresentation.resolve(value, connected: connected, readFailed: false, now: date)
-        }
-        XCTAssertNil(visible(status("idle")))
-        XCTAssertEqual(visible(status("preparing")), .deploying)
-        XCTAssertEqual(visible(status("preparing", expiry: nil)), .reconnecting)
-        XCTAssertEqual(visible(status("back_up")), .deployed)
-        XCTAssertNil(visible(status("back_up"), at: now.addingTimeInterval(201)))
-        XCTAssertEqual(visible(status("back_up"), connected: false), .reconnecting)
-        XCTAssertEqual(visible(status("idle", outcome: "rolled_back")), .problem)
-    }
-
     private func fixture(_ name: String) throws -> Data {
 #if SWIFT_PACKAGE
         try Data(contentsOf: XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures")))
@@ -291,7 +273,7 @@ import UniformTypeIdentifiers
 
     }
 
-    /// Risk: a refused decision's card comes back without the note and pictures Khushal
+    /// Risk: a refused decision's card comes back without the note and pictures the owner
     /// wrote, as when its proposal no longer waits and the card is rebuilt from the refusal.
     func testRefusedDecisionBringsBackItsNoteAndAttachments() async throws {
         let (decision, api, item) = try await setupDecision()

@@ -39,7 +39,7 @@ struct ReviewMessageCard: View {
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(PanelsTheme.Web.surface2, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
-                } else if decision.error == nil { ScreenLoadingView(title: "messages") }
+                } else if decision.error == nil, decision.windowBound == nil { ScreenLoadingView(title: "messages") }
                 if let error = decision.error {
                     Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
                     if !decision.loaded { Button("Try again") { Task { await decision.load(item: live, api: store.client) } }.panelsScaledFont(size: 13) }
@@ -148,7 +148,7 @@ struct ReviewMessageDock: View {
                     skipButton
                     Button("Mark read") { actions.markRead(decision, onResolve: onResolve) }
                         .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.markRead")
-                        .disabled(!markReadAllowed || decision.through == 0 || decision.busy || actions.capturing || actions.finished)
+                        .disabled(!markReadAllowed || decision.markReadThrough == 0 || decision.busy || actions.capturing || actions.finished)
                 }
             } else {
                 skipButton

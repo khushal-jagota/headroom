@@ -10,6 +10,7 @@
   import ReviewReplyInput from './ReviewReplyInput.svelte';
   import ReviewOutgoingReplies from './ReviewOutgoingReplies.svelte';
   import { reviewReplyComposer } from '../lib/review/replyComposer.svelte';
+  import { ReviewSendOutcome } from '../lib/review/sendOutcome.svelte';
   import { unreadOwnerMessages, reviewMessageHref, draftStorageKey, attemptStorageKey, type OwnerMessage } from '../lib/review/messages';
   import MessagePieces from './conversation/MessagePieces.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -38,6 +39,8 @@
     attemptMetadataKey: `panels:review-reply-attempts:${conversationId}`,
     legacyConversationId: conversationId
   });
+  // The reply stays out of the card while it goes. The send button shows how it ended.
+  const outcome = new ReviewSendOutcome(composer);
   let loaded = $state(false);
   let events = $state.raw<OwnerMessage[]>([]);
   let error = $state<unknown>(null);
@@ -134,11 +137,12 @@
         {#if !replyOnly}<div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>{/if}
-        <ReviewOutgoingReplies {composer} busy={voiceActive || markingRead} onEdit={() => reply?.focus()} />
+        <ReviewOutgoingReplies {composer} busy={voiceActive || markingRead} quiet onEdit={() => reply?.focus()} />
         <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
           bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || markingRead}
-          sendDisabled={markingRead || !composer.ready || !through} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
+          sendDisabled={markingRead || !composer.ready || !through}
+          sending={outcome.sending} result={outcome.result} sendTitle={outcome.note} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
         <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error || composer.error}<ErrorLine error={error ?? composer.error}/>{/if}
       </div>

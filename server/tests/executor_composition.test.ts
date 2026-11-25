@@ -497,7 +497,6 @@ test('production constructs its real executor and reconciles that executor inven
       environments: {
         dependencies: {
           application_root: root,
-          node_executable: process.execPath,
         },
         async factory(current, dependencies) {
           if (!(current.executor instanceof VpsExecutorRegistry) || !current.core)

@@ -1,6 +1,6 @@
 import XCTest
 
-/// Moves through the app as Khushal does: the Sidebar for destinations, the native bar for Back.
+/// Moves through the app as the owner does: the Sidebar for destinations, the native bar for Back.
 extension XCUIApplication {
     var sidebarButton: XCUIElement { buttons["sidebar-button"] }
     /// The system Back button: the first button of a pushed page's bar. Its label is the

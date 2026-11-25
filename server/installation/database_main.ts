@@ -7,6 +7,7 @@ import { issue_home_machine_credential } from '../machines/executor_credentials.
 import { credential_path, write_credential } from '../executor/credential_file.ts';
 import { join } from 'node:path';
 import { bootstrap_application } from '../environments/bootstrap.ts';
+import { timezone } from '../measures/logic/dates.ts';
 
 try {
   if (
@@ -26,8 +27,10 @@ try {
   const seed = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
   ) as ApplicationSchemaSeed;
+  const zone = process.env.PLAN_INSTALL_OWNER_TIME_ZONE;
+  const owner_time_zone = zone === undefined ? undefined : timezone(zone);
   const database = createDatabaseFromSeed(path, seed, (tx) =>
-    bootstrap_application(tx, Math.floor(Date.now() / 1000)),
+    bootstrap_application(tx, Math.floor(Date.now() / 1000), owner_time_zone),
   );
   try {
     if (process.argv[3]) {

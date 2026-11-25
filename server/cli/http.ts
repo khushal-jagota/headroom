@@ -10,7 +10,7 @@ import { request as https_request, type RequestOptions } from 'node:https';
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { rates_proxy_for } from '../conversation/usage/proxy.ts';
-import { parse_numeric_json } from '../core/http/numeric_json.ts';
+import { parse_numeric_json, stringify_numeric_json } from '../core/http/numeric_json.ts';
 import {
   LAUNCH_TOKEN_ENVIRONMENT_NAME,
   UNIDENTIFIED_LAUNCH_TOKEN,
@@ -498,7 +498,24 @@ async function executor_send(
     translated = cli_mutation(
       method.toUpperCase(),
       target.pathname + target.search,
-      options.json_body ?? null,
+      // Match direct HTTP serialization before the IPC schema sees native numeric markers.
+      (
+        JSON.parse as (
+          text: string,
+          reviver: (key: string, value: unknown, context: { source?: string }) => unknown,
+        ) => unknown
+      )(stringify_numeric_json(options.json_body ?? null), (_key, value, context) => {
+        if (
+          typeof value === 'number' &&
+          context.source !== undefined &&
+          /^-?\d+$/.test(context.source) &&
+          !Number.isSafeInteger(value)
+        )
+          throw new ExecutorValidationError(
+            'Machine code cannot relay JSON integers outside the safe integer range without precision loss.',
+          );
+        return value;
+      }),
     );
   } catch (error) {
     if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);

@@ -11,6 +11,7 @@ import {
   type PendingConversationFile
 } from "../../../lib/conversation/pendingFiles";
 import type { SentMessagePiece } from "../../../lib/conversation/wire";
+import { uploadPiece } from "../../../lib/conversation/videoUploads/pieces";
 import type { ComposerAttachmentReference } from "./attachments";
 
 export type ComposerDraft = Readonly<{
@@ -118,7 +119,7 @@ export function beginComposerSend(
     ...pendingImagesAsPieces(draftBeforeSend.pendingImages),
     ...pendingFilesAsPieces(draftBeforeSend.pendingFiles),
     ...(draftBeforeSend.pendingVideos ?? []).flatMap(video => video.phase === "ready" && video.uploadId
-      ? [{piece: "attachment_upload" as const, upload_id: video.uploadId}] : [])
+      ? [uploadPiece(video)] : [])
   ];
   const draftAfterSend: ComposerDraft = {
     text: "",

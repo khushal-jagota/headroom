@@ -17,7 +17,9 @@ retain their requested conversation and remain read only when it is no longer cu
 Saved responses can supply display while fresh reads run. Review builds its cards
 from the saved view, and a message or ask card whose read cannot reach the server
 uses the phone's saved copy of its last read, so Mark read and an answer still
-save. A card whose detail this phone never read shows its title and waits. New responses apply
+save. A card whose detail this phone never read acts on the saved view: its Mark read
+reads through the conversation's newest message when the view was built, and its ask
+comes from the view ([Review](Review.md#cards)). New responses apply
 immediately, including changes that move rows. A failed refresh keeps the content
 on screen with no note; the next stream event or pull replaces it. A read that
 cannot reach the server (no network, a timeout, a dropped connection, a failed host
@@ -42,6 +44,49 @@ Conversation text and Review notes are saved as
 they change. A Review draft belongs to the exact ticket, field, proposal time and
 revision. A failed local save is shown in the app; a send cannot clear its composer
 until the outgoing work and the composer clear have committed together.
+
+## Artifacts
+
+An artifact that the phone opened keeps a saved copy. The copies are files in the
+`Artifacts` folder beside the store, because the response budget is shared by every
+screen. A copy holds Markdown, text, HTML, an image or a PDF of up to 10 MiB. An HTML
+page's copy also holds the files that the page loaded from its own Ticket or Manager,
+such as screenshots and style files. Video, audio, other files and larger files keep no
+copy and are read each time.
+
+The viewer draws the saved copy at once, then reads the file again. The server's ETag
+answers 304 for an unchanged file; without one, the phone compares the bytes. Only a
+changed file draws again, so the scroll position stays. A failed read keeps the copy with
+no note. Until a read succeeds, the next connection reads again.
+
+An HTML page always tries the server first, as before: same origin, WebKit's own
+streaming, redirects and downloads. A launch or a return to the app, while the app is still
+connecting, is not offline. When the page finishes, the reader saves it and the images,
+styles and scripts that it loaded from its own Ticket or Manager, off the main thread. A
+file whose Content-Length is over the limit is not read, and a read with no such length
+stops once it passes the limit. The copy opens only when the load
+of the artifact's own page cannot reach the server, or at once while the app is
+reconnecting. A failed link inside the page never switches to the copy. The copy loads
+through the app's `panels-artifact` scheme, with one host for each server. That scheme
+serves only saved files and forwards nothing, so any other request fails quietly. When the
+app follows the server again, the same viewer loads the server's page, changed or not. A
+file that the server no longer has leaves the copy. When the server no longer has the
+artifact itself, its whole copy leaves, and the viewer shows the server's answer.
+
+Known limits:
+
+- The first save of an HTML page reads the page a second time, beside WebKit's own load.
+- Files that a page loads after its load event, or that are missing from its resource-timing
+  list, are not saved.
+- Query strings are ignored, so the same file with different queries shares one copy.
+- A file that a page no longer loads stays in its copy until eviction.
+- On each return to following the server, a visible copy gives way to the server's page
+  before that page is known to load. On a half-open connection, the spinner then shows
+  until WebKit's load times out.
+
+All copies stay under 256 MiB, and one page's copy never takes more. The copy opened least
+recently leaves first, and a copy not opened for 30 days leaves. Copies are kept per server address. A Ticket's file list is a
+saved response, so a Ticket page lists its files offline.
 
 ## The outbox
 
@@ -147,7 +192,7 @@ Messages from goal pages go through their holder's conversation.
 ## Verification
 
 Run `ios/scripts/test-offline.sh` for host tests. They cover cache eviction against
-saved work, server separation, the shared composer clear, each kind landing once
+saved work, artifact copies by size, age and server, server separation, the shared composer clear, each kind landing once
 across a lost connection, a lost response and a relaunch, mark read coalescing, the
 ask answer receipt rule and the refused-message mark.
 

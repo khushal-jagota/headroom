@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { ChildProcesses, signal_child } from '../../lifecycle/owned_processes.ts';
 import type { SpawnOptions } from 'node:child_process';
 import { lstat, stat } from 'node:fs/promises';
@@ -26,6 +28,7 @@ export function git(
   directory: string,
   args: readonly string[],
   options: ScratchPassOptions = {},
+  input?: string,
 ): Promise<GitResult> {
   options.signal?.throwIfAborted();
   directory = options.admit_path?.(directory) ?? directory;
@@ -40,7 +43,7 @@ export function git(
         GIT_OPTIONAL_LOCKS: '0',
         GIT_TERMINAL_PROMPT: '0',
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     };
     const argv = ['-C', directory, ...args];
     const child = options.git_execution
@@ -49,6 +52,12 @@ export function git(
     const stdout: Buffer[] = [],
       stderr: Buffer[] = [];
     let failure: Error | undefined;
+    const input_written =
+      input === undefined
+        ? Promise.resolve()
+        : pipeline(Readable.from([input]), child.stdin!).catch((error: Error) => {
+            failure = error;
+          });
     child.stdout!.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr!.on('data', (chunk: Buffer) => stderr.push(chunk));
     child.once('error', (error) => {
@@ -61,7 +70,8 @@ export function git(
       child.stderr!.destroy();
     };
     options.signal?.addEventListener('abort', abort, { once: true });
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
+      await input_written;
       options.signal?.removeEventListener('abort', abort);
       if (options.signal?.aborted) {
         reject(options.signal.reason);

@@ -57,13 +57,41 @@ extension APIClient {
     }
 }
 enum SettingsServerAddress {
+    private static let key = "panels.baseURL"
+
+    static func saved(in defaults: UserDefaults = .standard) -> URL? {
+        guard let address = defaults.string(forKey: key) else { return nil }
+#if DEBUG
+        return validated(address) ?? fixtureOrigin(address)
+#else
+        return validated(address)
+#endif
+    }
+
+    static func save(_ url: URL, in defaults: UserDefaults = .standard) {
+        defaults.set(url.absoluteString, forKey: key)
+    }
+
     static func validated(_ text: String) -> URL? {
+        guard let components = originComponents(text), components.scheme == "https" else { return nil }
+        return components.url
+    }
+
+#if DEBUG
+    static func fixtureOrigin(_ text: String) -> URL? {
+        guard let components = originComponents(text), components.scheme == "http",
+              ["localhost", "127.0.0.1"].contains(components.host) else { return nil }
+        return components.url
+    }
+#endif
+
+    private static func originComponents(_ text: String) -> URLComponents? {
         guard let components = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              components.scheme == "https", let host = components.host, !host.isEmpty,
+              let host = components.host, !host.isEmpty,
               components.user == nil, components.password == nil,
               components.query == nil, components.fragment == nil,
               components.path.isEmpty || components.path == "/" else { return nil }
-        return components.url
+        return components
     }
 }
 

@@ -20,7 +20,7 @@ describe("conversation dots across Worker references", () => {
   ] as const)("classifies literal work facts without inventing a conversation signal: %j", (facts, expected) => {
     const ticket = {
       ...quiet, ...facts, id: "literal-worker", title: "Literal Worker",
-      stage: "needs_implementation", ticket_status: "agent", conversation_id: null
+      stage: "needs_implementation", ticket_status: "agent_owned", conversation_id: null
     };
     expect(workItemTicketGroupKey(ticket)).toBe(expected);
     expect(buildWorkspaceRail([], [{ id: "item", title: "Item", tickets: [ticket], ...quiet } as BoardManager]).items[0].groups[0].cards[0].conversation_signal).toBeUndefined();

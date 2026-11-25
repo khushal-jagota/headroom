@@ -87,12 +87,15 @@ import XCTest
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
         let chief = store.resources.handle(ChiefResources.settings)
-        let deployment = store.resources.handle(ChiefResources.deployment)
-        chief.acquire(); deployment.acquire()
-        defer { chief.release(); deployment.release(); store.resources.stop() }
+        let updates = store.updateResource
+        chief.acquire(); updates.acquire()
+        defer { chief.release(); updates.release(); store.resources.stop() }
         await store.refresh()
         XCTAssertTrue(store.errors.isEmpty)
         XCTAssertEqual(store.chief?.label, "Chief 1")
+        XCTAssertEqual(store.updateStatus?.title, "Not checked for updates")
+        XCTAssertEqual(store.updateStatus?.appSha, "running")
+        XCTAssertFalse(RefreshProtocol.state.withLock { $0.readKeys.contains("/api/deployment-status") })
         await LocalStore.shared.flushCache()
         let cached = try XCTUnwrap(LocalStore.shared.record(server: "https://refresh.invalid", kind: "cache", id: ResourceCacheEnvelope.identity(chief.key))?.payload)
         let saved = try JSONDecoder().decode(ResourceCacheEnvelope.self, from: cached)
@@ -114,19 +117,19 @@ import XCTest
         XCTAssertFalse(RefreshProtocol.state.withLock { $0.paths.contains("/api/resource-body") })
         RefreshProtocol.state.withLock { $0.paths = []; $0.revision = "2" }
         await store.readSettings(probing: true)
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/resource-body" }.count }, 2)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/resource-body" }.count }, 1)
         XCTAssertEqual(store.chief?.label, "Chief 2")
         // Epoch changes invalidate even an identical revision token.
         RefreshProtocol.state.withLock { $0.paths = []; $0.epoch = "restarted" }
         await store.readSettings(probing: true)
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/resource-body" }.count }, 2)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/resource-body" }.count }, 1)
         // Failed probes / unsupported version API preserve ordinary reads.
         RefreshProtocol.state.withLock { $0.paths = []; $0.supportsVersions = false }
-        chief.entry.lastAttempt = .distantPast; deployment.entry.lastAttempt = .distantPast
+        chief.entry.lastAttempt = .distantPast; updates.entry.lastAttempt = .distantPast
         await store.readSettings(probing: true)
         XCTAssertTrue(store.errors.isEmpty)
         XCTAssertTrue(RefreshProtocol.state.withLock { $0.paths.contains("/api/workers/chief-of-staff/settings") })
-        XCTAssertTrue(RefreshProtocol.state.withLock { $0.paths.contains("/api/deployment-status") })
+        XCTAssertTrue(RefreshProtocol.state.withLock { $0.paths.contains("/api/updates") })
     }
 
     /// Risk: the phone follows the events stream instead of reading after each change.
@@ -193,6 +196,20 @@ import XCTest
         store.withdrawNavigationDemand("ticket:Z")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 4)
+    }
+
+    /// Risk: a quiet view only receives checkpoints, so its fresh time stops at the last
+    /// content change and a waiting ask the stream confirmed seconds ago is refused offline
+    /// an hour later. A checkpoint on the active stream refreshes the time.
+    func testCheckpointKeepsTheViewFresh() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.checkpointStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        defer { run.cancel() }
+        try await until { store.view?.contentVersion == "1" && store.view?.mode == "current" }
+        let snapshotAt = try XCTUnwrap(store.viewFreshAt)
+        try await until { (store.viewFreshAt ?? .distantPast) > snapshotAt }
+        XCTAssertEqual(store.view?.contentVersion, "1", "The checkpoint changed no content")
     }
 
     /// SwiftUI starts the next run before the cancelled one unwinds, as when the server
@@ -313,6 +330,7 @@ private struct RefreshFixture {
     /// still opens a stream is not this test's store, so its stream is not counted.
     let token = UUID().uuidString
     var paths: [String] = []
+    var readKeys: [String] = []
     var events: [EventsRequest] = []
     var revision = "1"
     var epoch = "initial"
@@ -326,6 +344,8 @@ private struct RefreshFixture {
     var pullStreams = false
     var openStreams = 0
     var failStreams = false
+    /// The first stream sends one snapshot, then a checkpoint with the same content.
+    var checkpointStreams = false
     var maxOpenStreams = 0
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
@@ -389,6 +409,11 @@ private struct RefreshFixture {
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
         }
         if failStreams { throw URLError(.notConnectedToInternet) }
+        if checkpointStreams {
+            let checkpoint: [String: Any] = ["event": "checkpoint", "wire_version": 3, "projection_version": 7, "view_id": "v", "scope_generation": generation,
+                "ordering_generation": "o", "coverage": Self.coverage("2"), "previous_coverage": Self.coverage("1"), "content_version": "1", "authority": Self.authority]
+            return ([(0, [try Self.frame(snapshot("1", working: false, updated: 1))]), (0.5, [try Self.frame(checkpoint)])], false)
+        }
         if pullStreams {
             let frame = try Self.frame(snapshot(String(events.count), working: false, updated: 1))
             return ([(events.count == 1 ? 0 : 0.3, [frame])], false)
@@ -431,14 +456,15 @@ private struct RefreshFixture {
         }
         if url.path == "/api/resource-versions" {
             if !supportsVersions { throw APIError(status: 404, message: "Not Found") }
-            return try JSONSerialization.data(withJSONObject: ["epoch": epoch, "resources": ["/api/workers/chief-of-staff/settings", "/api/deployment-status"].map { ["key": $0, "revision": revision] }])
+            return try JSONSerialization.data(withJSONObject: ["epoch": epoch, "resources": [["key": "/api/workers/chief-of-staff/settings", "revision": revision]]])
         }
         let key = url.path == "/api/resource-body" ? URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first!.value! : url.path
+        readKeys.append(key)
         if url.path == "/api/resource-body", !supportsVersions { throw APIError(status: 404, message: "Not Found") }
         let body: Any
         switch key {
         case "/api/workers/chief-of-staff/settings": body = ["future_field": "preserved", "employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
-        case "/api/deployment-status": body = ["state": "idle"]
+        case "/api/updates": body = ["state": "not_checked", "app_sha": "running", "allowed_actions": [], "machines": [], "available_machines": [], "client_versions": [], "interruption": ["stops_agents": false, "agents": [], "machine_ids": []]] as [String: Any]
         case "/api/executor/health": body = ["mode": "remote", "connection_state": "ready"]
         default: throw URLError(.unsupportedURL)
         }

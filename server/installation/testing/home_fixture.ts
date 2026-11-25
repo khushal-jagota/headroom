@@ -5,12 +5,20 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AppManifest } from '../../environments/release/contracts.ts';
+import { darwin_home_jobs } from '../darwin.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import type {
   HomeInstallDependencies,
   HomeInstallSubmission,
   HomeServicePlan,
 } from '../contracts.ts';
+
+/** Hold a cleanly exited candidate registered without a PID until rollback boots it out. */
+export const crash_restart_jobs: typeof darwin_home_jobs = (request, ...bindings) => {
+  const jobs = darwin_home_jobs(request, ...bindings);
+  jobs[request.service]!.KeepAlive = { SuccessfulExit: false };
+  return jobs;
+};
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -28,7 +36,7 @@ export async function home_install_fixture() {
   writeFileSync(foreign, 'existing account data');
   const controller = new AbortController(),
     owner = new ChildProcesses();
-  const request: HomeInstallSubmission = {
+  const request = {
     root: join(base, 'new-parent', 'home'),
     service: 'com.panels.test',
     port: await unused_port(),
@@ -37,7 +45,7 @@ export async function home_install_fixture() {
     archive_sha256: 'a'.repeat(64),
     revision: 'b'.repeat(40),
     update_token: 'gho_fixtureUpdateToken0123456789',
-  };
+  } satisfies HomeInstallSubmission;
   const unit = join(account, '.config/systemd/user/com.panels.test.service');
   const events: string[] = [];
   const service: HomeServicePlan = {

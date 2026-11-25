@@ -187,7 +187,7 @@ struct ReviewProposalDock: View {
                 catch { busyAction = nil; throw error }
                 decision.acceptScopeRead(current)
                 // Moved to someone else here: the card is held so the move reads as
-                // Khushal's, not as a notice, and leaves once the sheet closes. The stream
+                // the owner's, not as a notice, and leaves once the sheet closes. The stream
                 // can close the sheet first, so a save that finds it closed leaves now.
                 // Leaving clears the busy state.
                 if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }

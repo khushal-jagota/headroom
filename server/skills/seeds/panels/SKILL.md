@@ -12,7 +12,7 @@ routines or replacement recurring reviews.
 
 Existing personal Tickets keep their identity, records, proposals, and ordinary Stage
 gates. Their removal from the catalog does not cancel them, complete them, grant agent
-permission, or widen their ceiling. Preserve all 19 personal Tickets. Historical calendar work does not authorize changes
+permission, or widen their ceiling. Preserve existing personal Tickets. Historical calendar work does not authorize changes
 to ordinary unfinished work.
 
 # Panels
@@ -114,7 +114,7 @@ SELF-CHECK before returning: scan for contractions, "has been", "should", ", mak
 
 A Ticket owns its documents, images, evidence, and scratch. Panels clears its files seven days after it ends. New activity on an ended Ticket starts a fresh seven-day wait. Its stage text and proposals remain, but links to cleared files expire.
 
-Use the artifact directory in the Worker prompt. It is on the machine that runs the Ticket, and Panels transfers artifacts to the server. Use served links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Keep code, dependencies, and scratch in the supplied `worktree/`. The checkout is private and is not served, transferred as artifacts, or backed up. Do not infer paths from the current directory.
+Use `PLAN_TICKET_FILES_DIR/artifacts` if Panels supplies `PLAN_TICKET_FILES_DIR`. Otherwise use the artifact directory in the Worker prompt. Panels transfers the files to the server. Use served links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Keep code, dependencies, and scratch in the supplied `worktree/`. The checkout is private and is not served, transferred as artifacts, or backed up. Do not infer paths from the current directory.
 
 Artifacts complement the ticket record. Brief, success condition, what changes, plan, implementation, consequences, and recaps remain concise canonical Markdown, with links to richer work when it helps.
 
@@ -132,7 +132,7 @@ The command groups describe both the object being changed and the operation's au
 - `panels ticket ...` for ordinary, actor-neutral ticket creation, inspection, organization, and approval.
 - `panels manager ...` manages ordinary Managers.
 - `panels ticket show`, `panels ticket propose`, and `panels recap` for the gated worker flow: your Ticket, proposals, and recaps.
-- `panels review` shows what waits on Khushal.
+- `panels review` shows what waits on the owner.
 - `panels send-message --chief ...` addresses the Chief conversation. Ticket creation and edits stay under `panels ticket ...`.
 
 ## Skills

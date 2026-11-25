@@ -7,6 +7,6 @@
     "sound": "default",
     "thread-id": "panels-chief"
   },
-  "server_url": "https://panels-vps.tail687c57.ts.net",
+  "server_url": "https://panels.example.com",
   "route": "/#/agents/chief-of-staff"
 }
