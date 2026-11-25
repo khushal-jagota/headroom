@@ -60,6 +60,8 @@ struct HolderTickets: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+            Text("Tickets").font(PanelsTheme.TypeScale.heading).foregroundStyle(PanelsTheme.muted)
+                .accessibilityAddTraits(.isHeader)
             if let active {
                 if active.tickets.isEmpty {
                     Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)

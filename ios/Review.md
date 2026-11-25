@@ -41,9 +41,13 @@ last for one app run.
 
 ## Summary screen
 
-The summary shows at launch, after the last card, after a visit to another Sidebar
-destination, and on a return to the app when the card that was open left the window
-meanwhile. Otherwise leaving and returning to the app keeps the owner on the same card,
+The summary shows at launch, after the last card, and after every tap on Sidebar
+Review. The tap clears Review’s pushed page path and shown card, including a card
+whose exit runs. It does not refresh, change skip history or priority keys, or open
+a card. A notification addressed to Review itself also opens the summary.
+Only Back to review or Review skipped opens the cards. The summary also
+shows on a return to the app when the card that was open left the window meanwhile.
+Otherwise leaving and returning to the app keeps the owner on the same card,
 and a page or artifact opened from a card returns to it. Offline, nothing fresh
 arrives, so he stays where he was.
 
@@ -205,8 +209,10 @@ Host tests run with `ios/scripts/test-offline.sh` and use no server, browser or
 Simulator.
 
 - `ReviewQueueTests` checks the queue model: the shown card follows the window and
-  only its exit holds it; the summary after a visit and after the open card left while
-  away, but not on a plain return or offline; per-card skip, the entry keys, the four
+  only its exit holds it until an explicit summary selection; the summary after a
+  selection and after the open card left while
+  away, but not on a plain return or offline; late callbacks after a summary selection,
+  including a reopened card with the same identity; per-card skip, the entry keys, the four
   summary states and the return order; a refusal coming to the front once, including
   one that lands during an exit; the reviewer-move notice; and refusal cards built
   from each proposal's latest saved decision.
@@ -234,7 +240,8 @@ The permanent `ReviewMessagesTests/testSplitCardsSkipAndReturn` proves what mode
 tests cannot: on the real SwiftUI host the app opens on the summary, the proposal and
 its Ticket's message are separate cards, Skip is per card, an artifact opened from a
 card docks its reply with the card's draft and returns to it, and Review skipped
-brings every card back. Its writes change the fixture, so it runs alone on a fresh
+brings every card back. The same journey checks Sidebar Review from an open card,
+from Chief with a card retained, and from the summary itself. Its writes change the fixture, so it runs alone on a fresh
 stub with `PANELS_REVIEW_MESSAGES=1`, `PANELS_REVIEW_SPLIT=1` and
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testSplitCardsSkipAndReturn`.
 `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` reaches
@@ -251,5 +258,11 @@ summary states, answers a permission ask, and has the stub capture each screen w
 `simctl`. It is a review tool, outside the permanent suite. Simulator evidence does not
 establish physical-device haptic feel, frame rate, the microphone or a live
 transcription provider.
+
+`SidebarNavigationTests/testReviewSelectionClearsRetainedArtifactPath` is a one-off
+walk with the split fixture and `--review`. A synthetic notification opens Chief
+from an artifact without a Back action. Sidebar Review then discards the retained
+path and shows the summary. The walk also checks a bare Review notification after
+a card was open. It uses the existing loopback host and no APNs provider.
 
 See [saved data and interrupted connections](Offline.md) for the outbox.

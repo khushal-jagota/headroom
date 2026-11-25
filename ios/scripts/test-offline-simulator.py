@@ -617,6 +617,8 @@ def main() -> int:
         # Explicit selection leaves all other DESIGN_REVIEW journeys unchanged.
         if not state.get("workspace_fixture"):
             state["workspace_baseline"] = (copy.deepcopy(tickets), copy.deepcopy(goals))
+        state.pop("holder_pages_case", None)
+        state.pop("holder_pages_goals", None)
         state.update(
             workspace_fixture=True,
             workspace_moved=False,
@@ -672,6 +674,32 @@ def main() -> int:
             title="Publish Science",
             deadline=None,
         )
+
+    def workspace_goals() -> list[dict[str, Any]]:
+        if "holder_pages_case" in state:
+            return [goals[key] for key in state["holder_pages_goals"]]
+        return [goals["release"], goals["words"]]
+
+    def select_holder_pages_case(case: str) -> None:
+        # One-off page order proof reuses the Workspace host, routes and goal writers.
+        select_workspace_fixture()
+        state["holder_pages_case"] = case
+        goals["release"]["active"] = True
+        binary = goal_record("holder-binary", "Confirm the plan", "binary")
+        binary.update(deadline=None, holder_kind="chief", holder_id=None)
+        extra = goal_record("holder-extra", "Check the follow-up", "binary")
+        extra.update(deadline=None, holder_kind="manager", holder_id="wren")
+        goals.update({binary["id"]: binary, extra["id"]: extra})
+        selected = ["holder-binary", "release"]
+        if case == "none" or case == "empty":
+            selected = []
+        elif case == "multiple":
+            selected.append("holder-extra")
+        elif case == "inactive":
+            selected.append("holder-extra")
+            for key in selected:
+                goals[key]["active"] = False
+        state["holder_pages_goals"] = selected
 
     def workspace_records() -> dict[tuple[str, str], dict[str, Any]]:
         records = {
@@ -992,8 +1020,8 @@ def main() -> int:
                 elif section == "goals":
                     members = [
                         ("goal", goal["id"])
-                        for goal in (goals["release"], goals["words"])
-                        if goal["holder_id"] == owner_id
+                        for goal in workspace_goals()
+                        if (goal["holder_id"] or "chief") == owner_id
                     ]
                 elif section == "settled":
                     members = [
@@ -1233,6 +1261,21 @@ def main() -> int:
                         state["machine_name"] = "Studio"
                     self.respond({"name": "Studio"})
                     return
+                if REVIEW_MESSAGES and name in ("review-open-chief", "review-open-summary"):
+                    # Reuse this host for the retained Review path walk. Synthetic pushes
+                    # select a different destination without popping the artifact first.
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    payload = dict(aps={"alert": {"title": "Review navigation proof", "body": name}},
+                                   server_url=url,
+                                   route="/#/agents/chief-of-staff" if name == "review-open-chief" else "/#/review")
+                    file = output / (name + ".apns")
+                    file.write_text(json.dumps(payload))
+                    result = subprocess.run(["xcrun", "simctl", "push", DEVICE, BUNDLE, str(file)], capture_output=True)
+                    self.respond({"output": (result.stdout + result.stderr).decode()},
+                                 200 if result.returncode == 0 else 500)
+                    return
                 if UPDATES_SMOKE and name.startswith("updates/"):
                     phase = name.removeprefix("updates/")
                     if phase not in ("offer", "updating", "restart", "failed", "refused", "complete"):
@@ -1249,6 +1292,15 @@ def main() -> int:
                 if UPDATES_SMOKE and name == "update-state":
                     self.respond(dict(phase=state["update_phase"], reads=state["update_reads"],
                                       retry_count=state["update_retry_count"], writes=state["writes"]))
+                    return
+                if DESIGN_REVIEW and name.startswith("holder-pages/"):
+                    case = name.removeprefix("holder-pages/")
+                    if case not in ("goals", "none", "empty", "multiple", "inactive"):
+                        self.respond({"error": "Unknown holder page case"}, 400)
+                        return
+                    with lock:
+                        select_holder_pages_case(case)
+                    self.respond({"case": case})
                     return
                 if DESIGN_REVIEW and name == "workspace-fixture":
                     with lock:
@@ -1641,7 +1693,7 @@ def main() -> int:
             if (GOALS_SMOKE or state.get("workspace_fixture")) and path == "/api/goals":
                 self.respond(
                     dict(
-                        goals=[goals["release"], goals["words"]]
+                        goals=workspace_goals()
                         if state.get("workspace_fixture")
                         else list(goals.values()),
                         status_date="2026-11-04",
@@ -1795,12 +1847,37 @@ def main() -> int:
                     "status_date": "2026-11-14",
                     "next_refresh_at": time.time() + 3600,
                 }
+            elif state.get("holder_pages_case") and path.endswith("/page"):
+                # Include a retired Tickets block to prove it cannot duplicate the fixed list.
+                blocks = [] if state["holder_pages_case"] == "empty" else [
+                    dict(type="text", id="holder-notes", text=("Chief notes: " if "/chief/" in path else "Manager notes: ") + state["holder_pages_case"]),
+                    dict(type="tickets", id="retired-tickets"),
+                ]
+                value = {"page": {"kind": "headroom.page", "version": 1, "blocks": blocks}, "page_revision": 1}
+            elif state.get("holder_pages_case") and path == "/api/tickets" and "id" not in query:
+                rows = []
+                if query.get("is_backlogged") == ["false"] and "stage" not in query:
+                    manager = query.get("manager_id", [None])[0]
+                    identity = "weekly" if manager is None else "build"
+                    ticket = tickets[identity]
+                    rows = [dict(id=identity, title=ticket["title"], worker_type="coding",
+                                 stage="needs_what_changes", ticket_status="agent_owned", is_backlogged=False,
+                                 blocked=False, recap_preview="", activity_at=1, project_id="wren",
+                                 project="Wren", manager_id=manager, awaiting_reply=False,
+                                 awaiting_answer=False, awaiting_approval=False, awaiting_agent_approval=False,
+                                 assigned=False, agent_state="idle", locale="vps",
+                                 conversation_signal=dict(working=False, message_for_owner=False))]
+                value = {"tickets": rows, "page": dict(page, match_count=len(rows), return_count=len(rows))}
             elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith("/page"):
                 value = {"page": {"blocks": []}, "page_revision": 1}
             elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith(
                 "/page/readings"
             ):
-                value = {"values": [], "sources": []}
+                value = dict(
+                    goal_id="chief" if "/chief/" in path else path.split("/")[3],
+                    revision=1, status="neutral", status_date="2026-11-04",
+                    next_refresh_at=time.time() + 3600, values=[], sources=[], charts={},
+                )
             elif path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":

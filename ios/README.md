@@ -15,7 +15,10 @@ Review opens on its summary once the app has a home address. There is no tab bar
 Chief, each Manager and Settings. Only the current destination is on screen and
 mounted, in its own navigation stack. The shell keeps each destination's page path,
 so you can return to the page you left, for example after a notification opens another
-page. Drafts survive every switch because they are saved per owner and reload
+page. A tap on Sidebar Review always clears Review’s page path and opens its summary,
+even when Review is already selected or a card’s exit runs. It does not refresh or
+open cards. Ordinary Back from a page or artifact still returns to its card.
+Drafts survive every switch because they are saved per owner and reload
 when a page mounts. Scroll position and a view's in-memory state do not.
 
 A slide-over Sidebar replaces the tab bar; see [Sidebar](#sidebar). Every page uses
@@ -52,7 +55,7 @@ Control Center or a notification pull-down, keeps the streams. A stream with no 
 for 35 seconds fails; the server's heartbeat every 15 seconds keeps a good one open.
 A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
-then 8 seconds and show Reconnecting. Then saved work drains, as before.
+then 8 seconds. Short interruptions stay quiet. A sustained loss of server contact shows the native full-screen cover described in [Saved data and interrupted connections](Offline.md). Then saved work drains, as before.
 
 Ordinary responses have one shared owner per server and exact resource key. Mounted
 screens acquire handles for their documents. A payload-free change signal probes
@@ -259,8 +262,8 @@ Use one-off Simulator reviews for appearance and visual polish.
 | `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
 | `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Chief and Review through the Sidebar, reply, and follow the conversation route. |
 | `ReviewMessagesTests/testSplitCardsSkipAndReturn` | Act on a Review item and return to skipped work. |
-| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once with no cover or status note. Try Again resends a refused message once. |
-| `ServerReachabilityTests/testUnreachableServerShowsNoCoverAndRecovers` | Lose the server: no cover appears, the app stays usable, and Review opens again without a relaunch. |
+| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once while transient failures stay quiet. Try Again resends a refused message once. |
+| `ServerReachabilityTests/testUnreachableServerShowsCoverAndRecovers` | A short loss stays quiet; sustained loss covers an open sheet. Continue offline retains saved work, and recovery clears the cover and sends queued work once. |
 
 Discover the native tests before a release run. Discovery must find all five
 methods. A selection that executes zero tests fails, even if Xcode returns success.
@@ -692,8 +695,8 @@ recording, shows it as done at once and sends it while the app is in the foregro
 Review, Chief, Orchestrator, Ticket and artifact lists share a labeled
 delayed block skeleton on the first load. The retry screen appears only when nothing
 has loaded and the server refused the read; a read that cannot reach the server
-keeps the skeleton. Failed refreshes keep the last content visible, including an
-empty result, with no note. Retry buttons remain disabled until their request
+keeps the skeleton until sustained loss requires the shared connection cover.
+Failed refreshes keep the last content visible, including an empty result, with no local note. Retry buttons remain disabled until their request
 finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
@@ -867,9 +870,12 @@ Each Sidebar card shows the status tag of its worst active goal. Chief and Manag
 show their own goals with working checklists and manual charts. A binary goal without
 a checklist offers Mark done or Mark not done. Manual charts offer their configured
 increments, such as Add 100 words. A Manager with one goal displays that goal
-under the Manager's name; multiple goals use cards. Holder documents use the same
-native page renderer, including Tickets blocks; when none is authored the page
-keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+under the Manager's name; multiple goals use cards. Chief and Manager pages put
+their labeled, paged Tickets list immediately after the title and recap, before
+goals and authored content. Goal cards have no section heading. Pages omit absent
+goals and empty authored documents, including their section spacing. Tickets stay in one
+fixed place and old authored Tickets blocks do not render. All goals remains in
+Settings and includes inactive goals and column filters.
 Goal screens share a full project catalogue read for labels, filters and editing.
 
 A goal page opens its holder's conversation. Previous goal transcripts use the

@@ -269,7 +269,7 @@ private struct ConversationSurface: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active && !store.contentCovered)
             }
             if readOnly {
                 Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
@@ -376,7 +376,7 @@ struct ConversationThread: View {
     @State private var appeared = false
     @State private var visibleRowIDs: Set<String> = []
     private var readBoundary: ConversationReadBoundary? {
-        model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
+        model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared && !store.contentCovered)
     }
     @Environment(AppStore.self) private var store
     @Environment(\.screenTextEntry) private var textEntry
@@ -458,7 +458,7 @@ struct ConversationThread: View {
             .onChange(of: model.conversationID) { _, _ in visibleRowIDs = [] }
             .onChange(of: model.lens) { _, _ in visibleRowIDs = [] }
             .task(id: readBoundary) {
-                await model.acknowledgeVisibleRows(visibleRowIDs, active: active && appeared, using: store.client)
+                await model.acknowledgeVisibleRows(visibleRowIDs, active: active && appeared && !store.contentCovered, using: store.client)
             }
             .contentMargins(.top, 12, for: .scrollContent)
             .task {

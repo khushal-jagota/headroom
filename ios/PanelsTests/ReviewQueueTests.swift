@@ -50,17 +50,15 @@ final class ReviewQueueTests: XCTestCase {
     }
 
     /// Risk: the summary shows at the wrong moments, or a return to the app moves the owner
-    /// off a card that is still waiting. A Sidebar visit and a card that left while the app
+    /// off a card that is still waiting. A Sidebar selection and a card that left while the app
     /// was away show the summary; a plain return keeps him where he was.
-    func testSummaryAfterAVisitAndAfterTheOpenCardLeftWhileAway() {
+    func testSummarySelectionAndAfterTheOpenCardLeftWhileAway() {
         var queue = ReviewQueue()
         let all = [proposal, chiefMessage]
-        queue.visit(0)
         queue.returnToCards(); reconcile(&queue, all)
-        queue.visit(0)
-        XCTAssertEqual(queue.shown?.id, proposal.id, "Remounting on the same visit keeps the card")
-        queue.visit(1); reconcile(&queue, all)
-        XCTAssertNil(queue.shown, "Another destination and back shows the summary")
+        XCTAssertEqual(queue.shown?.id, proposal.id)
+        queue.showSummary(); reconcile(&queue, all)
+        XCTAssertNil(queue.shown, "An explicit Review selection shows the summary")
 
         queue.returnToCards(); reconcile(&queue, all)
         queue.leaveApp(session: 4)
@@ -304,20 +302,46 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertNil(queue.leaving)
     }
 
-    /// Risk: the same freeze through a visit. Review becomes the destination again while a
-    /// card's exit runs; the summary must not replace the exit.
-    func testACardLeavingWhenReviewIsVisitedAgainFinishesItsExit() {
+    /// Risk: a Review selection during an exit leaves a held card or a late callback
+    /// changes the summary. The saved decision stays handled, and skip history stays intact.
+    func testSummarySelectionAbandonsTheExitAndIgnoresLateCallbacks() {
         var queue = ReviewQueue()
         let all = [proposal, ticketMessage, chiefMessage]
-        queue.visit(1)
         queue.returnToCards(); reconcile(&queue, all)
-        queue.resolve(proposal)
-        queue.visit(2)
-        XCTAssertEqual(queue.shown?.id, proposal.id, "The exit still runs after the visit")
-        queue.finishExit(proposal); reconcile(&queue, all)
-        XCTAssertEqual(queue.shown?.id, ticketMessage.id, "The queue moves on")
-        queue.visit(3)
-        XCTAssertNil(queue.shown, "With no exit running, a visit opens on the summary")
+        queue.skip(proposal, in: all); reconcile(&queue, all)
+        queue.resolve(ticketMessage); reconcile(&queue, all)
+        let skipped = queue.skipped
+        let history = queue.history
+        queue.showSummary()
+        queue.finishExit(ticketMessage)
+        queue.resolve(ticketMessage)
+        queue.skip(ticketMessage, in: all)
+        reconcile(&queue, all)
+        XCTAssertNil(queue.shown)
+        XCTAssertNil(queue.leaving)
+        XCTAssertNil(queue.pinned)
+        XCTAssertEqual(queue.handled, [ticketMessage.id])
+        XCTAssertEqual(queue.skipped, skipped)
+        XCTAssertEqual(queue.history, history)
+        queue.showSummary(); reconcile(&queue, all)
+        XCTAssertNil(queue.shown, "A repeated selection stays on the summary")
+    }
+
+    /// Risk: the same card opens again before its old exit callback runs. Identity alone
+    /// cannot distinguish the new presentation from the abandoned one.
+    @MainActor func testSummarySelectionInvalidatesTheReopenedCardPresentation() {
+        let store = AppStore(baseURL: URL(string: "http://127.0.0.1:1")!)
+        store.review = ReviewResponse(items: [proposal, chiefMessage], runningWorkerCount: 0)
+        let session = ReviewSession()
+        session.update(store: store, savedWork: ReviewSavedWork(), freshSession: nil)
+        session.returnToCards(store: store)
+        let oldPresentation = session.exits
+        XCTAssertTrue(session.presents(proposal, at: oldPresentation))
+        session.showSummary()
+        session.returnToCards(store: store)
+        XCTAssertEqual(session.shown?.id, proposal.id)
+        XCTAssertFalse(session.presents(proposal, at: oldPresentation))
+        XCTAssertTrue(session.presents(proposal, at: session.exits))
     }
 
     /// Risk: one saved reply moves the queue on twice. The card that sent it and an artifact

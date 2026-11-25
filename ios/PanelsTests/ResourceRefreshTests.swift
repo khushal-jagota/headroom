@@ -4,6 +4,103 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ResourceRefreshTests: XCTestCase {
+    /// Existing refresh tests classify errors but do not prove delayed admission.
+    /// This clock-driven check replaces wall-clock waits for each failure class.
+    func testConnectionCoverRequiresSustainedRepeatedFailures() {
+        var single = ServerConnectionEvidence()
+        single.fail(.unreachable, started: 0, now: 0)
+        single.evaluate(now: 20)
+        XCTAssertFalse(single.isCovered, "One refusal cannot establish a complete outage")
+        var evidence = ServerConnectionEvidence()
+        evidence.fail(.unreachable, started: 0, now: 0)
+        evidence.fail(.unreachable, started: 1, now: 1)
+        XCTAssertEqual(evidence.deadline, 8)
+        evidence.evaluate(now: 7.99)
+        XCTAssertFalse(evidence.isCovered)
+        evidence.evaluate(now: 8)
+        XCTAssertTrue(evidence.isCovered)
+        evidence.continueOffline()
+        evidence.pause()
+        XCTAssertFalse(evidence.isCovered, "Continue offline lasts through a background return")
+        evidence.answered()
+        evidence.fail(.unreachable, started: 30, now: 30)
+        evidence.fail(.unreachable, started: 31, now: 31)
+        evidence.evaluate(now: 38)
+        XCTAssertTrue(evidence.isCovered, "Actual contact resets the offline choice for the next outage")
+
+        evidence.answered()
+        evidence.fail(.uncertain, started: 0, now: 10)
+        evidence.fail(.uncertain, started: 15, now: 25)
+        evidence.evaluate(now: 60)
+        XCTAssertFalse(evidence.isCovered, "Two timeouts stay quiet regardless of elapsed time")
+        evidence.fail(.uncertain, started: 30, now: 40)
+        evidence.evaluate(now: 44.99)
+        XCTAssertFalse(evidence.isCovered)
+        evidence.evaluate(now: 45)
+        XCTAssertTrue(evidence.isCovered)
+        evidence.answered()
+        evidence.fail(.unreachable, started: 50, now: 50)
+        evidence.pause()
+        evidence.fail(.unreachable, started: 100, now: 100)
+        evidence.evaluate(now: 108)
+        XCTAssertFalse(evidence.isCovered, "Background time cannot join separate short drops")
+    }
+
+    /// A healthy response or heartbeat must defeat older failures, and an old
+    /// server or foreground run must never regain authority over the cover.
+    func testConnectionContactAndRequestGenerationBoundOutageEvidence() async throws {
+        var time: TimeInterval = 0
+        let url = URL(string: "https://refresh.invalid")!
+        let connection = ServerConnection(server: url, now: { time })
+        connection.begin()
+        let old = try XCTUnwrap(connection.attempt(server: url))
+        let response = HTTPURLResponse(url: url, statusCode: 503, httpVersion: nil, headerFields: nil)!
+        connection.answered(old, response: response)
+        time = 10
+        connection.failed(URLError(.cannotConnectToHost), attempt: old)
+        connection.failed(URLError(.cannotConnectToHost), attempt: old)
+        XCTAssertFalse(connection.isCovered, "An actual HTTP error clears earlier outage evidence")
+        let current = try XCTUnwrap(connection.attempt(server: url))
+        connection.failed(URLError(.cannotConnectToHost), attempt: current)
+        time = 19
+        let next = try XCTUnwrap(connection.attempt(server: url))
+        connection.failed(URLError(.cannotConnectToHost), attempt: next)
+        XCTAssertTrue(connection.isCovered)
+        connection.answered(next, response: HTTPURLResponse(url: URL(string: "https://elsewhere.invalid")!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        XCTAssertTrue(connection.isCovered, "A response from another origin cannot clear this server's outage")
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.supportsVersions = false }
+        let api = APIClient(baseURL: url, session: RefreshProtocol.session, serverConnection: connection)
+        do {
+            _ = try await api.responseData("/api/resource-versions")
+            XCTFail("The fixture must refuse this endpoint")
+        } catch { XCTAssertEqual((error as? APIError)?.status, 404) }
+        XCTAssertFalse(connection.isCovered, "The shared transport announces HTTP contact before validation throws")
+        let beforeHeartbeat = try XCTUnwrap(connection.attempt(server: url))
+        connection.failed(URLError(.cannotConnectToHost), attempt: beforeHeartbeat)
+        time = 28
+        connection.failed(URLError(.cannotConnectToHost), attempt: try XCTUnwrap(connection.attempt(server: url)))
+        XCTAssertTrue(connection.isCovered)
+        connection.answered(next)
+        XCTAssertFalse(connection.isCovered, "A heartbeat proves current server contact")
+        connection.pause(); connection.begin()
+        time = 40
+        connection.failed(URLError(.cannotConnectToHost), attempt: current)
+        connection.failed(URLError(.cannotConnectToHost), attempt: next)
+        XCTAssertFalse(connection.isCovered)
+        connection.failed(URLError(.cannotConnectToHost), attempt: try XCTUnwrap(connection.attempt(server: url)))
+        connection.begin() // The next run starts before the prior run's defer pauses it.
+        time = 49
+        connection.failed(URLError(.cannotConnectToHost), attempt: try XCTUnwrap(connection.attempt(server: url)))
+        XCTAssertFalse(connection.isCovered, "A new foreground run discards an unfinished outage even without an earlier pause")
+        connection.configure(server: URL(string: "https://other.invalid")!)
+        connection.begin()
+        XCTAssertNil(connection.attempt(server: url))
+        for code in [URLError.cancelled, .secureConnectionFailed, .badServerResponse, .cannotDecodeRawData] {
+            XCTAssertNil(ServerConnection.failure(URLError(code)))
+        }
+        XCTAssertNil(ServerConnection.failure(APIError(status: 503, message: "reachable")))
+    }
+
     func testOnlyUnreachableTransportFailuresRequireTailscaleState() {
         for code in [URLError.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet] {
             XCTAssertTrue(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
@@ -12,7 +109,7 @@ import XCTest
         for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
             XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
         }
-        // The app shows no connection state: a passing transport failure leaves no note.
+        // Individual reads show no connection state: a passing transport failure leaves no local note.
         for code in [URLError.timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet] {
             XCTAssertNil(ServerReadFailure.note(URLError(code)), "\(code)")
             XCTAssertNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
@@ -259,7 +356,10 @@ import XCTest
     /// replaces once its snapshot lands, so two are open only during that wait.
     func testPullOpensFreshStreamAndClosesTheOldOneWhenItsSnapshotLands() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        var time: TimeInterval = 0
+        let url = URL(string: "https://refresh.invalid")!
+        let connection = ServerConnection(server: url, now: { time })
+        let store = AppStore(baseURL: url, session: RefreshProtocol.session, serverConnection: connection)
         let run = Task { await store.run() }
         defer { run.cancel() }
         func open() -> Int { RefreshProtocol.state.withLock { $0.openStreams } }
@@ -293,7 +393,7 @@ import XCTest
         try await until { open() == 1 }
 
         // Offline, the new stream fails at once: the pull ends then, and the followed stream stays.
-        RefreshProtocol.state.withLock { $0.failStreams = true }
+        RefreshProtocol.state.withLock { $0.failStreams = true; $0.failure = .cannotFindHost }
         let started = ContinuousClock.now
         await store.pull()
         XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
@@ -301,6 +401,9 @@ import XCTest
         XCTAssertEqual(open(), 1)
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.maxOpenStreams }, 2)
         XCTAssertEqual(store.connection, "Following changes")
+        time = 9
+        await store.pull()
+        XCTAssertFalse(connection.isCovered, "Repeated failed replacements cannot cover the healthy followed stream between heartbeats")
     }
 
     /// Risk: a run that ends must not leave the view marked as following. Otherwise the

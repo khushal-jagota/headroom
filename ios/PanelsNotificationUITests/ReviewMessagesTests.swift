@@ -27,6 +27,33 @@ final class ReviewMessagesTests: XCTestCase {
         // The proposal is its own card, with Skip, Return and Approve in one row.
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        // The real Sidebar action must leave an open card, even while Review is already
+        // selected. Model tests cannot prove selection through the shell's NavigationStack.
+        let selectionProofStart = Date()
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.label, "3 new.")
+        XCTAssertEqual(app.staticTexts["review.summary.detail"].label, "Ready to review.")
+        XCTAssertFalse(approve.exists)
+        capture(app, "review-selection-from-card")
+        // A repeated tap stays on the summary. A trip through Chief does the same.
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.label, "3 new.")
+        XCTAssertFalse(approve.exists)
+        capture(app, "review-selection-already-summary")
+        back.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        app.openDestination("sidebar-chief")
+        XCTAssertTrue(app.descendants(matching: .any)["chief-screen"].waitForExistence(timeout: 8))
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.label, "3 new.")
+        XCTAssertFalse(approve.exists)
+        capture(app, "review-selection-from-chief")
+        print("Review selection proof: \(Date().timeIntervalSince(selectionProofStart)) seconds")
+        back.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 10))
         let message = app.staticTexts["First unread message"]
         XCTAssertFalse(message.exists, "The message is a card of its own")
         let note = app.textFields["review.revision"].firstMatch

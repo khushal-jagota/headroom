@@ -36,6 +36,68 @@ final class SidebarNavigationTests: XCTestCase {
         capture("machine-name-conversation-renamed-studio")
     }
 
+    /// A notification leaves Review's artifact path retained behind Chief. This one-off
+    /// walk proves that the real Sidebar selection discards it, which a queue test cannot.
+    /// It reuses the split fixture and host; no production notification service is involved.
+    @MainActor func testReviewSelectionClearsRetainedArtifactPath() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        _ = try await URLSession.shared.data(from: URL(string: base + "/proof/review-owner/ticket-split")!)
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        app.openDestination("sidebar-settings")
+        app.segmentedControls.buttons["Notifications"].tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = app.buttons["allow-notifications"]
+        if allow.waitForExistence(timeout: 5) {
+            allow.tap()
+            let permission = springboard.buttons["Allow"]
+            if permission.waitForExistence(timeout: 5) { permission.tap() }
+        }
+        app.openDestination("sidebar-review")
+        app.openReviewCards()
+        let skip = app.buttons["review.skip"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 8))
+        skip.tap()
+        let message = app.staticTexts["First unread message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 8))
+        let artifact = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
+        XCTAssertTrue(artifact.waitForExistence(timeout: 5))
+        artifact.tap()
+        XCTAssertTrue(app.buttons["Artifact actions"].waitForExistence(timeout: 8))
+        capture(app, "review-retained-artifact-before-selection")
+
+        @MainActor func openPush(_ name: String) async throws {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + name)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let banner = springboard.descendants(matching: .any).matching(identifier: "NotificationShortLookView").firstMatch
+            XCTAssertTrue(banner.waitForExistence(timeout: 10))
+            banner.tap()
+        }
+        try await openPush("review-open-chief")
+        XCTAssertTrue(app.descendants(matching: .any)["chief-screen"].waitForExistence(timeout: 8))
+        app.openDestination("sidebar-review")
+        let summary = app.staticTexts["review.summary.headline"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.label, "3 to review.")
+        XCTAssertEqual(app.staticTexts["review.summary.detail"].label, "2 new, 1 skipped.")
+        XCTAssertFalse(app.buttons["Artifact actions"].exists)
+        capture(app, "review-retained-artifact-cleared")
+
+        // Bare Review notifications keep their summary destination after the visit hook
+        // disappears. Chief can retain an open card behind it before the notification.
+        app.openReviewCards()
+        XCTAssertTrue(skip.waitForExistence(timeout: 8))
+        app.openDestination("sidebar-chief")
+        try await openPush("review-open-summary")
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertFalse(skip.exists)
+        capture(app, "review-notification-summary")
+    }
+
     @MainActor func testDestinationsBackSwipeAndOneComposer() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
