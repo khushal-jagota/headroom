@@ -64,9 +64,8 @@ struct SettingsView: View {
         Group {
             if let workers {
                 Section {
-                    LabeledContent("Legacy executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown").textSelection(.enabled)
-                    Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.").textSelection(.enabled)
-                        .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                    MoreSelectableValue("Legacy executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")
+                    MoreSelectableText(store.executorHealth?.contactSentence ?? "Last contact: unknown.", style: .footnote, color: PanelsTheme.muted)
                 }.listRowBackground(PanelsTheme.raised)
                 Section {
                     NavigationLink {
@@ -75,7 +74,7 @@ struct SettingsView: View {
                     ForEach(skills.filter { ["panels-manager", "panels-worker"].contains($0.name) }, id: \.name) { skill in
                         NavigationLink(skill.name == "panels-manager" ? "Manager" : "Worker skill") { SettingsSkillDetail(skill: skill) }.systemCopyText(skill.name)
                     }
-                } header: { Text("Agents").textSelection(.enabled).panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
+                } header: { MoreSelectableText("Agents", style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
                 Section {
                     ForEach(workers.workers.sorted { $0.label < $1.label }) { worker in
                         NavigationLink {
@@ -88,7 +87,7 @@ struct SettingsView: View {
                             }
                         }.systemCopyText(worker.label + "\n" + (worker.launchDefaults.employeeLaunchModel ?? store.backendLabel(worker.launchDefaults.employeeBackend)))
                     }
-                } header: { Text("Workers").textSelection(.enabled).panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
+                } header: { MoreSelectableText("Workers", style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
             }
         }
     }
@@ -96,18 +95,22 @@ struct SettingsView: View {
         Group {
             if let schedules {
                 Section {
-                    if schedules.isEmpty { ContentUnavailableView("No scheduled tasks", systemImage: "calendar").textSelection(.enabled) }
+                    if schedules.isEmpty {
+                        ContentUnavailableView {
+                            Label { MoreUnavailableText(text: "No scheduled tasks") } icon: { Image(systemName: "calendar") }
+                        }
+                    }
                     ForEach(schedules) { schedule in
                         NavigationLink {
                             List {
                                 Section {
                                     TicketMachineLabel(locale: schedule.locale, selectable: true)
-                                    LabeledContent("Status", value: schedule.enabled ? "Enabled" : "Disabled").textSelection(.enabled)
-                                    LabeledContent("Time", value: schedule.localTime).textSelection(.enabled)
-                                    LabeledContent("Cadence", value: schedule.cadence.replacingOccurrences(of: "_", with: " ").capitalized).textSelection(.enabled)
-                                    LabeledContent("Worker", value: schedule.workerType.replacingOccurrences(of: "_", with: " ").capitalized).textSelection(.enabled)
+                                    MoreSelectableValue("Status", value: schedule.enabled ? "Enabled" : "Disabled")
+                                    MoreSelectableValue("Time", value: schedule.localTime)
+                                    MoreSelectableValue("Cadence", value: schedule.cadence.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    MoreSelectableValue("Worker", value: schedule.workerType.replacingOccurrences(of: "_", with: " ").capitalized)
                                 }.listRowBackground(PanelsTheme.raised)
-                                if !schedule.kickoffNote.isEmpty { Section { Text(schedule.kickoffNote).textSelection(.enabled) } header: { Text("Kickoff Note").textSelection(.enabled) }.listRowBackground(PanelsTheme.raised) }
+                                if !schedule.kickoffNote.isEmpty { Section { MoreSelectableText(schedule.kickoffNote) } header: { MoreSelectableText("Kickoff Note", style: .footnote, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised) }
                             }.panelsNavigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
                         } label: {
                             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
@@ -117,7 +120,7 @@ struct SettingsView: View {
                             }
                         }.systemCopyText(schedule.title + "\n" + schedule.localTime)
                     }
-                } header: { Text("Scheduled Tasks").textSelection(.enabled) } footer: { Text("Schedules follow the server’s local time. Manage schedules on the web.").textSelection(.enabled) }
+                } header: { MoreSelectableText("Scheduled Tasks", style: .footnote, color: Color(uiColor: .secondaryLabel)) } footer: { MoreSelectableText("Schedules follow the server’s local time. Manage schedules on the web.", style: .footnote, color: Color(uiColor: .secondaryLabel)) }
                 .listRowBackground(PanelsTheme.raised)
             }
         }
@@ -152,7 +155,7 @@ struct SettingsView: View {
                             .disabled(notificationEditor.isSaving)
                             .accessibilityIdentifier("notification-preference-\(subject.key)-\(preference.id)")
                         }
-                    } header: { Text(subject.label).textSelection(.enabled).panelsSectionHeading(.notification) }.listRowBackground(PanelsTheme.raised)
+                    } header: { MoreSelectableText(subject.label, style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
                 }
             }
         }
@@ -178,15 +181,15 @@ private struct SettingsAgentDetail: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("Backend", value: store.backendLabel(configuration.employeeBackend)).textSelection(.enabled)
-                LabeledContent("Model", value: configuration.employeeLaunchModel ?? "Backend default").textSelection(.enabled)
-                LabeledContent("Reasoning", value: configuration.employeeLaunchReasoningEffort?.capitalized ?? "Backend default").textSelection(.enabled)
-            } header: { Text("Launch Defaults").textSelection(.enabled).panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
+                MoreSelectableValue("Backend", value: store.backendLabel(configuration.employeeBackend))
+                MoreSelectableValue("Model", value: configuration.employeeLaunchModel ?? "Backend default")
+                MoreSelectableValue("Reasoning", value: configuration.employeeLaunchReasoningEffort?.capitalized ?? "Backend default")
+            } header: { MoreSelectableText("Launch Defaults", style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
             if let skill {
                 Section { NavigationLink("Role skill") { SettingsSkillDetail(skill: skill) } }
                     .listRowBackground(PanelsTheme.raised)
             }
-            Section { Text("Manage configuration on the web.").textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
+            Section { MoreSelectableText("Manage configuration on the web.", style: .footnote, color: PanelsTheme.faint) }
                 .listRowBackground(PanelsTheme.raised)
         }.panelsNavigationTitle(title).panelsScreen().onAppear { Haptics.light() }
     }
@@ -196,8 +199,8 @@ private struct SettingsSkillDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-                Text(skill.description).textSelection(.enabled).font(PanelsTheme.TypeScale.configurationHeading)
-                Text(skill.markdownBody).font(PanelsTheme.TypeScale.body).textSelection(.enabled)
+                MoreSelectableText(skill.description, style: .title3, weight: .medium)
+                MoreSelectableText(skill.markdownBody)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
         }.panelsNavigationTitle(skill.name).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
     }
@@ -222,12 +225,12 @@ struct ServerAddressSheet: View {
                     TextField("https://machine.tailnet.ts.net", text: $address)
                         .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .accessibilityLabel("HTTPS address")
-                    if let error { Text(error).textSelection(.enabled).foregroundStyle(PanelsTheme.error) }
+                    if let error { MoreSelectableText(error, color: PanelsTheme.error) }
                 } header: {
-                    Text("HTTPS Address").textSelection(.enabled)
+                    MoreSelectableText("HTTPS Address", style: .footnote, color: Color(uiColor: .secondaryLabel))
                 } footer: {
                     if isFirstLaunch {
-                        Text("Enter your Panels home's Tailscale Serve address. Connect this device to the same tailnet.").textSelection(.enabled)
+                        MoreSelectableText("Enter your Panels home's Tailscale Serve address. Connect this device to the same tailnet.", style: .footnote, color: Color(uiColor: .secondaryLabel))
                     }
                 }.listRowBackground(PanelsTheme.raised)
             }.panelsNavigationTitle(isFirstLaunch ? "Connect to Panels" : "Server").navigationBarTitleDisplayMode(.inline).panelsScreen()

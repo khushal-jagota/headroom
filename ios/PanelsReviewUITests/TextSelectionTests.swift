@@ -125,14 +125,14 @@ final class TextSelectionTests: XCTestCase {
         conversationRow.tap()
         XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
         capture(app, "conversation-row-opened-with-one-tap")
-        let message = readable("Plain update 1", in: app)
+        let message = readable("Plain update 59", in: app)
         XCTAssertTrue(message.waitForExistence(timeout: 8))
         copy(message, in: app, capture: "conversation-message-system-menu")
         let composer = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
-        paste(into: composer, expected: "Plain update 1", in: app)
+        paste(into: composer, expected: "Plain update 59", in: app)
         capture(app, "conversation-message-copied-and-pasted")
-        clear(composer, expected: "Plain update 1", in: app)
+        clear(composer, expected: "Plain update 59", in: app)
         dismissKeyboard(in: app)
         app.backButton.tap()
         XCTAssertTrue(title.waitForExistence(timeout: 5))
@@ -160,7 +160,7 @@ final class TextSelectionTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        app.openDestination("sidebar-chief")
+        openSelectionDestination("sidebar-chief", in: app)
         let goalRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Write 1,000 words")).firstMatch
         XCTAssertTrue(goalRow.waitForExistence(timeout: 10))
         for _ in 0..<4 where goalRow.frame.maxY > app.frame.height * 0.6 {
@@ -183,12 +183,32 @@ final class TextSelectionTests: XCTestCase {
         app.backButton.tap()
         XCTAssertTrue(goalScreen.waitForNonExistence(timeout: 5))
 
-        app.openDestination("sidebar-settings")
+        openSelectionDestination("sidebar-settings", in: app)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "sidebar-layer").firstMatch.waitForNonExistence(timeout: 5))
         let navigationTitle = app.navigationBars.firstMatch.descendants(matching: .textView)
             .matching(NSPredicate(format: "value == %@ OR label == %@", "Settings", "Settings")).firstMatch
         XCTAssertTrue(navigationTitle.waitForExistence(timeout: 8), "The native bar title needs a selectable text overlay")
-        copy(navigationTitle, in: app, capture: "settings-navigation-title-system-menu")
-        app.openDestination("sidebar-chief")
+        // A native bar label has tight glyph bounds. Select this single word
+        // at its center rather than starting at the edge of the final glyph.
+        let expandedTitleHeight = navigationTitle.frame.height
+        navigationTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.1)
+        let titleCopy = systemAction("Copy", in: app)
+        XCTAssertTrue(titleCopy.waitForExistence(timeout: 3))
+        capture(app, "settings-navigation-title-system-menu")
+        titleCopy.tap()
+        // The native large title moves into the scroll view and collapses. Its
+        // selection surface must follow, without covering the list or bar controls.
+        app.collectionViews.firstMatch.swipeUp(velocity: .slow)
+        let collapsedTitle = app.navigationBars.firstMatch.descendants(matching: .textView)
+            .matching(NSPredicate(format: "value == %@ OR label == %@", "Settings", "Settings")).firstMatch
+        XCTAssertTrue(collapsedTitle.waitForExistence(timeout: 5))
+        XCTAssertLessThan(collapsedTitle.frame.height, expandedTitleHeight)
+        collapsedTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.1)
+        let collapsedCopy = systemAction("Copy", in: app)
+        XCTAssertTrue(collapsedCopy.waitForExistence(timeout: 3))
+        capture(app, "settings-collapsed-navigation-title-system-menu")
+        collapsedCopy.tap()
+        openSelectionDestination("sidebar-chief", in: app)
         let chiefComposer = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(chiefComposer.waitForExistence(timeout: 5))
         paste(into: chiefComposer, expected: "Settings", in: app)
@@ -200,6 +220,16 @@ final class TextSelectionTests: XCTestCase {
         let writes = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Any])
         let paths = writes.compactMap { ($0 as? [String: Any])?["path"] as? String }
         XCTAssertFalse(paths.contains { $0.contains("manual-writes") || $0.hasSuffix("/messages") || $0.hasSuffix("/send") })
+    }
+
+    @MainActor private func openSelectionDestination(_ identifier: String, in app: XCUIApplication) {
+        let sidebar = app.buttons["sidebar-button"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 10))
+        sidebar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let destination = app.buttons[identifier]
+        XCTAssertTrue(destination.waitForExistence(timeout: 10))
+        destination.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "sidebar-layer").firstMatch.waitForNonExistence(timeout: 10))
     }
 
     @MainActor private func readable(_ text: String, in app: XCUIApplication) -> XCUIElement {

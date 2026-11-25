@@ -13,15 +13,19 @@ struct UpdateCard: View {
                     let expected = status.expectedRestart(now: context.date, starting: starting)
                     let connected = store.connection == "Following changes" && store.updateFailure == nil
                     let title = !connected ? (expected ? "Updating…" : "Can't reach Panels") : (starting ? "Updating…" : status.title)
-                    Label(title, systemImage: status.needsAttention ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath").textSelection(.enabled)
-                        .foregroundStyle(status.needsAttention ? PanelsTheme.error : PanelsTheme.strong)
+                    Label {
+                        MoreSelectableText(title, color: status.needsAttention ? PanelsTheme.error : PanelsTheme.strong)
+                    } icon: {
+                        Image(systemName: status.needsAttention ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath")
+                            .foregroundStyle(status.needsAttention ? PanelsTheme.error : PanelsTheme.strong)
+                    }
                     if let interruption = status.cardInterruption {
                         impact(interruption)
                     }
                     machineRows(status.cardMachines, status: status, actionable: connected)
                     if status.state == "available" { warnings(status.warnings) }
                     if let detail = status.detail, !detail.isEmpty {
-                        Text(detail).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                        MoreSelectableText(detail, style: .footnote, color: PanelsTheme.faint)
                     }
                     if connected && status.allowedActions.contains("update") && status.available != nil {
                         Button("Update") { offer = CapturedUpdateOffer(status: status, server: store.baseURL) }
@@ -37,11 +41,11 @@ struct UpdateCard: View {
                         Button("Try now") { Task { await store.updateResource.refresh() } }
                     }
                 } else {
-                    Text(store.updateFailure == nil ? "Connecting to Panels" : "Update status unavailable").textSelection(.enabled)
+                    MoreSelectableText(store.updateFailure == nil ? "Connecting to Panels" : "Update status unavailable")
                     Button("Try now") { Task { await store.updateResource.refresh() } }
                 }
                 if let error = store.updateActions.error {
-                    Text(error).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+                    MoreSelectableText(error, style: .footnote, color: PanelsTheme.error)
                         .accessibilityIdentifier("updates.error")
                 }
             }
@@ -64,15 +68,15 @@ struct UpdateCard: View {
 
     private func impact(_ value: PanelsUpdateStatus.Interruption) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-            Text(value.sentence).textSelection(.enabled).foregroundStyle(PanelsTheme.strong)
+            MoreSelectableText(value.sentence, color: PanelsTheme.strong)
             if value.stopsAgents && !value.agents.isEmpty {
-                Text(value.agents.joined(separator: ", ")).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                MoreSelectableText(value.agents.joined(separator: ", "), style: .footnote, color: PanelsTheme.faint)
             }
         }
     }
     private func warnings(_ values: [String]) -> some View {
         ForEach(values, id: \.self) { warning in
-            Text(warning).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+            MoreSelectableText(warning, style: .footnote, color: PanelsTheme.error)
         }
     }
     private func machineRows(_ rows: [PanelsUpdateStatus.Machine], status: PanelsUpdateStatus, actionable: Bool) -> some View {
@@ -82,11 +86,11 @@ struct UpdateCard: View {
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.xs))
                     : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
                 layout {
-                    Text(machine.name).textSelection(.enabled).foregroundStyle(PanelsTheme.strong)
+                    MoreSelectableText(machine.name, color: PanelsTheme.strong)
                     if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: PanelsTheme.Space.sm) }
-                    Text(machine.label).textSelection(.enabled).foregroundStyle(["failed", "unavailable"].contains(machine.state) ? PanelsTheme.error : PanelsTheme.faint)
+                    MoreSelectableText(machine.label, color: ["failed", "unavailable"].contains(machine.state) ? PanelsTheme.error : PanelsTheme.faint)
                 }
-                if let detail = machine.detail { Text(detail).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
+                if let detail = machine.detail { MoreSelectableText(detail, style: .footnote, color: PanelsTheme.faint) }
                 if actionable && machine.canRetry && machine.attemptId != nil {
                     Button("Try again") { perform(.retryMachine(machine), status: status) }
                         .accessibilityIdentifier("updates.retry-machine.\(machine.machineId)")

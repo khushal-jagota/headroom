@@ -13,6 +13,8 @@ struct PanelsSelectableText: UIViewRepresentable {
     var tracking: CGFloat
     var onSelectionChanged: (Bool) -> Void
     @Environment(\.openURL) private var openURL
+    @Environment(\.multilineTextAlignment) private var multilineTextAlignment
+    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.panelsTextSelectionChanged) private var selectionChanged
 
     init(_ text: String, font: UIFont = .preferredFont(forTextStyle: .body), color: UIColor = .label,
@@ -87,7 +89,7 @@ struct PanelsSelectableText: UIViewRepresentable {
 
     /// Native navigation bars own UILabel geometry. Add only a transparent selection
     /// layer, so the bar keeps its own glyphs, title layout, and collapse behavior.
-    @MainActor static func install(on label: UILabel) {
+    @MainActor static func install(on label: UILabel, in navigationBar: UINavigationBar) {
         let overlay: LabelSelectionTextView
         if let existing = objc_getAssociatedObject(label, &labelSelectionAssociation) as? LabelSelectionTextView {
             overlay = existing
@@ -99,12 +101,13 @@ struct PanelsSelectableText: UIViewRepresentable {
             overlay.isSelectable = true
             overlay.isScrollEnabled = false
             overlay.textContainer.lineFragmentPadding = 0
-            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            label.addSubview(overlay)
-            label.isUserInteractionEnabled = true
+            overlay.navigationBar = navigationBar
+            navigationBar.addSubview(overlay)
             objc_setAssociatedObject(label, &labelSelectionAssociation, overlay, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
-        overlay.frame = label.bounds
+        overlay.navigationBar = navigationBar
+        if overlay.superview !== navigationBar { navigationBar.addSubview(overlay) }
+        navigationBar.bringSubviewToFront(overlay)
         let value = NSMutableAttributedString(attributedString:
             label.attributedText ?? NSAttributedString(string: label.text ?? ""))
         let range = NSRange(location: 0, length: value.length)
@@ -121,7 +124,31 @@ struct PanelsSelectableText: UIViewRepresentable {
         overlay.accessibilityTraits = label.accessibilityTraits
         overlay.isAccessibilityElement = true
         label.isAccessibilityElement = false
+        overlay.observeTitleScroll()
+        overlay.synchronizeGeometry()
         overlay.setNeedsLayout()
+    }
+
+    /// UIKit can move its large-title label from the bar into the page's scroll view.
+    /// Refresh the known label even when a new traversal below the bar cannot find it.
+    @MainActor static func refreshTitleSelections(in navigationBar: UINavigationBar) {
+        for case let overlay as LabelSelectionTextView in navigationBar.subviews {
+            guard let label = overlay.label else {
+                overlay.stopObservingTitleScroll()
+                overlay.resignFirstResponder()
+                overlay.removeFromSuperview()
+                continue
+            }
+            install(on: label, in: navigationBar)
+        }
+    }
+
+    @MainActor static func removeTitleSelections(from navigationBar: UINavigationBar) {
+        for case let overlay as LabelSelectionTextView in navigationBar.subviews {
+            overlay.stopObservingTitleScroll()
+            overlay.resignFirstResponder()
+            overlay.removeFromSuperview()
+        }
     }
 
     private func attributedText() -> NSAttributedString {
@@ -148,6 +175,11 @@ struct PanelsSelectableText: UIViewRepresentable {
             if tracking != 0 { value.addAttribute(.kern, value: tracking, range: range) }
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineSpacing = lineSpacing
+            switch multilineTextAlignment {
+            case .center: paragraph.alignment = .center
+            case .trailing: paragraph.alignment = layoutDirection == .rightToLeft ? .left : .right
+            case .leading: paragraph.alignment = layoutDirection == .rightToLeft ? .right : .left
+            }
             value.addAttribute(.paragraphStyle, value: paragraph, range: range)
             result.append(value)
         }
@@ -200,7 +232,56 @@ struct PanelsSelectableText: UIViewRepresentable {
 
 @MainActor private final class LabelSelectionTextView: SelectionTextView {
     weak var label: UILabel?
+    weak var navigationBar: UINavigationBar?
+    private weak var observedScrollView: UIScrollView?
+    private var scrollObservation: NSKeyValueObservation?
+
+    func observeTitleScroll() {
+        var ancestor = label?.superview
+        while let view = ancestor, !(view is UIScrollView) { ancestor = view.superview }
+        let scrollView = ancestor as? UIScrollView
+        guard scrollView !== observedScrollView else { return }
+        stopObservingTitleScroll()
+        observedScrollView = scrollView
+        scrollObservation = scrollView?.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+            // UIKit changes the large title during its scroll update. Read its final
+            // geometry on the main actor after that update, without drawing a title.
+            Task { @MainActor [weak self] in self?.synchronizeGeometry() }
+        }
+    }
+
+    func stopObservingTitleScroll() {
+        scrollObservation?.invalidate()
+        scrollObservation = nil
+        observedScrollView = nil
+    }
+
+    func synchronizeGeometry() {
+        observeTitleScroll()
+        guard let label, let navigationBar, label.window != nil,
+              label.window === navigationBar.window else {
+            isHidden = true
+            resignFirstResponder()
+            return
+        }
+        var visible = true
+        var effectiveAlpha: CGFloat = 1
+        var ancestor: UIView? = label
+        while let view = ancestor {
+            visible = visible && !view.isHidden
+            effectiveAlpha *= view.alpha
+            ancestor = view.superview
+        }
+        let converted = label.convert(label.bounds, to: navigationBar)
+        let hidden = !visible || effectiveAlpha <= 0.01 || !converted.intersects(navigationBar.bounds)
+        if hidden && !isHidden { resignFirstResponder() }
+        isHidden = hidden
+        alpha = effectiveAlpha
+        if frame != converted { frame = converted }
+    }
+
     override func layoutSubviews() {
+        synchronizeGeometry()
         if let label {
             let rect = label.textRect(forBounds: label.bounds, limitedToNumberOfLines: label.numberOfLines)
             let inset = UIEdgeInsets(top: max(0, rect.minY), left: 0,
