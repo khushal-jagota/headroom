@@ -189,7 +189,7 @@ test('environment providers and poll hooks share the server, and both producer g
     const updates = await fetch(server.address + '/api/updates');
     expect(updates.status).toBe(200);
     expect(await updates.json()).toMatchObject({
-      state: 'check_unavailable',
+      state: 'not_checked',
       activity: 'idle',
       client_versions: [client_identity],
     });
@@ -203,6 +203,12 @@ test('environment providers and poll hooks share the server, and both producer g
     const captured = await deployment.json();
     expect(captured.body.state).toBe('idle');
     expect(JSON.parse(captured.revision)).toEqual(captured.body);
+    // Already-installed iPhones also fall back to a direct read of this resource.
+    const old_settings = await fetch(server.address + '/api/deployment-status', {
+      headers: { 'X-Panels-iOS-Build': '9' },
+    });
+    expect(old_settings.status).toBe(200);
+    expect(await old_settings.json()).toEqual(captured.body);
     verification = fetch(server.address + '/preview-grace-proof/held').then(async (response) => ({
       status: response.status,
       body: await response.json(),

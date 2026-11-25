@@ -44,8 +44,12 @@ test('a newer offer retains machine failure and recomputes interruption at the p
   };
   const interrupted = vi.fn().mockReturnValue(['First agent']);
   const attempts = new FileUpdateAttemptStore(join(root, 'attempt.json'), () => {});
+  const available = vi
+    .fn<() => Promise<PublishedUpdate | null>>()
+    .mockRejectedValueOnce(new Error('catalog unavailable'))
+    .mockResolvedValue(null);
   const service = new UpdateService({
-    provider: null,
+    provider: { available, download_artifact: async () => {} },
     attempts,
     runtime: {
       database: {} as Database,
@@ -81,21 +85,21 @@ test('a newer offer retains machine failure and recomputes interruption at the p
       ],
       retry_machine: () => {},
       prepare: async () => {},
-      phase: () => 'failed',
-      reported_at: () => null,
-      configured: () => true,
     },
   });
-  vi.spyOn(service, 'ready_release').mockReturnValue(release);
   vi.spyOn(service as unknown as { launch(): void }, 'launch').mockImplementation(() => {});
   try {
     service.start();
-    vi.mocked(service.ready_release).mockReturnValueOnce(null);
     expect(service.status()).toMatchObject({
-      state: 'check_unavailable',
+      state: 'not_checked',
       activity: 'busy',
       allowed_actions: [],
     });
+    await expect(service.prefetch()).rejects.toThrow('catalog unavailable');
+    expect(service.status().state).toBe('check_unavailable');
+    await service.prefetch();
+    expect(service.status().state).toBe('up_to_date');
+    vi.spyOn(service, 'ready_release').mockReturnValue(release);
     const offered = service.status();
     expect(offered).toMatchObject({
       state: 'available',

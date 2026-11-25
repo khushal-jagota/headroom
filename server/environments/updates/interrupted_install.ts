@@ -1,10 +1,10 @@
 /** Startup fallback when the detached installer died and the OS restarted the home first. */
-import { renameSync, statSync } from 'node:fs';
+import { readFileSync, renameSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { restore_database_snapshot } from '../backup/restore.ts';
 import { resolved_path } from '../paths.ts';
 import { release_installer_barrier, with_installer_lock } from '../update_barrier.ts';
-import { missing } from './attempts.ts';
+import { missing, read_record_json } from './attempts.ts';
 import { is_object } from './codec.ts';
 import { PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { assert_installer_path } from './installer/configuration.ts';
@@ -16,6 +16,11 @@ interface InterruptedAttempt {
   readonly from_sha: string;
   readonly to_sha: string;
   readonly backup: string | null;
+  readonly registered: boolean;
+  readonly restored: boolean;
+  readonly swapped: boolean;
+  readonly data_restored: boolean;
+  readonly snapshot_required: boolean;
 }
 /** An attempt still installing this app, with the swap recorded and no terminal state. */
 function interrupted_attempt(data_directory: string, app_sha: string): InterruptedAttempt | null {
@@ -32,7 +37,6 @@ function interrupted_attempt(data_directory: string, app_sha: string): Interrupt
     (value.to_sha !== app_sha && value.from_sha !== app_sha) ||
     typeof value.to_sha !== 'string' ||
     !is_object(value.steps) ||
-    Object.hasOwn(value.steps, 'coordinator_registered') ||
     !(
       Object.hasOwn(value.steps, 'installer_started') || Object.hasOwn(value.steps, 'app_swapped')
     ) ||
@@ -46,6 +50,11 @@ function interrupted_attempt(data_directory: string, app_sha: string): Interrupt
     from_sha: value.from_sha,
     to_sha: value.to_sha,
     backup: value.backup ?? null,
+    registered: Object.hasOwn(value.steps, 'coordinator_registered'),
+    restored: Object.hasOwn(value.steps, 'rollback_app_restored'),
+    swapped: Object.hasOwn(value.steps, 'app_swapped'),
+    data_restored: Object.hasOwn(value.steps, 'rollback_database_restored'),
+    snapshot_required: value.snapshot_required === true,
   };
 }
 
@@ -74,9 +83,33 @@ export async function recover_interrupted_install(
     // A schema step can commit before the trial starts. Only the installer's
     // durable terminal record admits new work, so an uncommitted candidate is undone.
     const record = new InstallationRecord({ data_directory, attempt_id: attempt.attempt_id });
+    if (attempt.registered) {
+      // A registered installer can resume late. Bind this fallback to its actual marker and selection.
+      if (
+        readFileSync(join(data_directory, 'update-barrier.json'), 'utf8').trim() !==
+        attempt.attempt_id
+      )
+        throw new Error('Interrupted update marker belongs to a different attempt');
+      if (selected_release(current_root) !== release_path(current_root, app_sha))
+        throw new Error('Interrupted update cannot verify the selected home');
+      const manifest = read_record_json(join(app, 'manifest.json'));
+      if (!is_object(manifest) || manifest.app_sha !== app_sha)
+        throw new Error('Interrupted update cannot verify the running release');
+    }
     if (attempt.from_sha === app_sha) {
       // A snapshot never mutates the original database. On the return path, the
       // installer restores data before selecting this release.
+      if (attempt.registered) {
+        // The retained home must boot and pass its machine trial before ordinary writes resume.
+        if (
+          attempt.swapped &&
+          (attempt.backup !== null || attempt.snapshot_required) &&
+          !attempt.data_restored
+        )
+          throw new Error('The previous release is selected without its recorded database restore');
+        if (!attempt.restored) record.record('rollback_app_restored');
+        return 'none';
+      }
       record.record(
         'failed',
         'failed',
@@ -96,6 +129,15 @@ export async function recover_interrupted_install(
       statSync(staged, { throwIfNoEntry: false }) !== undefined
     )
       throw new Error('Interrupted update cannot restore its retained previous release');
+    if (attempt.registered) {
+      const manifest = read_record_json(join(previous, 'manifest.json'));
+      if (
+        !is_object(manifest) ||
+        manifest.app_sha !== attempt.from_sha ||
+        (attempt.snapshot_required && !attempt.backup)
+      )
+        throw new Error('Interrupted update cannot verify its retained release and snapshot');
+    }
     if (attempt.backup !== null) {
       await restore_database_snapshot(attempt.backup, database, { live_stopped: true });
       record.record('rollback_database_restored');
@@ -109,6 +151,7 @@ export async function recover_interrupted_install(
       renameSync(previous, app);
     }
     record.record('rollback_app_restored');
+    if (attempt.registered) return 'rolled_back';
     record.record(
       'failed',
       'failed',

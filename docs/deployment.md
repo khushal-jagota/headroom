@@ -3,7 +3,8 @@
 Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until Khushal presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
 ```text
-PR candidate packages → native Linux and Apple Silicon boots
+staging PR or push → server and web suites
+PR into main → candidate packages → native Linux and Apple Silicon boots
                       → previous release → Update → joined machine, file and agent turn
                       → failed trial → previous home restored
 merged main tree + passing suites + passing native journeys → publish qualified packages
@@ -26,7 +27,7 @@ The TypeScript Linux builder rebuilds browser assets from source, then removes b
 - **The installer.** The independent service runs the installer and Node from the pinned previous release. Its request and journal live outside the release.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
 
-Pull requests qualify the Mac launcher with ad-hoc signatures on the hosted Mac. The test installs the public predecessor and re-signs its installed launcher copy. It checks the executable code and bundle identifier before it exercises the update. The main release uses the original Developer ID signatures on both packages and checks that their team identifiers match before publication.
+Pull requests into main qualify the Mac launcher with ad-hoc signatures on the hosted Mac. The test installs the public predecessor and re-signs its installed launcher copy. It checks the executable code and bundle identifier before it exercises the update. The main release uses the original Developer ID signatures on both packages and checks that their team identifiers match before publication.
 
 ## What a release needs from the host
 

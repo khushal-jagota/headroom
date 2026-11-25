@@ -5,7 +5,7 @@ import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../co
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
   | "check_unavailable" | "available" | "updating" | "refresh_needed"
-  | "failed" | "mac_failed" | "mac_unreachable" | "unreachable" | "machines";
+  | "failed" | "unreachable" | "machines";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
 /** What the card's action button does. */
@@ -46,12 +46,12 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   }
   if (starting) return { state: "updating", dimmed: false };
   if (!status) return { state: null, dimmed: false };
-  if (status.state === "up_to_date" || status.state === "check_unavailable") {
+  if (status.state === "up_to_date" || status.state === "not_checked" || status.state === "check_unavailable") {
     const until = updateConfirmationUntil(status);
     const recent = until !== null && now >= until - UPDATE_CONFIRMATION_MS && now < until;
     if (recent || status.machines.some(machine => machine.state !== "current"))
       return { state: "machines", dimmed: false };
-    if (status.state === "up_to_date")
+    if (status.state !== "check_unavailable")
       return { state: pageIsBehind ? "refresh_needed" : null, dimmed: false };
   }
   return { state: status.state, dimmed: false };
@@ -74,16 +74,12 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
     case "failed":
       return { word: "Update didn't install", tone: "wrong", detail: status?.detail ?? status?.attempt?.detail ?? undefined,
         action: allows("retry") && attempt ? { label: "Try again", does: "retry" } : undefined };
-    case "mac_failed":
-    case "mac_unreachable":
-      return { word: "Machine update needs attention", tone: "wrong" };
     case "machines": {
       const rows = status?.machines ?? [];
       const failed = rows.some(row => row.state === "failed" || row.state === "unavailable");
       const updating = rows.some(row => row.state === "updating");
-      const latestUnknown = status?.state === "check_unavailable";
-      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : latestUnknown ? "Update installed" : "Up to date",
-        detail: latestUnknown ? "Couldn’t confirm the latest version." : undefined,
+      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : status?.state === "up_to_date" ? "Up to date" : "Update installed",
+        detail: status?.state === "check_unavailable" ? "Couldn’t confirm the latest version." : undefined,
         tone: failed ? "wrong" : updating ? "changing" : "done" };
     }
     case "unreachable":

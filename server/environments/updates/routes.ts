@@ -9,10 +9,6 @@ import { is_object } from './codec.ts';
 import type { UpdateAttempt, UpdateAttemptView, UpdateInterruption } from './contracts.ts';
 import type { UpdateService } from './service.ts';
 
-export interface UpdateMacReads {
-  health_payload(): Record<string, unknown> | null;
-  status(): Promise<unknown | null>;
-}
 export function attempt_body(attempt: UpdateAttempt): UpdateAttemptView {
   return {
     interruption: (attempt.extra.interruption as UpdateInterruption | undefined) ?? null,
@@ -58,16 +54,11 @@ function install_body(value: unknown): { app_sha: string } {
     ]);
   return { app_sha: raw.app_sha };
 }
-export function create_update_routes(
-  service: UpdateService,
-  mac: UpdateMacReads,
-): FastifyPluginAsync<AreaServices> {
+export function create_update_routes(service: UpdateService): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
     app.get('/updates', async (request) => {
       requireOwner(services.identity(request));
       const result = service.status();
-      const health = mac.health_payload();
-      const mac_details = health === null ? null : { ...health, update: await mac.status() };
       return {
         ...result,
         client_versions: services.database.read(list_client_versions),
@@ -78,7 +69,6 @@ export function create_update_routes(
             : { app_sha: result.available.manifest.app_sha, ...result.available },
         attempt: result.attempt === null ? null : attempt_body(result.attempt),
         app_sha: result.app_sha ?? '',
-        mac_details,
       };
     });
     const act = (action: () => UpdateAttempt | void) => {

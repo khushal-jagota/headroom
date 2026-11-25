@@ -1,6 +1,6 @@
 /** Deterministic reference system. Its observations are not durable event records. */
 import { isDeepStrictEqual } from 'node:util';
-import type { Principal } from '../core/contracts.ts';
+import { PlannerError, type Principal } from '../core/contracts.ts';
 import { matches_owner_sender_message } from './runtime/messages.ts';
 import {
   ConversationAlreadyStarted,
@@ -234,7 +234,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
   }
   async start_conversation(request: ConversationStartRequest): Promise<void> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new Error('Workspace admission is closed for an owner update.');
+      throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
     const resolved = resolve_conversation_start_request(request);
     if (this._conversations.has(resolved.conversation_id))
       throw new ConversationAlreadyStarted(resolved.conversation_id);
@@ -262,7 +262,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new Error('Workspace admission is closed for an owner update.');
+      throw new PlannerError('update_in_progress', 'Sending is paused for the owner update.');
     require_message_content(content);
     const {
       sender_label,

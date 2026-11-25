@@ -1,3 +1,4 @@
+import { supervised_installer } from '../../environments/updates/installation_command.ts';
 /** Native-only fixture payloads use real sealed archives and the retained installer. */
 import assert from 'node:assert/strict';
 import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises';
@@ -234,7 +235,7 @@ export async function native_retained_updates(options: {
     const path = join(root, 'data/update-agent/installer.plist'),
       job = await read_home_job(path, io, execution());
     assert.equal(job.Label, item.target.slice(domain.length + 1));
-    assert.deepEqual(job.ProgramArguments, item.command);
+    assert.deepEqual(job.ProgramArguments, supervised_installer(item.command!));
     authenticate_loaded_job(observed.stdout, path, job, ['HOME', 'PATH'], realpathSync);
     await control(['bootout', item.target]);
     const after = await control(['print', item.target], true);
@@ -329,7 +330,7 @@ export async function native_retained_updates(options: {
         }
         const path = join(root, 'data/update-agent/installer.plist'),
           job = await read_home_job(path, io, execution());
-        assert.deepEqual(job.ProgramArguments, item.command);
+        assert.deepEqual(job.ProgramArguments, supervised_installer(item.command!));
         const pid = authenticate_loaded_job(
           value.stdout,
           path,

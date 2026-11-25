@@ -579,7 +579,7 @@ export class ServerServices {
     this.assert_startup_open();
     const { app, background } = await this.create_http(context, conversation, environments);
     this.assert_startup_open();
-    environments?.recover_update_barrier?.();
+    await environments?.recover_update_barrier?.();
     const startup_frozen = this.update_barrier.frozen;
     if (startup_frozen)
       conversation.core?.workspace_admission.claim(() => {}, {
@@ -642,7 +642,7 @@ export class ServerServices {
           const attempt_id = environments?.update_attempt_id?.() ?? '';
           const was_frozen = this.update_barrier.frozen;
           this.update_barrier.refresh();
-          if (this.update_barrier.frozen) environments?.recover_update_barrier?.();
+          if (this.update_barrier.frozen) await environments?.recover_update_barrier?.();
           if (this.update_barrier.frozen || this.lifetime.isClosing()) return;
           if (was_frozen) environments?.reopen_update_work?.(attempt_id);
           // Producer startup is one-shot, including a rejected partial start. Orphan

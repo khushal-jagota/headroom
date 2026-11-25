@@ -18,6 +18,16 @@ function unit_value(value: string): string {
     throw new Error('Installer unit value contains a control character');
   return JSON.stringify(value.replaceAll('%', '%%'));
 }
+/** A registered job survives its home. Retry its retained command at most once if it exits abnormally. */
+export function supervised_installer(command: readonly string[]): string[] {
+  return [
+    '/bin/sh',
+    '-c',
+    '"$@"; code=$?; case "$code" in 0|2) exit "$code";; esac; exec "$@"',
+    'panels-installer',
+    ...command,
+  ];
+}
 /** A regular user unit survives loss of the manager. The marker disappears when the trial settles. */
 export function installer_unit(
   command: readonly string[],
@@ -38,7 +48,10 @@ export function installer_unit(
     ...Object.entries(selected_installer_environment(environment)).map(
       ([key, value]) => 'Environment=' + unit_value(key + '=' + value),
     ),
-    'ExecStart=' + command.map((value) => unit_value(value.replaceAll('$', () => '$$'))).join(' '),
+    'ExecStart=' +
+      supervised_installer(command)
+        .map((value) => unit_value(value.replaceAll('$', () => '$$')))
+        .join(' '),
     '[Install]',
     'WantedBy=default.target',
     '',

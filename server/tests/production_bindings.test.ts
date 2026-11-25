@@ -1,6 +1,5 @@
 /** The server composes pure driver rules and machine services. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -109,17 +108,20 @@ test('default production startup binds the real installer and environment runtim
     });
     expect(health.status).toBe(200);
     expect(await health.json()).toEqual({ ready: true, app_sha: null });
+    const updates = await fetch(server.address + '/api/updates');
+    expect(updates.status).toBe(200);
+    expect(await updates.json()).not.toHaveProperty('mac_details');
+    const machine_health = await fetch(server.address + '/api/executor/health');
+    expect(machine_health.status).toBe(200);
+    expect(await machine_health.json()).toMatchObject({ connection_state: 'disconnected' });
     expect(installer).toHaveBeenCalledTimes(1);
     expect(mac).toHaveBeenCalledTimes(1);
     expect(backend).not.toHaveBeenCalled();
     const inputs = installer.mock.calls[0]![0];
-    const [mac_context, executor] = mac.mock.calls[0]!;
+    const [mac_context] = mac.mock.calls[0]!;
     expect(inputs).toMatchObject({
       application_root: realpathSync(application_root),
     });
-    expect(executor).toBeInstanceOf(VpsExecutorRegistry);
-    expect(executor!.configured()).toBe(false);
-    expect(executor!.health_payload()).toBeNull();
     expect(inputs.child_processes).toBe(mac_context.child_processes);
     expect(inputs.signal).toBe(mac_context.signal);
     expect(inputs.signal.aborted).toBe(false);

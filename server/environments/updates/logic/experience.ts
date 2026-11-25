@@ -1,12 +1,7 @@
 /** Update state follows the persisted attempt, offered release, and one instant. */
 import { parseIsoDatetime } from '../../../core/clock.ts';
 import type { ParsedIsoDatetime } from '../../../core/clock.ts';
-import type {
-  DeploymentStatus,
-  PublishedUpdate,
-  UpdateAttempt,
-  UpdateExperience,
-} from '../contracts.ts';
+import type { PublishedUpdate, UpdateAttempt, UpdateExperience } from '../contracts.ts';
 
 export function instant(value: string): ParsedIsoDatetime {
   const parsed = parseIsoDatetime(value.replaceAll('Z', '+00:00'));
@@ -59,44 +54,4 @@ export function resolve(
     return ['failed', ['retry'], attempt.detail, null];
   }
   return idle;
-}
-export function deployment_status(
-  attempt: UpdateAttempt | null,
-  app_sha: string | null,
-  options: { success_seconds: number; now: string },
-): DeploymentStatus {
-  const body: DeploymentStatus = {
-    state: 'idle',
-    deployed_sha: app_sha,
-    target_sha: null,
-    outcome: null,
-    detail: null,
-    valid_until: null,
-    success_display_until: null,
-  };
-  if (attempt === null || attempt.state === 'waiting') return body;
-  body.target_sha = attempt.to_sha;
-  if (attempt.state === 'preparing') body.state = 'preparing';
-  else if (attempt.state === 'installing') {
-    body.state = 'restarting';
-    body.valid_until = attempt.deadline_at;
-  } else if (attempt.state === 'failed') {
-    if (
-      instant(options.now).epochMicroseconds <
-      add_seconds(instant(attempt.updated_at), options.success_seconds).epochMicroseconds
-    ) {
-      body.state = 'problem';
-      body.outcome = 'failed';
-      body.detail = attempt.detail;
-    }
-  } else if (attempt.to_sha === app_sha) {
-    const until = add_seconds(instant(attempt.updated_at), options.success_seconds);
-    body.outcome = 'succeeded';
-    if (instant(options.now).epochMicroseconds < until.epochMicroseconds) {
-      body.state = 'back_up';
-      body.valid_until = until.iso;
-      body.success_display_until = until.iso;
-    }
-  }
-  return body;
 }

@@ -8,7 +8,6 @@ export const UPDATE_INSTALL_DEADLINE_SECONDS = 900;
 export const DATABASE_BACKUP_BYTES_PER_SECOND = 20_000_000;
 export const DATABASE_BACKUP_FLOOR_SECONDS = 120;
 export const INSTALLER_LAUNCH_TIMEOUT_SECONDS = 30;
-export const DEPLOYMENT_SUCCESS_DISPLAY_SECONDS = 300;
 export const STAGED_APP_PREFIX = '.app-next-';
 export const PREVIOUS_APP_PREFIX = '.app-previous-';
 export const ATTEMPT_FILE_NAME = 'update-attempt.json';

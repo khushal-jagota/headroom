@@ -1,4 +1,8 @@
 /** Shared update view contracts. These types have no server runtime dependencies. */
+export type UpdateState =
+  'not_checked' | 'check_unavailable' | 'up_to_date' | 'available' | 'updating' | 'failed';
+export type UpdateAction = 'update' | 'retry';
+
 export type UpdateMode = 'now' | 'idle';
 
 export type UpdateAttemptState = 'waiting' | 'preparing' | 'installing' | 'done' | 'failed';

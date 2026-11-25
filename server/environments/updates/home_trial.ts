@@ -9,7 +9,6 @@ import { attempt_path, missing } from './attempts.ts';
  */
 export class HomeUpdateTrial {
   private replied_to: string | null = null;
-  private verified = false;
 
   readonly attempt_id: string;
   private readonly barrier: UpdateBarrier;
@@ -24,7 +23,8 @@ export class HomeUpdateTrial {
   }
 
   observed(incarnation: string): void {
-    if (this.active && this.replied_to === incarnation) this.verified = true;
+    if (this.active && this.replied_to === incarnation)
+      this.barrier.prepared_home_attempt = this.attempt_id;
   }
 
   replied(incarnation: string): void {
@@ -32,7 +32,9 @@ export class HomeUpdateTrial {
   }
 
   get prepared_attempt_id(): string | null {
-    return this.active && this.verified ? this.attempt_id : null;
+    return this.active && this.barrier.prepared_home_attempt === this.attempt_id
+      ? this.attempt_id
+      : null;
   }
 }
 

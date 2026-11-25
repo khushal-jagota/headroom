@@ -17,6 +17,14 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import * as integrity_notices from '../tickets/integrity_notice.ts';
+import { pin_existing } from '../environments/updates/installer/selection.ts';
+import { open_control_server } from '../lifecycle/control.ts';
+import { executor_link_socket_path } from '../core/http/executor_link.ts';
+import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
+import { MacHttpClient } from '../executor/mac/transport/http.ts';
+import { issue_home_machine_credential } from '../machines/executor_credentials.ts';
+import { write_credential } from '../executor/credential_file.ts';
+import { InstallationRecord } from '../environments/updates/installer/record.ts';
 import { FileUpdateAttemptStore } from '../environments/updates/attempts.ts';
 import { startServer } from '../core/start.ts';
 import type { TestCompositionContext } from '../core/start.ts';
@@ -263,10 +271,7 @@ async function owned_server(
           create_mac(mac_context) {
             mac_contexts.push(mac_context);
             const ready_release = vi.fn(mac_context.ready_release);
-            mac_composition = create_mac_update_composition(
-              { ...mac_context, ready_release },
-              null,
-            );
+            mac_composition = create_mac_update_composition({ ...mac_context, ready_release });
             mac_inert = ready_release.mock.calls.length === 0;
             return mac_composition;
           },
@@ -365,9 +370,6 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
       inert: owned.mac_inert,
       route_handle: owned.environment.mac_updates === owned.mac_composition.service,
       live: mac_context.ready_release() === update_instance.ready_release(),
-      configured: owned.mac_composition.operations.configured(),
-      health: owned.mac_composition.reads.health_payload(),
-      status: await owned.mac_composition.reads.status(),
     }).toEqual({
       calls: 1,
       store: true,
@@ -377,9 +379,6 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
       inert: true,
       route_handle: true,
       live: true,
-      configured: false,
-      health: null,
-      status: null,
     });
     // The card names the running work, and the press carries no confirmation.
     expect((await owned.status()).detail).toContain('Panels resumes it afterwards');
@@ -542,6 +541,149 @@ test('ordinary shutdown retains ownership beyond grace while a provider return i
     await provider_return;
   }
 }, 20_000);
+
+test('an installed home reopens when a registered coordinator never claims the update', async () => {
+  const owned = await owned_server({
+    prepare() {
+      mkdirSync(join(owned.root, 'app'), { recursive: true });
+      writeFileSync(
+        join(owned.root, 'app/manifest.json'),
+        JSON.stringify({ app_sha: 'a'.repeat(40) }),
+      );
+      pin_existing(owned.root, 'a'.repeat(40));
+      return ['scripted-installer'];
+    },
+    async launch(attempt_id) {
+      new InstallationRecord({ data_directory: join(owned.root, 'data'), attempt_id }).record(
+        'coordinator_registered',
+      );
+    },
+  });
+  try {
+    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    const install = await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) });
+    expect(install.status).toBe(200);
+    const { attempt } = await install.json();
+    const marker = join(owned.root, 'data/update-barrier.json');
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(false), { timeout: 10_000 });
+    expect((await owned.status()).attempt).toMatchObject({
+      attempt_id: attempt.attempt_id,
+      state: 'failed',
+    });
+    expect((await owned.post('/api/projects', { name: 'retained', summary: 'proof' })).status).toBe(
+      200,
+    );
+  } finally {
+    await owned.close();
+  }
+}, 20000);
+
+test.each(['candidate', 'retained'] as const)(
+  'a live %s home loses its registered coordinator and stays frozen until safe recovery',
+  async (side) => {
+    const current = 'a'.repeat(40),
+      other = 'b'.repeat(40),
+      id = 'lost-installer';
+    const control_root = mkdtempSync(join(tmpdir(), 'panels-orphan-control-'));
+    const socket = join(control_root, 'owner.sock'),
+      restart = vi.fn();
+    const supervisor = await open_control_server(
+      socket,
+      () => ({ version: 1, status: 'accepted' }),
+      restart,
+    );
+    let lock: number | undefined, client: MacHttpClient | undefined;
+    const owned = await owned_server(undefined, {
+      before_start(root) {
+        vi.stubEnv('PLAN_SERVER_CONTROL_SOCKET', socket);
+        mkdirSync(join(root, 'app'), { recursive: true });
+        writeFileSync(join(root, 'app/manifest.json'), JSON.stringify({ app_sha: current }));
+        pin_existing(root, current);
+        const now = new Date().toISOString();
+        writeFileSync(
+          join(root, 'data/update-attempt.json'),
+          JSON.stringify({
+            attempt_id: id,
+            state: 'installing',
+            mode: 'now',
+            from_sha: side === 'retained' ? current : other,
+            to_sha: side === 'candidate' ? current : other,
+            created_at: now,
+            updated_at: now,
+            release: release(),
+            steps: {
+              coordinator_registered: now,
+              installer_started: now,
+              app_swapped: now,
+              ...(side === 'retained' ? { rollback_app_restored: now } : {}),
+            },
+          }),
+        );
+        new UpdateBarrier(join(root, 'data/update-barrier.json')).freeze(id);
+        lock = openSync(join(root, 'data/update-installer.lock'), 'a+');
+        expect(flock(lock, 'try-exclusive')).toBe(0);
+      },
+    });
+    try {
+      const marker = join(owned.root, 'data/update-barrier.json');
+      expect(restart).not.toHaveBeenCalled();
+      closeSync(lock!);
+      lock = undefined;
+      await owned.environment.recover_update_barrier!();
+      expect(existsSync(marker)).toBe(true);
+      expect((await owned.post('/api/projects', { name: 'frozen', summary: 'proof' })).status).toBe(
+        503,
+      );
+      if (side === 'candidate') {
+        await vi.waitFor(() => expect(restart).toHaveBeenCalled());
+        expect((await owned.status()).attempt.state).toBe('installing');
+        return;
+      }
+      const grant = owned.context.database.write((tx) =>
+        issue_home_machine_credential(tx, 'linux'),
+      );
+      const identity = {
+        protocol_version: PROTOCOL_VERSION,
+        spool_format_version: SPOOL_FORMAT_VERSION,
+        application_revision: current,
+        executor_incarnation: '11111111-1111-4111-8111-111111111111',
+        connection_generation: 0,
+      };
+      client = new MacHttpClient(executor_link_socket_path(owned.path), grant.machine_id, identity);
+      const secret = join(owned.root, 'credential');
+      await write_credential(secret, grant.credential);
+      await client.ensure_credential(secret);
+      const lease = {
+        identity,
+        process_id: 1,
+        mac_wall_clock_ms: Date.now(),
+        queue_depth: 0,
+        oldest_item_age_ms: null,
+        waiting_conversations: [],
+        waiting_conversations_truncated: false,
+        working_turns: [],
+        admission_stopped: false,
+      };
+      expect(await client.lease(lease)).toMatchObject({ error: { code: 'retry_later' } });
+      expect(existsSync(marker)).toBe(true);
+      expect(await client.lease(lease)).toMatchObject({ error: { code: 'retry_later' } });
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(false), { timeout: 6000 });
+      expect((await owned.status()).attempt).toMatchObject({ state: 'failed', attempt_id: id });
+      expect(restart).not.toHaveBeenCalled();
+      expect(
+        (await owned.post('/api/projects', { name: 'recovered', summary: 'proof' })).status,
+      ).toBe(200);
+    } finally {
+      if (lock !== undefined) closeSync(lock);
+      await client?.stop({ deadline: performance.now() / 1000 + 5 });
+      await supervisor.close();
+      await owned.close();
+      rmSync(control_root, { recursive: true, force: true });
+    }
+  },
+  30000,
+);
 
 test('a retained installer keeps startup health-only and orphan recovery retries without file changes', async () => {
   // Existing update hosts prove active updates, but not frozen startup or a failed
@@ -771,6 +913,9 @@ test('an accepted queued send drains even when worker readiness polling is disab
     );
     expect((await owned.status()).attempt.state).toBe('preparing');
     await reached(pending.promise, 'installer waiting for the queued send');
+    const refused = await owned.send('new send during cutover');
+    expect(refused.status).toBe(503);
+    expect(JSON.stringify(await refused.json())).toContain('update');
     await owned.registry.child(first.conversation_id).finish();
     await reached(launched.promise, 'installer launch after queued send delivery');
     expect(await owned.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);

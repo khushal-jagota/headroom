@@ -12,7 +12,7 @@ const attempt = { attempt_id: "a1", from_sha: "1".repeat(40), to_sha: "2".repeat
   state: "failed" as const, completed_at: new Date(0).toISOString(), detail: null, deadline_at: null, mode: "now" as const, interruption: null };
 const status: UpdateStatus = { state: "available", allowed_actions: ["update"], activity: "unknown",
   client_versions: [], machines: [], available_machines: [], interruption: { stops_agents: false, agents: [], machine_ids: [] },
-  available: { app_sha: "2".repeat(40) }, attempt: null, app_sha: "1".repeat(40), detail: null, deadline_at: null, mac_details: null };
+  available: { app_sha: "2".repeat(40) }, attempt: null, app_sha: "1".repeat(40), detail: null, deadline_at: null };
 const machine = (name: string, state: MachineUpdateState["state"]): MachineUpdateState => ({
   machine_id: name, name, platform: "linux", present: state !== "waiting", build_id: "old", target_build_id: "new",
   changed: true, state, attempt_id: "old", request_id: name, detail: null, can_retry: state === "failed",
@@ -32,9 +32,22 @@ describe("the update card resolver", () => {
     expect(updatePresentation({ ...base, status: complete }).state).toBe("machines");
     expect(updateCard("machines", complete).word).toBe("Up to date");
     expect(updatePresentation({ ...base, status: undefined })).toEqual({ state: null, dimmed: false });
-    for (const state of ["available", "updating", "failed", "mac_failed", "mac_unreachable"] as const) {
+    for (const state of ["available", "updating", "failed"] as const) {
       expect(updatePresentation({ ...base, status: at(state) })).toEqual({ state, dimmed: false });
     }
+  });
+
+  it("keeps an unchecked catalog quiet without losing refresh, installation, or machine failure", () => {
+    const unchecked = at("not_checked");
+    expect(updatePresentation({ ...base, status: unchecked }).state).toBeNull();
+    expect(updatePresentation({ ...base, status: unchecked, pageIsBehind: true }).state).toBe("refresh_needed");
+    const recent = { ...unchecked, attempt: { ...attempt, state: "done" as const }, app_sha: attempt.to_sha };
+    expect(updatePresentation({ ...base, status: recent }).state).toBe("machines");
+    expect(updateCard("machines", recent)).toMatchObject({ word: "Update installed", tone: "done" });
+    expect(updateCard("machines", recent).detail).toBeUndefined();
+    const failed = { ...unchecked, machines: [machine("Home", "failed")] };
+    expect(updatePresentation({ ...base, status: failed }).state).toBe("machines");
+    expect(updateCard("machines", failed).word).toBe("Machine update needs attention");
   });
 
   it("shows the saved install independently of whether the latest release can be checked", () => {
@@ -64,14 +77,14 @@ describe("the update card resolver", () => {
   });
 
   it("shows Updating… at once after a press, before the server answers", () => {
-    for (const state of ["available", "failed", "mac_failed", "mac_unreachable"] as const) {
+    for (const state of ["available", "failed"] as const) {
       expect(updatePresentation({ ...base, status: at(state), starting: true }).state).toBe("updating");
     }
   });
 
   it("offers Refresh once the server is no longer updating and the running version moved", () => {
     expect(updatePresentation({ ...base, status: at("up_to_date"), pageIsBehind: true }).state).toBe("refresh_needed");
-    for (const state of ["available", "mac_failed", "mac_unreachable", "check_unavailable"] as const) {
+    for (const state of ["available", "check_unavailable"] as const) {
       expect(updatePresentation({ ...base, status: at(state), pageIsBehind: true }).state).toBe(state);
     }
     const failedMachine = at("up_to_date", { machines: [machine("Mac 1", "failed")] });
@@ -105,8 +118,6 @@ describe("the update card", () => {
       updating: updateCard("updating", at("updating")),
       refresh_needed: updateCard("refresh_needed", status),
       failed: updateCard("failed", failed),
-      mac_failed: updateCard("mac_failed", at("mac_failed")),
-      mac_unreachable: updateCard("mac_unreachable", at("mac_unreachable")),
       unreachable: updateCard("unreachable", undefined),
     };
     expect(Object.fromEntries(Object.entries(cards).map(([state, card]) =>
@@ -115,8 +126,6 @@ describe("the update card", () => {
       updating: ["Updating…", null, null, null, true],
       refresh_needed: ["Refresh to load this version", "Refresh", "refresh", null, false],
       failed: ["Update didn't install", "Try again", "retry", null, false],
-      mac_failed: ["Machine update needs attention", null, null, null, false],
-      mac_unreachable: ["Machine update needs attention", null, null, null, false],
       unreachable: ["Can't reach Panels", "Try now", "reconnect", "Trying again every few seconds", false],
     });
     // A failure the server will not retry keeps its details, without a dead button.

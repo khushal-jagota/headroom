@@ -124,7 +124,7 @@ export const create_production_environment_operations: ProductionEnvironmentFact
       environment,
       ...(darwin_home ? { darwin_home } : {}),
     }),
-    create_mac: (mac_context) => create_mac_update_composition(mac_context, dependencies.executor),
+    create_mac: create_mac_update_composition,
     collector: {
       module_url: new URL('./vps_metrics/collectors/index.ts', import.meta.url).href,
       export_name: 'build_home_collector',

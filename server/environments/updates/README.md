@@ -6,7 +6,7 @@ An offered release can include `available.compatibility`, with the same shape as
 
 `client_versions` contains the last retained identity from each device. The card compares those declarations with the offered release's compatibility limits before Update. The ordinary update-status read reconciles new declarations.
 
-`GET /api/updates` retains the server's `state`, `allowed_actions`, `available`, and `attempt`. The installer persists the home outcome. Reading status cannot complete the attempt. Before a successful release check, the status can be `check_unavailable`. A fresh machine report is separate evidence of the running machine version. The legacy `mac_details` field remains for existing clients.
+`GET /api/updates` retains the server's `state`, `allowed_actions`, `available`, and `attempt`. The installer persists the home outcome. Reading status cannot complete the attempt. A home with no provider or a first check still in flight reports `not_checked`. A failed check reports `check_unavailable`. A fresh machine report is separate evidence of the running machine version. Executor connection details come from `/api/executor/health`.
 
 - `machines` describes each registered executor machine against the current attempt, including failed targets that remain eligible for retry.
 - `available_machines` describes each machine against the pending offer. Its request and attempt IDs are null because the offer has no machine request yet. It is empty without an offer. A new offer does not remove a retry from `machines`.

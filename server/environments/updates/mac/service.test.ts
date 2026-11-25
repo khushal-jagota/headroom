@@ -15,6 +15,7 @@ test('current accepts matching leased content across revisions and rejects unlea
   const children = new ChildProcesses();
   const service = new MacUpdateService({
     root,
+    machines: () => [],
     attempts: new FileUpdateAttemptStore(join(root, 'attempt.json'), () => {}),
     provider: null,
     current_app_sha: 'a'.repeat(40),

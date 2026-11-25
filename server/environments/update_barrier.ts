@@ -42,6 +42,8 @@ export class UpdateBarrier {
    * barrier that a move holds. Only the move that set it clears it.
    */
   move_hold: string | null = null;
+  /** The running home exchanged two compatible, authenticated machine leases during this freeze. */
+  prepared_home_attempt: string | null = null;
   private current_generation = 0;
   private durable_generation = 0;
   private active = 0;
@@ -57,10 +59,12 @@ export class UpdateBarrier {
     return this.active === 0;
   }
   close(): number {
+    this.prepared_home_attempt = null;
     this.frozen = true;
     return ++this.current_generation;
   }
   reopen(): number {
+    this.prepared_home_attempt = null;
     this.frozen = false;
     return ++this.current_generation;
   }
@@ -193,7 +197,7 @@ export function release_installer_barrier(data_directory: string, attempt_id: st
 /** Hold the installer's kernel lock, or report that a live installer holds it. */
 export async function with_installer_lock<T>(
   data_directory: string,
-  attempt_id: string,
+  attempt_id: string | null,
   operation: (descriptor: number) => Promise<T>,
 ): Promise<{ acquired: false } | { acquired: true; result: T }> {
   const descriptor = openSync(join(data_directory, 'update-installer.lock'), 'a+');
@@ -204,7 +208,7 @@ export async function with_installer_lock<T>(
       return { acquired: false };
     if (errno !== 0) throw lock_error(errno);
     owned = true;
-    writeFileSync(descriptor, attempt_id + '\n');
+    if (attempt_id !== null) writeFileSync(descriptor, attempt_id + '\n');
     return { acquired: true, result: await operation(descriptor) };
   } finally {
     if (owned) flock(descriptor, 'unlock');

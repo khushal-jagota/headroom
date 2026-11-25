@@ -2,10 +2,12 @@ import { has_home_credential } from '../../machines/executor_credentials.ts';
 import { require_snapshot_space } from './installer/snapshot_space.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
 import { with_installer_lock } from '../update_barrier.ts';
-import { selected_release } from './installer/selection.ts';
+import { release_path, selected_release } from './installer/selection.ts';
+import { request_control } from '../../lifecycle/control.ts';
+import { assert_installer_path } from './installer/configuration.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolved_path } from '../paths.ts';
@@ -140,7 +142,7 @@ export class UpdateService {
   private readonly record_now: () => string;
   private ready: PublishedUpdate | null = null;
   private last_checked = 0;
-  private checked = false;
+  private discovery: 'not_checked' | 'check_unavailable' | 'up_to_date' = 'not_checked';
   private last_state: string | null = null;
   private running = false;
   private incarnation = 0;
@@ -169,27 +171,58 @@ export class UpdateService {
   installer_observed(attempt_id: string): void {
     if (this.installer_starting?.attempt_id === attempt_id) this.installer_starting = null;
   }
-  recover_orphaned_attempt(attempt_id: string, generation: number): number | null {
+  async recover_orphaned_attempt(attempt_id: string, generation: number): Promise<number | null> {
     const barrier = this.options.update_barrier;
     const current = this.attempts.read();
     if (
       barrier === undefined ||
       barrier.generation !== generation ||
+      (current === null && existsSync(this.attempts.path)) ||
       (current?.attempt_id ?? '') !== attempt_id ||
       this.owns_preparation(attempt_id) ||
-      (current?.state === 'installing' &&
-        (current.steps.installer_started !== undefined ||
-          current.steps.coordinator_registered !== undefined)) ||
       current?.steps.rollback_failed !== undefined
     )
       return null;
+    let recovery_detail = 'The previous update did not complete. Try again.';
+    if (current?.state === 'installing') {
+      const started = current.steps.installer_started !== undefined;
+      if (current.steps.coordinator_registered !== undefined) {
+        const revision = this.current_app_sha;
+        if (
+          !revision ||
+          (revision !== current.from_sha && revision !== current.to_sha) ||
+          readFileSync(barrier.path, 'utf8').trim() !== attempt_id ||
+          selected_release(this.options.current_root) !==
+            release_path(this.options.current_root, revision)
+        )
+          return null;
+        if (
+          started &&
+          revision === current.from_sha &&
+          current.steps.rollback_app_restored !== undefined
+        ) {
+          // This live server owns the database. Only its real retained-home trial may reopen it.
+          if (barrier.prepared_home_attempt !== attempt_id) return null;
+          recovery_detail =
+            'The installer stopped. Panels restored and checked the previous version.';
+        } else if (started) {
+          // Restart this APP through its own supervisor. The next startup can restore before opening SQLite.
+          const socket = process.env.PLAN_SERVER_CONTROL_SOCKET;
+          if (!socket) throw new Error('The interrupted update needs its home supervisor');
+          assert_installer_path(socket);
+          await request_control(socket, { version: 1, operation: 'restart' });
+          return null;
+        } else if (revision !== current.from_sha) return null;
+        else recovery_detail = 'The installer did not start. The previous version kept running.';
+      } else if (started) return null;
+    }
     if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) {
       this.attempts.change(attempt_id, states(current.state), (record) => ({
         ...record,
         state: 'failed',
         detail: states('waiting', 'preparing').has(record.state)
           ? RESTARTED_DETAIL
-          : 'The previous update did not complete. Try again.',
+          : recovery_detail,
       }));
     }
     const released = barrier.reopen_if_current(generation);
@@ -240,7 +273,7 @@ export class UpdateService {
       .then(() => this.prefetch_release(incarnation))
       .catch((error: unknown) => {
         if (this.active(incarnation)) {
-          this.checked = false;
+          this.discovery = 'check_unavailable';
           this.ready = null;
           this.options.changes.emit();
         }
@@ -297,7 +330,7 @@ export class UpdateService {
     }
     if (release === null || release.manifest.app_sha === this.current_app_sha) {
       this.ready = null;
-      this.checked = true;
+      this.discovery = 'up_to_date';
       this.options.changes.emit();
       return;
     }
@@ -308,7 +341,7 @@ export class UpdateService {
     // Admission only. The install decides on the backup when it starts.
     await this.options.installer.node_schema_steps_pending(this.options.database, staged);
     if (!this.active(incarnation)) return;
-    this.checked = true;
+    this.discovery = 'up_to_date';
     this.ready = release;
     this.options.changes.emit();
     try {
@@ -340,7 +373,7 @@ export class UpdateService {
       machines,
       available_machines,
       interruption,
-      state: state === 'up_to_date' && !this.checked ? 'check_unavailable' : state,
+      state: state === 'up_to_date' ? this.discovery : state,
       allowed_actions,
       activity,
       available,
@@ -507,6 +540,8 @@ export class UpdateService {
     const attempt = this.attempts.read();
     if (attempt?.state !== 'preparing') return;
     const attempt_id = (this.preparation_attempt_id = attempt.attempt_id);
+    const conversation = this.options.runtime.conversation();
+    let owns_send_admission = false;
     let barrier_closed = false;
     try {
       this.options.runtime.assert_database_owned();
@@ -553,7 +588,11 @@ export class UpdateService {
       if (snapshot_required)
         await require_snapshot_space(this.options.database, this.options.backup_directory);
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
-      while (this.options.runtime.conversation()?.has_pending_update_sends()) {
+      if (conversation) {
+        owns_send_admission = conversation.workspace_admission.close_starts();
+        if (!owns_send_admission) throw new Error('Send admission is already closed.');
+      }
+      while (conversation?.has_pending_update_sends()) {
         await delay(ATTEMPT_OBSERVER_SECONDS * 1000);
         if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
       }
@@ -615,6 +654,14 @@ export class UpdateService {
           fail_before_start(),
         );
       else fail_before_start();
+    } finally {
+      if (
+        owns_send_admission &&
+        this.active(incarnation) &&
+        !this.options.update_barrier?.frozen &&
+        !conversation?.workspace_admission.closed
+      )
+        conversation?.workspace_admission.reopen();
     }
   }
   /** Every failed update reaches the journal and the owner once. */

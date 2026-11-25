@@ -4,8 +4,6 @@ import type { MacUpdateServiceContract } from './updates/mac/contracts.ts';
 import type { EnvironmentOperations } from './runtime.ts';
 
 export interface ExecutorUpdateBindings {
-  configured(): boolean;
-  health_payload(): Record<string, unknown> | null;
   bind_updates(service: MacUpdateServiceContract): void;
 }
 export interface ProductionEnvironmentDependencies {

@@ -177,9 +177,6 @@ export class VpsExecutor {
     this.updates = service;
     this.presence.update_check = () => service.check();
   }
-  configured(): boolean {
-    return true;
-  }
   open_runs() {
     const remote = this.runs.as_factory();
     return retained_open_runs([remote]);

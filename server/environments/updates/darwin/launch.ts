@@ -1,3 +1,4 @@
+import { supervised_installer } from '../installation_command.ts';
 import { InstallationRecord } from '../installer/record.ts';
 /** The launchd installer job runs from the retained release. */
 import { fstatSync, lstatSync, realpathSync } from 'node:fs';
@@ -134,7 +135,7 @@ export async function launch_darwin_installer(
     path,
     {
       Label: identity.label + '.update-' + attempt_id,
-      ProgramArguments: [...command],
+      ProgramArguments: supervised_installer(command),
       WorkingDirectory: join(identity.root, 'data'),
       RunAtLoad: true,
       KeepAlive: { Crashed: true },
@@ -154,10 +155,10 @@ export async function launch_darwin_installer(
       path,
       io.execution,
     );
-    new InstallationRecord({ data_directory: join(identity.root, 'data'), attempt_id }).record(
-      'coordinator_registered',
-    );
   }
+  new InstallationRecord({ data_directory: join(identity.root, 'data'), attempt_id }).record(
+    'coordinator_registered',
+  );
   await io.command(
     ['/bin/launchctl', 'bootstrap', identity.domain, path],
     io.execution,
