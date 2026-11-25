@@ -186,6 +186,8 @@ describe('bounded navigation owner',()=>{
       owner.setDemand('review',{review_skipped_keys:history,review_priority_keys:history,windows:[viewWindow('review')]});
       await flush();expect(owner.getState().effective!.runtimeCurrent).toBe(true);
       expect(summary()).toBeNull();
+      // A local completion plus a trusted global total proves clear even during handover.
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toEqual({new:0,skipped:0});
       const next=snapshot(connections[1].request,'1','next');next.content.counts.review=2;
       next.content.review_summary={skipped:1,new:1};connections[1].send(next);
       expect(summary()).toEqual({new:1,skipped:1});
@@ -197,6 +199,7 @@ describe('bounded navigation owner',()=>{
         upserts:[],evictions:[],windows:[],review_context:[],review_summary:{skipped:1,new:0},counts:{...next.content.counts,review:1}});
       expect(summary()).toEqual({new:0,skipped:1});
       connections[1].error();expect(summary()).toBeNull();
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toBeNull();
     }finally{owner.dispose();}
   });
   it('keeps history hints outside hydrated demand and rejects excess request bytes without retaining the bad demand',()=>{

@@ -10,8 +10,12 @@ export function sameReviewHistory(left:readonly ReviewHistoryKey[],right:readonl
 }
 export const SKIPPED_RETURN_LABEL='Review skipped';
 /** A retained current publication can belong to the previous demand while a new scope loads. */
-export function currentReviewSummary(view:EffectiveNavigationView|null,request:ViewRequest,history:readonly ReviewHistoryKey[]):ReviewSummary|null {
-  const summary=view?.publication.view?.reviewSummary;
+export function currentReviewSummary(view:EffectiveNavigationView|null,request:ViewRequest,history:readonly ReviewHistoryKey[],answeredTotal=0):ReviewSummary|null {
+  const publication=view?.publication.view;
+  // The global total does not depend on the demanded conversation context or skip history.
+  // It can prove the queue is clear while a replacement scope catches up after a reply.
+  if(view?.runtimeCurrent && publication && Math.max(0,publication.counts.review-answeredTotal)===0)return {new:0,skipped:0};
+  const summary=publication?.reviewSummary;
   return view?.runtimeCurrent && view.publication.view?.scopeGeneration===request.scope_generation
     && sameReviewHistory(request.review_skipped_keys,history) && summary ? summary : null;
 }

@@ -111,8 +111,8 @@
   // The final screen must not say that something waits for it.
   let finalSummary = $derived.by(() => {
     void reviewRequest;
-    const summary=currentReviewSummary(displayed,navigation.owner.getRequest(),skippedHistory);
     const answered=(review?.items ?? []).filter(item=>undecided(item)===null);
+    const summary=currentReviewSummary(displayed,navigation.owner.getRequest(),skippedHistory,answered.length);
     const history=new Set(skippedHistory.map(key=>JSON.stringify(key)));
     const answeredSkipped=answered.filter(item=>history.has(JSON.stringify(reviewHistoryKey(item)))).length;
     return remainingReviewSummary(summary,answered.length-answeredSkipped,answeredSkipped);
