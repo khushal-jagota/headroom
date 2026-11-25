@@ -4,8 +4,8 @@
  * matters here is between a login that needs replacing and one that merely cannot be
  * confirmed. A signed-out backend is told to sign in, because that is the only thing that
  * will fix it. A login whose saved token has expired is usually refreshed by the CLI
- * without anyone doing anything, so the card says what is known and offers no action: a
- * sign-in button there would send somebody to replace a credential that still works.
+ * without anyone doing anything, so the card says what is known. The Backends page then
+ * offers a secondary Re-sign in with a caveat, never the primary Sign in.
  */
 
 import type { BackendSnapshot } from "./wire";

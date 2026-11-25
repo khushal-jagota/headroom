@@ -63,6 +63,15 @@ export async function machine_service_environment(
   for (const { manifest } of BUILT_IN_MANIFESTS) {
     const home = manifest.home;
     if (!home) continue;
+    // A set variable makes macOS Claude read a suffixed Keychain item, which hides the login the
+    // owner already saved. Leave it unset unless the owner set it or the providers are isolated.
+    if (
+      host.system === 'darwin' &&
+      home.leave_unset_on_macos &&
+      !request.isolated_providers &&
+      !host.environment[home.environment_name]
+    )
+      continue;
     const configured = request.isolated_providers
       ? join(root, 'machine/providers', home.isolated_directory_name)
       : home_path(home, host.environment, host.account_home, {
