@@ -68,6 +68,6 @@ export const codex_manifest: DriverManifest = {
     native_path_marker: '/.codex/packages/standalone/',
     native_update_command: ['codex', 'update'],
     manual_only_detail:
-      'Panels only updates `codex` from the configured vps-owned user-local npm prefix; update this installation manually.',
+      "Panels only updates `codex` from this machine's user-local npm prefix; update this installation on the machine itself.",
   },
 };

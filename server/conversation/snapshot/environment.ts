@@ -1,5 +1,6 @@
 /** Production machine I/O stays outside card and route policy. */
 import { BackendCommands } from './commands.ts';
+import { cli_search_folders } from './cli_locations.ts';
 import { copy_environment } from '../../core/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendCommandOptions } from './commands.ts';
@@ -56,6 +57,19 @@ function file(path: string): boolean {
     return false;
   }
 }
+function executable_file(path: string): boolean {
+  try {
+    if (!file(path)) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false; // Not an executable file.
+  }
+}
+/**
+ * The command on PATH. When PATH misses it, the owner's own Node tool folders (see
+ * `cli_locations.ts`), and only a file the running account owns.
+ */
 export function backend_executable_path(
   name: string,
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -63,14 +77,13 @@ export function backend_executable_path(
   const choices = name.includes('/')
     ? [expand(name, environment)]
     : (environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', name));
-  for (const path of choices) {
-    try {
-      if (!file(path)) continue;
-      accessSync(path, constants.X_OK);
-      return isAbsolute(path) ? path : resolve(path);
-    } catch {
-      /* This PATH candidate is not executable. */
-    }
+  for (const path of choices)
+    if (executable_file(path)) return isAbsolute(path) ? path : resolve(path);
+  if (name.includes('/')) return null;
+  const uid = process.geteuid?.();
+  for (const folder of cli_search_folders(environment.HOME ?? homedir())) {
+    const path = join(folder, name);
+    if (executable_file(path) && statSync(path).uid === uid) return path;
   }
   return null;
 }
