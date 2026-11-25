@@ -5,7 +5,7 @@
   import LazyRegion from "./components/LazyRegion.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { recoverSavedReviewDecisions } from "./lib/review/decision";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
@@ -36,14 +36,16 @@
   const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
   import WindowTopRow from "./components/desktopWindow/WindowTopRow.svelte";
-  // Install before descendants register global shortcuts. Inert does not stop window listeners.
+  // Capture shortcuts before bubble listeners. Inert does not stop window listeners.
   const blockUpdateKeys = (event: KeyboardEvent): void => {
     if (!$updatePause.blocked) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   };
-  window.addEventListener("keydown", blockUpdateKeys, true);
-  onDestroy(() => window.removeEventListener("keydown", blockUpdateKeys, true));
+  onMount(() => {
+    window.addEventListener("keydown", blockUpdateKeys, true);
+    return () => window.removeEventListener("keydown", blockUpdateKeys, true);
+  });
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
