@@ -69,7 +69,8 @@ test('the approval note sends a picked picture and a pasted file back with Send 
   expect((await response.json()).receipt.outcome).toBe('applied');
   const attachments = response.request().postDataJSON().attachments;
   expect(attachments).toEqual([
-    { piece: 'attachment_upload', upload_id: imageStatus.upload_id },
+    // The note keeps the picture's measured size (the PNG is one pixel), and a file has none.
+    { piece: 'attachment_upload', upload_id: imageStatus.upload_id, width: 1, height: 1 },
     { piece: 'attachment_upload', upload_id: fileStatus.upload_id },
   ]);
 
