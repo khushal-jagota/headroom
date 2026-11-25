@@ -32,6 +32,7 @@ import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
 import { startShellUpdates } from './updates';
+import { prepareApplicationLocation } from './application_location';
 import type { ShellUpdates } from './updates/contracts';
 import { DESKTOP_BRIDGE_VERSION } from './bridge_version';
 import { ScreenStore } from './screens/store';
@@ -340,6 +341,7 @@ function applicationMenu(): Menu {
 }
 
 void app.whenReady().then(async () => {
+  if (!await prepareApplicationLocation()) return;
   handleAppScheme();
   if (app.isPackaged && process.platform === 'darwin') shellUpdates = startShellUpdates(serverAddress);
   screens = new ScreenController(new ScreenStore(join(app.getPath('userData'), 'screens'), PACKED), {

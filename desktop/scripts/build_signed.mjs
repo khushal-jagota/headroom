@@ -51,7 +51,7 @@ for (const args of [
 }
 await build({
   projectDir: desktop,
-  targets: Platform.MAC.createTarget('zip', Arch.arm64),
+  targets: Platform.MAC.createTarget(['dmg', 'zip'], Arch.arm64),
   publish: 'never',
   config: configurationPath,
 });
