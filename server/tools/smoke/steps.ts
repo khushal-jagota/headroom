@@ -150,7 +150,12 @@ export async function smoke_before_restart(
   const populated = await api<{ tickets: Json[] }>('/api/tickets?detail=summary&limit=5');
   assert.ok(populated.tickets.length > 0, 'Expected the populated synthetic seed');
   step('01 populated production reads');
-  const ticket = await api('/api/tickets', { title, worker_type: 'coding', locale: 'vps' });
+  const ticket = await api('/api/tickets', {
+    title,
+    worker_type: 'coding',
+    employee_launch_model: options.model,
+    locale: 'vps',
+  });
   assert.ok(typeof ticket.id === 'string');
   const ticket_id = ticket.id;
   await cli_ticket(base, ticket_id, environment);
