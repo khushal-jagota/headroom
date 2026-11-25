@@ -13,7 +13,6 @@ struct AppShell: View {
     @State private var reviewSession = ReviewSession()
     @State private var destination: AppDestination = .review
     @State private var paths: [AppDestination: [AppRoute]] = [:]
-    @State private var reviewVisit = 0
     /// The Sidebar's offset lives in this object, so a moving finger redraws the Sidebar, not the shell.
     @State private var sidebar = SidebarPresentation()
     /// The panel's width, from the shell's geometry, for the Sidebar button.
@@ -119,7 +118,6 @@ struct AppShell: View {
         case .review:
             // Review keeps its own header row; the Sidebar button takes its empty leading corner.
             ReviewView(savedWork: savedReviewWork, session: reviewSession, isActive: currentPath.isEmpty && scenePhase == .active)
-            .environment(\.reviewVisit, reviewVisit)
             .toolbar(.hidden, for: .navigationBar)
             .overlay(alignment: .topLeading) { reviewSidebarButton.padding(.leading, 16).padding(.top, 4) }
         case .chief: RouteDestination(route: .chief).toolbar { sidebarToolbarItem }
@@ -149,13 +147,16 @@ struct AppShell: View {
 
     private func showDestination(_ next: AppDestination) {
         guard next != destination else { return }
-        if next == .review { reviewVisit += 1 }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { destination = next }
     }
 
     private func select(_ next: AppDestination) {
+        if next == .review {
+            reviewSession.showSummary()
+            paths[.review] = []
+        }
         showDestination(next)
         closeSidebar()
     }
@@ -204,6 +205,7 @@ struct AppShell: View {
         sidebar.reset()
         switch destination {
         case .review(let ticketID):
+            if ticketID == nil { reviewSession.showSummary() }
             paths[.review] = ticketID.map { [.ticket($0)] } ?? []
             showDestination(.review)
         case .ticket(let id): paths[.review] = [.ticket(id)]; showDestination(.review)

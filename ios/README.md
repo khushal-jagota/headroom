@@ -15,7 +15,10 @@ Review opens on its summary once the app has a home address. There is no tab bar
 Chief, each Manager and Settings. Only the current destination is on screen and
 mounted, in its own navigation stack. The shell keeps each destination's page path,
 so you can return to the page you left, for example after a notification opens another
-page. Drafts survive every switch because they are saved per owner and reload
+page. A tap on Sidebar Review always clears Review’s page path and opens its summary,
+even when Review is already selected or a card’s exit runs. It does not refresh or
+open cards. Ordinary Back from a page or artifact still returns to its card.
+Drafts survive every switch because they are saved per owner and reload
 when a page mounts. Scroll position and a view's in-memory state do not.
 
 A slide-over Sidebar replaces the tab bar; see [Sidebar](#sidebar). Every page uses
