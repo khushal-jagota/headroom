@@ -290,11 +290,45 @@ import XCTest
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
         let run = Task { await store.run() }
+        defer { run.cancel() }
         try await until { store.connection == "Following changes" }
         run.cancel()
         await run.value
         XCTAssertEqual(store.connection, "Connecting")
         try await until { RefreshProtocol.state.withLock { $0.openStreams } == 0 }
+    }
+
+    /// Risk: an earlier test's delayed close can corrupt the new fixture's count,
+    /// so a closed stream appears open forever or an open stream appears closed.
+    func testStreamCountsIgnoreCallbacksFromEarlierFixtures() throws {
+        func stream() throws -> RefreshProtocol {
+            var url = URLComponents(string: "https://refresh.invalid/api/navigation/view/events")!
+            url.queryItems = [URLQueryItem(name: "view", value: "{\"scope_generation\":0,\"windows\":[]}")]
+            var request = URLRequest(url: try XCTUnwrap(url.url))
+            request.setValue(RefreshProtocol.state.withLock { $0.token }, forHTTPHeaderField: "X-Refresh-Fixture")
+            return RefreshProtocol(request: request, cachedResponse: nil, client: nil)
+        }
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let earlier = try stream()
+        let lateStart = try stream()
+        earlier.startLoading()
+        defer { earlier.stopLoading(); lateStart.stopLoading() }
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1)
+
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let current = try stream()
+        current.startLoading()
+        defer { current.stopLoading() }
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1)
+
+        lateStart.startLoading()
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1, "An earlier fixture cannot admit a new stream")
+        earlier.stopLoading()
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1, "Earlier callbacks do not close the current stream")
+        current.stopLoading()
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 0)
+        current.stopLoading()
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 0, "A stream closes only once")
     }
 
     private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
@@ -486,19 +520,23 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         if url.path == "/api/navigation/view/events" {
-            // A stream from another test's store stays open, silent and uncounted.
-            guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == Self.state.withLock({ $0.token }) else {
-                client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
-                return
-            }
             do {
-                let (schedule, finish) = try Self.state.withLock {
-                    $0.paths.append(url.path)
-                    let events = try $0.events(url)
-                    $0.openStreams += 1; $0.maxOpenStreams = max($0.maxOpenStreams, $0.openStreams)
+                let events = try countedStream.withLock { counted in
+                    let events: (schedule: [(delay: Double, chunks: [Data])], finish: Bool)? = try Self.state.withLock { fixture in
+                        guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == fixture.token else { return nil }
+                        fixture.paths.append(url.path)
+                        let events = try fixture.events(url)
+                        fixture.openStreams += 1; fixture.maxOpenStreams = max(fixture.maxOpenStreams, fixture.openStreams)
+                        return events
+                    }
+                    if events != nil { counted = true }
                     return events
                 }
-                countedStream.withLock { $0 = true }
+                // A stream from another test's store stays open, silent and uncounted.
+                guard let (schedule, finish) = events else {
+                    client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
+                    return
+                }
                 client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
                 for (index, step) in schedule.enumerated() {
                     DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
@@ -524,7 +562,12 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     private let countedStream = OSAllocatedUnfairLock(initialState: false)
     override func stopLoading() {
         stopped.withLock { $0 = true }
-        if countedStream.withLock({ counted in defer { counted = false }; return counted }) { Self.state.withLock { $0.openStreams -= 1 } }
+        if countedStream.withLock({ counted in defer { counted = false }; return counted }) {
+            Self.state.withLock { fixture in
+                guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == fixture.token else { return }
+                fixture.openStreams -= 1
+            }
+        }
     }
 }
 
