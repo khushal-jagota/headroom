@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { chromium } from 'playwright';
+import { check_large_conversation, seed_large_conversation } from './large_conversation.ts';
 import { published_mac_home_fault } from './mac_home_machine_fault.ts';
 import { healthy } from '../../updates/installer/health.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from '../../../installation/configuration.ts';
@@ -254,6 +255,8 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       path: join(o.base, 'evidence/update-rolled-back.png'),
       animations: 'disabled',
     });
+    phase = 'seeding the large Chief conversation before the upgrade';
+    const seeded = seed_large_conversation(o.base, recovered.conversation_id);
     phase = 'retrying the update';
     const retried = page.waitForResponse(
       (response) =>
@@ -360,6 +363,14 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
         conversation_id: restarted.conversation_id,
       };
     }
+    phase = 'opening the largest conversation and receiving a new Chief message';
+    const large_conversation = await check_large_conversation(
+      page,
+      url,
+      o.base,
+      recovered.conversation_id,
+      seeded,
+    );
     await writeFile(
       join(o.base, 'evidence/upgrade.json'),
       JSON.stringify(
@@ -378,6 +389,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           restored_home_machine: missingMachine?.label,
           recovered_conversation: recovered.conversation_id,
           original_linux_start: originalStart,
+          large_conversation,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
         },
         null,
