@@ -49,7 +49,7 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(queue.cards([chiefMessage, ask], refusals: []).map(\.id), [chiefMessage.id])
     }
 
-    /// Risk: the summary shows at the wrong moments, or a return to the app moves Khushal
+    /// Risk: the summary shows at the wrong moments, or a return to the app moves the owner
     /// off a card that is still waiting. A Sidebar visit and a card that left while the app
     /// was away show the summary; a plain return keeps him where he was.
     func testSummaryAfterAVisitAndAfterTheOpenCardLeftWhileAway() {
@@ -284,7 +284,7 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertFalse(raced.dismissed())
     }
 
-    /// Risk: the queue freezes for the rest of the run. Khushal moves a proposal to Chief,
+    /// Risk: the queue freezes for the rest of the run. the owner moves a proposal to Chief,
     /// and the app goes to the background before the Reviewer sheet closes. The card is
     /// leaving, so it is not "the card he was on": a fresh window on the return must not
     /// swap its exit for the summary, which removes the card and its sheet before the sheet

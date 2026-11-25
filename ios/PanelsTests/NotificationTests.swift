@@ -47,6 +47,22 @@ final class NotificationTests: XCTestCase {
         XCTAssertNil(NotificationRouting.reply(payload))
     }
 
+    @MainActor func testReplyBeforeHomeSelectionDoesNotEnqueueWorkForPayloadOrigin() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("reply.store")))
+        let reply = NotificationReply(serverURL: URL(string: "https://other-server.invalid")!, conversationID: "c_original", messageID: "source:7", owner: .chief)
+        var notices: [UNNotificationRequest] = []
+        let controller = NotificationController(replyOutbox: outbox, selectedServer: { nil }, postLocalNotification: { notices.append($0) })
+
+        await controller.receivedReply(reply, text: "Private reply", notificationID: "unconfigured-push")
+
+        XCTAssertTrue(try outbox.store.outgoing.allSummaries(server: LocalStore.server(reply.serverURL)).isEmpty)
+        XCTAssertEqual(notices.count, 1)
+        XCTAssertNil(notices.first?.content.userInfo["server_url"])
+        XCTAssertNotNil(controller.routingError)
+    }
+
     @MainActor func testReplyWithoutValidDestinationPostsLocalFailureNotification() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -194,6 +194,7 @@ export function native_wire_fixtures(): WireTypes {
     ['counts', [1, 1, 1.5, 1234, '1', 0]],
   ]);
   return {
+    AgentTurnStarted: { reason: 'Background task finished' },
     WorkMoveSourceRequest: { owner_kind: 'ticket', owner_id: 't_01234567' },
     WorkMoveProof: { published_branch: 'ticket/work', published_revision: 'a'.repeat(40) },
     WorkMoveSourceResult: { proof: null, error: 'Unpushed work' },

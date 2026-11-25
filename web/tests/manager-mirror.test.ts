@@ -90,7 +90,6 @@ function workspace(rows: ManagerWorkspaceTicket[]): ManagerWorkspace {
     tickets: rows,
     artifacts: [],
     conversation_history: [],
-    ticket_rollup: quiet,
     ...quiet
   };
 }
@@ -99,7 +98,7 @@ function boardItem(rows: ManagerWorkspaceTicket[]): BoardManager {
   const full = workspace(rows);
   return { id: full.id, title: full.title, recap: "",recap_preview: "",
     created_at: full.created_at, updated_at:full.created_at, conversation_id: null, tickets: rows,
-    ticket_rollup: quiet, ...quiet };
+    ...quiet };
 }
 
 describe("the shared Item and Ticket presentation", () => {
@@ -109,7 +108,7 @@ describe("the shared Item and Ticket presentation", () => {
     [{ assigned: true }, "assigned"],
     [{ awaiting_reply: true }, "awaiting_reply"],
     [{ agent_state: "errored" }, "errored"],
-    [{ ticket_status: "agent" }, "agent"],
+    [{ ticket_status: "agent_owned" }, "agent"],
     [{ gating_field: "consequences" }, "empty"],
     [{ awaiting_agent_approval: true }, "status_awaiting_approval"],
     [{ ticket_status: "empty" }, "empty"],
@@ -285,7 +284,6 @@ describe("the shared Item and Ticket presentation", () => {
     const full = ticket("same", { awaiting_approval: true, activity_at: 2 });
     const offDay = ticket("off-day", { awaiting_approval: true });
     const summary = boardItem([full, offDay]);
-    summary.ticket_rollup = { ...quiet, awaiting_reply: true };
     const rail = buildWorkspaceRail([boardCard(today)], [summary]);
     expect(rail.items[0].conversationSignal).toBeUndefined();
     expect(rail.items[0].groups[0].key).toBe("awaiting_approval");

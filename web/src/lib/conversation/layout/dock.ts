@@ -151,7 +151,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
       set('--conversation-popup-height', popupRoom);
       const targetHeight = parseFloat(getComputedStyle(pane ?? composer).getPropertyValue('--conversation-target')) || 0;
       const gap = parseFloat(getComputedStyle(host).getPropertyValue('--space-6')) || 0;
-      const menuOpen = composer.querySelector('.chat-menu, .chat-add-menu, .listbox-picker-panel') !== null;
+      const menuOpen = composer.querySelector('.chat-menu') !== null;
       composer.toggleAttribute('data-conversation-composer-constrained', composer.scrollHeight > composer.clientHeight + 1 || (menuOpen && popupRoom < targetHeight + gap));
     }
   }

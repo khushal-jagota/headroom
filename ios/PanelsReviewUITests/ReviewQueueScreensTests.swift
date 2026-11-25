@@ -253,4 +253,94 @@ final class ReviewQueueScreensTests: XCTestCase {
         noCover("Refused card"); capture("offline-card-refused-decision")
         try await proof("online")
     }
+
+    /// Cards the phone never read, acted on offline. The stub fails every read of a card's
+    /// conversation, so only the review window reaches the phone, then drops every
+    /// connection and adds a message the window never saw. Mark read reads through the
+    /// window's bound, the question and the permission are answered from the window, and
+    /// each lands once when the connection returns; the later message stays unread. Run
+    /// with PANELS_REVIEW_QUEUE=1 and
+    /// PANELS_OFFLINE_TEST=ReviewQueueScreensTests/testCardsNeverReadActOffline.
+    @MainActor func testCardsNeverReadActOffline() async throws {
+        guard ProcessInfo.processInfo.environment["PANELS_REVIEW_QUEUE"] == "1" else {
+            throw XCTSkip("Run with the Review queue fixture")
+        }
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        func proof(_ name: String) async throws -> Data {
+            let (data, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + name)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, name)
+            return data
+        }
+        _ = try await proof("card-reads-offline")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func noCover(_ screen: String) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        let headline = app.staticTexts["review.summary.headline"]
+        let skip = app.buttons["review.skip"]
+        let markRead = app.buttons["review.markRead"]
+        let proposal = app.staticTexts["Rebuild the iPhone Review queue"]
+        let question = app.staticTexts["Which build should go to TestFlight first?"]
+        let permission = app.staticTexts["Run the tests on the Mac simulator?"]
+
+        XCTAssertTrue(headline.waitForExistence(timeout: 15))
+        app.openReviewCards()
+        // The message card: its run was never read, so it shows its title and recap only.
+        XCTAssertTrue(markRead.waitForExistence(timeout: 10))
+        let enabled = NSPredicate(format: "isEnabled == true")
+        await fulfillment(of: [expectation(for: enabled, evaluatedWith: markRead)], timeout: 10)
+        XCTAssertFalse(app.staticTexts["First unread message"].exists, "The run was never read")
+        _ = try await proof("offline")
+        _ = try await proof("new-message")
+        noCover("Never-read message card"); capture("never-read-message")
+        markRead.tap()
+        XCTAssertTrue(proposal.waitForExistence(timeout: 10)); skip.tap()
+        // The historical message card is read only.
+        XCTAssertTrue(skip.waitForExistence(timeout: 10)); skip.tap()
+        XCTAssertTrue(question.waitForExistence(timeout: 10))
+        app.buttons["review.ask.option.Build 15"].tap()
+        noCover("Never-read question card"); capture("never-read-question")
+        app.buttons["review.ask.send"].tap()
+        XCTAssertTrue(permission.waitForExistence(timeout: 10))
+        noCover("Never-read permission card"); capture("never-read-permission")
+        app.buttons["review.ask.approve"].tap()
+        XCTAssertTrue(headline.waitForExistence(timeout: 10))
+        noCover("Summary")
+
+        // Back online, each action lands once.
+        _ = try await proof("online")
+        var answers: [[String: Any]] = []
+        var reads: [Int] = []
+        for _ in 0..<60 {
+            answers = try JSONSerialization.jsonObject(with: try await proof("ask-answers")) as? [[String: Any]] ?? []
+            let writes = try JSONSerialization.jsonObject(with: try await proof("writes")) as? [Any] ?? []
+            reads = writes.compactMap { ($0 as? [String: Any])?["through_sequence"] as? Int }
+            if answers.count >= 2 && !reads.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertEqual(reads, [3], "Mark read reaches the window's newest message, not the later one")
+        let bodies = answers.compactMap { $0["body"] as? [String: Any] }
+        XCTAssertEqual(answers.count, 2)
+        XCTAssertEqual(bodies.first { $0["request_id"] != nil }?["request_id"] as? String, "request-1")
+        let approval = bodies.first { $0["ask_id"] != nil }
+        XCTAssertEqual(approval?["ask_id"] as? String, "ask-1")
+        XCTAssertEqual(approval?["option_id"] as? String, "allow")
+        // The message the window never saw stays unread, so its card comes back as new beside
+        // the two skipped cards; the answered asks are gone.
+        let returned = NSPredicate(format: "label == %@", "3 to review.")
+        await fulfillment(of: [expectation(for: returned, evaluatedWith: headline)], timeout: 15)
+        capture("never-read-after-reconnect")
+    }
 }

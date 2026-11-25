@@ -45,6 +45,7 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
     if (request.url === '/api/meta') {
       response.end(JSON.stringify({
         app_sha: current.toLowerCase().repeat(40),
+        // The newer shell also accepts an older server's bridge floor.
         compatibility: { desktop_shell: { minimum_bridge_version: 1 } },
         screens: { sha256: copies[current].digest },
         waiting_screens: waiting === null ? null : { sha256: copies[waiting].digest },
@@ -70,7 +71,10 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
   try {
     desktop = await launchDesktopApp({ localServerAddress: `http://127.0.0.1:${port}` });
     const page = desktop.window;
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.fill('#address', `http://127.0.0.1:${port}`);
     await page.click('#connect');
     await expect(page.locator('h1')).toHaveText('Screen A', { timeout: 30_000 });
@@ -78,7 +82,7 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
     await expect.poll(() => downloads.some((entry) => entry.digest === copies.B.digest), { timeout: 30_000 }).toBe(true);
     await expect(page.locator('h1')).toHaveText('Screen A');
     for (const entry of downloads) {
-      expect(JSON.parse(entry.identity ?? '{}')).toMatchObject({ kind: 'desktop', bridge_version: 1 });
+      expect(JSON.parse(entry.identity ?? '{}')).toMatchObject({ kind: 'desktop', bridge_version: 2 });
       expect(entry.origin).toBeUndefined();
     }
 

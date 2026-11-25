@@ -278,6 +278,7 @@ async function admit(
       [
         node,
         '--experimental-import-meta-resolve',
+        '--experimental-vm-modules',
         '--input-type=module',
         '-e',
         NATIVE_NODE_PROBE,

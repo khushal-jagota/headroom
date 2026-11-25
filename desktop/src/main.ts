@@ -7,6 +7,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   shell,
@@ -25,7 +26,7 @@ import {
   selectScreenPresentation,
   registerAppScheme,
 } from './app_scheme';
-import { bridgeChannel, type ServerAddressResult } from './bridge';
+import { bridgeChannel, WINDOW_STATE_CHANNEL, type DesktopWindowState, type ServerAddressResult } from './bridge';
 import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_session';
 import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
@@ -42,6 +43,10 @@ if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PA
 
 registerAppScheme();
 
+// Electron places the lights' top-left corner. This puts them where a native 52px toolbar puts
+// them, measured on macOS 27: the first light's left edge at x 19 and their centres at y 26.
+const TRAFFIC_LIGHT_POSITION = { x: 19, y: 19 };
+
 let mainWindow: BrowserWindow | null = null;
 let startingFirstWindow = true;
 let preparingScreens = 0;
@@ -54,7 +59,13 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     ...bounds,
     title: 'Panels',
-    backgroundColor: '#11151f',
+    // The page colour (`--surface-1`), so the window does not flash another colour on load.
+    backgroundColor: '#121212',
+    // On macOS, no system title bar: the traffic lights sit centred on the app's own 52px top
+    // row. Other systems keep their own frame, and the page draws no top row there.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: TRAFFIC_LIGHT_POSITION } : {}),
+    // At 720px or less the screens change to the phone layout, which the window never shows.
+    minWidth: 900,
     show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
@@ -70,11 +81,26 @@ function createWindow(): BrowserWindow {
   rememberLastScreen(window);
   sendLinksToTheBrowser(window);
   observeScreenStart(window);
+  sendWindowState(window);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
     shellUpdates?.windowChanged();
   });
   return window;
+}
+
+/** The page dims the top row while another app has focus and drops the lights' space in full screen. */
+function sendWindowState(window: BrowserWindow): void {
+  const send = () => {
+    if (window.isDestroyed()) return;
+    const state: DesktopWindowState = { focused: window.isFocused(), fullScreen: window.isFullScreen() };
+    window.webContents.send(WINDOW_STATE_CHANNEL, state);
+  };
+  window.on('focus', send);
+  window.on('blur', send);
+  window.on('enter-full-screen', send);
+  window.on('leave-full-screen', send);
+  window.webContents.on('dom-ready', send);
 }
 
 function openWindow(url: string): BrowserWindow {
@@ -133,29 +159,51 @@ async function switchServer(typed: string): Promise<ServerAddressResult> {
   return result;
 }
 
-// A link or a new window that leaves the app opens in the default browser. A new window
-// for a server path, such as a file opened in another tab, opens at the server's address.
+// Every link the page follows or opens in a new window passes here, and each ends in one of
+// three places: the default browser, a page of the app, or a message that says why not.
 function sendLinksToTheBrowser(window: BrowserWindow): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openOutside(url);
+    openLink(window, url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).protocol === 'panels:') return;
     event.preventDefault();
-    openOutside(url);
+    openLink(window, url);
   });
 }
 
-function openOutside(link: string): void {
-  const url = new URL(link);
-  if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
-    void shell.openExternal(url.href);
+function openLink(window: BrowserWindow, link: string): void {
+  const url = parseLink(link);
+  if (!url) return void refuseLink(window, link, 'It is not a valid address.');
+  const address = serverAddress();
+  const ownServer = address !== null && url.protocol !== 'mailto:' && url.origin === new URL(address).origin;
+  // A page of the connected server opens in the app. The server's data and files stay with
+  // the browser, which can show or download them.
+  if (ownServer && !/^\/(api|files)(\/|$)/.test(url.pathname)) {
+    if (!window.isDestroyed()) void window.loadURL(`${SCREENS_URL.slice(0, -1)}${url.pathname}${url.search}${url.hash}`);
     return;
   }
-  const address = serverAddress();
-  if (url.protocol === 'panels:' && url.host === SCREENS_HOST && address)
-    void shell.openExternal(`${address}${url.pathname}${url.search}${url.hash}`);
+  if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+    shell.openExternal(url.href).catch((error: Error) => refuseLink(window, link, `The browser would not open it: ${error.message}`));
+    return;
+  }
+  // A link to a server path in a new window, such as a file opened in another tab, opens at the server's address.
+  if (url.protocol === 'panels:' && url.host === SCREENS_HOST && address) {
+    shell.openExternal(`${address}${url.pathname}${url.search}${url.hash}`).catch((error: Error) => refuseLink(window, link, `The browser would not open it: ${error.message}`));
+    return;
+  }
+  refuseLink(window, link, 'Panels opens web and email links only.');
+}
+
+function parseLink(link: string): URL | null {
+  try { return new URL(link); } catch { return null; }
+}
+
+/** The click had no result the person could see, so say why. */
+function refuseLink(window: BrowserWindow, link: string, reason: string): void {
+  if (window.isDestroyed()) return;
+  void dialog.showMessageBox(window, { type: 'info', message: 'Panels could not open this link.', detail: `${link}\n\n${reason}` });
 }
 
 // Calls that act answer only the separate setup origin. An artifact can invoke the

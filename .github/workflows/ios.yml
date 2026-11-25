@@ -40,5 +40,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: xcodebuild -version
+      - name: Verify generated project
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+          ios/scripts/generate-project.sh
+          git diff --exit-code -- ios/Panels.xcodeproj/project.pbxproj
       - name: Build
         run: xcodebuild -project ios/Panels.xcodeproj -scheme Panels -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/panels-ios" -jobs 4 CODE_SIGNING_ALLOWED=NO build

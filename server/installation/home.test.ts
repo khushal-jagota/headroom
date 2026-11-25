@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, vi } from 'vitest';
+import { afterEach, beforeEach, test, vi } from 'vitest';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
@@ -33,6 +33,15 @@ import { create_linux_home_service } from './linux.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
+
+// File-mode fixtures and assertions choose their own mask, independent of the runner.
+let inherited_mask: number;
+beforeEach(() => {
+  inherited_mask = process.umask(0o022);
+});
+afterEach(() => {
+  process.umask(inherited_mask);
+});
 
 test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
   const f = await fixture(),
@@ -118,6 +127,7 @@ test('fresh database initialization closes its child before activation and faile
       f.deps.execution,
       process.execPath,
       machine,
+      'Asia/Tokyo',
     );
     const identity = JSON.parse(readFileSync(join(machine, 'identity.json'), 'utf8'));
     const credential_file = join(machine, 'machine-credential.json');
@@ -130,6 +140,12 @@ test('fresh database initialization closes its child before activation and faile
     const reader = createReadAccess(path);
     try {
       reader.read((sql) => {
+        assert.equal(
+          sql.get<{ owner_time_zone: string }>(
+            'SELECT owner_time_zone FROM attention_history_metadata',
+          )?.owner_time_zone,
+          'Asia/Tokyo',
+        );
         // A fresh home starts with no projects.
         assert.deepEqual(sql.all('SELECT name FROM projects'), []);
         assert(
@@ -410,6 +426,44 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     assert.equal(readFileSync(command_link, 'utf8'), wrapper);
   } finally {
     await f.close();
+  }
+});
+
+test('a test home preserves the account command on success and first-machine rollback', async () => {
+  // Normal install coverage refuses a shared command. It does not prove the explicit
+  // opt-out leaves that command outside successful installation and failed cleanup.
+  for (const machine_failure of [false, true]) {
+    const f = await fixture();
+    try {
+      const command = join(f.account, '.local/bin/panels');
+      mkdirSync(dirname(command), { recursive: true });
+      writeFileSync(command, 'existing live command\n', { mode: 0o755 });
+      const before = statSync(command);
+      const install = install_home(
+        { ...f.request, skip_command_link: true },
+        {
+          ...f.deps,
+          healthy: async () => true,
+          machine_healthy: async () => {
+            if (machine_failure) throw new Error('test machine refused');
+          },
+        },
+      );
+      if (machine_failure) {
+        await assert.rejects(install, /test machine refused/);
+        assert(!existsSync(f.request.root));
+      } else {
+        assert.equal(await install, `http://127.0.0.1:${f.request.port}`);
+        assert(existsSync(f.request.root));
+      }
+      assert.equal(readFileSync(command, 'utf8'), 'existing live command\n');
+      const after = statSync(command);
+      assert.equal(after.ino, before.ino);
+      assert.equal(after.mode, before.mode);
+      assert.equal(after.mtimeMs, before.mtimeMs);
+    } finally {
+      await f.close();
+    }
   }
 });
 

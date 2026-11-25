@@ -223,7 +223,7 @@ test('restart refuses a Mac ticket while the Mac is away without changing it', a
     }),
   ).rejects.toMatchObject({
     code: 'validation',
-    message: 'Waiting for the Mac: restart this Ticket once it is back',
+    message: 'Waiting for Mac: restart this Ticket once it is back',
     detail: { ticket_id: ticket.id },
   });
   expect(kill).not.toHaveBeenCalled();
@@ -843,4 +843,98 @@ test('dequeued feedback rereads its receipt and late delivery unblocks the first
   expect(db.read(decisions.pending_ticket_ids)).toContain(ticket.id);
   await deliver_ticket_decision_messages(ticket.id, options);
   expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(false);
+});
+
+// Gap: a saved upload token is not delivery. This reuses the existing Worker prompt fixture,
+// streams video and binary bytes, pins the accepted decision beyond TTL, then reads the actual prompt files.
+test('an accepted decision retains streamed files through refusal, TTL, and a fresh Worker retry', async () => {
+  const { VideoUploadService } = await import('../conversation/video_uploads/service.ts');
+  const { readFileSync } = await import('node:fs');
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  let upload_now = now;
+  const uploads = new VideoUploadService(db, fixture_path(db), {
+    now: () => upload_now,
+    disk_free_bytes: () => 20 * 1024 ** 3,
+  });
+  const files = {
+    ...options,
+    message_files: new ConversationMessageFiles(fixture_path(db)),
+    upload_service: uploads,
+  };
+  await start_ready_worker_step(ticket.id, files);
+  const id = read(db, ticket.id).conversation_id!;
+  system.complete_running_turn(id);
+  const proposed = propose(db, read(db, ticket.id), 'Revise the attachment surface.');
+  const { create_video_fixture } = await import('../conversation/testing/video_fixture.ts');
+  const video = create_video_fixture(dirname(fixture_path(db)));
+  const expected = new Map([
+    ['proof.mp4', readFileSync(video)],
+    ['proof.bin', Buffer.from([0, 255, 7, 6, 5])],
+  ]);
+  const refs: { piece: 'attachment_upload'; upload_id: string }[] = [];
+  for (const [filename, bytes] of expected) {
+    const upload = uploads.reserve({
+      destination: { kind: 'ticket', id: ticket.id, expected_conversation_id: id },
+      filename,
+      byte_count: bytes.length,
+    });
+    await uploads.transfer(
+      upload.upload_id,
+      (async function* () {
+        yield bytes;
+      })(),
+    );
+    refs.push({ piece: 'attachment_upload', upload_id: upload.upload_id });
+  }
+  const command = {
+    decision: 'send_back',
+    field: 'what_changes',
+    expected_proposal_revision: proposed.pending_proposal_revision,
+    message: 'Use these files.',
+    attachments: refs,
+  };
+  const first = db.write((tx) =>
+    apply_decision(tx, ticket.id, 'op-streams', command, OWNER, now, uploads),
+  );
+  expect(first.receipt?.outcome).toBe('applied');
+  expect(
+    db.write((tx) => apply_decision(tx, ticket.id, 'op-streams', command, OWNER, now, uploads)),
+  ).toEqual(first);
+  system.arm_backend_write_failure(id);
+  const refused = await start_ready_worker_step(ticket.id, files);
+  expect(refused.delivery_fate).toBe('refused');
+  for (const ref of refs) {
+    const retained = db.read((sql) =>
+      sql.get<{ state: string; sender_message_id: string; conversation_id: null }>(
+        'SELECT state,sender_message_id,conversation_id FROM conversation_video_uploads WHERE upload_id=?',
+        [ref.upload_id],
+      ),
+    );
+    expect(retained).toEqual({
+      state: 'admitted',
+      sender_message_id: 'decision-upload:op-streams',
+      conversation_id: null,
+    });
+  }
+  upload_now += 48 * 60 * 60;
+  uploads.recover_and_cleanup();
+  for (const ref of refs) expect(uploads.status(ref.upload_id).state).toBe('admitted');
+  await restart_worker(system, db, OWNER, ticket.id, {
+    now: () => now,
+    start_worker_step: () => start_ready_worker_step(ticket.id, files),
+  });
+  const retried_id = read(db, ticket.id).conversation_id!;
+  expect(retried_id).not.toBe(id);
+  const prompt = system.backend_prompt_writes(retried_id).at(-1)!.content;
+  for (const [filename, bytes] of expected) {
+    const piece = prompt.find((piece) => 'file_name' in piece && piece.file_name === filename)!;
+    expect(piece).toBeDefined();
+    if (!('stored_file_id' in piece))
+      throw new Error('Worker prompt omitted the managed file reference');
+    expect(readFileSync(files.message_files.path_of(retried_id, piece.stored_file_id))).toEqual(
+      bytes,
+    );
+  }
+  for (const ref of refs) expect(uploads.status(ref.upload_id).state).toBe('linked');
 });

@@ -83,11 +83,18 @@ export function native_style_findings(diff: string): Finding[] {
   return findings;
 }
 
-function main(base: string): void {
-  const diff = execFileSync('git', ['diff', '--unified=0', '--no-ext-diff', base, '--', 'server'], {
+/** A whole-branch diff runs to megabytes, past the 1 MiB default of execFileSync. */
+const SERVER_DIFF_MAX_BYTES = 256 * 1024 * 1024;
+export function server_diff(base: string, cwd = process.cwd()): string {
+  return execFileSync('git', ['diff', '--unified=0', '--no-ext-diff', base, '--', 'server'], {
+    cwd,
     encoding: 'utf8',
+    maxBuffer: SERVER_DIFF_MAX_BYTES,
   });
-  const findings = native_style_findings(diff);
+}
+
+function main(base: string): void {
+  const findings = native_style_findings(server_diff(base));
   for (const finding of findings)
     console.error(`${finding.path}:${finding.line}: ${finding.message}`);
   if (findings.length) process.exitCode = 1;

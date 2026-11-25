@@ -51,7 +51,6 @@
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0,
     projectedItems = null,
     narration = null,
     outgoingMessages = [], onStopDrawingMessage, onSendAgain, acknowledgedMessageIds = new Set<string>()
@@ -73,7 +72,6 @@
     conversationId: string;
     models?: readonly BackendModel[];
     /** Moves whenever a live frame arrives, so a running turn can say it is alive. */
-    livenessPulse?: number;
     /** The label this pane sends under. Messages carrying it are yours, and yours are
      *  not labelled — you know who wrote them. Everyone else's still are. */
     ownSenderLabel?: string | null;
@@ -185,7 +183,6 @@
         toolCallCount={item.toolCallCount}
         foldedMessageCount={item.foldedMessageCount}
         expanded={lens === "full" || expandedTurns[item.turnKey] === true}
-        {livenessPulse}
       />
     {:else if item.kind === "work_group"}
       <!-- Focus shows no tool calls at all; Full keeps each run behind its own summary. -->
@@ -198,6 +195,12 @@
       />
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
+    {:else if item.row.kind === "agent_turn_started"}
+      <SystemLine mark="dot" data-conversation-row="agent_turn_started">{item.row.reason}</SystemLine>
+    {:else if item.row.kind === "background_task_started"}
+      <SystemLine data-conversation-row="background_task_started">Background task started · {item.row.taskDescription}</SystemLine>
+    {:else if item.row.kind === "background_task_ended"}
+      <SystemLine data-conversation-row="background_task_ended">Background task {item.row.taskStatus} · {item.row.taskDescription}</SystemLine>
     {:else if item.row.kind === "agent_message"}
       {@const isNarration = lens === "full" && (narration ?? !item.row.toOwner)}
       <!-- In Full the agent's own narration sits beside what it said to the person. The
@@ -248,7 +251,10 @@
             {#each item.row.questions as question (question.question_id)}
               <div>
                 <span class="c2-ask-question">{question.header || question.question}</span>
-                <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
+                {#if item.row.answers[question.question_id]?.answers.length}<span> · {item.row.answers[question.question_id]?.answers.join(", ")}</span>{/if}
+                {#if item.row.answers[question.question_id]?.attachments?.length}
+                  <MessagePieces content={item.row.answers[question.question_id]?.attachments ?? []} {conversationId} />
+                {/if}
               </div>
             {/each}
           </div>

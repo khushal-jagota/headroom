@@ -1,8 +1,11 @@
-# Video upload intake and admission
+# Attachment upload intake and admission
 
 `VideoUploadService` completes the existing admission service. It reserves quota,
-receives bounded chunks, validates the local container, and records ready or failed
-outcomes. `preflight`, `adopt`, and `finish` retain the existing two-phase adoption
+receives bounded chunks, and records ready or failed transfer outcomes. Every file type
+uses this service with the same 250 MiB limit, including empty files. Media inspection
+chooses a representation. A failed or unavailable video probe keeps the file as an
+opaque attachment instead of refusing it. Supported small raster images retain native
+image delivery within its existing budget; larger images remain file references. `preflight`, `adopt`, and `finish` retain the existing two-phase adoption
 path and accepted-file pinning.
 
 The constructor remains `new VideoUploadService(database, db_path)`. Its optional
@@ -62,3 +65,9 @@ keeps runtime ownership when it receives that rejection.
 
 A client disconnect removes the temporary file and records `Upload interrupted.`,
 with the last committed progress checkpoint.
+
+Accepted decisions pin their uploads in the decision transaction. A refused Worker start
+returns the bytes to the upload store but retains that decision pin. A later Worker
+claim can adopt them into its new conversation, even after the ordinary upload expiry.
+Definite refusals of an unsent draft release its identity so an edited draft can reuse
+the upload. Accepted or uncertain deliveries remain pinned.

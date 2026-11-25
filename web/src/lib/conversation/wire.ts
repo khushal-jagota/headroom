@@ -4,6 +4,8 @@ import type { ProviderOptionDescriptor } from "../usage/contracts/model";
 export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 
 import { mutationHeaders } from "../releaseMonitor";
+import { RequestLimitError } from "../requestLimit/limit";
+import { BACKEND_READ_LIMIT_MS, BACKEND_SIGN_IN_LIMIT_MS, BACKEND_UPDATE_LIMIT_MS } from "../requestLimit/config";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -65,13 +67,16 @@ export type PromptDeliveryRefusalReason =
  */
 export type MessagePiece =
   | { piece: "text"; text: string }
-  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string }
+  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string; width?: number; height?: number }
   | {
       piece: "file";
       stored_file_id: string;
       media_type: string;
       file_name: string;
       byte_count: number;
+      /** A picture's or video's size as the sender's browser showed it, when measured. */
+      width?: number;
+      height?: number;
     };
 
 export type MessageContent = MessagePiece[];
@@ -160,7 +165,11 @@ export type UserInputQuestion = {
   allow_other: boolean;
 };
 
-export type UserInputAnswers = Record<string, { answers: string[] }>;
+/** Upload pieces belong to the question whose free-text answer receives their file references. */
+export type UserInputAttachment = Extract<SentMessagePiece, { piece: "image" | "file" | "attachment_upload" | "video_upload" }>;
+export type UserInputAnswers = Record<string, { answers: string[]; attachments?: UserInputAttachment[] }>;
+/** Stored answers refer to managed files rather than browser upload bytes. */
+export type RecordedUserInputAnswers = Record<string, { answers: string[]; attachments?: MessagePiece[] }>;
 
 export type PendingUserInput = {
   request_id: string;
@@ -179,6 +188,7 @@ export type ComposerCatalogEntry = {
 };
 
 export type HeldPrompt = StoredMessageContent & {
+  requested_mode?: PromptDeliveryMode;
   held_prompt_id: string;
   sender_message_id?: string | null;
   sender_label: string;
@@ -186,6 +196,7 @@ export type HeldPrompt = StoredMessageContent & {
   sender?: Principal | null;
   recipient?: Principal | null;
   queue_reason: PromptQueueReason;
+  delivery_uncertain?: boolean;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */
@@ -242,6 +253,9 @@ type SenderMintedPromptFields = {
 };
 
 export type ConversationEvent =
+  | Row<"agent_turn_started", { turn_number: number; reason: string }>
+  | Row<"background_task_started", { task_id: string; task_description: string }>
+  | Row<"background_task_ended", { task_id: string; task_description: string; task_status: string }>
   | Row<
       "prompt",
       StoredMessageContent & {
@@ -311,7 +325,7 @@ export type ConversationEvent =
     >
   | Row<
       "user_input_answered",
-      { request_id: string; answers: UserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
+      { request_id: string; answers: RecordedUserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<'credential_request', { request: import('./view/contracts').CredentialRequestRowBody }>
@@ -484,7 +498,8 @@ export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
   | { piece: "file"; data: string; media_type: string; file_name: string }
-  | { piece: "video_upload"; upload_id: string };
+  | { piece: "video_upload"; upload_id: string; width?: number; height?: number }
+  | { piece: "attachment_upload"; upload_id: string; width?: number; height?: number };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];
@@ -577,7 +592,11 @@ export async function mutateCredentialRequest(
     response = await clientFetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
       method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     });
-  } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
+  } catch (error) {
+    // No answer is not a refusal: the server can still save the value.
+    if (error instanceof RequestLimitError) throw new CredentialRequestWireError('The server did not answer in time. Check the conversation before another attempt.', false);
+    throw new CredentialRequestWireError('The server could not be reached.', false);
+  }
   if (!response.ok) {
     let code: unknown;
     try { code = (await response.json()).error?.code; } catch { /* Never echo arbitrary server payloads into this private form. */ }
@@ -590,17 +609,19 @@ export async function mutateCredentialRequest(
   catch { throw new CredentialRequestWireError('The result could not be read. Check the conversation before another attempt.', false); }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, limitMs?: number): Promise<T> {
   if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
     init = { ...init, headers: await mutationHeaders(init.headers) };
   }
   let response: Response;
+  let raw: string;
   try {
-    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init);
-  } catch {
+    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init, limitMs);
+    raw = await response.text();
+  } catch (error) {
+    if (error instanceof RequestLimitError) throw new ConversationWireError(error.message, 0);
     throw new ConversationWireError("The server could not be reached.", 0);
   }
-  const raw = await response.text();
   if (response.ok) {
     if (raw === "") return {} as T;
     try {
@@ -718,14 +739,18 @@ export function answerPermissionAsk(
   );
 }
 
-export function answerUserInput(
+export async function answerUserInput(
   conversationId: string,
   requestId: string,
   answers: UserInputAnswers
 ): Promise<{ fate: AnswerFate }> {
+  // The same answer draft keeps its identity across a lost response and retry.
+  const identity = JSON.stringify([conversationId, requestId, Object.entries(answers).sort(([left], [right]) => left.localeCompare(right))]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  const operationId = `answer-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
-    postJson({ request_id: requestId, answers })
+    postJson({ request_id: requestId, answers, operation_id: operationId })
   );
 }
 
@@ -764,7 +789,7 @@ export async function readScopedBackends(
   selection: BackendScopeRequest, refresh = false
 ): Promise<BackendSnapshot[]> {
   const answer = await request<{backends: BackendSnapshot[]}>(
-    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id })
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id }), BACKEND_READ_LIMIT_MS
   );
   return answer.backends;
 }
@@ -775,7 +800,7 @@ export function backendMachinePath(path: string, machineId?: string): string {
 
 export async function readBackends(refresh = false, machineId?: string): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
-    backendMachinePath(`/backends${refresh ? "?refresh=true" : ""}`, machineId)
+    backendMachinePath(`/backends${refresh ? "?refresh=true" : ""}`, machineId), undefined, BACKEND_READ_LIMIT_MS
   );
   return answer.backends;
 }
@@ -786,7 +811,7 @@ export function updateBackend(
 ): Promise<BackendUpdateResult> {
   return request<BackendUpdateResult>(backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/update`, machineId), {
     method: "POST"
-  });
+  }, BACKEND_UPDATE_LIMIT_MS);
 }
 
 export type BackendSignInState =
@@ -814,7 +839,7 @@ export function startBackendSignIn(
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
     backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in`, machineId),
-    { method: "POST" }
+    { method: "POST" }, BACKEND_SIGN_IN_LIMIT_MS
   );
 }
 
@@ -848,12 +873,12 @@ export function submitBackendSignInReturnUrl(
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
     backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`, machineId),
-    postJson({ return_url: returnUrl })
+    postJson({ return_url: returnUrl }), BACKEND_SIGN_IN_LIMIT_MS
   );
 }
 
 export function refreshBackends(machineId?: string): Promise<BackendsRefreshResult> {
-  return request<BackendsRefreshResult>(backendMachinePath("/backends/refresh", machineId), { method: "POST" });
+  return request<BackendsRefreshResult>(backendMachinePath("/backends/refresh", machineId), { method: "POST" }, BACKEND_READ_LIMIT_MS);
 }
 
 export function setBackendModelEnabled(

@@ -2,11 +2,12 @@ import { mintOutgoingMessage, reserveOutgoingMessageImages, resetOutgoingImageRe
 import { describe, expect, it, vi } from "vitest";
 import { beginComposerSend, restoreRefusedComposerSend, type ComposerDraft } from "../src/components/conversation/composer/draftTransaction";
 import { LocalComposerSends, releaseRemovedLocalSends, pendingSendContent, recallLocalSends, rememberLocalSends, type PendingComposerSend } from "../src/lib/conversation/videoUploads/localSends";
-import { VideoTransfers } from "../src/lib/conversation/videoUploads/uploads";
+import { AttachmentTransfers, VideoTransfers, pendingUploadsAsPieces, restoredPendingUploads, openAttachmentDraft, attachmentTransfersFor, liveAttachmentDrafts, clearAttachmentDraft } from "../src/lib/conversation/videoUploads/uploads";
 import type { PendingVideo, UploadDestination, VideoUploadAdapter, VideoUploadStatus } from "../src/lib/conversation/videoUploads/contracts";
 
 const destination: UploadDestination = {kind: "ticket", id: "t_video", expected_conversation_id: null};
-const file = {name: "recording.mp4", size: 100, type: "video/mp4", privateBytes: "never persist these"} as unknown as File;
+// A real File: a video gets a local address for its first frame, which needs a Blob.
+const file = Object.assign(new File(["x".repeat(100)], "recording.mp4", {type: "video/mp4"}), {privateBytes: "never persist these"});
 function video(): PendingVideo {
   return {id: 1, fileName: file.name, byteCount: 100, mediaType: file.type, destination: {...destination}, receivedBytes: 0, phase: "uploading", file};
 }
@@ -44,7 +45,7 @@ describe("video attachment send intent", () => {
     const laterDraft = {...draft(), text: "later words", pickedModel: "another-model"};
     expect(laterDraft.text).not.toBe(first.attempt.draftBeforeSend.text);
     attachment.phase = "ready";
-    expect(pendingSendContent(first).at(-1)).toEqual({piece: "video_upload", upload_id: "ready-token"});
+    expect(pendingSendContent(first).at(-1)).toEqual({piece: "attachment_upload", upload_id: "ready-token"});
     await queue.pump(); expect(sent).toEqual(["first", "second"]); expect(queue.entries).toEqual([]);
   });
 
@@ -66,7 +67,7 @@ describe("video attachment send intent", () => {
     // Retrying a draft still has no send intent.
     await uploads.start(attachment); expect(attachment.phase).toBe("ready");
     expect(dispatch).not.toHaveBeenCalled();
-    attachment.phase = "failed";
+    attachment.phase = "failed"; attachment.file = file;
     queue.enqueue(entry(attachment)); await uploads.start(attachment); await queue.pump();
     expect(adapter.transfer).toHaveBeenCalledTimes(3);
     expect(adapter.cancel).toHaveBeenCalledWith("upload-1");
@@ -128,15 +129,16 @@ describe("video attachment send intent", () => {
     resetOutgoingImageReservationsForTest();
   });
 
-  it("reload retains text and ready metadata without video bytes and requires explicit Send again", async () => {
+  it("reload retains its transcript time, text, and ready metadata without submitting the message", async () => {
     const store = new Map<string, string>();
     vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
     const attachment = video(); attachment.phase = "ready"; attachment.uploadId = "saved-token";
-    rememberLocalSends("owner", [entry(attachment)]);
+    rememberLocalSends("owner", [{...entry(attachment), sentAtUnixMilliseconds: 1772000000000}]);
     expect([...store.values()].join("")).not.toContain("privateBytes");
     expect([...store.values()].join("")).not.toContain("never persist these");
     const recalled = recallLocalSends("owner");
+    expect(recalled[0]?.sentAtUnixMilliseconds).toBe(1772000000000);
     expect(recalled[0]?.attempt.draftBeforeSend.text).toBe("captured words");
     expect(recalled[0]?.attempt.draftBeforeSend.pendingVideos?.[0]?.uploadId).toBe("saved-token");
     expect(recalled[0]?.phase).toBe("interrupted");
@@ -144,4 +146,78 @@ describe("video attachment send intent", () => {
     const queue = new LocalComposerSends(dispatch, () => undefined); queue.entries = recalled;
     await queue.pump(); expect(dispatch).not.toHaveBeenCalled();
   });
+});
+
+// Generic tokens must survive the same ready-reference reload boundary as video did.
+it("accepts arbitrary and empty files under one cap, and restores ready refs without file bytes", async () => {
+  const transfers = new AttachmentTransfers({ reserve: vi.fn(), transfer: vi.fn(), status: vi.fn(async () => ({ ...status("binary-token"), filename: "archive.bin", byte_count: 24 * 1024 * 1024, received_bytes: 24 * 1024 * 1024, media_type: "application/octet-stream" })), cancel: vi.fn() }, () => {});
+  const empty = transfers.create({ name: "empty.unknown", size: 0, type: "" } as File, 1, destination);
+  expect(empty.byteCount).toBe(0);
+  const selected = transfers.create({ name: "archive.bin", size: 24 * 1024 * 1024, type: "application/octet-stream" } as File, 2, destination);
+  selected.phase = "ready"; selected.uploadId = "binary-token";
+  expect(() => transfers.create({ name: "too-large.bin", size: 250 * 1024 * 1024 + 1 } as File, 3, destination)).toThrow("250 MiB");
+  const pieces = pendingUploadsAsPieces([selected]);
+  expect(pieces).toEqual([{ piece: "attachment_upload", upload_id: "binary-token" }]);
+  const [restored] = restoredPendingUploads(pieces, destination);
+  expect(restored.phase).toBe("validating"); expect(restored.file).toBeUndefined();
+  await transfers.validate(restored);
+  expect(restored.fileName).toBe("archive.bin"); expect(restored.byteCount).toBe(24 * 1024 * 1024);
+  expect(pendingUploadsAsPieces([restored])).toEqual(pieces);
+});
+
+// An artifact mounts a second composer over the same draft while a transfer can still run.
+// Reuse the current adapter fixture to prove it keeps one owner and releases accepted refs.
+it("keeps a pending streamed file across composer remounts and clears its ready reference", async () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
+  const transfer = deferred<VideoUploadStatus>();
+  const adapter = { reserve: vi.fn(async () => status("shared-file")), transfer: vi.fn(async () => transfer.promise), status: vi.fn(async () => status("shared-file")), cancel: vi.fn(async () => {}) };
+  const firstOwner = attachmentTransfersFor("artifact-draft", adapter);
+  const pending = firstOwner.create(file, 1, destination);
+  const ready = { ...pending, id: 0, uploadId: "older-ready", phase: "ready" as const, file: undefined };
+  openAttachmentDraft("artifact-draft", [ready, pending]);
+  const completing = firstOwner.start(pending);
+  const secondOwner = attachmentTransfersFor("artifact-draft", adapter);
+  expect(secondOwner).toBe(firstOwner);
+  const reopened = openAttachmentDraft("artifact-draft", [{ ...ready }]);
+  expect(reopened).toEqual([ready, pending]);
+  expect(reopened[1]).toBe(pending);
+  await Promise.resolve();
+  transfer.resolve(status("shared-file"));
+  await completing;
+  expect(adapter.transfer).toHaveBeenCalledOnce();
+  expect(pending.file).toBeUndefined();
+  expect(pendingUploadsAsPieces(liveAttachmentDrafts.get("artifact-draft")!)).toEqual([{piece:"attachment_upload",upload_id:"older-ready"},{piece:"attachment_upload",upload_id:"shared-file"}]);
+  clearAttachmentDraft("artifact-draft");
+  expect(liveAttachmentDrafts.get("artifact-draft")).toEqual([]);
+  expect(openAttachmentDraft("artifact-draft", [{ ...ready }])).toEqual([]);
+  expect([...store.values()].join("")).not.toContain("shared-file");
+});
+
+// Upload progress reaches 100% before the PUT returns its terminal status. The component
+// observes validating then, but only the live transfer can decide its ready/failed outcome.
+it("does not race a live validating PUT with a status GET, and deduplicates resumed validation", async () => {
+  const uploading = deferred<VideoUploadStatus>();
+  const resumed = deferred<VideoUploadStatus>();
+  const adapter = { reserve: vi.fn(async () => status("live-file")),
+    transfer: vi.fn(async (_id: string, selected: File, _signal: AbortSignal, progress: (bytes: number) => void) => {progress(selected.size); return uploading.promise;}),
+    status: vi.fn(async () => resumed.promise), cancel: vi.fn(async () => {}) };
+  const transfers = new AttachmentTransfers(adapter, () => {});
+  const pending = transfers.create(file, 1, destination);
+  const completing = transfers.start(pending);
+  await Promise.resolve();
+  expect(pending.phase).toBe("validating");
+  await transfers.validate(pending);
+  expect(adapter.status).not.toHaveBeenCalled();
+  uploading.resolve(status("live-file"));
+  await completing;
+  expect(pending.phase).toBe("ready");
+  const restored = {...pending, phase:"validating" as const};
+  const first = transfers.validate(restored);
+  const second = transfers.validate(restored);
+  expect(adapter.status).toHaveBeenCalledOnce();
+  resumed.resolve(status("live-file"));
+  await Promise.all([first, second]);
+  expect(restored.phase).toBe("ready");
 });

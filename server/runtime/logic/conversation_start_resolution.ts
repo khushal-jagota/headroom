@@ -5,7 +5,9 @@ import { ConversationRoleMaterials, FLOOR_DEFAULT_ACCESS } from '../../conversat
 import type { ConversationAccess, WorkspacePathPolicy } from '../../conversation/contracts.ts';
 const ROLE_DIRECTIVE_PREFIX =
   'Start with the `panels` skill. It explains the system and is necessary, then drill through to your identity through the skills layers.';
-export const WORKER_ROLE_TEXT = `${ROLE_DIRECTIVE_PREFIX} You are a ticket worker.`;
+export const WORKER_ROLE_TEXT =
+  'Use your skill tool to load the `panels` skill, then `panels-worker`, then your specialist Worker skill. ' +
+  'Follow these skills to learn the system and your identity. You are a ticket worker.';
 function home_folder_text(shared_workspace_folder: string, extra = ''): string {
   return (
     " Your start folder is your own. Use it to keep things for yourself: notes, scratch files, and rules you want to remember. Don't copy what is already recorded in Tickets or elsewhere in Panels." +
@@ -23,7 +25,7 @@ export function manager_role_text(shared_workspace_folder: string): string {
     `${ROLE_DIRECTIVE_PREFIX} You are a Manager.` +
     home_folder_text(
       shared_workspace_folder,
-      ' Keep private notes out of artifacts/. The owner sees those files. Read `panels manager workspace "$PLAN_MANAGER_ID"` to identify your visible page and its edit command.',
+      ' Keep private notes out of artifacts/. The owner sees those files. Read `panels manager show` to identify your visible page and its edit command.',
     )
   );
 }

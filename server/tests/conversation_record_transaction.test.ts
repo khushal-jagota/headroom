@@ -8,14 +8,72 @@ import {
   PromptEventPayload,
   ContextCompactedEventPayload,
   PromptDiscardedEventPayload,
+  type ConversationEventPayload,
 } from '../conversation/events.ts';
 import { text_message_content } from '../conversation/message_content.ts';
-import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import type { ReadSql, SqlParameters, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { InboxStore } from '../executor/data/inbox.ts';
 import { FileStaging } from '../executor/vps_files.ts';
 import { as_object } from '../executor/protocol.ts';
 import type { WireValue } from '../executor/contracts.ts';
+
+// First-prompt behavior alone cannot prove that SQLite avoids other conversations' prompts.
+test('delivered prompt existence searches only the requested conversation across store instances', () => {
+  const database = fixture();
+  const store = new ConversationStore(database);
+  for (const conversation_id of ['requested', 'other']) {
+    store.create_conversation(
+      new ResolvedConversationStart({
+        conversation_id,
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: null,
+        workspace_folder: '/workspace',
+        access: 'full',
+      }),
+    );
+  }
+  expect(store.has_delivered_prompt('requested')).toBe(false);
+  const content = text_message_content('prompt');
+  const prompt = new PromptEventPayload({
+    content,
+    sender_label: 'owner',
+    mode: PromptDeliveryMode.queue,
+  });
+  store.append_events('other', [prompt]);
+  store.append_events('requested', [
+    new PromptDiscardedEventPayload({ content, sender_label: 'owner' }),
+  ]);
+  const read = database.read.bind(database);
+  const plans: { detail: string }[] = [];
+  const observed_read = <T>(work: (sql: ReadSql) => T): T =>
+    read((sql) =>
+      work({
+        all: sql.all.bind(sql),
+        get<Row>(query: string, parameters?: SqlParameters): Row | undefined {
+          plans.push(...sql.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, parameters));
+          return sql.get<Row>(query, parameters);
+        },
+      }),
+    );
+  const observed_database = {
+    read: observed_read,
+    write: database.write.bind(database),
+    close: database.close.bind(database),
+  };
+  expect(new ConversationStore(observed_database).has_delivered_prompt('requested')).toBe(false);
+  store.append_events('requested', [prompt]);
+  expect(new ConversationStore(observed_database).has_delivered_prompt('requested')).toBe(true);
+  expect(plans).toHaveLength(2);
+  for (const { detail } of plans) {
+    expect(detail).toContain('SEARCH conversation_events');
+    expect(detail).toContain(
+      'USING INDEX sqlite_autoindex_conversation_events_1 (conversation_id=?)',
+    );
+  }
+});
 
 // The output fixture cannot prove that a failed participant rolls back source rows,
 // sequence allocation, lifecycle, receipts, and projection before a safe retry.
@@ -116,9 +174,9 @@ test('a rejected participant rolls the whole append back and retry commits once'
   expect(store.read_live_background_task_ids().get('atomic')).toEqual(['receipt', 'participant']);
 });
 
-// A whole-write rejection cannot prove the executor's permanent refusal: its
-// receipt must survive while its taken event, lifecycle and projection roll back.
-test('executor refusal after take commits only its receipt and replays without another event', () => {
+// Receipts must survive refusal and deduplicate replay without a global wake.
+// Committed shared events and explicit shared effects must retain their wakes.
+test('executor receipts announce committed shared effects, not receipt-only acceptance or refusal', () => {
   const observed: number[] = [];
   const database = fixture({
     onChange: () =>
@@ -225,7 +283,7 @@ test('executor refusal after take commits only its receipt and replays without a
   ).toEqual([[], [], [], [], []]);
   expect(attempt()).toEqual(first);
   expect(takes).toBe(1);
-  expect(observed.every((total) => total === 0)).toBe(true);
+  expect(observed).toEqual([]);
   expect(
     database.read((sql) =>
       sql.get<{ disposition: string }>(
@@ -246,6 +304,54 @@ test('executor refusal after take commits only its receipt and replays without a
   ).toThrow('commit participant refused after taking the conversation event');
   expect(store.read_events_after(id, 0)).toEqual([]);
   expect(store.read_conversation(id)?.latest_sequence).toBe(0);
+
+  const accept = (
+    sequence: number,
+    payloads: readonly ConversationEventPayload[] = [],
+    background_task = false,
+  ) =>
+    store.commit_backend_event<WireValue<'JsonObject'>>(
+      (tx) => {
+        takes++;
+        if (background_task)
+          store.record_background_task_started_in_transaction(tx, id, 'task', 'background work');
+        return { result: {}, written: store.append_in_transaction(tx, id, payloads) };
+      },
+      (tx, take) => {
+        const [receipt, taken] = inbox.accept_in_transaction(
+          tx,
+          { ...envelope, sequence, submission_id: `submission-${sequence}` },
+          take,
+          100,
+          { identity },
+        );
+        return { result: as_object(receipt, 'AcceptanceReceipt'), taken, written: [] };
+      },
+      { always_announce: background_task },
+    );
+  const accepted = accept(2);
+  expect(accepted.taken).toBe(true);
+  expect(accepted.result.disposition).toBe('accepted');
+  expect(accepted.written).toEqual([]);
+  const replay = accept(2);
+  expect(replay.taken).toBe(false);
+  expect(replay.result).toEqual(accepted.result);
+  expect(takes).toBe(2); // One refused take and one accepted take, with neither replay repeated.
+  expect(observed).toEqual([]);
+  expect(
+    database.read((sql) =>
+      sql.get<{ sequence: number; disposition: string }>(
+        'SELECT sequence,disposition FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
+        ['sender', id],
+      ),
+    ),
+  ).toEqual({ sequence: 2, disposition: 'accepted' });
+
+  expect(accept(3, [prompt]).written.map((row) => row.kind)).toEqual(['prompt']);
+  expect(observed).toEqual([1]);
+  expect(accept(4, [], true).written).toEqual([]);
+  expect(store.read_live_background_task_ids().get(id)).toEqual(['task']);
+  expect(observed).toEqual([1, 1]);
 });
 
 // Dispatch can follow a user-owned opener's claim release. Its durable intent still owns the wake.

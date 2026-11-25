@@ -35,7 +35,7 @@ The process owner rejects cleanup handles from another namespace. The default st
 `panels-worker-` and `panels-workers.slice`.
 
 `PLAN_WORKER_READ_ONLY_PATHS` is a colon-separated list of absolute paths mounted
-read-only in each Worker unit. The trial protects `/home/vps/Deployments/Panels`.
+read-only in each Worker unit. The original trial protects the incumbent Linux deployment's installed tree.
 The server's own unit needs the same protection for Manager and Chief children.
 
 `PLAN_NOTIFICATIONS_ENABLED=true` keeps notification delivery active when

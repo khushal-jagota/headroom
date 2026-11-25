@@ -3,6 +3,7 @@ import { same_reference } from '../../child_reference.ts';
 import {
   BackendSpawnFailed,
   PromptWriteRefused,
+  UserInputAnswerWriteFailed,
 } from '../../../conversation/backends/contracts.ts';
 import {
   decode_json,
@@ -181,7 +182,12 @@ export class MacCommandService implements MacCommandServiceContract {
         await this.dependencies.inputs.download_inputs(command, preparation.signal);
       } catch (error) {
         if (!this.withdrawn.has(command.command_id)) {
-          const refusal = command.operation === 'start' ? BackendSpawnFailed : PromptWriteRefused;
+          const refusal =
+            command.operation === 'start'
+              ? BackendSpawnFailed
+              : command.operation === 'answer_user_input'
+                ? UserInputAnswerWriteFailed
+                : PromptWriteRefused;
           throw new refusal(error_message(error));
         }
       } finally {

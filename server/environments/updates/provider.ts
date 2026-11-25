@@ -178,90 +178,100 @@ export class GitHubUpdateProvider implements UpdateProvider {
     }
   }
   async available(): Promise<PublishedUpdate | null> {
+    const publications: Record<string, unknown>[] = [];
     for (let page = 1; ; page++) {
       const response = await this.request('releases', { per_page: '100', page: String(page) });
       const releases = list(await response.json());
-      for (const publication of releases) {
-        if (
-          publication.draft !== false ||
-          publication.prerelease !== false ||
-          typeof publication.tag_name !== 'string' ||
-          !publication.tag_name.startsWith('server-')
-        )
-          continue;
-        const assets = list(publication.assets);
-        const proof = assets.find((asset) => asset.name === 'publication.json');
-        if (proof === undefined) continue;
-        const payload = await this.response_json(
-          await this.request(
-            `releases/assets/${proof.id}`,
-            {},
-            false,
-            undefined,
-            'application/octet-stream',
-          ),
-        );
-        const source = record(payload.source_run);
-        if (
-          source.repository !== this.repository ||
-          source.workflow_path !== TRUSTED_RELEASE_WORKFLOW ||
-          source.workflow_ref !==
-            `${this.repository}/${TRUSTED_RELEASE_WORKFLOW}@refs/heads/main` ||
-          source.ref !== 'refs/heads/main' ||
-          source.event !== 'push' ||
-          typeof source.source_sha !== 'string' ||
-          !/^[0-9a-f]{40}$/.test(source.source_sha) ||
-          typeof source.run_id !== 'string' ||
-          !/^[1-9][0-9]*$/.test(source.run_id) ||
-          typeof source.run_attempt !== 'string' ||
-          !/^[1-9][0-9]*$/.test(source.run_attempt) ||
-          publication.tag_name !==
-            `server-${source.source_sha}-${source.run_id}-${source.run_attempt}` ||
-          publication.target_commitish !== source.source_sha ||
-          payload.publication_run_id !== Number(source.run_id)
-        )
-          throw new Error('Publication identity differs from trusted repository evidence.');
-        const check_asset = (value: Record<string, unknown>, name: string) => {
-          if (
-            value.artifact_source !== 'github-release' ||
-            !Number.isSafeInteger(value.artifact_id) ||
-            !assets.some((asset) => asset.id === value.artifact_id && asset.name === name)
-          )
-            throw new Error('Publication asset identity differs from its release.');
-        };
-        check_asset(payload, 'app.zip');
-        for (const [key, name] of [
-          ['mac', 'mac.zip'],
-          ['linux_executor', 'linux-executor.zip'],
-          ['mac_home', 'mac-home.zip'],
-        ]) {
-          if (payload[key!] !== undefined && payload[key!] !== null)
-            check_asset(record(payload[key!]), name!);
-        }
-        let selected = payload;
-        if (this.target.system === 'darwin') {
-          if (!is_object(payload.mac_home)) continue;
-          selected = { ...payload, ...payload.mac_home, mac: null };
-        }
-        const release = parse_release({ ...selected, proof_artifact_id: proof.id });
-        if (
-          release.manifest.app_sha !== source.source_sha ||
-          release.expires_at !== null ||
-          release.parts === undefined
-        )
-          throw new Error('Publication identity differs from trusted repository evidence.');
-        if (release.manifest.runtime_contract === null) continue;
-        if (
-          release.manifest.runtime_contract.system !== this.target.system ||
-          release.manifest.runtime_contract.architecture !== this.target.architecture ||
-          (release.manifest.runtime_contract.system === 'darwin' &&
-            release.manifest.runtime_contract.role !== this.target.role)
-        )
-          throw new Error('Publication runtime target differs from this home');
-        return release;
-      }
-      if (releases.length < 100) return null;
+      publications.push(...releases);
+      if (releases.length < 100) break;
     }
+    const eligible = publications
+      .filter(
+        (publication) =>
+          publication.draft === false &&
+          publication.prerelease === false &&
+          typeof publication.tag_name === 'string' &&
+          publication.tag_name.startsWith('server-'),
+      )
+      .map((publication) => {
+        const published_at_ms =
+          typeof publication.published_at === 'string' ? Date.parse(publication.published_at) : NaN;
+        if (!Number.isFinite(published_at_ms)) throw new Error('Invalid server publication date');
+        return { publication, published_at_ms };
+      })
+      .sort((a, b) => b.published_at_ms - a.published_at_ms);
+    for (const { publication } of eligible) {
+      const assets = list(publication.assets);
+      const proof = assets.find((asset) => asset.name === 'publication.json');
+      if (proof === undefined) continue;
+      const payload = await this.response_json(
+        await this.request(
+          `releases/assets/${proof.id}`,
+          {},
+          false,
+          undefined,
+          'application/octet-stream',
+        ),
+      );
+      const source = record(payload.source_run);
+      if (
+        source.repository !== this.repository ||
+        source.workflow_path !== TRUSTED_RELEASE_WORKFLOW ||
+        source.workflow_ref !== `${this.repository}/${TRUSTED_RELEASE_WORKFLOW}@refs/heads/main` ||
+        source.ref !== 'refs/heads/main' ||
+        source.event !== 'push' ||
+        typeof source.source_sha !== 'string' ||
+        !/^[0-9a-f]{40}$/.test(source.source_sha) ||
+        typeof source.run_id !== 'string' ||
+        !/^[1-9][0-9]*$/.test(source.run_id) ||
+        typeof source.run_attempt !== 'string' ||
+        !/^[1-9][0-9]*$/.test(source.run_attempt) ||
+        publication.tag_name !==
+          `server-${source.source_sha}-${source.run_id}-${source.run_attempt}` ||
+        publication.target_commitish !== source.source_sha ||
+        payload.publication_run_id !== Number(source.run_id)
+      )
+        throw new Error('Publication identity differs from trusted repository evidence.');
+      const check_asset = (value: Record<string, unknown>, name: string) => {
+        if (
+          value.artifact_source !== 'github-release' ||
+          !Number.isSafeInteger(value.artifact_id) ||
+          !assets.some((asset) => asset.id === value.artifact_id && asset.name === name)
+        )
+          throw new Error('Publication asset identity differs from its release.');
+      };
+      check_asset(payload, 'app.zip');
+      for (const [key, name] of [
+        ['mac', 'mac.zip'],
+        ['linux_executor', 'linux-executor.zip'],
+        ['mac_home', 'mac-home.zip'],
+      ]) {
+        if (payload[key!] !== undefined && payload[key!] !== null)
+          check_asset(record(payload[key!]), name!);
+      }
+      let selected = payload;
+      if (this.target.system === 'darwin') {
+        if (!is_object(payload.mac_home)) continue;
+        selected = { ...payload, ...payload.mac_home, mac: null };
+      }
+      const release = parse_release({ ...selected, proof_artifact_id: proof.id });
+      if (
+        release.manifest.app_sha !== source.source_sha ||
+        release.expires_at !== null ||
+        release.parts === undefined
+      )
+        throw new Error('Publication identity differs from trusted repository evidence.');
+      if (release.manifest.runtime_contract === null) continue;
+      if (
+        release.manifest.runtime_contract.system !== this.target.system ||
+        release.manifest.runtime_contract.architecture !== this.target.architecture ||
+        (release.manifest.runtime_contract.system === 'darwin' &&
+          release.manifest.runtime_contract.role !== this.target.role)
+      )
+        throw new Error('Publication runtime target differs from this home');
+      return release;
+    }
+    return null;
   }
   async publication(run_id: number): Promise<PublishedUpdate | null> {
     const run = await this.json(`actions/runs/${run_id}`);

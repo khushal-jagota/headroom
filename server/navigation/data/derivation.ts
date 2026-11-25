@@ -11,6 +11,7 @@ import {
   hasColumn,
   lifecycleSummary,
   newDerivationContext,
+  pendingAsk,
   proposal,
   recapPreview,
   safeReason,
@@ -186,12 +187,12 @@ export function derive(
     if (!['none', 'out', 'errored'].includes(t.worker_step_claim))
       throw new Error('invalid worker-step claim');
     let status =
-      t.pending_proposal !== null
+      t.pending_proposal !== null && !live
         ? 'awaiting_approval'
         : t.worker_step_claim === 'errored'
           ? 'errored'
           : t.worker_step_claim === 'out'
-            ? 'agent'
+            ? 'agent_owned'
             : live
               ? 'blocked'
               : 'empty';
@@ -353,6 +354,12 @@ export function derive(
         "SELECT created_at FROM conversation_events WHERE conversation_id=? AND kind IN ('permission_asked','user_input_requested') ORDER BY sequence DESC LIMIT 1",
         [id],
       )?.created_at ?? null;
+    // The newest message to the owner bounds a Mark read from a card that never read its run.
+    value.latest_owner_message_sequence =
+      sql.get<{ sequence: number }>(
+        "SELECT sequence FROM conversation_events WHERE conversation_id=? AND kind='message_to_owner' ORDER BY sequence DESC LIMIT 1",
+        [id],
+      )?.sequence ?? null;
     value.error_acknowledged_through_sequence =
       sql.get<{ through_sequence: number }>(
         'SELECT through_sequence FROM conversation_error_acknowledgements WHERE conversation_id=?',
@@ -362,6 +369,7 @@ export function derive(
     if (version === 4 || version === SCHEMA_VERSION) {
       dep('navigation_signal_publications', id);
       value.attention = currentAttention(sql, id);
+      value.pending_ask = value.attention.current.awaiting_answer ? pendingAsk(sql, id) : null;
     }
     records.push(record(kind, id, value));
     const addresses = new Map<string, { key: NavigationKey; value: Row }>();

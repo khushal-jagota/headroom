@@ -634,7 +634,6 @@ strong {
   object-fit: contain;
   border-radius: var(--radius-lg);
 }
-.file-preview-media > .file-preview-media--wide { min-width: var(--media-min-width); }
 .file-preview-media > .file-preview-video-poster { background: var(--surface-2); }
 .file-preview-media-play {
   position: absolute;
@@ -669,6 +668,50 @@ strong {
   .file-preview-media > .file-preview-video-poster { max-height: var(--media-max-height-phone); }
 }
 
+/* A picture or video takes its final box before it loads, so nothing around it moves.
+   With a recorded size the box has the media's own shape, never upscaled, within the
+   largest box its place allows. A conversation fits media without a size into one fixed
+   frame (below). The media fades in inside its box. */
+.file-preview-media { --media-box-width: 28rem; --media-box-height: var(--media-max-height); }
+@media (max-width: 600px) { .file-preview-media { --media-box-height: var(--media-max-height-phone); } }
+.file-preview-media[data-media-frame="sized"] {
+  width: min(var(--media-w), var(--media-box-width), calc(var(--media-box-height) * var(--media-ratio)));
+  aspect-ratio: var(--media-ratio);
+  background: var(--surface-2);
+}
+.file-preview-media[data-media-frame="sized"] > :is(.file-preview-image, .file-preview-video-poster) {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  object-fit: cover;
+}
+:is([data-conversation-pane], .review-message-card, .review-outgoing-reply) .file-preview-media[data-media-frame="fixed"] {
+  width: var(--media-box-width);
+  height: var(--media-box-height);
+  background: var(--surface-2);
+}
+:is([data-conversation-pane], .review-message-card, .review-outgoing-reply) .file-preview-media[data-media-frame="fixed"] > :is(.file-preview-image, .file-preview-video-poster) {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: scale-down;
+}
+/* The media draws over this browser's own copy of what it sent, which fills the same box. */
+.file-preview-media > .file-preview-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.file-preview-media[data-media-frame] > :is(.file-preview-image, .file-preview-video-poster) { position: relative; }
+/* The box is the placeholder. A video's own fill would cover the local copy under it. */
+.file-preview-media[data-media-frame] > .file-preview-video-poster { background: transparent; }
+.file-preview-media > [data-media-reveal] { transition: opacity var(--motion-base) var(--motion-ease); }
+.file-preview-media > [data-media-reveal]:not([data-media-loaded]) { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .file-preview-media > [data-media-reveal] { transition: none; } }
+
 /* Two or more together: an even grid of square, cropped cells. */
 .file-preview-grid {
   display: grid;
@@ -679,9 +722,11 @@ strong {
 }
 .file-preview-grid > br { display: none; }
 .file-preview-grid > *, .file-preview-grid .file-preview { min-width: 0; margin: 0; }
-.file-preview-grid .file-preview-media { width: 100%; max-width: none; aspect-ratio: 1; border-radius: var(--radius-md); }
+.file-preview-grid .file-preview-media,
+.file-preview-grid .file-preview-media[data-media-frame] { width: 100%; height: auto; max-width: none; aspect-ratio: 1; border-radius: var(--radius-md); }
 .file-preview-grid .file-preview-media > .file-preview-image,
-.file-preview-grid .file-preview-media > .file-preview-video-poster {
+.file-preview-grid .file-preview-media > .file-preview-video-poster,
+.file-preview-grid .file-preview-media[data-media-frame] > :is(.file-preview-image, .file-preview-video-poster) {
   width: 100%;
   height: 100%;
   max-height: none;
@@ -2052,8 +2097,8 @@ select {
  * ticket screen alone — every other screen keeps the padded, flowing shell. */
 /* The ticket screen is what the page inside it — and so the conversation's share of that
  * page — is measured against; see .conversation-layer for why it is this element
- * and not the viewport. It is also the frame the conversation's own popovers are placed
- * in, which is what the positioning is for. */
+ * and not the viewport. It is also the frame the composer's command catalog is placed in,
+ * which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
   min-width: 0;
@@ -3604,17 +3649,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
   [data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) { animation: none; }
 }
 
-/* The options menu: the float plane. Sections are set apart by space and a quiet caption,
- * never by rules. */
-.chat-overflow { position: relative; display: flex; }
+/* The options menu: the float plane, placed from its button by web/src/lib/floatingPanel.ts.
+ * Sections are set apart by space and a quiet caption, never by rules. */
+.chat-overflow { display: flex; }
 .chat-overflow-menu {
-  position: absolute;
-  top: calc(100% + var(--cv-s2));
-  right: 0;
-  z-index: 4;
   min-width: 240px;
   max-width: min(320px, calc(100vw - 32px));
-  max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
   overflow-y: auto;
   display: grid;
   gap: var(--cv-s1);
@@ -3839,6 +3879,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * box's, and every rule names that level. */
 :where(.chat-thread-content, .chat-thread-content > [data-conversation-transcript]) > :where(:not([data-conversation-transcript], [data-conversation-history-edge])) + :where(:not([data-conversation-history-edge])) { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
+/* A short break between agent messages: a turn's gap above a 32px hairline (as Review draws it), and 16px under it. */
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="break"] { position: relative; margin-block-start: var(--cv-gap-turn); padding-block-start: var(--space-4); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="break"]::before { content: ""; position: absolute; inset-block-start: 0; inset-inline-start: 0; inline-size: var(--space-6); border-block-start: var(--border-hairline) solid var(--text-faintest); opacity: .55; }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="row"], [data-rhythm="first"]) { margin-block-start: 0; }
@@ -3846,7 +3889,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .chat-thread-content > [data-conversation-transcript] > [data-conversation-turn] + :not([data-rhythm]) { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-gap-block); }
 /* The live edge under a message keeps the message's hover row clear: a turn's gap. */
-.chat-thread-content > [data-conversation-transcript][data-conversation-ends-with-message] ~ [data-conversation-live-edge] { margin-block-start: var(--cv-gap-turn); }
 /* An item that draws nothing gives nothing, and the item after it keeps its own gap. */
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="none"] { margin-block: 0; }
 
@@ -4121,14 +4163,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* Pictures in a bubble (sent or waiting) are at most 320 wide and 200 tall, their aspect ratio
  * kept, so a mock can be read in place; they open the viewer. The bubble is as wide as its
  * widest content. */
-:is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px); }
+:is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px); --media-box-width: 320px; --media-box-height: 200px; }
 :is(.chat-u, .chat-qrow) .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
   max-width: 100%;
   max-height: 200px;
   border-radius: var(--cv-r-lg);
 }
-:is(.chat-u, .chat-qrow) .file-preview-media > .file-preview-media--wide { min-width: 0; }
-:is(.chat-u, .chat-qrow) .file-preview-grid { width: min(100%, 320px); gap: var(--cv-s1); margin: 0; }
+/* In pixels, so the bubble that measures the grid measures 320, not the pictures' own widths. */
+:is(.chat-u, .chat-qrow) .file-preview-grid { width: 320px; max-width: 100%; gap: var(--cv-s1); margin: 0; }
 :is(.chat-u, .chat-qrow) .file-preview-grid .file-preview-media { max-width: none; border-radius: var(--cv-r-md); }
 
 /* --- Tool rows ------------------------------------------------------------------------------
@@ -4606,6 +4648,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .composer-field[data-composer-field-held][data-composer-field-controls-below] { grid-template-rows: minmax(0, 1fr) auto; }
 .composer-field[data-composer-field-held].has-attachments { grid-template-rows: minmax(0, 1fr) auto auto; }
 .composer-field[data-composer-field-held] > .composer-field-input { align-self: start; }
+/* With the controls beside the words, the one row stays where an unheld field puts it. */
+.composer-field[data-composer-field-held]:not([data-composer-field-controls-below]):not(.has-attachments) > .composer-field-input { align-self: end; }
 
 /* Its icons: a 32px target, the 22px glyph in the secondary tone, lifting to the strong tone on
  * hover. */
@@ -4804,6 +4848,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
   width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
 }
+/* Narrow: the opened column starts 36px in, so a turn's spinner hanging in the gutter keeps
+ * clear of the screen edge (x >= 12px). The header, thread and composer move together. */
+@media (max-width: 480px) {
+  [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
+    width: calc(100% - 36px - var(--space-5));
+    margin-inline: 36px var(--space-5);
+  }
+}
 .conversation-layer [data-conversation-pane] { max-height: 100%; }
 /* Large questions and held prompts scroll inside the card; the whole composer remains one
  * child of the pane's flex column. */
@@ -4815,22 +4867,95 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer [data-conversation-composer-constrained] {
   overflow-y: auto;
 }
-/* Upward popovers are capped by the room over the composer, the catalog keeping its own cap
- * when there is more. */
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu,
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-add-menu,
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .listbox-picker-panel {
-  max-height: max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6)));
-  overflow-y: auto;
-}
+/* The command catalog sits over the composer, capped by the room there. Menus that open
+ * from a button float in the top layer instead (see the popover rule below). */
 .conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu {
   max-height: min(320px, max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6))));
+  overflow-y: auto;
 }
-/* Once a composer needs its own scroller, upward popovers would be clipped by that scroller.
- * Their controls stay reachable in its flow instead. Ordinary menus float. */
-.conversation-layer [data-conversation-composer-constrained] .chat-menu,
-.conversation-layer [data-conversation-composer-constrained] .chat-add-menu,
-.conversation-layer [data-conversation-composer-constrained] .listbox-picker-panel {
+/* Once a composer needs its own scroller, the catalog would be clipped by that scroller.
+ * It stays reachable in its flow instead. */
+.conversation-layer [data-conversation-composer-constrained] .chat-menu {
   position: static;
   max-width: 100%;
+}
+
+/* A menu or picker panel placed by web/src/lib/floatingPanel.ts is a popover in the top
+ * layer. Undo the browser's centered, padded popover defaults; Floating UI writes its left
+ * and top. Zero specificity, so each panel's own look still wins. */
+:where([popover]) {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+}
+
+/* === The desktop window ====================================================================
+ * Only inside the desktop app: its preload marks the root `data-desktop-window`, and
+ * `data-window-inactive` / `data-window-full-screen` as the window changes. A browser matches
+ * none of these rules. The window has one 52px top row (--window-top-row): the traffic lights,
+ * the app name and the sidebar button (WindowTopRow), and each page's own row pinned on the
+ * same line (WindowPageRowSlot, which also draws the fade under it). Everything else starts
+ * under the row; the open conversation alone runs to the window's top, its header the page row.
+ * BoardRoute holds the sidebar's part. */
+
+/* Every page header starts --window-content-top under the top row (y 68), level with the
+ * sidebar's first card: the pages that have their own top padding take the row's height. */
+:root[data-desktop-window] { --page-top: var(--window-content-top); }
+/* A Ticket's or a Manager's reading area starts under the row, so its open conversation can still
+ * reach the top; anything else in the pane (a destination, a loading or failed page) starts under it. */
+:root[data-desktop-window] :is(.ticket-reading, .manager-reading) { margin-top: var(--window-top-row); }
+:root[data-desktop-window] .board-workspace-right:not(:has(.ticket-reading, .manager-reading)) { padding-top: var(--window-top-row); }
+:root[data-desktop-window] .destination-pane--document { padding-top: 0; }
+/* The row above each title has moved onto the top row, so the title is the page's first line. */
+:root[data-desktop-window] :is(.page-title, .ticket-head > .ticket-title-row, .manager-workspace-head .manager-workspace-title, .goal-heading > h1, .review-screen .review-ticket-title),
+:root[data-desktop-window] .manager-page .manager-column .manager-workspace-head .manager-workspace-title { margin-top: 0; }
+:root[data-desktop-window] .settings-page .settings-page-eyebrow { margin-top: 0; }
+
+/* An artifact's or a file's own bar stands directly under the top row, so nothing fades over it. */
+:root[data-desktop-window] .board-workspace-right:has(.ticket-artifact, [data-review-artifact], [data-file-preview-route]) > .window-page-row-slot::after { display: none; }
+/* An open Review artifact makes the card inert. The card's lifted row goes with it, so its
+ * actions cannot act behind the artifact. */
+:root[data-desktop-window] .board-workspace-right:has([data-review-artifact]) > .window-page-row-slot .window-page-row { visibility: hidden; }
+
+/* With the sidebar hidden, every reading column keeps clear of the sidebar button: the page's
+ * scroll areas and the conversation take the insets BoardRoute sets, so their scrollbars stay
+ * at the window's edge while the column moves in. */
+:root[data-desktop-window] :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer, .destination-pane--document) {
+  transition: padding-left var(--motion-slow) var(--motion-ease), padding-right var(--motion-slow) var(--motion-ease);
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer) {
+  padding-inline: var(--window-column-inset-start) var(--window-column-inset-end);
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden .destination-pane--document {
+  padding-inline: calc(var(--page-gutter) + var(--window-column-inset-start)) calc(var(--page-gutter) + var(--window-column-inset-end));
+}
+:root[data-desktop-window] .board-workspace-shell--rail-hidden :is(.manager-page, .ticket-page) > .conversation-layer::after {
+  left: var(--window-column-inset-start);
+  right: var(--window-column-inset-end);
+  width: min(var(--page-measure), calc(100% - var(--window-column-inset-start) - var(--window-column-inset-end) - 2 * var(--space-5)));
+  margin-inline: auto;
+  transform: none;
+}
+
+/* The open conversation's own header is the page row: on the window-control line, its divider
+ * at the foot of the top row, in the reading column. */
+:root[data-desktop-window] [data-conversation-dock-state="opened"] > .conversation-layer { padding-top: 0; }
+:root[data-desktop-window] [data-conversation-dock-state="opened"] .chat-head {
+  height: var(--window-top-row);
+  box-shadow: 0 var(--border-hairline) 0 var(--border-color);
+}
+:root[data-desktop-window] :is(.chat-head, .chat-overflow-menu) :is(button, a, input, select, summary, label, [tabindex]) { -webkit-app-region: no-drag; }
+:root[data-desktop-window] .chat-overflow-menu { -webkit-app-region: no-drag; }
+:root[data-desktop-window][data-window-inactive] .chat-head :is(.chat-head-title, .cv-state, .cv-segment, .chat-head-collapse) { color: var(--tone-faint); }
+:root[data-desktop-window][data-window-inactive] .chat-head .cv-icon-button { color: var(--tone-tertiary); }
+
+/* Full-window layers keep their own controls out of the top row's drag region: the media
+ * viewer's bar starts under the row, and a dialog's controls take their own clicks. */
+:root[data-desktop-window] .media-viewer-bar { margin-top: var(--window-top-row); }
+:root[data-desktop-window] :is(dialog, [role="dialog"], .machine-scrim, .goal-preview, .window-page-row-menu) :is(button, a, input, select, textarea, summary, label) { -webkit-app-region: no-drag; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-desktop-window] :is(.ticket-doc, .manager-doc, .review-scroll, .board-workspace-utility, .conversation-layer, .destination-pane--document) { transition: none; }
 }

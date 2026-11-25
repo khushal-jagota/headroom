@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { install_numeric_json_parser } from '../core/http/numeric_intake.ts';
 import { dictionaryBody } from '../list_reads/http.ts';
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import * as operations from './decision_operations.ts';
 
 export const decision_routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
@@ -26,6 +27,7 @@ export const decision_routes: FastifyPluginAsync<AreaServices> = async (app, ser
           request.body as Record<string, unknown>,
           services.identity(request).principal,
           services.clock.nowUnix(),
+          new VideoUploadService(services.database, services.config.db_path),
         ),
       );
     },

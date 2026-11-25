@@ -378,6 +378,10 @@ def main() -> int:
     decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
+        # Set by /proof/artifact-revision: the dock artifact's file changes on the server.
+        "artifact_revision": False,
+        # The Origin header of each write from the proof page.
+        "page_posts": [],
         "slow": (
             not REVIEW_COMPLETION and not GOALS_SMOKE
             and not REACHABILITY_SMOKE and not DESIGN_REVIEW
@@ -898,10 +902,23 @@ def main() -> int:
                 cards[key] = min(cards.get(key, waiting), waiting)
         for identity, read, unread_at in conversations:
             records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+            if REVIEW_MESSAGES:
+                # The newest message to the owner, as the server's record carries it.
+                records[("conversation", identity)]["value"]["latest_owner_message_sequence"] = (
+                    8 if identity == "history" else 4 if state["new_message"] else 3
+                )
         for identity, ask in state["asks"].items():
             conversation = conversation_record(identity, 0, None)
             waiting = bool(ask["pending_user_input"] or ask["pending_permission_ask"])
             conversation["value"]["latest_ask_at"] = ask["at"]
+            # The waiting ask in the conversation route's shape, as the server's record carries it.
+            conversation["value"]["pending_ask"] = (
+                dict(kind="permission", **ask["pending_permission_ask"])
+                if ask["pending_permission_ask"]
+                else dict(kind="user_input", **ask["pending_user_input"])
+                if ask["pending_user_input"]
+                else None
+            )
             conversation["value"]["attention"]["current"]["awaiting_answer"] = waiting
             conversation["value"]["attention"]["current"]["signal"]["working"] = True
             records[("conversation", identity)] = conversation
@@ -1387,7 +1404,7 @@ def main() -> int:
                             body="Show what waits, in two tones, with one quiet return button.")
                         tickets["offline-new"] = arrival
                 elif REVIEW_QUEUE and name.startswith("review-move/"):
-                    # The proposal now waits on Chief: it leaves Khushal's window.
+                    # The proposal now waits on Chief: it leaves the owner's window.
                     with lock:
                         ticket = tickets[name.split("/", 1)[1]]
                         ticket["ceiling_holder"] = {"kind": "chief", "id": "chief"}
@@ -1399,12 +1416,21 @@ def main() -> int:
                     return
                 elif name == "new-message":
                     state["new_message"] = True
+                elif name == "artifact-revision":
+                    state["artifact_revision"] = True
+                elif name == "page-posts":
+                    self.respond(state["page_posts"])
+                    return
                 elif DESIGN_REVIEW and name == "stall-refresh":
                     state["stall_refresh"] = True
                 elif DESIGN_REVIEW and name == "unstall-refresh":
                     state["stall_refresh"] = False
                 elif name == "offline":
                     state["offline"] = True
+                elif name == "card-reads-offline":
+                    # Every read of a Review card's conversation fails as offline, while the
+                    # view still arrives: the phone never reads these cards.
+                    state["card_reads_offline"] = True
                 elif name == "online":
                     state["offline"] = False
                     state["slow"] = False
@@ -1466,6 +1492,11 @@ def main() -> int:
                 self.respond({})
                 return
             if self.disconnected():
+                return
+            if state.get("card_reads_offline") and path.startswith(
+                "/api/conversation/conversations/"
+            ) and (path.endswith("/events") or path.count("/") == 4):
+                self.drop_connection()
                 return
             # The store's refresh reads the deployment status. Held here, the refresh after a
             # reviewer change stalls as on a slow connection, until the proof releases it.
@@ -1570,11 +1601,11 @@ def main() -> int:
                 self.wfile.write(content)
                 return
             if ARTIFACT_DOCK_SMOKE and path == "/api/artifact-catalog/ticket/offline-1":
-                # The Ticket page keeps its two files behind the collapsed Artifacts row.
-                self.respond(dict(revision="dock", directory="", offset=0, total=2, entries=[
+                # The Ticket page keeps its three files behind the collapsed Artifacts row.
+                self.respond(dict(revision="dock", directory="", offset=0, total=3, entries=[
                     dict(key=f"managed:{name}", path=name, label=name, kind="2",
                          href=f"/files/tickets/offline-1/{name}", directory=None, child_count=0)
-                    for name in ("dock-proof.md", "nested-dock.md")
+                    for name in ("dock-proof.md", "nested-dock.md", "proof.html")
                 ]))
                 return
             if ARTIFACT_DOCK_SMOKE and path in (
@@ -1583,7 +1614,8 @@ def main() -> int:
             ):
                 content = (
                     ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
-                     + "\n[Nested dock artifact](nested-dock.md)\n").encode()
+                     + "\n[Nested dock artifact](nested-dock.md)\n"
+                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")).encode()
                     if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)
@@ -1768,9 +1800,27 @@ def main() -> int:
                 # Both decode the same Ticket controls from this fixture's retained state.
                 value = tickets[path.split("/")[3]]
             elif path == "/files/tickets/offline-1/proof.html" and REVIEW_MESSAGES:
-                content = b"<!doctype html><html><body><h1>Inline artifact proof</h1></body></html>"
+                # The sibling screenshot writes its line only when it loads, so the walk can
+                # tell a page with its images from a page alone.
+                content = (
+                    b"<!doctype html><html><body><h1>Inline artifact proof</h1>"
+                    b"<img src='shots/proof-shot.png' width='120' alt='' "
+                    b"onload=\"document.getElementById('shot').textContent='Screenshot loaded'\">"
+                    b"<p id='shot'></p><p id='post'></p>"
+                    b"<p><a href='http://127.0.0.1:1/nowhere'>Broken link</a></p>"
+                    b"<script>fetch('page-post', {method: 'POST', body: 'proof'}).then(r => { if (r.ok) "
+                    b"document.getElementById('post').textContent = 'Page post landed' })</script></body></html>"
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            elif path == "/files/tickets/offline-1/shots/proof-shot.png" and REVIEW_MESSAGES:
+                content = (ROOT / "ios/Panels/Assets.xcassets/AppIcon.appiconset/AppIcon.png").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
@@ -1946,6 +1996,17 @@ def main() -> int:
             if self.disconnected():
                 return
             path = urlparse(self.path).path
+            if path == "/files/tickets/offline-1/page-post" and REVIEW_MESSAGES:
+                # The proof page's own write. Like the server's trusted ingress, a write
+                # whose Origin is not the server's own address is refused.
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                origin = self.headers.get("Origin")
+                allowed = origin is None or origin == f"http://127.0.0.1:{self.server.server_port}"
+                with lock:
+                    state["page_posts"].append(origin)
+                self.respond({"ok": allowed} if allowed else {"error": {"message": "request origin is not allowed"}},
+                             200 if allowed else 403)
+                return
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
             kind = (
                 "message" if path.endswith("/send")

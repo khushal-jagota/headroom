@@ -2,21 +2,28 @@ import { releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../ou
 import type { ComposerSendAttempt } from "../../../components/conversation/composer/draftTransaction";
 import type { PromptDeliveryMode, SentMessagePiece } from "../wire";
 import type { ComposerSendContext } from "./contracts";
+import { uploadPiece } from "./pieces";
 export type PendingComposerSend = {
   context: ComposerSendContext;
   attempt: ComposerSendAttempt;
   mode: PromptDeliveryMode;
+  sentAtUnixMilliseconds?: number;
+  restored?: boolean;
   phase: "waiting" | "dispatching" | "failed" | "interrupted";
   error?: string;
   needsReconciliation?: boolean;
+  needsReattachment?: boolean;
 };
 const PREFIX = "panels:composer-local-sends:";
+/** Fields that name this page's own memory. A reload cannot use them. */
+const LOCAL_ONLY = new Set(["file", "previewUrl", "localVideoUrl"]);
+const REATTACH_NOTE = "Some attachments could not be saved. Select them again before sending.";
 
 export function pendingSendContent(entry: PendingComposerSend): SentMessagePiece[] {
-  const pieces: SentMessagePiece[] = entry.attempt.content.filter(piece => piece.piece !== "video_upload");
+  const pieces: SentMessagePiece[] = entry.attempt.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload");
   for (const video of entry.attempt.draftBeforeSend.pendingVideos ?? []) {
-    if (video.phase !== "ready" || !video.uploadId) throw new Error("The video is not ready.");
-    pieces.push({piece: "video_upload", upload_id: video.uploadId});
+    if (video.phase !== "ready" || !video.uploadId) throw new Error("The file is not ready.");
+    pieces.push(uploadPiece(video));
   }
   return pieces;
 }
@@ -63,17 +70,18 @@ export class LocalComposerSends {
 export function rememberLocalSends(key: string, entries: readonly PendingComposerSend[]): void {
   try {
     if (!entries.length) window.sessionStorage.removeItem(PREFIX + key);
-    else window.sessionStorage.setItem(PREFIX + key, JSON.stringify(entries, (key, value) => key === "file" ? undefined : value));
+    else window.sessionStorage.setItem(PREFIX + key, JSON.stringify(entries, (key, value) => LOCAL_ONLY.has(key) ? undefined : value));
   } catch {
     // A large document/image payload may exceed session storage. Keep the words and
     // video references, with an explicit attachment recovery state, rather than lose text.
     try {
       const compact = entries.map(entry => ({...entry, phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
-        error: "Some attachments could not be saved. Select them again before sending.",
-        attempt: {...entry.attempt, content: entry.attempt.content.filter(piece => piece.piece === "text" || piece.piece === "video_upload"),
+        needsReattachment: entry.needsReattachment || entry.attempt.content.some(piece => piece.piece === "image" || piece.piece === "file"),
+        error: REATTACH_NOTE,
+        attempt: {...entry.attempt, content: entry.attempt.content.filter(piece => piece.piece === "text" || piece.piece === "video_upload" || piece.piece === "attachment_upload"),
           draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingImages: [], pendingFiles: [],
             attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind === "video")}}}));
-      window.sessionStorage.setItem(PREFIX + key, JSON.stringify(compact, (name, value) => name === "file" ? undefined : value));
+      window.sessionStorage.setItem(PREFIX + key, JSON.stringify(compact, (name, value) => LOCAL_ONLY.has(name) ? undefined : value));
     } catch { /* Storage refusal leaves the live state intact. */ }
   }
 }
@@ -84,17 +92,22 @@ export function recallLocalSends(key: string): PendingComposerSend[] {
     return entries.filter((entry): entry is PendingComposerSend => Boolean(entry && typeof entry === "object"
       && typeof entry.context?.messageId === "string" && entry.attempt?.draftBeforeSend
       && typeof entry.attempt.draftBeforeSend.text === "string" && Array.isArray(entry.attempt.content)))
-      .map(entry => ({...entry, attempt: {...entry.attempt, draftBeforeSend: {...entry.attempt.draftBeforeSend,
-        pendingVideos: (entry.attempt.draftBeforeSend.pendingVideos ?? []).map(video => ({...video,
-          phase: video.phase === "ready" ? "ready" : "interrupted", file: undefined,
-          error: video.phase === "ready" ? undefined : "Select the video again, then press Send."}))}}, phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
-        needsReconciliation: entry.phase === "dispatching" || entry.needsReconciliation,
-        error: "Return this message to the composer, select an interrupted video again, then press Send."}));
+      .map(entry => {
+        const needsReattachment = entry.needsReattachment || entry.error === REATTACH_NOTE;
+        return {...entry, attempt: {...entry.attempt, draftBeforeSend: {...entry.attempt.draftBeforeSend,
+          pendingVideos: (entry.attempt.draftBeforeSend.pendingVideos ?? []).map(video => ({...video,
+            phase: video.phase === "ready" ? "ready" : "interrupted", file: undefined,
+            error: video.phase === "ready" ? undefined : "Select the file again, then press Send."}))}},
+          phase: entry.phase === "dispatching" ? "dispatching" : "interrupted",
+          needsReconciliation: entry.phase === "dispatching" || entry.needsReconciliation,
+          needsReattachment,
+          error: needsReattachment ? REATTACH_NOTE : "This message was kept in the browser. Try again or edit it before sending."};
+      });
   } catch { return []; }
 }
 export function rememberDraftVideo(key: string, videos: readonly import("./contracts").PendingVideo[]): void {
   try {
-    const value = videos.map(({file: _file, ...video}) => video);
+    const value = videos.map(({file: _file, previewUrl: _previewUrl, localVideoUrl: _localVideoUrl, ...video}) => video);
     if (!value.length) window.sessionStorage.removeItem(PREFIX + "video:" + key);
     else window.sessionStorage.setItem(PREFIX + "video:" + key, JSON.stringify(value));
   } catch { /* best effort */ }
@@ -104,7 +117,7 @@ export function recallDraftVideo(key: string): import("./contracts").PendingVide
     const value = JSON.parse(window.sessionStorage.getItem(PREFIX + "video:" + key) ?? "[]");
     if (!Array.isArray(value)) return [];
     return value.filter(video => video && typeof video.fileName === "string" && typeof video.destination?.id === "string")
-      .map(video => ({...video, phase: video.phase === "ready" ? "validating" : "interrupted", error: "Select the video again, then press Send."}));
+      .map(video => ({...video, phase: video.phase === "ready" ? "validating" : "interrupted", error: "Select the file again, then press Send."}));
   } catch { return []; }
 }
 

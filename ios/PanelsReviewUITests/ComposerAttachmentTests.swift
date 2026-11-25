@@ -28,7 +28,7 @@ final class ComposerAttachmentTests: XCTestCase {
             XCTAssertTrue(item.waitForExistence(timeout: 3), "Paste is missing from the edit menu")
             item.tap()
         }
-        // A picture is copied in another app, as Khushal does: the app learns of a clipboard
+        // A picture is copied in another app, as the owner does: the app learns of a clipboard
         // change from another process when it becomes active again. Changed while the app
         // stays in front, the menu offers no Paste for a picture until a key is pressed.
         func copyFromAnotherApp(_ copy: () -> Void) async throws {

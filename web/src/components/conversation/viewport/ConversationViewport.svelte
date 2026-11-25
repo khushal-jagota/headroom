@@ -7,7 +7,6 @@
   import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
   import type { ConversationJump } from "./viewportConfiguration";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
-  import LiveEdge from '../view/LiveEdge.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
@@ -26,6 +25,7 @@
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
   import { releaseTextRestoration, type TextRestorationPlacement, type LatestPlacementIntent } from './placement';
+  import { outgoingMessageIsSending } from "../../../lib/conversation/outgoing";
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -43,7 +43,6 @@
     onSendAgain,
     models,
     ownSenderLabel,
-    livenessPulse,
     activityUncertain = false,
     conversationState,
     emptyState,
@@ -68,12 +67,9 @@
     onSendAgain?: (messageId: string) => Promise<void> | void;
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
-    livenessPulse: number;
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
-    /** What stands at the very end of the thread after everything said: the person's
-     *  messages that are waiting to be sent. */
     afterTranscript?: Snippet;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
@@ -163,7 +159,7 @@
   let newestLineBelowTheView = $state(false);
   /** v8 (11): how far the thread's end was below the view at the last scroll or resize. */
   let endGapBeforeResize = 0;
-  /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
+  /** Newer content is below the view, past the near-the-bottom margin: Jump to latest shows. */
   let newestLineFarBelow = $state(false);
   /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
   let atTheTop = $state(true);
@@ -273,6 +269,8 @@
     if (aligned && reader?.restorationOutcome === 'idle') releaseTextRestoration(operation);
     return aligned;
   }
+  /** A send in flight or accepted. Each owns the placement of its own message. */
+  const PLACEABLE_SEND = '[data-conversation-outgoing][data-conversation-accepted="true"], [data-conversation-outgoing][data-conversation-sending="true"]';
   let pendingPresentationTarget: Element | null = null;
   let heldSent = $state<{ messageId: string; displayKey: string | null; rowKey: string | null } | null>(null);
   let liveArrivalPixels = 0;
@@ -551,8 +549,8 @@
   }
 
   function hasUnplacedAcceptedSend(): boolean {
-    if (outgoingMessages.some(message => message.accepted && !message.restored && !settledMessageIds.has(message.messageId))) return true;
-    return [...(contentElement?.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]') ?? [])]
+    if (outgoingMessages.some(message => (message.accepted || outgoingMessageIsSending(message)) && !message.restored && !settledMessageIds.has(message.messageId))) return true;
+    return [...(contentElement?.querySelectorAll<HTMLElement>(PLACEABLE_SEND) ?? [])]
       .some(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) &&
         !outgoingMessages.some(message => message.messageId === element.dataset.conversationOutgoing && message.restored));
   }
@@ -714,17 +712,18 @@
           if (message === undefined) arrivingMessages.delete(key);
           else if (presentationReady(message)) pendingFullMessageKey = key;
         }
-        // Only confirmed acceptance creates a send placement. A recovery bubble is not acceptance.
+        // A send in flight or accepted creates the send placement, so the answer room is built
+        // in the frame the bubble appears. A bubble that failed or came back from a reload is recovery.
         for (const message of outgoingMessages) {
           if (message.restored) settledMessageIds.add(message.messageId);
         }
-        const recovery = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing]:not([data-conversation-accepted="true"])')]
+        const recovery = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing]:not([data-conversation-accepted="true"]):not([data-conversation-sending="true"])')]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) && !recoverySeen.has(element.dataset.conversationOutgoing!)).at(-1);
         if (recovery && presentationReady(recovery)) {
           recoveryToPlace = recovery.dataset.conversationOutgoing!;
           recoverySeen.add(recoveryToPlace);
         }
-        const accepted = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]')]
+        const accepted = [...thread.querySelectorAll<HTMLElement>(PLACEABLE_SEND)]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!)).at(-1);
         if (accepted !== undefined) supersedeRestorationWithAcceptedSend();
         if (accepted !== undefined && presentationReady(accepted)) {
@@ -1155,7 +1154,7 @@
       repairLayout(thread);
       requestReconciliation();
     });
-    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
+    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "data-conversation-sending", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
     observer.observe(thread);
     observer.observe(content);
     return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
@@ -1197,10 +1196,11 @@
     return () => observer.disconnect();
   });
 
-  // The jump is drawn by the pane, straddling the composer's top edge. v5.4: it shows only
-  // while the newest content is more than one viewport below the visible area (or newer
-  // history is not loaded yet, or a jump is under way).
-  const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);
+  // The jump is drawn by the pane, straddling the composer's top edge. It shows while the newest
+  // content is below the view and the reader has moved off it. While the thread follows new
+  // output the following steps trail the arriving lines, so that gap does not show it. It also
+  // shows while newer history is not loaded yet, or a jump is under way.
+  const jumpShown = $derived((newestLineFarBelow && manualReader) || newerHistory || newerThanUnplacedAnchor || latestPending);
   $effect(() => {
     jump = jumpShown
       ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
@@ -1238,7 +1238,7 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {livenessPulse} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
+      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -1246,7 +1246,6 @@
       {lens}
       {models}
       {ownSenderLabel}
-      {livenessPulse}
       {activityUncertain}
       {conversationId}
       {outgoingMessages}
@@ -1255,10 +1254,9 @@
       {onSendAgain}
     />
     {/if}
-    <!-- v8 (3): the Working line right after the running turn's content (its steered
-         messages are inside the turn), then the queued messages, which send after it. -->
-    {#if reader!==null}<LiveEdge {reader} {activityUncertain} {livenessPulse}/>{/if}
-    {#if afterTranscript}{@render afterTranscript()}{/if}
+    {#if afterTranscript}
+      <div class="held-queue-slot">{@render afterTranscript()}</div>
+    {/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1299,6 +1297,9 @@
   }
   /* An empty conversation takes the whole view, so its one line stands in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
+  /* Keep a short transcript at the top and its held messages against the composer. */
+  .chat-thread-content:has(> .held-queue-slot) { flex-grow: 1; }
+  .chat-thread-content > .held-queue-slot { margin-block-start: auto; }
   /* Answer room is not content and never shrinks to make room for content. The browser keeps
      the reader's place when history arrives above them; nothing here competes with it. */
   .c2-reserved { flex: none; overflow-anchor: none; }

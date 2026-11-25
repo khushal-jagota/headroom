@@ -49,7 +49,7 @@ import SwiftData
             if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
         } catch { container = nil; startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
     }
-    static var directory: URL {
+    nonisolated static var directory: URL {
         if let path = ProcessInfo.processInfo.environment["PANELS_STORE_DIRECTORY"] { return URL(fileURLWithPath: path) }
         return URL.applicationSupportDirectory.appendingPathComponent("PanelsPhoneStore", isDirectory: true)
     }

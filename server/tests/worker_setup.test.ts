@@ -18,7 +18,47 @@ import { WORKER_SETUP_RESTART_REFUSAL_SECONDS } from '../ticket_workspaces/worke
 import { add_work_attention } from '../work_attention.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import { createSignalNavigationRuntime } from '../navigation/index.ts';
-import { create, fixture, fixture_path, now } from './ticket_fixture.ts';
+import { create, fixture, fixture_path, manager, now } from './ticket_fixture.ts';
+
+import { read_operations } from '../work_moves/operations.ts';
+import type { WorkMoveOperation, WorkMoveOwner } from '../work_moves/contracts.ts';
+
+// Risk: new move phases depend on authenticated executor reports, including supervisors.
+// Reuse this connected executor fixture instead of a second host.
+function seed_move(database: Database, owner: WorkMoveOwner, conversation_id: string): void {
+  const operation: WorkMoveOperation = {
+    operation_id: conversation_id,
+    machine_id: ORIGINAL_MAC_MACHINE_ID,
+    everything: false,
+    started_at_ms: now * 1000,
+    finished_at_ms: null,
+    items: [
+      {
+        owner,
+        title: 'Move proof',
+        conversation_id,
+        phase: 'queued',
+        phases: [{ phase: 'queued', started_at_ms: now * 1000, finished_at_ms: null }],
+        result: null,
+      },
+    ],
+  };
+  database.write((tx) =>
+    tx.run('INSERT OR REPLACE INTO work_move_operations VALUES(?,?,?,?)', [
+      operation.operation_id,
+      operation.started_at_ms,
+      null,
+      JSON.stringify(operation),
+    ]),
+  );
+}
+function move_phase(database: Database, conversation_id: string) {
+  return database.read(
+    (sql) =>
+      read_operations(sql).find((operation) => operation.operation_id === conversation_id)!
+        .items[0]!.phase,
+  );
+}
 
 /** The Ticket fixture with the real producer and navigation commit steps, as in navigation_totals. */
 function navigated_fixture(): Database {
@@ -164,10 +204,12 @@ test('Another machine declares its setup while its start is open, and every sett
           .child;
       });
 
+      seed_move(database, { kind: 'ticket', id: ticket.id }, conversation_id);
       await endpoint.report_worker_setup(identity, {
         child: reference,
         step: 'preparing_workspace',
       });
+      expect(move_phase(database, conversation_id)).toBe('recovering');
       expect(setup_row(database, ticket.id)).toMatchObject({
         conversation_id,
         machine_id: ORIGINAL_MAC_MACHINE_ID,
@@ -179,6 +221,17 @@ test('Another machine declares its setup while its start is open, and every sett
       );
       await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
       expect(navigation_setup(database, ticket.id)).toMatchObject({ step: 'starting_worker' });
+      expect(move_phase(database, conversation_id)).toBe('starting');
+      // Even an open command cannot advance a move after its conversation is replaced.
+      seed_move(database, { kind: 'ticket', id: ticket.id }, conversation_id);
+      database.write((tx) =>
+        tx.run('UPDATE tickets SET conversation_id=NULL WHERE id=?', [ticket.id]),
+      );
+      await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
+      expect(move_phase(database, conversation_id)).toBe('queued');
+      database.write((tx) =>
+        tx.run('UPDATE tickets SET conversation_id=? WHERE id=?', [conversation_id, ticket.id]),
+      );
 
       database.write((tx) =>
         tx.run(
@@ -191,6 +244,67 @@ test('Another machine declares its setup while its start is open, and every sett
       // A report that arrives after the start settled declares nothing.
       await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
       expect(setup_row(database, ticket.id)).toBeNull();
+      expect(move_phase(database, conversation_id)).toBe('queued');
+    }
+    const manager_id = manager(database, 'Move setup proof');
+    for (const owner of [
+      { kind: 'chief' as const },
+      { kind: 'manager' as const, id: manager_id },
+    ]) {
+      const conversation_id = `conv_move_${owner.kind}`;
+      const key = owner.kind === 'chief' ? 'chief_of_staff' : `manager_${owner.id}`;
+      database.write((tx) => {
+        tx.run(
+          "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,workspace_path_policy,access,created_at) VALUES(?,'codex','model','/','executor_default','full',?)",
+          [conversation_id, now],
+        );
+        tx.run(
+          'INSERT INTO agents(agent_key,conversation_id,machine_id) VALUES(?,?,?) ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id,machine_id=excluded.machine_id',
+          [key, conversation_id, ORIGINAL_MAC_MACHINE_ID],
+        );
+      });
+      const values = worker_resolve(database, ticket);
+      const start = {
+        ...values,
+        conversation_id,
+        role_materials: {
+          ...values.role_materials,
+          identity_environment_variables: [
+            ['PLAN_ACTOR', owner.kind],
+            ...(owner.kind === 'manager' ? [['PLAN_MANAGER_ID', owner.id]] : []),
+          ],
+        },
+      };
+      const child = endpoint.runs.create({
+        resolved_start: start as never,
+        event_sink: { async report() {} },
+        message_files: null as never,
+      });
+      await child.start(start as never, { vendor_session_cursor: null });
+      const reference = database.read(
+        (sql) =>
+          JSON.parse(
+            sql.get<{ command_json: string }>(
+              "SELECT command_json FROM executor_commands WHERE conversation_id=? AND operation='start'",
+              [conversation_id],
+            )!.command_json,
+          ).child_command.child,
+      );
+      seed_move(database, owner, conversation_id);
+      await endpoint.report_worker_setup(identity, {
+        child: reference,
+        step: 'preparing_workspace',
+      });
+      expect(move_phase(database, conversation_id)).toBe('recovering');
+      await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
+      expect(move_phase(database, conversation_id)).toBe('starting');
+      expect(database.read((sql) => sql.all('SELECT * FROM ticket_worker_setups'))).toEqual([]);
+      seed_move(database, owner, conversation_id);
+      database.write((tx) =>
+        tx.run('UPDATE agents SET conversation_id=NULL WHERE agent_key=?', [key]),
+      );
+      await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
+      expect(move_phase(database, conversation_id)).toBe('queued');
     }
   } finally {
     await registry.stop({ deadline: performance.now() / 1000 + 2 });

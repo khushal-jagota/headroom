@@ -15,7 +15,7 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
-- **Ticket servers.** A Worker runs its own server from its isolated git worktree with private runtime state. The TypeScript test server uses the private temporary directory described below. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
+- **Ticket servers.** A Worker runs its own server from its isolated git worktree with private runtime state. The TypeScript test server uses the private temporary directory described below. Headroom never publishes one through the live app. Work the owner must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
 - **A local checkout.** One source checkout with its own Node dependencies, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the checkout and their private `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
@@ -38,7 +38,7 @@ The home uses one platform contract for service identity, app-child launch, proc
 
 An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
 
-A home does not link skills in the provider account folders. Machine code links them. At startup, an installed home removes only its own old links from those folders, and it keeps every other entry.
+A home does not link skills in the provider account folders. Machine code links them. A disposable home can use private provider folders and omit the shared account command through the installer. At startup, an installed home removes only its own old links from those folders, and it keeps every other entry.
 
 The home links workspace skills and removes its old account links on an awaited worker thread, so file removal does not block the event loop. Startup waits for this work before normal work starts.
 
@@ -94,7 +94,7 @@ env -i PATH="$PATH" HOME="$TEST_SERVER_ROOT/home" TMPDIR="$TMPDIR" \
   PLAN_NOTIFICATIONS_ENABLED=false npm run test-server
 ```
 
-The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture and the production composition; this test server uses a fresh database and the test-mode composition.
+The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture, the production server and private home machine code connected through its local socket; this test server uses a fresh database and the test-mode composition.
 
 ## Ticket scratch
 

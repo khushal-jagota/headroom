@@ -34,12 +34,15 @@ export function newDesktopUserData(): string {
 
 export async function launchDesktopApp(launch: DesktopLaunch): Promise<DesktopApp> {
   const userData = launch.userData ?? newDesktopUserData();
+  const hook = process.env.PANELS_DESKTOP_MAIN_HOOK;
   const executablePath = createRequire(join(DESKTOP, 'package.json'))('electron') as string;
   const app = await _electron.launch({
     executablePath,
     // The VPS and CI runners have no setuid sandbox helper. The page keeps Electron's
     // own sandbox, context isolation and no Node, which the app sets per window.
-    args: [DESKTOP, '--no-sandbox'],
+    // A run on a Mac with someone at the screen names a hook that keeps the window behind
+    // every other and out of focus, and no restore dialog follows the quit.
+    args: hook ? ['-r', hook, DESKTOP, '-ApplePersistenceIgnoreState', 'YES'] : [DESKTOP, '--no-sandbox'],
     env: {
       ...process.env,
       PANELS_DESKTOP_USER_DATA: userData,

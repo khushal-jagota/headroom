@@ -248,7 +248,10 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private unchanged(release: PublishedUpdate): boolean {
     const machine = this.context.machines?.().find((item) => item.machine_id === this.machine_id);
     const build = this.build_identity(release).build_id;
-    return build !== undefined && machine?.identity?.build_id === build;
+    // Older retained publications have no content identity to compare.
+    return build === undefined
+      ? machine?.identity?.application_revision === release.manifest.app_sha
+      : machine?.identity?.build_id === build;
   }
   private preparation_error(release: PublishedUpdate): string | null {
     if (this.artifact(release) === null) return null;

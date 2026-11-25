@@ -4,7 +4,14 @@ import type { FastifyReply } from 'fastify';
 import { HttpError } from '../core/http/errors.ts';
 import type { VideoSendAdmission } from './video_send_admission.ts';
 import type { ConversationMessageFiles } from './message_files.ts';
-import { MessageText, MessageImage, MessageFile, type MessageContent } from './message_content.ts';
+import {
+  MessageText,
+  MessageImage,
+  MessageFile,
+  media_size_from,
+  type MediaSize,
+  type MessageContent,
+} from './message_content.ts';
 import {
   MAX_CONVERSATION_IMAGE_BYTES,
   MAX_CONVERSATION_MESSAGE_IMAGE_BYTES,
@@ -37,10 +44,31 @@ export type SentPiece =
       media_type: string;
       file_name: string;
     }
-  | {
-      piece: 'video_upload';
-      upload_id: string;
-    };
+  | SentUploadPiece;
+/** A file the browser already uploaded, named by its upload. A picture or video can carry
+ *  the width and height the browser measured, so its message keeps that box. */
+export type SentUploadPiece = {
+  piece: 'video_upload' | 'attachment_upload';
+  upload_id: string;
+  width?: number;
+  height?: number;
+} & ({ piece: 'video_upload' } | { piece: 'attachment_upload' });
+const SENT_UPLOAD_PIECE_KEYS = ['piece', 'upload_id', 'width', 'height'];
+/** An upload reference with no other keys, and either no size or a whole, in-range size. */
+export function sent_upload_piece(value: unknown): SentUploadPiece | null {
+  if (!object(value)) return null;
+  if (value.piece !== 'video_upload' && value.piece !== 'attachment_upload') return null;
+  if (typeof value.upload_id !== 'string') return null;
+  if (!Object.keys(value).every((key) => SENT_UPLOAD_PIECE_KEYS.includes(key))) return null;
+  const sized = 'width' in value || 'height' in value;
+  const size = media_size_from(value);
+  if (sized && size === null) return null;
+  return { piece: value.piece, upload_id: value.upload_id, ...(size ?? {}) } as SentUploadPiece;
+}
+/** The size an upload piece carries, if any. */
+export function sent_upload_size(piece: SentUploadPiece): MediaSize | null {
+  return media_size_from(piece as unknown as Record<string, unknown>);
+}
 export interface OwnerSendBody {
   conversation_id: string | null;
   owner_read_through_sequence: number | null;
@@ -182,6 +210,7 @@ export function parse_owner_send_body(
         ['image', 'SentImagePiece'],
         ['file', 'SentFilePiece'],
         ['video_upload', 'SentVideoUploadPiece'],
+        ['attachment_upload', 'SentAttachmentUploadPiece'],
       ] as const;
       const successful =
         object(value) &&
@@ -190,9 +219,8 @@ export function parse_owner_send_body(
             value.piece === tag &&
             (tag === 'text'
               ? typeof value.text === 'string'
-              : tag === 'video_upload'
-                ? typeof value.upload_id === 'string' &&
-                  Object.keys(value).every((k) => ['piece', 'upload_id'].includes(k))
+              : tag === 'video_upload' || tag === 'attachment_upload'
+                ? sent_upload_piece(value) !== null
                 : typeof value.data === 'string' &&
                   typeof value.media_type === 'string' &&
                   (tag === 'file'
@@ -201,8 +229,8 @@ export function parse_owner_send_body(
         );
       if (successful) {
         if (value.piece === 'text') content.push({ piece: 'text', text: value.text as string });
-        else if (value.piece === 'video_upload')
-          content.push({ piece: 'video_upload', upload_id: value.upload_id as string });
+        else if (value.piece === 'video_upload' || value.piece === 'attachment_upload')
+          content.push(sent_upload_piece(value)!);
         else if (value.piece === 'file')
           content.push({
             piece: 'file',
@@ -236,11 +264,18 @@ export function parse_owner_send_body(
             expected: `'${tag}'`,
           });
         if (tag === 'text') text(value, 'text', path, false, true);
-        else if (tag === 'video_upload') {
+        else if (tag === 'video_upload' || tag === 'attachment_upload') {
           text(value, 'upload_id', path, false, true);
           for (const key of Object.keys(value))
-            if (!['piece', 'upload_id'].includes(key))
+            if (!SENT_UPLOAD_PIECE_KEYS.includes(key))
               add('extra_forbidden', [...path, key], 'Extra inputs are not permitted', value[key]);
+          if (('width' in value || 'height' in value) && media_size_from(value) === null)
+            add(
+              'value_error',
+              [...path, 'width'],
+              'Width and height must both be whole pixels from 1 to 100000',
+              value.width,
+            );
         } else {
           text(value, 'data', path, false, true);
           text(value, 'media_type', path, false, true);
@@ -324,6 +359,15 @@ export function validated_sent_files(
   }
   return validated;
 }
+/** The inline budget changes representation only, never upload acceptance. */
+export function inline_image_budget(sent: readonly SentPiece[]): { remaining: number } {
+  const bytes = sent.reduce(
+    (total, piece) =>
+      total + (piece.piece === 'image' ? Buffer.byteLength(piece.data, 'base64') : 0),
+    0,
+  );
+  return { remaining: Math.max(0, MAX_CONVERSATION_MESSAGE_IMAGE_BYTES - bytes) };
+}
 export async function conversation_message_content(
   files: ConversationMessageFiles,
   conversation_id: string,
@@ -333,8 +377,9 @@ export async function conversation_message_content(
     video_admission?: Pick<VideoSendAdmission, 'adopt'>;
   } = {},
 ): Promise<MessageContent> {
-  const video_count = sent.filter((p) => p.piece === 'video_upload').length;
-  if (video_count > 1) throw new HttpError(422, 'a message permits only one video');
+  const video_count = sent.filter(
+    (p) => p.piece === 'video_upload' || p.piece === 'attachment_upload',
+  ).length;
   if (video_count && !options.video_admission)
     throw new HttpError(422, 'video upload requires send admission');
   const validated = validated_sent_files(sent);
@@ -344,8 +389,10 @@ export async function conversation_message_content(
       pieces.push(new MessageText({ text: piece.text }));
       continue;
     }
-    if (piece.piece === 'video_upload') {
-      pieces.push(options.video_admission!.adopt(conversation_id));
+    if (piece.piece === 'video_upload' || piece.piece === 'attachment_upload') {
+      pieces.push(
+        options.video_admission!.adopt(piece.upload_id, conversation_id, sent_upload_size(piece)),
+      );
       continue;
     }
     const value = validated.get(index)!;

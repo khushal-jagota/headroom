@@ -3,7 +3,9 @@
  *  sentence. */
 
 import {
+  messageNotDelivered,
   promptLabelFor,
+  refusalSentence,
   turnFailureSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
@@ -33,7 +35,7 @@ export function lastTurnFailedFrom(rows: readonly TranscriptRow[]): boolean {
   for (let at = rows.length - 1; at >= 0; at -= 1) {
     const row = rows[at];
     if (row?.kind === "turn_ended") return row.ending === "failed";
-    if (row?.kind === "prompt") return false;
+    if (row?.kind === "prompt" || row?.kind === "agent_turn_started") return false;
   }
   return false;
 }
@@ -50,6 +52,11 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
   switch (row.kind) {
     case 'credential_request':
       return { who: null, text: row.request.state === 'pending' ? `${row.request.provider} API key requested` : `${row.request.name} · ${row.request.state === 'reused' ? 'saved' : row.request.state}` };
+    case "agent_turn_started":
+      return { who: null, text: oneLine(row.reason) };
+    case "background_task_started":
+    case "background_task_ended":
+      return null;
     case "prompt":
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: oneLine(messageContentText(row.content)) };
     case "prompt_refused":
@@ -57,7 +64,7 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
       // the only place that could ever say so.
       return {
         who: senderOf(row.senderLabel, ownSenderLabel),
-        text: oneLine(`not delivered · ${row.sentence}`)
+        text: oneLine(messageNotDelivered(refusalSentence(row.reason)))
       };
     case "prompt_uncertain":
       return {

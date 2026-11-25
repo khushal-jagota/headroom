@@ -247,6 +247,7 @@ export class MacPresenceService {
     if (!this.closed && returned && this.returned !== null) this.returned();
     const server_move = this.closed ? null : this.server_move_notice();
     let reply: WireValue<'LeaseReply'> = {
+      agent_started_turns: true,
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),

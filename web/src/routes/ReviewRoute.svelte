@@ -108,7 +108,13 @@
   let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'ticket' ? 'ticket' : 'address') && key.id===(item.review_item_type === 'ticket' ? item.ticket_id : item.address_id))) : review?.items ?? [])
     .map(undecided).filter((item): item is ReviewItem => item !== null));
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
-  let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
+  // The queue's count still holds what was answered on this screen until its refresh arrives.
+  // The final screen must not say that something waits for it.
+  let answeredHere = $derived((review?.items ?? []).filter(item => undecided(item) === null).length);
+  let waitingCount = $derived.by(() => {
+    const count = displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null;
+    return count === null ? null : Math.max(0, count - answeredHere);
+  });
   let finalLatched = $state(false);
   let returning = $state(false);
   let returnError = $state<unknown>(null);
@@ -339,9 +345,15 @@
   // same view, such as a late refresh, is not a move.
   let viewKey = $derived(showFinal ? FINAL_VIEW : currentItem ? itemKey(currentItem) : 'none');
   let partsKey = $derived(currentItem?.review_item_type==='ticket' ? JSON.stringify([Boolean(currentItem.proposal),currentItem.messages.map(message=>message.conversation_id),currentItem.ask?.conversation_id ?? null]) : '');
+  // The deck is drawn from the first real view on. Until the review has loaded, and until it
+  // is known to hold an item or to be finished, the skeleton stands instead and nothing moves.
+  let opened = $state(false);
+  $effect.pre(() => { if (viewKey !== 'none') opened = true; });
   // Runs before the screen is redrawn, while it still shows what is about to leave.
   $effect.pre(() => {
     const view=viewKey;
+    // Loading is not a view. The deck has nothing to leave until it has drawn something.
+    if(!opened)return;
     void partsKey;
     void artifact.shown;
     untrack(() => deck.beforeChange(rootElement,view,deckItemElement));
@@ -462,7 +474,8 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- The card stays drawn under an artifact, so the artifact can drop onto it. It takes no input meanwhile. -->
     <section class="review-screen" data-screen="review" inert={Boolean(artifact.shown)} bind:this={screenElement} onclick={artifact.claimPress}>
-      <ResourceState shape="block" loading={!reviewReady} hasData={reviewReady} loadingText="Loading review...">
+      <ResourceState shape="block" loading={!opened} hasData={opened} loadingText="Loading review...">
+        {#if opened}
         <ReviewDeck {deck} view={viewKey} final={showFinal} bind:element={deckItemElement}>
           {#key coverEpoch}
           {#if showFinal}
@@ -509,6 +522,7 @@
           {/if}
           {/key}
         </ReviewDeck>
+        {/if}
       </ResourceState>
     </section>
   </div>

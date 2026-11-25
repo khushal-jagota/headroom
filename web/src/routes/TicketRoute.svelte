@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { postOwnerSend } from "../lib/conversation/ownerSend";
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
@@ -8,7 +9,7 @@
   import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
@@ -53,6 +54,7 @@
   import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
   import { proposalContentIdentity } from "../lib/review/proposalState";
   import { type ManagedFileTarget } from "../lib/filePreview";
+  import WindowPageRow from "../components/desktopWindow/WindowPageRow.svelte";
 
   let {
     id,
@@ -128,8 +130,7 @@
     selectedPastConversationId = requestedConversationId && requestedConversationId !== canonicalTicket.value.conversation_id ? requestedConversationId : null;
     if (requestedConversationId) conversationState = "opened";
   });
-  // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
-  // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
+  // Use the assigned Manager’s saved title in the ceiling picker.
   let ticketManager = $derived(
     section?.detail.manager_id
       ? {
@@ -234,11 +235,7 @@
    * same write that made the link.
    */
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
-      method: "POST",
-      body});
-    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
-    return delivered;
+    return postOwnerSend(`/api/tickets/${stableId}/conversation/send`, body);
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
@@ -267,12 +264,12 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
       method: "PATCH", body: { field_values: { [field]: body } }});
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+    return mutateJsonAndWaitForScreen(`/api/tickets/${stableId}/complete/${field}`, {
       method: "POST", body: { body }});
   }
 
@@ -361,8 +358,10 @@
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
+          <!-- In the desktop window the band is pinned on the window's top row. -->
+          <WindowPageRow>
           <div class="page-band">
-          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
+          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity data-window-row-context>
             <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
                  the mark's accessible name and tooltip. -->
             <span class="worker-machine"><MachineIdentity machineId={masthead.machine_id} locale={masthead.locale} showName /></span>
@@ -376,6 +375,7 @@
             {#snippet leading()}{#if !section.record.value.terminal}<WorkMoveDialog owner={{kind:"ticket",id:stableId}} label={masthead.title} currentMachineId={masthead.machine_id} />{/if}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
+          </WindowPageRow>
           <div class="ticket-title-row">
             <!-- The title, then its marks beside its words as staging drew them: working, and
                  the unread dot. -->
@@ -400,7 +400,7 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}`, {
+                  mutateJsonAndWaitForScreen(`/api/tickets/${stableId}`, {
                     method: "PATCH", body: { recap: raw }
                   })}
               />
@@ -455,7 +455,7 @@
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key pageProposalKey}
-                    <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                    <WorkerProposalCard conversationId={detail.conversation_id} ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={async () => {}}
                       onScope={updateScope}
@@ -524,7 +524,7 @@
       {#snippet proposalBar()}
         {#if section && pageProposal}
           {#key pageProposalKey}
-            <WorkerProposalCard composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
+            <WorkerProposalCard conversationId={section.detail.conversation_id} composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
               ceiling={section.detail.ceiling} holder={section.detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(section.detail.conversation_id)}
               bind:revisionText={proposalNote} initialEditedBody={proposalEditedBody}
               onAccept={async () => { if (routeMounted) artifact.close(); }}

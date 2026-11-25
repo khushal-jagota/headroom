@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 import { fetchJson, PlannerFetchError } from "../api";
-import { queryClient } from "../queryClient";
+import { refreshScreen } from "../resourceVersions/refresh";
 import { readReviewDraft, saveReviewDraft } from "./messages";
 import type { SentMessagePiece } from "../conversation/wire";
 import type { DecisionCommand, DecisionReceipt, SavedDecision } from "./contracts";
@@ -137,8 +137,8 @@ async function resolve(identity: string, saved: SavedDecision): Promise<Decision
       receipt.error!.code, { detail: receipt.error!.detail }) : null;
   // Keep the refusal above proposal membership before refresh can unmount its card.
   if (refusal) publishRefusal(identity, saved, refusal);
-  // A refresh failure cannot undo a confirmed terminal decision.
-  await queryClient.invalidateQueries().catch(() => undefined);
+  // The decision is terminal when the server answers. The screen catches up after it.
+  void refreshScreen();
   if (refusal) throw refusal;
   return receipt;
 }

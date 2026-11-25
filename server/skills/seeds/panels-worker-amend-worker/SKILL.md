@@ -37,7 +37,7 @@ You can read all of this. You cannot write any of it. These doors are owner-only
 
 Agree the change and its blast radius with the user. Read the current record with `panels worker-type show <type>` before you say anything.
 
-Then report what the change does to the Tickets of the type. `panels ticket list --json` names them and where they sit. Give the count and the ids. "Some Tickets are affected" is not a blast radius.
+Then report what the change does to the Tickets of the type. `panels ticket list --worker-type <type> --all --json` names them and where they sit. Give the count and the ids. "Some Tickets are affected" is not a blast radius.
 
 - **Unfinished Tickets of the type** keep their own stages and guidance. The amendment does not reach them. Say for each whether that is acceptable, or whether the user wants a replacement Ticket.
 - **For a removal**, new Tickets of the type are refused after the delete. Name each unfinished Ticket that saved no model, because the delete refuses while one exists. The user decides what happens to each: a saved model, done, or deleted.
@@ -84,7 +84,7 @@ The writes are not yours to make. Hand them to the owner or Chief during this re
 
 ## Consequences
 
-Bring the repository in line through the ordinary branch and staging route. This has no effect on this Panels.
+Bring the repository in line through the repository’s documented integration route. This has no effect on this Panels.
 
 - Update the entry for the type in `server/worker_types/shipped_worker_types.json`, or remove it.
 - Update `server/skills/seeds/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.
@@ -92,4 +92,4 @@ Bring the repository in line through the ordinary branch and staging route. This
 
 A seeding pass on a fresh deploy does not apply your amendment: seeding declines a table that already holds rows. Only the explicit write does it.
 
-A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what repository work finished. Submit the report with `panels worker propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If authorized follow-through cannot finish, request help instead of reporting completion.
+A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what repository work finished. Submit the report with `panels ticket propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If authorized follow-through cannot finish, request help instead of reporting completion.

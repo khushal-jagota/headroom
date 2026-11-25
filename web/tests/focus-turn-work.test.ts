@@ -55,7 +55,7 @@ function draw(options: { expanded: boolean; settled?: boolean; status?: Partial<
     body: async () => ""
   } as unknown as ConversationViewReader;
   return render(ProjectedTranscript, {
-    props: { reader, models: [], ownSenderLabel: null, livenessPulse: 0 }
+    props: { reader, models: [], ownSenderLabel: null }
   }).body;
 }
 
@@ -71,33 +71,31 @@ describe("Focus is focus: no tool activity at all", () => {
     }
   });
 
-  it("draws no running command either", () => {
+  it("draws no running command either, only the turn's Working line at its top", () => {
     const html = draw({ expanded: false, settled: false, running: true });
-    // The running turn's Working line is the live edge at the end of the thread, drawn
-    // by the viewport (LiveEdge), never at the turn's top.
-    expect(html).not.toContain("Working");
+    expect(html).toContain("data-conversation-alive-word");
     expect(html).not.toContain("git status");
     expect(html).not.toContain("data-conversation-live-activity");
   });
 
-  it("draws no head for a running turn held by an ask: the ask says it waits, not the thread", () => {
+  it("keeps the Working head on a running turn held by an ask: the server counts it working", () => {
     const html = draw({
       expanded: false, settled: false,
       status: { pending_permission: { kind: "permission", request_id: "a1" } as ConversationViewStatus["pending_permission"] }
     });
     expect(html).not.toContain("Waiting for your approval");
-    expect(html).not.toContain("Working");
+    expect(html).toContain("data-conversation-alive-word");
+    expect(html).toContain("data-conversation-live-mark");
     expect(html).not.toContain("tool call");
-    // The transcript ends at the last message; the waiting ask is the composer's.
     expect(html).not.toContain("data-conversation-paused");
-    expect(html).not.toContain("data-conversation-alive-word");
   });
 });
 
 describe("a turn's head in Full", () => {
-  it("shows nothing at the top while the turn runs; the live line is the live edge at the end", () => {
+  it("heads the running turn at its top with the Working line, over its work", () => {
     const html = draw({ expanded: false, lens: "full", settled: false, running: true });
-    expect(html).not.toContain("data-conversation-alive-word");
+    expect(html.indexOf("data-conversation-alive-word")).toBeGreaterThan(-1);
+    expect(html.indexOf("data-conversation-alive-word")).toBeLessThan(html.indexOf("data-conversation-work-group"));
     expect(html).toContain("data-conversation-work-group");
     expect(html).not.toContain("data-conversation-tool-elapsed");
   });

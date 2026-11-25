@@ -1,4 +1,6 @@
+import { work_move_runtime } from '../work_moves/operations.ts';
 /** Production loop factories remain explicit until the production core composes them. */
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { composeAreaLoops } from '../areas.ts';
 import type { AreaLoopOptions } from '../areas.ts';
@@ -155,6 +157,10 @@ export function compose_background_services(
       settled: () => late_cleanup ?? service?.settled() ?? Promise.resolve(),
     });
   };
+  own(() => {
+    const runtime = work_move_runtime(context.database);
+    return { start() {}, close: (stop) => runtime.close(stop), settled: () => runtime.settled() };
+  });
   const dispatch = dispatcher_admitted(context.config, options.dispatcher_owned);
   const notifications =
     !context.config.test_mode &&
@@ -190,6 +196,7 @@ export function compose_background_services(
               worker_type_registry: configured_worker_type_registry(),
               now: () => context.clock.nowUnix(),
               message_files: new ConversationMessageFiles(context.config.db_path),
+              upload_service: new VideoUploadService(context.database, context.config.db_path),
             }
           : null,
       });

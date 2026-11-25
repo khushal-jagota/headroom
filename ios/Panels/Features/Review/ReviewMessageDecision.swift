@@ -90,6 +90,12 @@ extension APIClient {
     static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)" }
     func isCurrent(for item: ReviewItem) -> Bool { loaded && loadedFreshness == Self.freshness(item) }
     var through: Int { events.last?.sequence ?? 0 }
+    /// Offline, for a run this phone never read: the newest message to the owner when the
+    /// saved view was built. The card shows only its title and recap, and Mark read reads
+    /// through this bound, so a later message stays unread. A read run always wins.
+    private(set) var windowBound: Int?
+    /// What Mark read acknowledges: the displayed run, or the window's bound before any read.
+    var markReadThrough: Int { loaded ? through : windowBound ?? 0 }
     private(set) var attempt: PendingWork?
     @ObservationIgnored private var attemptFact: OutgoingStore.Summary?
     func refreshAttempt() {
@@ -137,6 +143,8 @@ extension APIClient {
             // and a reply work on it. The next connection reads it again.
             guard !Task.isCancelled, error is URLError, let cached = api.savedReviewMessages(id, after: item.ownerReadThroughSequence) else {
                 if !Task.isCancelled, !(error is URLError) { self.error = error.localizedDescription }
+                if !Task.isCancelled, error is URLError, !loaded, let bound = item.latestOwnerMessageSequence,
+                   bound > item.ownerReadThroughSequence { windowBound = bound }
                 return
             }
             messages = cached; fromSavedCopy = true
@@ -220,7 +228,8 @@ extension APIClient {
     /// Saved in the outbox; the card moves on at once.
     func markRead() async -> Bool {
         await settled()
-        guard let api, let id = item?.conversationId, loaded, through > 0, !busy, !accepted else { return false }
+        let through = markReadThrough
+        guard let api, let id = item?.conversationId, through > 0, !busy, !accepted else { return false }
         do { try Outbox.shared.enqueueMarkRead(owner: item?.owner, conversationID: id, through: through, api: api); return true }
         catch { self.error = error.localizedDescription; return false }
     }

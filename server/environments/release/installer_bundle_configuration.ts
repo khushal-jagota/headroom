@@ -52,6 +52,7 @@ export const INSTALLER_SOURCE_FILES = [
   'server/environments/release/admission.ts',
   'server/environments/release/admission_process.ts',
   'server/environments/release/admission_probe.ts',
+  'server/environments/release/static_imports.ts',
   'server/environments/release/identity.ts',
   'server/environments/release/configuration.ts',
   'server/environments/release/logic/host.ts',

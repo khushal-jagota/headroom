@@ -25,6 +25,32 @@ import {
   worker,
 } from './ticket_fixture.ts';
 afterEach(() => vi.restoreAllMocks());
+// A custom workflow can omit Brief or put it later. Neither can accept create-time
+// Brief text without losing it or settling the wrong stage.
+test('creation refuses Brief text unless Brief is the first gate', () => {
+  const db = fixture();
+  const base = create(db, { settle_kickoff: false }).workflow;
+  const withoutBrief = {
+    ...base,
+    specialist_skill: null,
+    fields: base.fields.filter((field) => field.id !== 'brief'),
+    stages: base.stages.filter((stage) => stage.gating_field !== 'brief'),
+  };
+  const laterBrief = {
+    ...base,
+    specialist_skill: null,
+    stages: [base.stages[1]!, base.stages[0]!, ...base.stages.slice(2)],
+  };
+  expect(() => create(db, { workflow: withoutBrief, settle_kickoff: false })).toThrow(
+    'supplied brief requires brief as the first workflow gate',
+  );
+  expect(() => create(db, { workflow: laterBrief, settle_kickoff: false })).toThrow(
+    'brief stage and field must be paired first',
+  );
+  const ticket = create(db, { workflow: withoutBrief, brief: '', settle_kickoff: false });
+  expect(ticket.stage).toBe(withoutBrief.stages[0]!.id);
+  expect(ticket.pending_proposal).toBeNull();
+});
 test('accept_kickoff_field_advances_to_what_changes_and_leaves_title_independent', () => {
   const db = fixture();
   let t = create(db, { title: 'Proposed title', brief: 'proposed note', settle_kickoff: false });
@@ -179,7 +205,7 @@ test('a_ticket_created_with_a_live_blocker_never_starts_until_it_clears', () => 
   expect(claim(db, t.id)).toBeNull();
   advance(db, blocker);
   expect(read(db, t.id).ticket_status).toBe('empty');
-  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent');
+  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent_owned');
 });
 test('every_creation_blocker_holds_until_the_last_one_is_done', () => {
   const db = fixture(),
@@ -210,9 +236,9 @@ test('every_creation_blocker_holds_until_the_last_one_is_done', () => {
     expect(claim(db, t.id)).toBeNull();
   }
   advance(db, blockers[1]!);
-  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent');
+  expect(claim(db, t.id, now + 1)?.ticket_status).toBe('agent_owned');
 });
-test('a_parked_brief_outranks_a_creation_blocker_until_it_is_settled', () => {
+test('a_creation_blocker_outranks_a_parked_brief', () => {
   const db = fixture(),
     blocker = create(db),
     t = create(db, {
@@ -221,7 +247,8 @@ test('a_parked_brief_outranks_a_creation_blocker_until_it_is_settled', () => {
       blocked_by_ticket_ids: [blocker.id],
     });
   expect(t.stage).toBe('needs_brief');
-  expect(t.ticket_status).toBe('awaiting_approval');
+  expect(t.pending_proposal).not.toBeNull();
+  expect(t.ticket_status).toBe('blocked');
   expect(accept(db, t, 'brief', 'needs_what_changes').ticket_status).toBe('blocked');
   expect(claim(db, t.id)).toBeNull();
 });
@@ -279,7 +306,7 @@ test('a_claim_release_does_not_fire_once_the_ticket_has_moved_on', () => {
       }),
     ),
   ).toBe(false);
-  expect(read(db, t.id).ticket_status).toBe('agent');
+  expect(read(db, t.id).ticket_status).toBe('agent_owned');
 });
 test('auto_approval_old_data_and_multi_field_edit', () => {
   const db = fixture();

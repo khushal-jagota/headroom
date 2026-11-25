@@ -11,9 +11,9 @@ Tickets generally have stages, these are not there to show all of your working, 
 
 ## Your ticket and its workflow guide
 
-Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Panels copies it from a Worker type when the Ticket is made, and a later edit to that type does not change it. Run `panels worker my-ticket` to read the current Stage, ownership, and scope.
+Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Panels copies it from a Worker type when the Ticket is made, and a later edit to that type does not change it. Run `panels ticket show` to read the current Stage, ownership, and scope.
 
-Panels sends the complete guide at kickoff. Read it again with `panels worker my-ticket workflow`, and after context recovery. Follow your Ticket's own guide. Do not load a Worker type's specialist skill for your Ticket. That skill is the current guide of the type, and it can differ from the copy your Ticket holds.
+Panels sends the complete guide at kickoff. Read it again with `panels ticket show workflow`, and after context recovery. Follow your Ticket's own guide. Do not load a Worker type's specialist skill for your Ticket. That skill is the current guide of the type, and it can differ from the copy your Ticket holds.
 
 ### Who owns the current Stage
 
@@ -25,15 +25,15 @@ Every non-terminal Stage has a default ownership mode.
 
 ### The CLI
 
-Everything runs through the `panels` command — `panels --help` for full usage. You often use panels worker and panels ticket.
+Everything runs through the `panels` command — `panels --help` for full usage. You often use panels ticket, panels recap and panels send-message.
 
-`panels worker propose` and `recap` take their text on stdin only.
+Commands that take text read it from stdin, `--message TEXT`, or `--body-file FILE`.
 
-- `panels worker propose <id>`, with the proposal text piped on stdin. A proposal does
+- `panels ticket propose`, with the proposal text. A proposal does
   not carry the recap. Write the recap when you propose, and whenever what the Ticket is
   waiting on has changed since you last wrote it.
-- `panels worker recap <id>`, with the recap text piped on stdin.
-- `panels send-message` sends an ordinary message. Select exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>`. Supply text with `--message TEXT` or `--body-file FILE` (`-` reads stdin).
+- `panels recap`, with the recap text.
+- `panels send-message` sends an ordinary message. Select exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>`. Supply text on stdin, with `--message TEXT`, or with `--body-file FILE`.
 
 Choose the owner when they raised the matter or the decision belongs to them. Otherwise, choose your assigned Manager or Chief. There is no default recipient. Keep the message short.
 
@@ -49,7 +49,7 @@ When the current approved step creates a Ticket, load and follow `panels-ticket-
 
 File proposals canonically and stop at the gate. Let Panels route review and continuation. Do not duplicate a proposal or its status in chat.
 
-After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels worker propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
+After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels ticket propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
 
 Explicit owner requests still apply.
 
@@ -84,14 +84,13 @@ Panels clears the folder seven days after the Ticket ends. New activity on an en
 
 Ticket-owned artifacts are durable work products that make the work easier to understand. Use them to show work, explain systems and changes, etc. Create one where an artifact will improve understanding or help a user judge what is going on with less overwhelm. Prefer a self-contained HTML artifact over Markdown when either format can present the work. Use Markdown when the artifact is primarily plain text or HTML would not improve understanding.\
 \
-Use the artifact directory in your Worker prompt. It is on the machine that runs the Ticket, and Panels transfers artifacts to the server. Link artifacts as `/files/tickets/<ticket-id>/artifacts/<relative-path>`. Keep scratch inside the supplied worktree. Do not infer artifact paths from the current directory.
+Use `PLAN_TICKET_FILES_DIR/artifacts` if Panels supplies `PLAN_TICKET_FILES_DIR`. Otherwise use the artifact directory in your Worker prompt. Panels transfers the files to the server. Link artifacts as `/files/tickets/<ticket-id>/artifacts/<relative-path>`. Keep scratch inside the supplied worktree. Do not infer artifact paths from the current directory.
 
 ### Preview servers you leave running
 
-When a Ticket's work is a running preview server, you cannot publish it yourself: publishing a port needs rights no Worker runtime has. Start the server bound to `127.0.0.1` on an available port, then send the Chief of Staff the port number and one line on what the user will see, and ask for it to be published. The Chief returns the published HTTPS address; record that as an ordinary Markdown link. Tell the Chief when the Ticket is done so the publication can be withdrawn.
+A running preview requires a home with trusted Tailscale ingress. Run `panels preview prepare` from the Ticket. Start the app from the returned worktree on loopback at its returned base path. Use `panels preview register --port PORT` to check the listener and get the HTTPS link. Share the returned URL.
 
-Never record `http://127.0.0.1:<port>/` or `http://localhost:<port>/`: that address is true only on this machine, and the user browses from another device. Never ask the user to run a command to see your work. A recorded link goes out of date when the port dies, like any other stored value.
-
+Run `panels preview stop` when work ends. Stop the app process you started. Use a Ticket artifact when the home has no preview ingress.
 
 ### The server is not yours
 
@@ -100,9 +99,7 @@ The Panels server that runs you is operator-owned. The owner starts it, stops it
 Do not signal it and do not replace it. Never run `kill`, `pkill`, `killall`, an `lsof`-driven
 kill, or `systemctl` against it. Never run `panels serve` on its port.
 
-A pattern cannot tell the live server from your own. On this machine the live deployment and a
-scratch instance run the same command line, so `pkill -f "planner serve"` stops both. That took
-the live server down on 15 August 2026 and again on 20 October 2026.
+A pattern can match your scratch process and the live server when they use the same command line.
 
 If you start your own server, record its PID at launch and stop that exact PID. If a port is
 busy, pick another port. Never free a port.

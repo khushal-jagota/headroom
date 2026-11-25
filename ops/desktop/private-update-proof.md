@@ -2,15 +2,15 @@
 
 The private proof uses two signed, notarized builds from one manual run of `desktop.yml`. It publishes no GitHub Release. The normal release feed remains unchanged.
 
-Dispatch the Ticket branch with `private_feed_url` set to `http://127.0.0.1:18769/` for a feed on Mac 1. A private VPS directory can replace that address. Do not put a token or password in the URL. The workflow embeds the address in both proof builds. Normal builds contain no override.
+Dispatch the Ticket branch with `private_feed_url` set to `http://127.0.0.1:18769/` for a feed on the test Mac. Use the configured private HTTPS address for a feed on another machine. Do not put a token or password in the URL. The workflow embeds the address in both proof builds. Normal builds contain no override.
 
 The workflow emits `panels-desktop-mac-proof-a` and `panels-desktop-mac-proof-b`. Each contains a ZIP, a matching `latest-mac.yml`, and its blockmap. The workflow checks the signature, notarization, Gatekeeper assessment, app version, and the manifest checksum. Build B has a higher version than build A.
 
-Ask the Manager for the Mac 1 step after both artifacts exist. Give the exact run URL, commit, and versions. The Manager coordinates the following work:
+Coordinate the proof on the assigned test Mac after both artifacts exist. Give the exact run URL, commit, and versions. The Manager coordinates the following work:
 
-1. Download both artifacts into separate folders on Mac 1.
+1. Download both artifacts into separate folders on the test Mac.
 2. Serve a private folder through the configured address. Initially copy build A's files into that folder.
-3. Install build A once, then open it. The current released app lacks an updater and cannot bootstrap this proof itself.
+3. Install build A once, then open it.
 4. Quit build A. Replace the feed's files with build B's files. Copy its ZIP and blockmap before its manifest. Reopen build A to trigger its startup check.
 5. Check that the app downloads build B while its window stays usable.
 6. Quit the app, reopen it, and check the new version and signature.

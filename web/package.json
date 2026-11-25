@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",
+    "@floating-ui/dom": "1.8.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tanstack/svelte-query": "6.1.38",
     "chart.js": "^4.5.1",

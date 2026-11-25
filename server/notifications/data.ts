@@ -158,7 +158,10 @@ export function reconcile_attention(sql: TransactionSql): void {
     conversation_id: string | null;
     updated_at: number;
     is_backlogged: number;
-  }>('SELECT * FROM tickets ORDER BY id')) {
+    has_live_blocker: number;
+  }>(
+    "SELECT tickets.*,EXISTS(SELECT 1 FROM ticket_blocks b JOIN tickets blocker ON blocker.id=b.blocking_ticket_id WHERE b.blocked_ticket_id=tickets.id AND blocker.stage != 'done') has_live_blocker FROM tickets ORDER BY id",
+  )) {
     const conversation = conversations.get(row.conversation_id ?? '') ?? NOTHING_WAITING;
     const holder = JSON.parse(row.ceiling_holder);
     const parked = row.pending_proposal
@@ -169,6 +172,7 @@ export function reconcile_attention(sql: TransactionSql): void {
       awaiting_answer: conversation.pending_ask && !row.is_backlogged,
       awaiting_approval:
         row.worker_step_claim !== 'errored' &&
+        !row.has_live_blocker &&
         parked !== null &&
         holder.kind === 'owner' &&
         holder.id === 'owner' &&

@@ -27,7 +27,7 @@ const identity = (key: Key): string => compact(key);
 function sortPairs(left: Key, right: Key): number {
   return binaryCompare(left[0], right[0]) || binaryCompare(left[1], right[1]);
 }
-function continuity(sql: ReadSql): Continuity {
+export function continuity(sql: ReadSql): Continuity {
   const source = coverage(sql);
   const meta = sql.get<{
     projection_version: number;
@@ -125,14 +125,28 @@ export function readContent(sql: ReadSql, value: ViewRequest): [Continuity, View
       const { key: item, full } = pending.pop()!;
       const encoded = identity(item);
       const existing = found.get(encoded) ?? records.get(encoded);
+      // A conversation admitted outside Review comes back with its waiting ask for Review.
       if (
         existing !== undefined &&
-        (item[0] !== 'manager' || !full || 'recap_reference' in existing.value)
-      )
+        (item[0] !== 'manager' || !full || 'recap_reference' in existing.value) &&
+        (item[0] !== 'conversation' || !review || 'pending_ask' in existing.value)
+      ) {
+        // A Review member admitted earlier, such as the selected Ticket, still reaches its
+        // conversation, so that conversation carries the waiting ask.
+        if (review && item[0] !== 'conversation') {
+          const conversation = record(sql, item)?.conversation_id;
+          if (item[0] !== 'goal' && conversation)
+            pending.push({ key: ['conversation', conversation], full: true });
+        }
         continue;
+      }
       const raw = record(sql, item);
       if (raw === null) throw new NavigationUnavailable('navigation view dependency is absent');
-      const row = project({ kind: item[0], id: item[1], value: raw } as NavigationRecord, !full);
+      const row = project(
+        { kind: item[0], id: item[1], value: raw } as NavigationRecord,
+        !full,
+        review,
+      );
       found.set(encoded, row);
       keys.set(encoded, item);
       if (['ticket', 'manager', 'chief', 'goal'].includes(item[0])) {

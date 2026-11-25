@@ -165,15 +165,17 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     workflow.fields.map((f) => f.id),
   );
   const pending = codec.proposal_from_json(r.pending_proposal);
-  const status = pending
-    ? 'awaiting_approval'
-    : r.worker_step_claim === 'errored'
-      ? 'errored'
-      : r.worker_step_claim === 'out'
-        ? 'agent'
-        : r.has_live_blocker
-          ? 'blocked'
-          : 'empty';
+  // A live blocker outranks a parked proposal: the proposal waits until the blockers are done.
+  const status =
+    pending && !r.has_live_blocker
+      ? 'awaiting_approval'
+      : r.worker_step_claim === 'errored'
+        ? 'errored'
+        : r.worker_step_claim === 'out'
+          ? 'agent_owned'
+          : r.has_live_blocker
+            ? 'blocked'
+            : 'empty';
   return {
     id: r.id,
     title: r.title,
@@ -391,6 +393,11 @@ export function create_ticket(tx: TransactionSql, o: CreationOptions): Ticket {
       throw new PlannerError('validation', 'a custom workflow cannot select a specialist skill');
   }
   validate_completion_stage(workflow);
+  if (o.brief?.trim() && workflow.stages[0]!.gating_field !== 'brief')
+    throw new PlannerError(
+      'validation',
+      'supplied brief requires brief as the first workflow gate',
+    );
   if (o.stated_ceiling != null) admission.validate_creation_ceiling(o.stated_ceiling);
   const id = newId('t'),
     context = resolve_ticket_creation_context(tx, o),
@@ -404,7 +411,7 @@ export function create_ticket(tx: TransactionSql, o: CreationOptions): Ticket {
   const values: Record<string, string> = {},
     approvals: Record<string, TicketFieldApproval> = {};
   let proposal: PendingTicketProposal | null = null;
-  if (o.brief?.trim() && workflow.fields.some((f) => f.id === 'brief')) {
+  if (o.brief?.trim()) {
     if (index(workflow, initial) < index(workflow, ceiling)) {
       stage = workflow.stages[1]!.id;
       values.brief = o.brief;
@@ -585,7 +592,7 @@ export function file_current_proposal(
 function explicit_approval(sql: ReadSql, p: Principal): TicketFieldApproval {
   let name =
     p.kind === 'owner'
-      ? 'Khushal'
+      ? 'Owner'
       : p.kind === 'chief'
         ? 'Chief'
         : sql.get<{

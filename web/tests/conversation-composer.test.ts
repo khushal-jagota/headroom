@@ -1,3 +1,7 @@
+import ReviewOutgoingReplies from "../src/components/ReviewOutgoingReplies.svelte";
+import { mintOutgoingMessage } from "../src/lib/conversation/outgoing";
+import { ReviewReplyComposer } from "../src/lib/review/replyComposer.svelte";
+import ReviewReplyInput from "../src/components/ReviewReplyInput.svelte";
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- the tests' type check has no Node types; vitest runs in Node.
@@ -78,12 +82,10 @@ describe("a question asked in the composer's place", () => {
     expect(body).toMatch(/class="chat-send chat-ask-send[^"]*"[^>]*>(<!--[^>]*-->)*<span class="chat-ask-send-round"/);
   });
 
-  it("sends a several-answer question that has a choice and no words of its own", () => {
-    // The tests run without a DOM; the wiring is read from the source.
-    const composer = readFileSync(new URL("../src/components/conversation/ConversationComposer.svelte", import.meta.url), "utf8") as string;
+  it("keeps the ask send available for a selected answer without ordinary message content", () => {
+    // Browser question coverage proves the click route. This check keeps the controls' empty
+    // draft override explicit while the shared run-controls model still owns ordinary sends.
     const controls = readFileSync(new URL("../src/components/conversation/composer/ComposerRunControls.svelte", import.meta.url), "utf8") as string;
-    expect(composer).toContain('askCommitReady={userInput !== null && questionCommitReady && text.trim() === "" && attachments.length === 0}');
-    expect(composer).toMatch(/if \(userInput !== null && questionPanel !== null && questionCommitReady && text\.trim\(\) === "" && attachments\.length === 0\) \{\s*questionPanel\.commit\(\);\s*return;\s*\}/);
     expect(controls).toContain("disabled={view.submit.disabled && !askCommitReady}");
   });
 });
@@ -117,7 +119,36 @@ describe("queued messages and the composer", () => {
 describe("a send from the dock that was not delivered", () => {
   it("says why under the box as one system line with the failure dot, the words kept above it", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, undeliveredReason: "The Mac is offline" } });
-    expect(body).toMatch(/data-conversation-system-mark="failure"[\s\S]*Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
+    expect(body).toMatch(/data-conversation-system-mark="failure"[\s\S]*Not delivered\. The Mac is offline\./);
     expect(body).toContain("data-conversation-undelivered-note");
   });
+});
+
+// A saved send owns its retry. A new reply can move its pending upload onto its own message.
+it("keeps an outgoing retry available while a fresh reply waits for an attachment", () => {
+  const draftKey = "receipt-lookup";
+  const owner = {kind: "chief" as const, id: "chief"};
+  const composer = new ReviewReplyComposer({
+    draftKey, owner, attachmentDraftId: draftKey, destination: () => "c",
+    attemptKey: draftKey, attemptMetadataKey: draftKey + ":meta"
+  });
+  composer.intakeBusy = true;
+  composer.attempts = [{
+    conversationId: "c",
+    message: mintOutgoingMessage({content: [{piece: "text", text: "Saved reply"}], senderLabel: "owner", mode: "queue"}),
+    status: "connection-failed",
+    note: "Panels did not confirm the send."
+  }];
+  const {body: prior} = render(ReviewOutgoingReplies, {props: {composer, onEdit: () => {}}});
+  const {body: fresh} = render(ReviewReplyInput, {
+    props: {
+      draftKey, uploadDestination: {...owner, expected_conversation_id: "c"}, text: "New reply",
+      intakeBusy: true, onSend: async () => {}, onError: () => {}
+    }
+  });
+  const retryButton = prior.match(/<button[^>]*data-review-retry[^>]*>/)?.[0];
+  expect(retryButton).toBeDefined();
+  expect(retryButton).not.toContain("disabled");
+  expect(fresh).not.toMatch(/<button[^>]*disabled[^>]*data-review-send/);
+  expect(fresh).toMatch(/<textarea(?![^>]*disabled)[^>]*data-review-reply/);
 });

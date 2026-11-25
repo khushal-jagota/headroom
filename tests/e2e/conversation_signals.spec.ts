@@ -39,7 +39,7 @@ async function marks(root: Locator, working: boolean, message: boolean): Promise
   }
 }
 
-const WORKING_LINE = /^Working(?: · (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/;
+const WORKING_LINE = /^Working(?: for (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/;
 
 test('test_exact_conversation_signals_cross_runtime_stream_and_surfaces', async ({
   signalServer,
@@ -394,12 +394,19 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
       (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
     ),
   ).toBe(true);
-  // The answered card leaves and the card holding the newer message arrives. The test reads it once the move is over.
+  // Receipt admission clears the editor, but the current card still owns the held reply.
+  const heldReply = card.locator('[data-conversation-held-stack] [data-conversation-held-row]');
+  await expect(heldReply).toContainText('The reply reaches this conversation once.');
+  await expect(heldReply.locator('[data-conversation-held-more]')).toBeEnabled();
+  await expect(card.locator('[data-review-reply]')).toHaveValue('');
+  await captureSuccess(page, 'review-reply-held.png');
+  await post(server, `/api/test/signals/${conversation}/finish`);
+  // The card can now advance to the newer message, which the original receipt did not read.
+  await expect(heldReply).toHaveCount(0);
   await expect(page.locator('[data-deck-leaving]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(card.locator('.review-message-run')).toHaveText('This newer message stays unread.');
   await expect(badge).toHaveText('1');
-  await post(server, `/api/test/signals/${conversation}/finish`);
   await page.waitForFunction(
     async ({ conversation, identity }) => {
       const endpoint = `/api/conversation/conversations/${conversation}/events?after=0`;

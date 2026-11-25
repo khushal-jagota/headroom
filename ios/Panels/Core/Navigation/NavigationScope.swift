@@ -185,7 +185,7 @@ extension NavigationPresentation {
 
 extension NavigationPresentation {
     /// Who reviews a proposal now, when the view shows it still waiting on the same
-    /// revision but held by someone other than Khushal. Nil when it no longer waits.
+    /// revision but held by someone other than the owner. Nil when it no longer waits.
     func movedReviewer(for item: ReviewItem, in snapshot: ViewSnapshot) -> String? {
         guard item.isProposal, proposalWaits(item, in: snapshot) == true else { return nil }
         var row: ViewTicketValue?
@@ -225,6 +225,7 @@ extension NavigationReviewMessage {
                               ownerKind: ownerKind, ownerId: ownerId, ownerReadThroughSequence: ownerReadThroughSequence, addressCurrent: addressCurrent)
         item.addressId = addressId
         item.recap = recap
+        item.latestOwnerMessageSequence = latestOwnerMessageSequence
         return item
     }
 }
@@ -234,6 +235,7 @@ extension NavigationReviewAsk {
         var item = ReviewItem(reviewItemType: "ask", title: title, waitingSince: waitingSince, conversationId: conversationId,
                               ownerKind: ownerKind, ownerId: ownerId)
         item.recap = recap
+        item.pendingAsk = pendingAsk?.state
         return item
     }
 }

@@ -3,7 +3,12 @@ import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import { readable_tool_call_detail } from '../../tool_detail.ts';
 import type { ConversationEventPayload, PromptEventPayload } from '../../events.ts';
 import type { MessageContent } from '../../message_content.ts';
-import { MessageFile, MessageImage, MessageText } from '../../message_content.ts';
+import {
+  MessageFile,
+  MessageImage,
+  MessageText,
+  media_size_entries,
+} from '../../message_content.ts';
 import {
   SENT_AFTER_ROW_LIMIT_MILLISECONDS,
   SENT_BEFORE_ROW_LIMIT_MILLISECONDS,
@@ -27,6 +32,7 @@ export function content_pieces(content: MessageContent): ViewMessagePiece[] {
         stored_file_id: piece.stored_file_id,
         media_type: piece.media_type,
         file_name: piece.file_name,
+        ...media_size_entries(piece.media_size),
       };
     }
     if (piece instanceof MessageFile) {
@@ -36,6 +42,7 @@ export function content_pieces(content: MessageContent): ViewMessagePiece[] {
         media_type: piece.media_type,
         file_name: piece.file_name,
         byte_count: piece.byte_count,
+        ...media_size_entries(piece.media_size),
       };
     }
     throw new Error('message content contains an unknown piece');
@@ -74,6 +81,7 @@ export function in_focus(payload: ConversationEventPayload, owner_label = 'owner
       return payload.ending !== 'completed';
     // A command reply answers a command the person typed, so it stays with the prompt
     // that asked for it. effects.ts and the browser's lens read this same rule.
+    case 'agent_turn_started':
     case 'command_reply':
     case 'credential_request':
     case 'permission_asked':
@@ -109,6 +117,21 @@ export function row_body(
   switch (source.kind) {
     case 'credential_request':
       return settlement?.kind === 'credential_request' ? settlement.request : source.request;
+    case 'agent_turn_started':
+      return { kind: source.kind, reason: source.reason };
+    case 'background_task_started':
+      return {
+        kind: source.kind,
+        task_id: source.task_id,
+        task_description: source.task_description,
+      };
+    case 'background_task_ended':
+      return {
+        kind: source.kind,
+        task_id: source.task_id,
+        task_description: source.task_description,
+        task_status: source.task_status,
+      };
     case 'prompt':
       return {
         kind: 'prompt',
@@ -220,7 +243,17 @@ export function row_body(
         answers:
           answer === null
             ? null
-            : answer.answers.map((value) => ({ ...value, answers: [...value.answers] })),
+            : answer.answers.map((value) => ({
+                question_id: value.question_id,
+                answers: [...value.answers],
+                ...(value.attachments?.length
+                  ? {
+                      attachments: content_pieces(value.attachments).filter(
+                        (piece) => piece.piece !== 'text',
+                      ),
+                    }
+                  : {}),
+              })),
         failure_detail: failure?.detail ?? null,
       } as UserInputRowBody;
       if (answer?.answer_id) {

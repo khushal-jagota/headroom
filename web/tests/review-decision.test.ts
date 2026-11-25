@@ -2,14 +2,14 @@ import { get } from "svelte/store";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { decisionRefusals, decisionIdentity, recallReviewDecision, recoverReviewDecision, recoverSavedReviewDecisions, savedReviewDecisions, submitReviewDecision, validateDecisionResponse, type ReviewDecision } from "../src/lib/review/decision";
 import type { SavedDecision } from "../src/lib/review/contracts";
-import { queryClient } from "../src/lib/queryClient";
+import { refreshScreen } from "../src/lib/resourceVersions/refresh";
 import { fetchJson } from "../src/lib/api";
 
 vi.mock("../src/lib/api", async importOriginal => {
   const original = await importOriginal<typeof import("../src/lib/api")>();
   return { ...original, fetchJson: vi.fn() };
 });
-vi.mock("../src/lib/queryClient", () => ({ queryClient: { invalidateQueries: vi.fn().mockResolvedValue(undefined) } }));
+vi.mock("../src/lib/resourceVersions/refresh", () => ({ refreshScreen: vi.fn().mockResolvedValue(undefined) }));
 const draftStore = new Map<string, unknown[]>();
 vi.mock("../src/lib/review/messages", () => ({
   readReviewDraft: async (id: string) => draftStore.get(id) ?? [],
@@ -49,7 +49,7 @@ function receipt(saved: SavedDecision, outcome: "applied" | "refused" = "applied
     expected_proposal_revision: saved.command.expected_proposal_revision,
     outcome, transition: outcome === "applied" ? {
       stage: "needs_implementation", ceiling: "needs_implementation", ceiling_holder: { kind: "owner", id: "owner" },
-      ticket_status: "agent", pending_proposal_revision: 3
+      ticket_status: "agent_owned", pending_proposal_revision: 3
     } : null,
     error: outcome === "refused" ? { code: "validation", message: "This changed, review again", detail: {} } : null,
     created_at: 123
@@ -106,7 +106,7 @@ it("does not treat HTTP errors, unsupported contracts, malformed receipts or POS
 it("surfaces a terminal changed-proposal refusal and permits a distinct corrected operation", async () => {
   const original = await pending();
   transport.mockResolvedValueOnce(receipt(original, "refused"));
-  vi.mocked(queryClient.invalidateQueries).mockImplementationOnce(async () => {
+  vi.mocked(refreshScreen).mockImplementationOnce(async () => {
     // Refresh can remove the old proposal card. Its refusal already lives above it.
     expect(get(decisionRefusals)).toContainEqual(expect.objectContaining({
       saved: original, error: expect.objectContaining({ message: "Approval did not apply: This changed, review again" })
@@ -163,7 +163,8 @@ it("keeps a terminal receipt authoritative when refresh fails and freezes mutabl
     const saved = recallReviewDecision(identity)!;
     expect(options?.body).toEqual(saved.command);
     expect(saved.command.next_holder?.id).toBe("owner");
-    vi.mocked(queryClient.invalidateQueries).mockRejectedValueOnce(new Error("refresh failed"));
+    // The decision does not wait for the refresh, so a refresh that never ends cannot hold it.
+    vi.mocked(refreshScreen).mockReturnValueOnce(new Promise(() => {}));
     return receipt(saved);
   });
   await expect(submitReviewDecision("ticket", "what_changes", incoming)).resolves.toMatchObject({ outcome: "applied" });

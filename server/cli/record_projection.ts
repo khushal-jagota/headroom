@@ -15,11 +15,11 @@ export function part(
     result.approval = options.approval;
   return result;
 }
-export function parse_part_names(raw: string | null): string[] | null {
-  if (raw === null || raw === undefined) return null;
-  const names = raw.split(',').map((s) => s.trim());
-  if (!names.length || names.some((s) => !s))
-    throw new Error('part names must be a comma-separated list');
+/** Part names come as words, each of which may hold a comma-separated list: `a,b c`. */
+export function parse_part_names(words: readonly string[]): string[] | null {
+  if (!words.length) return null;
+  const names = words.flatMap((word) => word.split(',')).map((name) => name.trim());
+  if (names.some((name) => !name)) throw new Error('part names must not be empty');
   return names;
 }
 const length = (text: string): number => [...text].length;

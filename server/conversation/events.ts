@@ -1,7 +1,7 @@
 /** Stored event payloads and transient frames. The backend seam shares these value types. */
 import type { Principal } from '../core/contracts.ts';
 import type { CredentialRequestRowBody } from '../../web/src/lib/conversation/view/contracts.ts';
-import type { MessageContent } from './message_content.ts';
+import type { MessageContent, MessageImage, MessageFile } from './message_content.ts';
 import {
   AnswerFate,
   PromptDeliveryMode,
@@ -12,6 +12,9 @@ import {
 export const ConversationEventKind = {
   credential_request: 'credential_request',
   prompt: 'prompt',
+  agent_turn_started: 'agent_turn_started',
+  background_task_started: 'background_task_started',
+  background_task_ended: 'background_task_ended',
   prompt_delivery_refused: 'prompt_delivery_refused',
   prompt_delivery_uncertain: 'prompt_delivery_uncertain',
   prompt_discarded: 'prompt_discarded',
@@ -114,9 +117,45 @@ export class UserInputQuestion {
 export class UserInputAnswer {
   readonly question_id: string;
   readonly answers: readonly string[];
-  constructor(values: { question_id: string; answers: readonly string[] }) {
+  readonly attachments?: readonly (MessageImage | MessageFile)[];
+  constructor(values: {
+    question_id: string;
+    answers: readonly string[];
+    attachments?: readonly (MessageImage | MessageFile)[];
+  }) {
     this.question_id = values.question_id;
     this.answers = values.answers;
+    if (values.attachments?.length) this.attachments = values.attachments;
+  }
+}
+
+export class AgentTurnStartedEventPayload {
+  readonly kind = ConversationEventKind.agent_turn_started;
+  readonly turn_number: number;
+  readonly reason: string;
+  constructor(values: { turn_number: number; reason: string }) {
+    this.turn_number = values.turn_number;
+    this.reason = values.reason;
+  }
+}
+export class BackgroundTaskStartedEventPayload {
+  readonly kind = ConversationEventKind.background_task_started;
+  readonly task_id: string;
+  readonly task_description: string;
+  constructor(values: { task_id: string; task_description: string }) {
+    this.task_id = values.task_id;
+    this.task_description = values.task_description;
+  }
+}
+export class BackgroundTaskEndedEventPayload {
+  readonly kind = ConversationEventKind.background_task_ended;
+  readonly task_id: string;
+  readonly task_description: string;
+  readonly task_status: string;
+  constructor(values: { task_id: string; task_description: string; task_status: string }) {
+    this.task_id = values.task_id;
+    this.task_description = values.task_description;
+    this.task_status = values.task_status;
   }
 }
 
@@ -549,6 +588,9 @@ export class ModelThinkingFrame {}
 export class HeldPromptsChangedFrame {}
 
 export type ConversationEventPayload =
+  | AgentTurnStartedEventPayload
+  | BackgroundTaskStartedEventPayload
+  | BackgroundTaskEndedEventPayload
   | CredentialRequestEventPayload
   | PromptEventPayload
   | PromptDeliveryRefusedEventPayload

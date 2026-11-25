@@ -1,13 +1,14 @@
 import Fastify from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
-import { fixture } from './ticket_fixture.ts';
+import { advance, create, fixture, propose } from './ticket_fixture.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import { createSignalNavigationRuntime } from '../navigation/index.ts';
 import { registerArea } from '../core/authority/register.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
+import { review_body } from '../navigation/views/review_cards.ts';
 
 const view = encodeURIComponent(
   JSON.stringify({
@@ -25,7 +26,11 @@ const view = encodeURIComponent(
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
 const streamPath = `/api/navigation/view/events?view=${view}`;
 
-async function setup(asking = false) {
+async function setup(
+  asking = false,
+  events: Array<[number, string, object]> = [],
+  ticketEvents: Array<[number, string, object]> | null = null,
+) {
   let producer: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let attached = false;
@@ -44,7 +49,28 @@ async function setup(asking = false) {
       (conversation_id,backend_key,model,workspace_folder,access,created_at)
       VALUES('actual','codex','fixture','/synthetic','full',0)`);
     tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','actual')");
+    for (const [sequence, kind, payload] of events)
+      tx.run(
+        "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES('actual',?,?,?,0)",
+        [sequence, kind, JSON.stringify(payload)],
+      );
   });
+  // A Ticket whose own conversation waits on an ask, for the Review member keyed by the Ticket.
+  let ticketId: string | null = null;
+  if (ticketEvents) {
+    ticketId = create(database).id;
+    database.write((tx) => {
+      tx.run(`INSERT INTO conversations
+        (conversation_id,backend_key,model,workspace_folder,access,created_at)
+        VALUES('ticket-conversation','codex','fixture','/synthetic','full',0)`);
+      tx.run("UPDATE tickets SET conversation_id='ticket-conversation' WHERE id=?", [ticketId]);
+      for (const [sequence, kind, payload] of ticketEvents)
+        tx.run(
+          "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES('ticket-conversation',?,?,?,0)",
+          [sequence, kind, JSON.stringify(payload)],
+        );
+    });
+  }
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
   producer.bind_runtime(() =>
     asking
@@ -79,6 +105,8 @@ async function setup(asking = false) {
   await navigation.start();
   return {
     app,
+    database,
+    ticketId,
     producer,
     navigation,
     revokeSnapshot: () => {
@@ -180,7 +208,7 @@ test('actual producer revocation closes an open HTTP stream and reattachment adm
 // can show that it holds the Chief's card, keeps the unread list as it was, and drops the card
 // when the ask is gone. Reuses this fixture: no Ticket, browser or second host.
 test('a Chief with an open ask joins Review and not the unread list', async () => {
-  const members = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') => {
+  const snapshot = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') => {
     const request = encodeURIComponent(
       JSON.stringify({
         projection_version: 7,
@@ -206,20 +234,192 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     );
     const response = await f.app.inject(`/api/navigation/view/snapshot?view=${request}`);
     expect(response.statusCode).toBe(200);
-    const snapshot = response.json() as CurrentViewSnapshot;
-    return (snapshot.content.windows[0]?.members ?? []).map((key) => `${key.kind}:${key.id}`);
+    return response.json() as CurrentViewSnapshot;
   };
+  const members = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') =>
+    ((await snapshot(f, section)).content.windows[0]?.members ?? []).map(
+      (key) => `${key.kind}:${key.id}`,
+    );
+  const conversation = async (f: Awaited<ReturnType<typeof setup>>) =>
+    (await snapshot(f, 'review')).content.records.find(
+      (record) => record.kind === 'conversation' && record.id === 'actual',
+    )?.value;
+  const permission = (detail: string) => ({
+    ask_id: 'ask',
+    title: 'Run a command',
+    detail,
+    options: [{ option_id: 'allow', label: 'Allow', option_kind: 'allow_once' }],
+  });
+  const events = (detail: string): Array<[number, string, object]> => [
+    [1, 'message_to_owner', { text: 'Done' }],
+    [2, 'permission_asked', permission(detail)],
+    [3, 'tool_call_started', {}],
+  ];
   const asking = await setup(true);
   const quiet = await setup(false);
+  const answerable = await setup(true, events('ls'));
+  const answered = await setup(false, events('ls'));
+  const oversized = await setup(true, events('x'.repeat(4096)));
+  // A key request keeps the conversation waiting after its permission ask was answered.
+  const superseded = await setup(true, [
+    ...events('ls'),
+    [4, 'permission_answered', { ask_id: 'ask', option_id: 'allow' }],
+  ]);
   try {
+    // Distinct risk: an unloaded Review card offline has only the window. Its conversation record
+    // must carry the read bound (the newest owner message, not the newest event) and the waiting
+    // ask in the conversation route's shape, only while it waits, and never an ask over the cap.
+    expect(await conversation(answerable)).toMatchObject({
+      latest_owner_message_sequence: 1,
+      pending_ask: { kind: 'permission', ...permission('ls') },
+    });
+    expect(await conversation(answered)).toMatchObject({
+      latest_owner_message_sequence: 1,
+      pending_ask: null,
+    });
+    expect(await conversation(oversized)).toMatchObject({ pending_ask: null });
+    expect(await conversation(superseded)).toMatchObject({ pending_ask: null });
+    // Outside the review window the record leaves the ask out of the view's budget. The Chief's
+    // conversation is admitted with the Chief first, so the Review case above also proves that
+    // the review window brings the ask back to a record admitted without it.
+    const outside = (await answerable.app.inject(snapshotPath)).json() as CurrentViewSnapshot;
+    const plain = outside.content.records.find(
+      (record) => record.kind === 'conversation' && record.id === 'actual',
+    )?.value;
+    expect(plain).toMatchObject({ latest_owner_message_sequence: 1 });
+    expect(plain).not.toHaveProperty('pending_ask');
     expect(await members(asking, 'review')).toHaveLength(1);
     expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
     expect(await members(asking, 'unread')).toEqual([]);
     expect(await members(quiet, 'review')).toEqual([]);
+    // Distinct risk: GET /api/review rebuilt on this window must show the same ask-only card,
+    // say why it waits, and refuse to read an unprojected index as an empty queue.
+    expect(asking.database.read(review_body)).toMatchObject({
+      available: true,
+      total: 1,
+      cards: [
+        { kind: 'chief', id: 'chief', title: 'Chief of Staff', waits: ['question'], stage: null },
+      ],
+    });
+    expect(quiet.database.read(review_body)).toEqual({ available: true, total: 0, cards: [] });
+    expect(fixture().read(review_body)).toEqual({ available: false, total: null, cards: [] });
   } finally {
     await asking.app.close();
     asking.navigation.close();
     await quiet.app.close();
     quiet.navigation.close();
+    for (const f of [answerable, answered, oversized, superseded]) {
+      await f.app.close();
+      f.navigation.close();
+    }
+  }
+});
+
+// Distinct gap: a Ticket's Review member is the Ticket. When an earlier admission already
+// holds the Ticket (it is selected, or another window lists it first), Review must still
+// reach its conversation, or the never-read Ask card has nothing to answer offline.
+test('a Ticket admitted before Review still carries its waiting ask', async () => {
+  const ask = {
+    request_id: 'request-1',
+    questions: [
+      {
+        question_id: 'colour',
+        header: 'Colour',
+        question: 'Which colour?',
+        options: [{ label: 'Blue', description: 'Calm' }],
+        multi_select: false,
+        allow_other: false,
+      },
+    ],
+  };
+  const f = await setup(true, [], [[1, 'user_input_requested', ask]]);
+  const window = (section: string, owner: object | null) => ({
+    section,
+    owner,
+    group: 'all',
+    child_filter: 'all',
+    anchor: null,
+    direction: 'after',
+    limit: 30,
+  });
+  const pendingAsk = async (selected: object | null, windows: object[]) => {
+    const request = encodeURIComponent(
+      JSON.stringify({
+        projection_version: 7,
+        scope_generation: 1,
+        locale: 'en-US',
+        selected,
+        selected_conversation_id: null,
+        review_conversation_ids: [],
+        review_skipped_keys: [],
+        review_priority_keys: [],
+        windows,
+      }),
+    );
+    const response = await f.app.inject(`/api/navigation/view/snapshot?view=${request}`);
+    expect(response.statusCode).toBe(200);
+    const snapshot = response.json() as CurrentViewSnapshot;
+    // Every window, the earlier one included, lists the Ticket.
+    for (const listed of snapshot.content.windows)
+      expect(listed.members).toContainEqual({ kind: 'ticket', id: f.ticketId });
+    return (
+      snapshot.content.records.find(
+        (record) => record.kind === 'conversation' && record.id === 'ticket-conversation',
+      )?.value as { pending_ask?: unknown } | undefined
+    )?.pending_ask;
+  };
+  try {
+    const review = window('review', null);
+    const expected = { kind: 'user_input', ...ask };
+    expect(await pendingAsk(null, [review])).toEqual(expected);
+    expect(await pendingAsk({ kind: 'ticket', id: f.ticketId }, [review])).toEqual(expected);
+    const rail = window('rail_tickets', { kind: 'chief', id: 'chief' });
+    expect(await pendingAsk(null, [rail, review])).toEqual(expected);
+  } finally {
+    await f.app.close();
+    f.navigation.close();
+  }
+});
+
+// Distinct risk: the Review queue is a stored projection, so only the real projection can show
+// that a parked proposal on a Ticket behind an unfinished blocker is left out of the queue and its
+// count, and that finishing the blocker brings it in again. Reuses this fixture: no browser or
+// second host. The Ticket read, the notification flag and the Review member share one blocker rule.
+test('a parked proposal on a blocked Ticket joins Review only when its blocker is done', async () => {
+  const f = await setup();
+  try {
+    const blocker = create(f.database, { title: 'Blocker' });
+    const blocked = propose(
+      f.database,
+      create(f.database, {
+        title: 'Blocked',
+        settle_kickoff: false,
+        stated_ceiling: 'needs_what_changes',
+        blocked_by_ticket_ids: [blocker.id],
+      }),
+      'Success proposal',
+    );
+    expect(blocked.pending_proposal).not.toBeNull();
+    expect(blocked.ticket_status).toBe('blocked');
+    expect(f.database.read(review_body)).toEqual({ available: true, total: 0, cards: [] });
+    const flag = () =>
+      f.database.read(
+        (sql) =>
+          sql.get<{ active: number }>(
+            "SELECT active FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+            [blocked.id],
+          )?.active,
+      );
+    expect(flag()).toBe(0);
+    advance(f.database, blocker);
+    expect(f.database.read(review_body)).toMatchObject({
+      available: true,
+      total: 1,
+      cards: [{ kind: 'ticket', id: blocked.id, waits: ['proposal'] }],
+    });
+    expect(flag()).toBe(1);
+  } finally {
+    await f.app.close();
+    f.navigation.close();
   }
 });

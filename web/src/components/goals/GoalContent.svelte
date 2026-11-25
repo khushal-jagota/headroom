@@ -10,7 +10,7 @@
  import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  import {createGoalPageContext} from '../../lib/goals/pageContext';
  import type {GoalEditBody,GoalResponse} from '../../lib/goals/contracts';
- import {PAGE_CONTEXT,PAGE_HOLDER,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
+ import {PAGE_CONTEXT,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
  import PageDocument from '../pageKit/PageDocument.svelte';
  import PageChart from '../pageKit/PageChart.svelte';
  import PageChecklist from '../pageKit/PageChecklist.svelte';
@@ -21,7 +21,6 @@
  let width=$state(0),error=$state<unknown>(null);
  let narrow=$derived(width<=640);
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
- setContext(PAGE_HOLDER,()=>goal.holder_kind==='manager'?{kind:'manager',id:goal.holder_id!}:{kind:'chief',id:'chief'});
  const sessions=createGoalRequestSessions();
  let editor=$derived(createGoalEditor(id));
  function save(patch:GoalEditBody){return editor.write({...patch,expected_revision:goal.revision});}

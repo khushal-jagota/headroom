@@ -18,8 +18,9 @@ import type {
   Ticket,
 } from './contracts.ts';
 import * as data from './data/index.ts';
-import { validated_sent_files, type SentPiece } from '../conversation/http.ts';
+import { sent_upload_piece, validated_sent_files, type SentPiece } from '../conversation/http.ts';
 import { HttpError } from '../core/http/errors.ts';
+import type { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { completion_follows, consequences_follows } from './logic/machine.ts';
 import { validate_revision_guidance, REVISION_GUIDANCE_MAX_CHARACTERS } from './logic/admission.ts';
 
@@ -51,10 +52,22 @@ function holder(value: unknown): DecisionHolder | null {
     throw validation(`${value.kind} principal id must be ${value.kind}`);
   return { kind: value.kind as DecisionHolder['kind'], id: value.id };
 }
+/** The command body keeps whole numbers as JsonNumber; a piece's size is read as a plain number. */
+function with_plain_sizes(piece: unknown): unknown {
+  if (!is_record(piece)) return piece;
+  const plain = { ...piece };
+  for (const side of ['width', 'height']) {
+    const number = plain[side];
+    if (number instanceof JsonNumber && number.kind === 'integer') plain[side] = number.value;
+  }
+  return plain;
+}
 /** Pictures and files that travel with a decision, in the same pieces a conversation message uses. */
 function attachments(value: unknown): void {
   if (!Array.isArray(value)) throw validation('attachments must be a list of pictures and files');
   const sent: SentPiece[] = value.map((piece: unknown) => {
+    const upload = sent_upload_piece(with_plain_sizes(piece));
+    if (upload) return upload;
     if (
       !is_record(piece) ||
       (piece.piece !== 'image' && piece.piece !== 'file') ||
@@ -203,6 +216,7 @@ export function apply(
   raw: Record<string, unknown>,
   actor: Principal,
   now: number,
+  uploads?: VideoUploadService,
 ): DecisionOperationResponse {
   identity(operation_id, 'operation_id');
   const command = parse_command(raw),
@@ -240,9 +254,28 @@ export function apply(
     created_at: now,
   };
   try {
-    receipt.transition = tx.savepoint((scope) =>
-      transition(scope, current, command, operation_id, actor, now),
-    );
+    receipt.transition = tx.savepoint((scope) => {
+      const ids = new Set<string>();
+      for (const piece of command.attachments ?? []) {
+        if (piece.piece !== 'attachment_upload' && piece.piece !== 'video_upload') continue;
+        if (!uploads || actor.kind !== 'owner')
+          throw validation('Uploaded decision attachments require owner upload admission.');
+        const id = piece.upload_id as string;
+        if (ids.has(id)) throw validation('An upload can appear only once in a decision.');
+        ids.add(id);
+        try {
+          uploads.preflight(
+            id,
+            { kind: 'ticket', id: ticket_id, expected_conversation_id: current.conversation_id },
+            'decision-upload:' + operation_id,
+            scope,
+          );
+        } catch (error) {
+          throw validation(error instanceof Error ? error.message : String(error));
+        }
+      }
+      return transition(scope, current, command, operation_id, actor, now);
+    });
   } catch (error) {
     if (
       !(error instanceof PlannerError) ||

@@ -1,6 +1,6 @@
 # Usage
 
-Usage is where Khushal sees what the agents on this host can still spend, and what they have already spent, without opening each provider's own dashboard. It also sets up the backends those agents run on. Headroom does not bill anyone. Codex, Claude and Antigravity use the logins on the host, and their plan limits and invoices stay with those providers.
+Usage is where the owner sees what the agents on this host can still spend, and what they have already spent, without opening each provider's own dashboard. It also sets up the backends those agents run on. Headroom does not bill anyone. Codex, Claude and Antigravity use the logins on the host, and their plan limits and invoices stay with those providers.
 
 ## What it is made of
 
@@ -30,7 +30,9 @@ Codex totals also include automatic compactions from matched response records. C
 
 ## Backend setup
 
-Backend cards read the tools installed on the selected machine. Backend settings and Usage Limits offer a machine choice. Ticket cards use the machine assigned to the Ticket. Sign-in and allowance refresh run there, and provider credentials stay there. The server keeps allowance observations separately for each machine and backend. An unavailable machine retains its own last observation and timestamp, and its actions report unavailable. Settings → Backends lists, in the server's order, each backend whose versions Panels checks (today Codex, Claude, then Antigravity), and any other backend Panels can sign in. A backend whose driver can sign in from Panels (today, Codex and Antigravity) offers sign-in there when its account is signed out or a sign-in is under way; a signed-in account shows no sign-in. Codex sign-in shows a code and link. Antigravity's opens Google's page and takes the address Google returns to in a paste box, so it works from any device. Claude keeps its own login command. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table; Antigravity's models and thinking levels come from agy's own lists. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
+Backend cards describe the tools installed on the selected machine. Backend settings and Usage Limits offer a machine choice. Ticket cards use the machine assigned to the Ticket. Sign-in and allowance refresh run there, and provider credentials stay there. The server keeps allowance observations separately for each machine and backend. An unavailable machine retains its own last observation and timestamp, and its actions report unavailable. Settings → Backends lists, in the server's order, each backend whose versions Panels checks (today Codex, Claude, then Antigravity), and any other backend Panels can sign in. A backend whose driver can sign in from Panels (today, Codex and Antigravity) offers sign-in there when its account is signed out or a sign-in is under way; a signed-in account shows no sign-in. Codex sign-in shows a code and link. Antigravity's opens Google's page and takes the address Google returns to in a paste box, so it works from any device. Claude keeps its own login command. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table; Antigravity's models and thinking levels come from agy's own lists. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
+
+Model pickers read saved models and capabilities for the selected machine. A warm read calls no machine and writes no observation. Missing facts, explicit Refresh, and changes to the machine or provider trigger discovery. Reconnection refreshes the machine facts. The server saves changed capability values and keeps each machine separate.
 
 The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. When a model leaves every saved complete list, its switch-off is deleted, because the model is refused as not offered. [Conversations](conversations.md) describes the picker and those refusals.
 
@@ -42,4 +44,4 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 `server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Settings and sign-in are `web/src/components/settings/BackendSettings.svelte` and `web/src/components/conversation/BackendSignInBlock.svelte`, with the session in `web/src/lib/conversation/backendSignInSession.ts`.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-24._

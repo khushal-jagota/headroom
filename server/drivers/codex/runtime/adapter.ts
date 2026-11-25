@@ -19,6 +19,7 @@ import {
 } from '../../../conversation/contracts.ts';
 import { ConversationTurnEnding as E } from '../../../conversation/events.ts';
 import type { UserInputAnswer } from '../../../conversation/events.ts';
+import { answer_file_references } from '../../../conversation/user_input_attachments.ts';
 import {
   ComposedMessageDoesNotContainSenderContent,
   MessageText,
@@ -165,6 +166,10 @@ export class CodexAppServerBackendChild implements B.BackendChild {
   private reasoning_effort: string | null;
   private turn: TurnInFlight | null = null;
   private stderr_next_turn = 0;
+  private readonly agent_turn_cancel = new AbortController();
+  private readonly child_threads = new Set<string>();
+  private readonly background_tasks = new Set<string>();
+  private readonly commands = new Map<string, { turn_id: string; description: string }>();
   private asks_raised = 0;
   private catalog: CatalogSnapshot = EMPTY_CATALOG_SNAPSHOT;
   private published_catalog: readonly ComposerCatalogEntry[] | null = null;
@@ -295,6 +300,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         approvalsReviewer: 'user',
         sandbox: 'danger-full-access',
         developerInstructions: resolved_start.role_materials?.role_text,
+        config: { 'features.wake_on_agent_messages': false },
       });
       const cursor = options.vendor_session_cursor;
       const method = cursor === null ? 'thread/start' : 'thread/resume';
@@ -564,10 +570,15 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     const turn = this.turn;
     const parked = turn?.parked_user_inputs.get(request_id);
     if (turn === null || parked === undefined) throw new B.UserInputAnswerWriteFailed(request_id);
+    const prepared = answer_file_references(
+      answers,
+      this.message_files,
+      this.resolved_start.conversation_id,
+    );
     turn.parked_user_inputs.delete(request_id);
     let answer: Record<string, unknown>;
     try {
-      answer = user_input_answer(answers);
+      answer = user_input_answer(prepared);
     } catch (error) {
       turn.parked_user_inputs.set(request_id, parked);
       if (error instanceof P.CodexProtocolError)
@@ -605,6 +616,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     await this.client.settled?.();
   }
   private async stop_owned(options?: StopOptions): Promise<void> {
+    this.agent_turn_cancel.abort();
     try {
       await this.coordinator.close();
       const turn = this.turn;
@@ -887,6 +899,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
   private async end_turn(turn: TurnInFlight, ending: E, summary: string | null): Promise<void> {
     if (this.turn !== turn) return;
     if (ending === E.failed) await this.client.settle_standard_error();
+    for (const [id, command] of this.commands)
+      if (command.turn_id === turn.turn_id) await this.start_background(id, command.description);
     this.turn = null;
     this.stderr_next_turn = this.client.standard_error_bytes_so_far();
     await this.complete_messages(turn);
@@ -948,20 +962,121 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         throw error;
     }
   }
+  private async start_background(id: string, description: string): Promise<void> {
+    if (this.background_tasks.has(id)) return;
+    this.background_tasks.add(id);
+    await this.sink.report(
+      null,
+      new B.BackgroundTaskStarted({
+        task_id: id,
+        task_description: description,
+      }),
+    );
+  }
+  private async end_background(id: string, status: string): Promise<void> {
+    if (!this.background_tasks.delete(id)) return;
+    await this.sink.report(
+      null,
+      new B.BackgroundTaskEnded({
+        task_id: id,
+        task_status: status === 'errored' || status === 'notFound' ? 'failed' : status,
+      }),
+    );
+  }
+  private async take_background(
+    method: string,
+    notification: P.ConsumedNotification,
+  ): Promise<void> {
+    if (method === 'thread/started') {
+      const value = notification as P.ThreadStartedNotification;
+      if (this.thread_id !== null && value.thread.parentThreadId === this.thread_id)
+        this.child_threads.add(value.thread.id);
+      return;
+    }
+    if (method === 'turn/completed') {
+      const value = notification as P.TurnCompletedNotification;
+      if (this.child_threads.has(value.threadId) && value.turn.status !== 'inProgress')
+        await this.end_background(`agent:${value.threadId}`, value.turn.status);
+      return;
+    }
+    if (method === 'turn/started') {
+      const value = notification as P.TurnStartedNotification;
+      if (this.child_threads.has(value.threadId))
+        await this.start_background(`agent:${value.threadId}`, 'Codex sub-agent');
+      return;
+    }
+    if (method !== 'item/started' && method !== 'item/completed') return;
+    const value = notification as P.ItemNotification;
+    if (value.threadId !== this.thread_id) return;
+    const item = value.item;
+    if (item.type === 'subAgentActivity') {
+      // The completion frame repeats the action, not the agent's current state.
+      if (method !== 'item/started') return;
+      const activity = item as P.SubAgentActivityThreadItem;
+      this.child_threads.add(activity.agentThreadId);
+      if (activity.kind === 'started' || activity.kind === 'interacted')
+        await this.start_background(`agent:${activity.agentThreadId}`, 'Codex sub-agent');
+      else await this.end_background(`agent:${activity.agentThreadId}`, activity.kind);
+    } else if (item.type === 'collabAgentToolCall') {
+      const call = item as P.CollabAgentToolCallThreadItem;
+      if (call.senderThreadId !== this.thread_id) return;
+      for (const id of call.receiverThreadIds) {
+        const state = call.agentsStates[id]?.status;
+        // Only the root's direct agents belong to this conversation.
+        if (['spawnAgent', 'resumeAgent', 'sendInput', 'followupTask'].includes(call.tool))
+          this.child_threads.add(id);
+        if (!this.child_threads.has(id)) continue;
+        if (state === 'running' || state === 'pendingInit')
+          await this.start_background(`agent:${id}`, call.prompt ?? 'Codex sub-agent');
+        else if (state !== undefined) await this.end_background(`agent:${id}`, state);
+      }
+    } else if (item.type === 'commandExecution') {
+      const command = item as P.CommandExecutionThreadItem;
+      const id = `command:${command.id}`;
+      if (command.status === 'inProgress') {
+        this.commands.set(id, { turn_id: value.turnId, description: command.command });
+        if (this.turn_for(value.turnId) === null) await this.start_background(id, command.command);
+      } else {
+        this.commands.delete(id);
+        await this.end_background(id, command.status);
+      }
+    }
+  }
   private async on_notification(
     method: string,
     notification: P.ConsumedNotification,
   ): Promise<void> {
     const thread = 'threadId' in notification ? notification.threadId : null;
-    if (thread !== null && thread !== this.thread_id) return;
+    if (thread !== null && thread !== this.thread_id) {
+      await this.take_background(method, notification);
+      return;
+    }
     const current = this.turn;
     if (current !== null && current.awaiting_start_response && thread !== null) {
       current.pending_notifications.push([method, notification]);
       return;
     }
+    await this.take_background(method, notification);
     switch (method) {
       case 'turn/started': {
         const value = notification as P.TurnStartedNotification;
+        if (this.turn === null && !this.agent_turn_cancel.signal.aborted) {
+          const token = await this.sink.start_agent_turn?.(
+            'Codex started a turn without a Panels prompt',
+            this.agent_turn_cancel.signal,
+          );
+          if (
+            token !== null &&
+            token !== undefined &&
+            !this.agent_turn_cancel.signal.aborted &&
+            this.turn === null
+          )
+            this.turn = new TurnInFlight(
+              token,
+              this.client.standard_error_bytes_so_far(),
+              this.login_generation(),
+            );
+        }
         const turn = this.turn;
         if (turn === null || value.threadId !== this.thread_id) return;
         if (turn.kind === 'review') turn.interrupt_turn_id = value.turn.id;
@@ -1183,7 +1298,12 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     );
   }
   private async on_child_ended(): Promise<void> {
+    this.agent_turn_cancel.abort();
     await this.coordinator.close();
+    this.background_tasks.clear();
+    this.commands.clear();
+    this.child_threads.clear();
+    await this.sink.report(null, new B.BackendStreamEnded());
     const turn = this.turn;
     if (turn === null) return;
     // The failed request owns an unacknowledged start. It is not an admitted turn ending.

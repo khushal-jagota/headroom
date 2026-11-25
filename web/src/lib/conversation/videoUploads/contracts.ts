@@ -33,9 +33,25 @@ export type PendingVideo = {
   error?: string;
   /** Memory only: never included by the persistence serializer. */
   file?: File;
+  /** Browser-local raster preview; never persisted. */
+  previewUrl?: string;
+  /** Browser-local video, for the sent message's first frame; never persisted. */
+  localVideoUrl?: string;
+  /** A picture's or video's size as this browser shows it, read from the file at attach
+   *  time. It goes out with the upload piece, so the sent message keeps this box. */
+  width?: number;
+  height?: number;
 };
 export type ComposerSendContext = {
+  queueWhilePending?: boolean;
   messageId: string;
+  sentAtUnixMilliseconds?: number;
+  attachmentNames?: readonly string[];
   expectedConversationId: string | null;
   destination?: UploadDestination;
 };
+
+/** The existing streamed transfer also carries images and arbitrary files. */
+export type PendingAttachment = PendingVideo;
+export type AttachmentUploadAdapter = VideoUploadAdapter;
+export type AttachmentUploadStatus = VideoUploadStatus;

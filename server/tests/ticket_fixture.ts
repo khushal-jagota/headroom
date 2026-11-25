@@ -28,7 +28,7 @@ const schema = JSON.parse(
   readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
 ) as ApplicationSchemaSeed;
 createDatabaseFromSeed(seed, schema, (tx) => {
-  tx.run('INSERT OR IGNORE INTO attention_history_metadata VALUES (1,0)');
+  tx.run('INSERT OR IGNORE INTO attention_history_metadata(singleton,started_at) VALUES (1,0)');
   tx.run(
     "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('project_other','Other',0,0),('project_vylo','Vylo',0,0)",
   );

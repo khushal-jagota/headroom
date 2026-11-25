@@ -17,11 +17,16 @@ export function ordered_user_input_answers(
     const question = questions[index];
     const answer = ordered[index];
     if (
-      answer.answers.length === 0 ||
+      (answer.answers.length === 0 && !answer.attachments?.length) ||
       answer.answers.some((value) => !value) ||
-      (!question.multi_select && answer.answers.length !== 1) ||
+      (!question.multi_select &&
+        answer.answers.length !== 1 &&
+        !(answer.answers.length === 0 && answer.attachments?.length)) ||
       (!question.allow_other &&
-        answer.answers.some((value) => !question.options.some((option) => option.label === value)))
+        (Boolean(answer.attachments?.length) ||
+          answer.answers.some(
+            (value) => !question.options.some((option) => option.label === value),
+          )))
     )
       return null;
   }

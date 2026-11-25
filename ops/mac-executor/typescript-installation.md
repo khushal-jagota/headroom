@@ -1,15 +1,15 @@
 # Apple Silicon machine code
 
 An Apple Silicon machine joins with the same command as a Linux machine.
-The owner gets the command and a private credential from Settings → Machines, or from `panels machine join-command`.
-The machine needs macOS 15 or newer, a login to its graphical session, the GitHub CLI with a login, and Python 3.11 or newer.
-The Python that comes with macOS is 3.9. Install a newer one with Homebrew: `brew install python gh`.
+The owner gets the command and a private credential from Settings → Machines. A terminal with owner authority can use `panels machine join-command`.
+The machine needs macOS 15 or newer, a graphical login, Tailscale, `curl`, and Python 3.11.8 or newer.
+Install a supported Python with Homebrew if needed: `brew install python`.
 The machine needs no Node, no Xcode tools and no signing identity.
 
 ## What the join does
 
-The command downloads `scripts/panels_install.py` at the server's released revision.
-The script checks the machine, then selects the newest unexpired release from `main` that matches that revision.
+The command downloads the official public `scripts/panels_install.py` at the server's released revision.
+The script checks the machine, then selects the permanent release from `main` that matches that revision.
 It downloads the `panels-mac-runtime` artifact and checks its SHA-256 against the publication receipt.
 It starts the join step `server/environments/mac_executor/join_main.ts` on the Node inside that release.
 The credential passes on private standard input. It never appears in a process argument.
@@ -44,7 +44,14 @@ The supervisor puts the runtime's own `bin` first.
 ## The launcher and its signature
 
 The launcher app is the same for every account. It reads the account's home from the user database, not from `HOME`.
-It runs the fixed Node and bootstrap below that home with the original arguments.
+For executor and console commands, it spawns the fixed Node and bootstrap below that home with the original arguments.
+Worker jobs use its `--panels-worker-spawn-v2` mode, which spawns the selected release's Node and entrypoint with the original environment.
+The signed launcher remains alive for both modes. It forwards TERM, INT, HUP, and QUIT to the exact Node child, then reaps and mirrors its exit status.
+Both processes keep the launchd process group and priority.
+The earlier `--panels-worker-exec-v1` mode replaces the app process with Node and does not satisfy the attribution requirement.
+New runtimes inspect that mode marker without executing old launchers.
+If the app is missing, lacks the mode, or fails before provider admission, the Worker uses bare Node and logs one warning.
+A failed app job must be absent before fallback. No provider starts before the proxy grants admission.
 The supervisor keeps its own Node across runtime updates and launches the selected versioned runtime as a child.
 
 The release workflow builds the launcher on its Apple Silicon runner with `server/executor/mac/packaging/launcher_main.ts`.
@@ -54,7 +61,7 @@ The publication proof checks the signature of the unpacked copy. The join copies
 
 macOS keys folder permissions on the designated requirement of the app.
 For a team signature, that requirement names the bundle identity and the team. For an ad-hoc signature, it names the exact code hash.
-So folder permissions stay when a later release changes the launcher.
+Folder permission decisions can remain valid when later releases keep that designated requirement stable.
 The launcher is not notarized. The join downloads it through the GitHub API, so it carries no quarantine flag, and Gatekeeper does not assess it.
 
 The hosted rehearsal `typescript-mac-executor.yml` signs its launcher ad hoc, because a pull request build has no release identity.
@@ -70,6 +77,22 @@ If startup fails, retain the state and logs. Use the recovery procedure below wh
 
 An installation from the earlier manual procedure keeps its own launcher, which the owner's Apple Development identity signed.
 Runtime updates do not change the launcher, so that installation keeps working.
+
+To enable the app route on an existing installation, the owner prepares a signed candidate from
+`server/executor/mac/packaging/launcher_main.ts`. The build holds no account path.
+Keep the installed bundle identifier, signing identity, and designated requirement.
+Compare `codesign -dv --verbose=4` and `codesign -d -r-` between the installed app and candidate, then verify the candidate with `codesign --verify --strict`.
+An earlier Apple Development installation and a Developer ID release can have different designated requirements, even with the same bundle and team.
+Earlier privacy grants do not automatically transfer across that identity change. The user can need fresh consent for each protected resource.
+This is a one-time identity transition. Later updates can retain decisions if the bundle, team, and Developer ID requirement remain stable.
+Apple explains the stored requirement check in [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/).
+Preserve the existing identity for this launcher repair. Any Developer ID migration belongs to the separate machine release.
+Do not add entitlements or clear macOS consent records.
+The owner supplies signing and installation when Keychain access can produce a prompt.
+Before replacement, run a harmless candidate Worker job and record its responsible process, exact release Node, environment, and job absence after stop.
+Use only private Ticket and temporary folders. Do not request consent or inspect protected folders.
+An ad hoc candidate proves the launch route and cleanup only. It does not prove the installed identity or consent retention.
+The owner replaces the app after those checks. Existing Workers keep their jobs. New Workers select the updated app.
 
 ## Preserve a failed first initialization
 

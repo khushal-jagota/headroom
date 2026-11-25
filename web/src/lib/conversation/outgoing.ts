@@ -1,12 +1,10 @@
-/** A send remains durable while transport resolves its destination. Unresolved sends
- * draw neither a provisional thread bubble nor a queue row. Confirmed acceptance
- * commits one transcript display slot; confirmed queue membership uses the tray.
- * A correlated record row replaces the contents of that same mounted slot. Recovery
- * outcomes stay visible without claiming that the agent accepted the message.
- */
-
-import { ConversationWireError, type ConversationEvent, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
+import type { PendingMessagePresentation } from "./transcriptOutgoing";
+/** A send appears under its browser-minted identity. The queue and the notebook
+ * replace its presentation when the server knows what happened. */
+import { ConversationWireError, type ConversationEvent, type OwnerSendBody, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
 import { PlannerFetchError } from "../api";
+import { mediaSizeOf } from "../mediaFrame";
+import { SEND_REQUEST_LIMIT_MS } from "../requestLimit/config";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 import {
   MAX_CONVERSATION_MESSAGE_FILE_BYTES,
@@ -34,11 +32,21 @@ export type OutgoingMessageKnownFate =
   | "sent_before_this_page"
   | "waiting_for_the_agent"
   | "answer_never_came_back"
-  | "machine_offline";
+  | "machine_offline"
+  | "not_sent"
+  | "agent_unconfirmed";
 
 export type OutgoingMessage = {
   /** Immutable displayed read boundary for an explicit review reply. */
   ownerReadThroughSequence?: number;
+  /** The original destination and model fields, before a late answer or reload changes the pane. */
+  sendTarget?: Pick<OwnerSendBody, "conversation_id" | "backend_key" | "model" | "reasoning_effort">;
+  failureNote?: string;
+  settledConversationId?: string;
+  attachmentNames?: readonly string[];
+  queueWhilePending?: boolean;
+  /** The mounted transcript's view of an upload or a server-held prompt. */
+  presentation?: PendingMessagePresentation;
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
@@ -158,13 +166,21 @@ function base64DecodedByteCount(data: string): number {
 const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
-  waiting_for_the_agent: "waiting for the agent to be free",
-  answer_never_came_back: "no answer came",
-  machine_offline: null
+  waiting_for_the_agent: "queued",
+  answer_never_came_back: "no response from Panels",
+  machine_offline: null,
+  not_sent: "not sent",
+  agent_unconfirmed: "the agent did not confirm receipt"
 };
+
+/** A send the server has not answered yet, and that nothing has yet shown to have failed. */
+export function outgoingMessageIsSending(message: OutgoingMessage): boolean {
+  return message.knownFate === "nothing_yet" && message.sendTarget !== undefined && !message.accepted;
+}
 
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
 export function outgoingMessageNote(message: OutgoingMessage): string | null {
+  if (outgoingMessageIsSending(message)) return "sending…";
   return KNOWN_FATE_NOTES[message.knownFate] ?? null;
 }
 
@@ -280,8 +296,21 @@ export function outgoingMessagesTheRecordHasNot(
  */
 export const SEND_DEADLINE_MILLISECONDS = 3 * 60 * 1000;
 
+/** How long one send request waits for the server's answer.
+ *
+ * Words alone reach the server at once, so the request has the ordinary send limit. A
+ * message that carries pictures or files can spend most of the long deadline above on
+ * its upload, so it keeps that deadline. At the limit the request ends, and the message
+ * says that the answer never came back.
+ */
+export function sendRequestLimitMs(content: readonly SentMessagePiece[]): number {
+  return content.some((piece) => piece.piece === "image" || piece.piece === "file")
+    ? SEND_DEADLINE_MILLISECONDS
+    : SEND_REQUEST_LIMIT_MS;
+}
+
 function theWaitIsOver(message: OutgoingMessage, nowUnixMilliseconds: number): boolean {
-  return message.knownFate === "nothing_yet"
+  return !message.accepted && message.knownFate === "nothing_yet"
     && nowUnixMilliseconds - message.sentAtUnixMilliseconds >= SEND_DEADLINE_MILLISECONDS;
 }
 
@@ -312,7 +341,7 @@ export function whenTheNextWaitRunsOut(
   outgoing: readonly OutgoingMessage[]
 ): number | null {
   const deadlines = outgoing
-    .filter((message) => message.knownFate === "nothing_yet")
+    .filter((message) => !message.accepted && message.knownFate === "nothing_yet")
     .map((message) => message.sentAtUnixMilliseconds + SEND_DEADLINE_MILLISECONDS);
   return deadlines.length === 0 ? null : Math.min(...deadlines);
 }
@@ -358,34 +387,8 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
   return outgoing.some((message) =>
     message.knownFate === "answer_never_came_back"
     || message.knownFate === "sent_before_this_page"
+    || message.knownFate === "waiting_for_the_agent"
   );
-}
-
-/** A transport in flight has no rendered destination. Acceptance or a record commits
- * the thread; confirmed queue membership commits the tray. Recovery remains visible. */
-export function outgoingMessagesByPlace(
-  outgoing: readonly OutgoingMessage[],
-  where: {
-    composerStackMessageIds: readonly string[];
-    serverHeldSenderMessageIds: ReadonlySet<string>;
-    recordedSenderMessageIds?: ReadonlySet<string>;
-  }
-): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
-  const recorded = (message: OutgoingMessage): boolean =>
-    where.recordedSenderMessageIds?.has(message.messageId) ?? false;
-  const aboveTheComposer = (message: OutgoingMessage): boolean =>
-    !message.accepted && !recorded(message) && (
-      where.composerStackMessageIds.includes(message.messageId)
-      || where.serverHeldSenderMessageIds.has(message.messageId)
-      || message.knownFate === "waiting_for_the_agent"
-    );
-  return {
-    thread: outgoing.filter(message => !aboveTheComposer(message) && (
-      message.accepted || recorded(message) || message.knownFate === "answer_never_came_back"
-      || message.knownFate === "machine_offline"
-    )),
-    composerStack: outgoing.filter(aboveTheComposer)
-  };
 }
 
 /** Receipt lookup is for unresolved identities, separate from mounted presentation.
@@ -527,6 +530,21 @@ export async function moveRememberedOutgoingMessages(
   try {
     const stored = window.sessionStorage.getItem(fromKey);
     if (stored === null) return true;
+    const target = window.sessionStorage.getItem(toKey);
+    if (target !== null && target !== stored) {
+      const [incoming, existing] = await Promise.all([
+        outgoingMessagesStoredUnder(fromConversationId), outgoingMessagesStoredUnder(toConversationId)
+      ]);
+      if (!incoming.length || !existing.length) return false;
+      const combined = new Map(existing.map(message => [message.messageId, message]));
+      for (const message of incoming) combined.set(message.messageId, message);
+      const messages = [...combined.values()].sort((left, right) => left.sentAtUnixMilliseconds - right.sentAtUnixMilliseconds);
+      if (!await rememberOutgoingMessages(toConversationId, messages)) return false;
+      const retained = await outgoingMessagesStoredUnder(toConversationId);
+      if (retained.length !== combined.size || retained.some(message => !combined.has(message.messageId))) return false;
+      window.sessionStorage.removeItem(fromKey);
+      return true;
+    }
     window.sessionStorage.setItem(toKey, stored);
     wroteTarget = true;
     window.sessionStorage.removeItem(fromKey);
@@ -824,9 +842,16 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   if (!DELIVERY_MODES.includes(decodedMode as PromptDeliveryMode)) return null;
   if (typeof sentAtUnixMilliseconds !== "number") return null;
   if (!KNOWN_FATES.includes(knownFate as OutgoingMessageKnownFate)) return null;
+  const sendTarget = storedSendTarget(held.sendTarget);
   return {
     messageId,
     content: pieces,
+    ...(typeof held.settledConversationId === "string" ? {settledConversationId: held.settledConversationId} : {}),
+    ...(Array.isArray(held.attachmentNames) && held.attachmentNames.every(name => typeof name === "string")
+      ? { attachmentNames: held.attachmentNames as string[] } : {}),
+    ...(held.queueWhilePending === true ? { queueWhilePending: true } : {}),
+    ...(typeof held.failureNote === "string" ? { failureNote: held.failureNote } : {}),
+    ...(sendTarget ? { sendTarget } : {}),
     ...(held.accepted === true ? { accepted: true } : {}),
     ...(typeof held.ownerReadThroughSequence === "number" && Number.isSafeInteger(held.ownerReadThroughSequence) && held.ownerReadThroughSequence >= 0 ? { ownerReadThroughSequence: held.ownerReadThroughSequence } : {}),
     ...(typeof held.displayMessageId === "string" ? { displayMessageId: held.displayMessageId } : {}),
@@ -844,6 +869,19 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   };
 }
 
+function storedSendTarget(value: unknown): OutgoingMessage["sendTarget"] {
+  if (value === null || typeof value !== "object") return undefined;
+  const target = value as Record<string, unknown>;
+  if (target.conversation_id !== null && typeof target.conversation_id !== "string") return undefined;
+  return {
+    conversation_id: target.conversation_id,
+    ...(typeof target.backend_key === "string" ? { backend_key: target.backend_key } : {}),
+    ...(typeof target.model === "string" ? { model: target.model } : {}),
+    ...(target.reasoning_effort === null || typeof target.reasoning_effort === "string"
+      ? { reasoning_effort: target.reasoning_effort } : {})
+  };
+}
+
 function machineOfflineRefusalFrom(value: unknown): MachineOfflineRefusal {
   const held = (value ?? {}) as Record<string, unknown>;
   return {
@@ -855,8 +893,9 @@ function machineOfflineRefusalFrom(value: unknown): MachineOfflineRefusal {
 function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
   if (value === null || typeof value !== "object") return null;
   const piece = value as Record<string, unknown>;
-  if (piece.piece === "video_upload" && typeof piece.upload_id === "string" && piece.upload_id !== "") {
-    return { piece: "video_upload", upload_id: piece.upload_id };
+  if ((piece.piece === "video_upload" || piece.piece === "attachment_upload") && typeof piece.upload_id === "string" && piece.upload_id !== "") {
+    // A picture's or video's measured size stays with it, so a message sent after a restore keeps its box.
+    return { piece: piece.piece, upload_id: piece.upload_id, ...(mediaSizeOf(piece as { width?: number; height?: number }) ?? {}) };
   }
   if (piece.piece === "text") {
     return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;

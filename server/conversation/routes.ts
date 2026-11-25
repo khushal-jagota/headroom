@@ -1,3 +1,4 @@
+import { owner_send_status } from '../message_delivery/owner_sends.ts';
 /** Product conversation HTTP surface, sharing the record and process runtime. */
 import { read_machine } from '../machines/data.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
@@ -8,6 +9,11 @@ import { stat } from 'node:fs/promises';
 import { PlannerError } from '../core/contracts.ts';
 import { sendFile } from '../core/http/static.ts';
 import { body_fields, Fields, object } from './http/intake.ts';
+import {
+  answer_attachments,
+  keep_answer_attachments,
+  type SentAnswerAttachment,
+} from './http/user_input.ts';
 import { public_event, send_event_tail } from './http/record.ts';
 import type { ConversationHttpWriteScope } from './http/writes.ts';
 import { readable_tool_call_detail } from './tool_detail.ts';
@@ -39,6 +45,9 @@ import {
 import { resolve_conversation_start_request } from './logic/conversation_start_resolution.ts';
 import type { SqliteProcessConversationSystem } from './system.ts';
 import type { ConversationViewRuntime } from './views/routes.ts';
+import { VideoUploadService } from './video_uploads/service.ts';
+import { VideoUploadError } from './video_uploads/contracts.ts';
+import { video_send_admission } from './video_send_admission.ts';
 import { pendingCredentialRequestBody } from './publication/coordinator.ts';
 
 export interface ConversationHttpRuntime {
@@ -191,6 +200,7 @@ async function state_json(
     is_running,
     held_prompts: held_prompts.map((held) => ({
       held_prompt_id: held.held_prompt_id,
+      requested_mode: held.requested_mode,
       ...message_content_json_entries(held.content),
       sender_label: held.sender_label,
       sender_message_id: held.sender_message_id,
@@ -297,6 +307,7 @@ async function answer_error<T>(answer: () => Promise<T>): Promise<T> {
   try {
     return await answer();
   } catch (error) {
+    if (error instanceof VideoUploadError) throw new HttpError(error.status_code, error.message);
     if (error instanceof Error && error.message === 'operation_id already names a different answer')
       throw new HttpError(422, error.message);
     throw error;
@@ -306,6 +317,30 @@ export function createConversationRoutes(
   runtime: ConversationHttpRuntime,
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    app.get<{
+      Params: { message_id: string };
+      Querystring: { owner_kind?: string; owner_id?: string };
+    }>('/owner-sends/:message_id', async (request) => {
+      requireOwner(services.identity(request));
+      const { owner_kind, owner_id } = request.query;
+      const { message_id } = request.params;
+      if (
+        (owner_kind !== 'chief' && owner_kind !== 'manager' && owner_kind !== 'ticket') ||
+        typeof owner_id !== 'string' ||
+        owner_id.length === 0 ||
+        (owner_kind === 'chief' && owner_id !== 'chief') ||
+        message_id.length === 0
+      )
+        throw new HttpError(422, 'Invalid owner send address');
+      return {
+        delivery: await owner_send_status(
+          runtime.record.database,
+          runtime.core,
+          { kind: owner_kind, id: owner_id },
+          message_id,
+        ),
+      };
+    });
     app.post('/conversations', async (request, reply) => {
       const start = start_request(request.body);
       runtime.record.database.read((sql) => read_machine(sql, start.machine_id));
@@ -466,27 +501,39 @@ export function createConversationRoutes(
         return conversation_link_lock(`conversation:${id}`).run(async () => {
           mutable_conversation(runtime, id);
           unassociated_send(runtime, id);
-          if (body.content.some((piece) => piece.piece === 'video_upload'))
-            throw new HttpError(503, 'video uploads are unavailable');
+          const admission = video_send_admission(
+            services.database,
+            services.config.db_path,
+            runtime.core.options.message_files,
+            body.content,
+            body.sender_message_id,
+            { kind: 'conversation', id, expected_conversation_id: id },
+            { kind: 'owner', id: 'owner' },
+            services.identity(request).principal,
+          );
           try {
-            const content = await conversation_message_content(
-              runtime.core.options.message_files,
-              id,
-              body.content,
-              { sender_message_id: body.sender_message_id },
-            );
-            return delivery_fate_json(
-              await runtime.core.send(id, content, {
-                sender_label: body.sender_label,
-                sender: services.identity(request).principal,
-                mode: body.mode,
-                model_change: body.model,
-                reasoning_effort_change: body.reasoning_effort,
-                sender_message_id: body.sender_message_id,
-                sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
-              }),
-            );
+            await admission?.preflight(id);
+            const content = admission
+              ? await admission.content(id)
+              : await conversation_message_content(
+                  runtime.core.options.message_files,
+                  id,
+                  body.content,
+                  { sender_message_id: body.sender_message_id },
+                );
+            const fate = await runtime.core.send(id, content, {
+              sender_label: body.sender_label,
+              sender: services.identity(request).principal,
+              mode: body.mode,
+              model_change: body.model,
+              reasoning_effort_change: body.reasoning_effort,
+              sender_message_id: body.sender_message_id,
+              sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
+            });
+            admission?.finish(fate);
+            return delivery_fate_json(fate);
           } catch (error) {
+            admission?.abort_before_dispatch();
             send_error(error);
           }
         });
@@ -570,6 +617,7 @@ export function createConversationRoutes(
         const fields = body_fields(request.body);
         const request_id = fields.text('request_id');
         const answers: UserInputAnswer[] = [];
+        const uploads = new Map<string, SentAnswerAttachment[]>();
         const supplied = fields.body.answers;
         if (!('answers' in fields.body))
           fields.issue('missing', ['answers'], 'Field required', fields.body);
@@ -579,6 +627,8 @@ export function createConversationRoutes(
           for (const [question_id, value] of Object.entries(supplied)) {
             const nested = new Fields(value, ['body', 'answers', question_id]);
             if (object(value)) {
+              if (value.attachments !== undefined)
+                uploads.set(question_id, answer_attachments(value.attachments, question_id));
               const choices = value.answers;
               if (!('answers' in value))
                 nested.issue('missing', ['answers'], 'Field required', value);
@@ -605,16 +655,32 @@ export function createConversationRoutes(
         fields.finish();
         requireOwner(services.identity(request));
         answerable_conversation(runtime, request.params.conversation_id, operation_id);
-        return {
-          fate: await answer_error(() =>
+        const attached = await answer_error(() =>
+          keep_answer_attachments(
+            runtime.core.options.message_files,
+            request.params.conversation_id,
+            request_id!,
+            operation_id,
+            answers,
+            uploads,
+            new VideoUploadService(services.database, services.config.db_path),
+          ),
+        );
+        try {
+          const fate = await answer_error(() =>
             runtime.core.answer_user_input(
               request.params.conversation_id,
               request_id!,
-              answers,
+              attached.answers,
               operation_id,
             ),
-          ),
-        };
+          );
+          attached.finish(fate === 'refused' ? 'refused' : 'accepted');
+          return { fate };
+        } catch (error) {
+          attached.finish('uncertain');
+          throw error;
+        }
       },
     );
     app.get<{ Params: { conversation_id: string; operation_id: string } }>(

@@ -7,7 +7,17 @@ function additive(old: unknown, next: unknown): boolean {
   if (!is_record(old) || !is_record(next)) return false;
   for (const [name, value] of Object.entries(old)) {
     if (!(name in next)) return false;
-    if (name === 'properties' || name === '$defs') {
+    if (name === 'enum') {
+      // A wider enum accepts every previous message. New event senders still need peer opt-in.
+      if (
+        !Array.isArray(value) ||
+        !Array.isArray(next[name]) ||
+        !value.every((entry) =>
+          (next[name] as unknown[]).some((candidate) => isDeepStrictEqual(entry, candidate)),
+        )
+      )
+        return false;
+    } else if (name === 'properties' || name === '$defs') {
       if (!is_record(value) || !is_record(next[name])) return false;
       for (const [field, schema] of Object.entries(value))
         if (!(field in next[name]) || !additive(schema, next[name][field])) return false;

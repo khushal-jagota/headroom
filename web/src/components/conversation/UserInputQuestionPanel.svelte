@@ -1,10 +1,13 @@
 <script lang="ts">
   import type {
     UserInputAnswers,
+    UserInputAttachment,
     UserInputQuestion
   } from "../../lib/conversation/wire";
   import {
     completeUserInputAnswers,
+    pendingAnswerAttachments,
+    rememberUserInputDraft, recallUserInputDraft, clearUserInputDraft, initialUserInputDraft,
     emptyUserInputDraft,
     toggleUserInputChoice,
     userInputOptionForKey,
@@ -13,12 +16,18 @@
     type UserInputDraft
   } from "../../lib/conversation/userInput";
   import type { Snippet } from "svelte";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import ComposerField from "./ComposerField.svelte";
+  import { releasePendingImages, type PendingConversationImage } from "../../lib/conversation/pendingImages";
+  import type { PendingAttachment, UploadDestination } from "../../lib/conversation/videoUploads/contracts";
+  import { clearAttachmentDraft, openAttachmentDraft, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
+  import type { PendingConversationFile } from "../../lib/conversation/pendingFiles";
   import AskShell from "./AskShell.svelte";
   import AskOptionContent from "./AskOptionContent.svelte";
 
   let {
     request,
+    uploadDestination,
     busy = false,
     answerAvailable = true,
     note = null,
@@ -27,11 +36,15 @@
     onStop,
     commitReady = $bindable(false),
     ownAnswer = null,
+    ownAttachments = [],
+    onQuestionDraftChange,
     acceptsOwnAnswer = $bindable(false),
+    activeQuestionId = $bindable(null),
     onOwnAnswerUsed,
     onWriteOwnAnswer,
     onSubmit
   }: {
+    uploadDestination: UploadDestination;
     request: { requestId: string; questions: readonly UserInputQuestion[] };
     busy?: boolean;
     answerAvailable?: boolean;
@@ -48,25 +61,48 @@
     /** The words in the composer, when the composer is where an own answer is written (it is
      *  docked right under the question). Null: the panel draws its own field for them. */
     ownAnswer?: string | null;
+    ownAttachments?: UserInputAttachment[];
+    onQuestionDraftChange?: (questionId: string, text: string, attachments: UserInputAttachment[], preservePendingUploads?: boolean) => void;
     /** Whether the question on screen takes an own answer, for the composer to say so. */
     acceptsOwnAnswer?: boolean;
+    activeQuestionId?: string | null;
     /** The composer's words were taken as an answer, so the composer can let them go. */
-    onOwnAnswerUsed?: () => void;
+    onOwnAnswerUsed?: (requestId: string, questionIds: string[]) => void;
     /** The person chose "Something else": the composer takes the cursor. */
     onWriteOwnAnswer?: () => void;
-    onSubmit?: (answers: UserInputAnswers) => void;
+    onSubmit?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
   } = $props();
 
   let step = $state(0);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
   let rememberedRequestId = $state("");
+  let rememberedConversationId = $state("");
+  let answerConversationId = $derived(uploadDestination.expected_conversation_id ?? uploadDestination.id);
+  let attachmentDrafts = $state<Record<string, UserInputAttachment[]>>({});
+  let standaloneDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>(untrack(() => Object.fromEntries(request.questions.map((each) => [each.question_id, { images: [], files: [], uploads: [], busy: false }]))));
+  let submitting = $state(false);
+  let completedRequest = $state(false);
+  function releaseStandalone(): void {
+    for (const entry of Object.values(standaloneDrafts)) releasePendingImages(entry.images);
+    standaloneDrafts = {};
+  }
+  onDestroy(releaseStandalone);
   const uid = $props.id();
 
   $effect(() => {
-    if (request.requestId === rememberedRequestId) return;
+    if (request.requestId === rememberedRequestId && answerConversationId === rememberedConversationId) return;
     rememberedRequestId = request.requestId;
-    step = 0;
-    draft = emptyUserInputDraft();
+    rememberedConversationId = answerConversationId;
+    completedRequest = false;
+    const saved = untrack(() => recallUserInputDraft(answerConversationId, request));
+    const initial = untrack(() => initialUserInputDraft(request, saved, ownAnswer, ownAttachments));
+    step = initial.step;
+    draft = initial.draft;
+    attachmentDrafts = initial.attachmentsByQuestion;
+    releaseStandalone();
+    standaloneDrafts = Object.fromEntries(request.questions.map((each) => [each.question_id, { images: [], files: [], uploads: ownAnswer === null ? openAttachmentDraft(`answer:${uploadDestination.id}:${request.requestId}:${each.question_id}`, restoredPendingUploads(attachmentDrafts[each.question_id] ?? [], uploadDestination)) : [], busy: false }]));
+    const selected = request.questions[step];
+    if (saved && selected && ownAnswer !== null) untrack(() => onQuestionDraftChange?.(selected.question_id, draft.other[selected.question_id] ?? "", attachmentDrafts[selected.question_id] ?? [], true));
   });
   /** Where the arrow keys are among the rows. v10 (4): nothing is pre-highlighted; a row
    *  lights only under the pointer or keyboard focus. */
@@ -74,34 +110,48 @@
   $effect(() => { step; request.requestId; focusedOption = -1; });
 
   let question = $derived(request.questions[step]);
+  let effectiveDraft = $derived(question && ownAnswer !== null && question.allow_other ? withOwnAnswer(draft, question, ownAnswer) : draft);
   let currentAnswers = $derived(
-    question === undefined ? [] : userInputAnswerFor(draft, question)
+    question === undefined ? [] : userInputAnswerFor(effectiveDraft, question)
   );
+  let allAttachments = $derived(ownAnswer !== null
+    ? { ...attachmentDrafts, ...(question ? { [question.question_id]: ownAttachments } : {}) }
+    : Object.fromEntries(Object.entries(standaloneDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files, entry.uploads)])));
+  $effect(() => {
+    const requestId = request.requestId;
+    const position = step;
+    const currentDraft = effectiveDraft;
+    const attached = allAttachments;
+    if (rememberedRequestId === requestId && rememberedConversationId === answerConversationId && !completedRequest) untrack(() => rememberUserInputDraft(answerConversationId, { requestId, step: position, draft: currentDraft, attachmentsByQuestion: attached }));
+  });
+  let currentAttachments = $derived(question ? allAttachments[question.question_id] ?? [] : []);
+  let readingAttachments = $derived(Object.values(standaloneDrafts).some((entry) => entry.busy));
   let chosenSomething = $derived(currentAnswers.length > 0);
-  let canContinue = $derived(chosenSomething);
+  let canContinue = $derived(chosenSomething || Boolean(question?.allow_other && currentAttachments.length));
   let isLast = $derived(step === request.questions.length - 1);
   let optionsElement = $state<HTMLDivElement | null>(null);
   let composerAnswers = $derived(ownAnswer !== null);
-  let ownWords = $derived(question === undefined ? "" : (draft.other[question.question_id] ?? "").trim());
 
-  $effect(() => { acceptsOwnAnswer = question?.allow_other === true; });
+  $effect(() => { acceptsOwnAnswer = question?.allow_other === true; activeQuestionId = question?.question_id ?? null; });
 
-  // The composer's words are this question's own answer while it is the place to type.
-  $effect(() => {
-    const words = ownAnswer;
-    if (words === null) return;
-    untrack(() => {
-      if (question === undefined || !question.allow_other || busy || !answerAvailable) return;
-      draft = withOwnAnswer(draft, question, words);
-    });
-  });
+  function captureCurrent(): void {
+    if (!question) return;
+    if (ownAnswer !== null && question.allow_other) draft = withOwnAnswer(draft, question, ownAnswer);
+    attachmentDrafts = { ...attachmentDrafts, [question.question_id]: [...currentAttachments] };
+  }
 
-  /** Answers the question on screen with the composer's words and goes on, as Next would.
-   *  False when this question takes no own answer, so the words stay where they are. */
-  export function answerWith(words: string): boolean {
-    if (question === undefined || !question.allow_other || busy || !answerAvailable || words.trim() === "") return false;
+  function selectStep(next: number): void {
+    step = next;
+    const target = request.questions[next];
+    if (target && composerAnswers) onQuestionDraftChange?.(target.question_id, draft.other[target.question_id] ?? "", attachmentDrafts[target.question_id] ?? []);
+  }
+
+  /** Captures this question's draft before a pager move or a backend answer. */
+  export function answerWith(words: string, attached: UserInputAttachment[] = ownAttachments): boolean {
+    if (!question || !question.allow_other || busy || submitting || !answerAvailable || (!words.trim() && !attached.length)) return false;
     draft = withOwnAnswer(draft, question, words);
-    continueOrSubmit();
+    attachmentDrafts = { ...attachmentDrafts, [question.question_id]: [...attached] };
+    void continueOrSubmit();
     return true;
   }
 
@@ -110,7 +160,7 @@
   /** 1–9 choose an answer, as a permission ask's question does. Typing a number into a
    *  field means the number. */
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (question === undefined || busy || !answerAvailable) return;
+    if (question === undefined || busy || submitting || readingAttachments || !answerAvailable) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
@@ -134,7 +184,8 @@
    *  the last choice sends all answers. Where several may be chosen, a row toggles and the
    *  composer's send goes on (commit()). */
   function choose(option: string): void {
-    if (question === undefined || busy || !answerAvailable) return;
+    if (question === undefined || busy || submitting || readingAttachments || !answerAvailable) return;
+    captureCurrent();
     const at = question.options.findIndex((each) => each.label === option);
     if (at >= 0) focusedOption = at;
     if (question.multi_select) {
@@ -145,18 +196,19 @@
       selected: { ...draft.selected, [question.question_id]: [option] },
       other: { ...draft.other, [question.question_id]: "" }
     };
-    continueOrSubmit();
+    if (composerAnswers) onQuestionDraftChange?.(question.question_id, "", attachmentDrafts[question.question_id] ?? []);
+    void continueOrSubmit();
   }
 
   $effect(() => {
-    commitReady = question !== undefined && question.multi_select && canContinue && !busy && answerAvailable;
+    commitReady = question !== undefined && canContinue && !busy && !submitting && !readingAttachments && answerAvailable;
   });
 
   /** Goes on with the answers chosen so far (a several-answer question): the composer's send. */
-  export function commit(): void { continueOrSubmit(); }
+  export function commit(): void { captureCurrent(); void continueOrSubmit(); }
 
   function writeOther(value: string): void {
-    if (question === undefined || busy || !answerAvailable) return;
+    if (question === undefined || busy || submitting || readingAttachments || !answerAvailable) return;
     draft = {
       selected: question.multi_select
         ? draft.selected
@@ -165,33 +217,43 @@
     };
   }
 
-  /** Enter in the Other field answers with it, as it would in any one-line form. */
-  function otherKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Enter" || event.isComposing || event.shiftKey) return;
-    event.preventDefault();
-    continueOrSubmit();
-  }
-
-  function continueOrSubmit(): void {
-    if (!canContinue || question === undefined || busy || !answerAvailable) return;
-    if (composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
-    if (!isLast) {
-      step += 1;
+  async function continueOrSubmit(): Promise<void> {
+    if (question === undefined || busy || submitting || readingAttachments || !answerAvailable) return;
+    const given = userInputAnswerFor(draft, question);
+    if (!given.length && !(question.allow_other && attachmentDrafts[question.question_id]?.length)) return;
+    if (!isLast) { selectStep(step + 1); return; }
+    const attachments = composerAnswers ? attachmentDrafts : allAttachments;
+    const answers = completeUserInputAnswers(draft, request.questions, attachments);
+    if (answers !== null) {
+      const submittedRequestId = request.requestId;
+      const submittedConversationId = answerConversationId;
+      const submittedQuestionIds = request.questions.map((each) => each.question_id);
+      const submittedDestinationId = uploadDestination.id;
+      const releaseSubmittedDraft = onOwnAnswerUsed;
+      submitting = true;
+      try {
+        const accepted = await onSubmit?.(answers);
+        if (accepted === true && (request == null || request.requestId === submittedRequestId) && answerConversationId === submittedConversationId) {
+          releaseSubmittedDraft?.(submittedRequestId, submittedQuestionIds);
+          completedRequest = true;
+          clearUserInputDraft(submittedConversationId, submittedRequestId);
+          for (const questionId of submittedQuestionIds) clearAttachmentDraft(`answer:${submittedDestinationId}:${submittedRequestId}:${questionId}`);
+          releaseStandalone();
+          attachmentDrafts = {};
+        }
+      } finally { submitting = false; }
       return;
     }
-    const answers = completeUserInputAnswers(draft, request.questions);
-    if (answers !== null) { onSubmit?.(answers); return; }
-    // A question was passed over with the pager: go back to the first one still unanswered.
-    const open = request.questions.findIndex((each) => userInputAnswerFor(draft, each).length === 0);
-    if (open >= 0) step = open;
+    const open = request.questions.findIndex((each) => userInputAnswerFor(draft, each).length === 0 && !(each.allow_other && attachments[each.question_id]?.length));
+    if (open >= 0) selectStep(open);
   }
 
   /** v13 (5): the pager's forward arrow moves to the next question (answered or not); it is
    *  unavailable only on the last one. Back is unavailable only on the first. */
   function goForward(): void {
-    if (busy || isLast) return;
-    if (canContinue && composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
-    step += 1;
+    if (busy || submitting || readingAttachments || isLast) return;
+    captureCurrent();
+    selectStep(step + 1);
   }
 </script>
 
@@ -202,10 +264,10 @@
   {#if request.questions.length > 1}
     <span class="count">{step + 1} of {request.questions.length}</span>
     <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-back
-      aria-label="Previous question" title="Previous question" disabled={busy || step === 0}
-      onclick={() => (step -= 1)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4" /></svg></button>
+      aria-label="Previous question" title="Previous question" disabled={busy || submitting || readingAttachments || step === 0}
+      onclick={() => { captureCurrent(); selectStep(step - 1); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4" /></svg></button>
     <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-forward
-      aria-label="Next question" title="Next question" disabled={busy || isLast}
+      aria-label="Next question" title="Next question" disabled={busy || submitting || readingAttachments || isLast}
       onclick={goForward}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
   {/if}
 {/snippet}
@@ -241,7 +303,7 @@
           data-user-input-option={option.label}
           aria-pressed={selected}
           aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
-          disabled={busy || !answerAvailable}
+          disabled={busy || submitting || readingAttachments || !answerAvailable}
           onclick={() => choose(option.label)}
           onfocus={() => (focusedOption = index)}
         >
@@ -252,18 +314,24 @@
     </div>
 
     {#if question.allow_other && !composerAnswers}
-      <label class="other">
-        <span class="visually-hidden">Other answer</span>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>
-        <input
-          data-user-input-other
-          value={draft.other[question.question_id] ?? ""}
-          placeholder="Something else…"
-          disabled={busy || !answerAvailable}
-          oninput={(event) => writeOther(event.currentTarget.value)}
-          onkeydown={otherKeydown}
-        />
-      </label>
+      {@const attachmentDraft = standaloneDrafts[question.question_id]}
+      {#if attachmentDraft}
+      <div class="other">
+        <ComposerField
+          draftKey={`answer:${uploadDestination.id}:${request.requestId}:${question.question_id}`} {uploadDestination}
+          bind:uploads={attachmentDraft.uploads}
+          bind:images={attachmentDraft.images}
+          bind:files={attachmentDraft.files}
+          bind:intakeBusy={attachmentDraft.busy}
+          bind:value={() => draft.other[question.question_id] ?? "", writeOther}
+          placeholder="Something else…" label="Other answer" inputAttributes={{ "data-user-input-other": "" }}
+          disabled={busy || submitting || !answerAvailable}
+          onsubmit={() => { captureCurrent(); void continueOrSubmit(); }}
+          send={{ label: "Send answer", ready: canContinue, sending: submitting, disabled: !canContinue || busy || !answerAvailable, onclick: () => { captureCurrent(); void continueOrSubmit(); } }} />
+      </div>
+      {/if}
+    {:else if !question.allow_other}
+      <p class="note" data-composer-attachment-unavailable>This question only accepts the listed choices. Answer with a listed choice, then attach files in a message.</p>
     {/if}
 
     {#if note}<p class="note" role="alert">{note}</p>{/if}
@@ -285,27 +353,6 @@
   .count { flex: none; }
   .options { max-height: 360px; overflow: auto; }
   /* The field: a canvas well inside the raised ask, with a pen where the key would be. */
-  .other {
-    position: relative;
-    display: flex;
-    align-items: center;
-    margin-block-start: var(--cv-s2);
-  }
-  .other svg { position: absolute; left: 13px; width: 14px; height: 14px; fill: none; stroke: var(--cv-t3); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
-  .other input {
-    width: 100%;
-    box-sizing: border-box;
-    min-height: 40px;
-    padding: 0 var(--cv-s3) 0 44px;
-    border: 1px solid var(--cv-line-strong);
-    border-radius: var(--cv-r-md);
-    background: var(--cv-canvas);
-    color: var(--cv-t1);
-    font: var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font);
-  }
-  .other input::placeholder { color: var(--cv-placeholder); }
-  .other input:focus { outline: none; border-color: var(--cv-accent-line); }
-  .other input:disabled { cursor: default; color: var(--cv-t3); }
+  .other { margin-block-start: var(--cv-s2); }
   .note { margin: var(--cv-s3) 0 0; color: var(--cv-danger); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); }
-  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

@@ -84,7 +84,7 @@ final class SidebarNavigationTests: XCTestCase {
 
         // Settings holds the old More places; a pushed place keeps native Back.
         app.openDestination("sidebar-settings")
-        for place in ["All goals", "Usage", "VPS"] {
+        for place in ["All goals", "Usage", "Diagnostics"] {
             XCTAssertTrue(app.buttons[place].waitForExistence(timeout: 8), "Settings has no \(place)")
         }
         XCTAssertFalse(app.buttons["Feedback"].exists)
@@ -103,6 +103,108 @@ final class SidebarNavigationTests: XCTestCase {
         app.openDestination("sidebar-review")
         XCTAssertFalse(chiefScreen.exists)
         capture(app, "sidebar-09-back-on-review")
+    }
+
+    /// The Sidebar follows the thumb from both sides. Each drag holds part way before it lets
+    /// go, so a recording of this walk shows the panel under the finger; the assertions check
+    /// where each release lands. Run once with Reduce Motion on as well: the landings match.
+    @MainActor func testSidebarFollowsTheThumb() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/workspace-fixture")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 12))
+        let chief = app.buttons["sidebar-chief"]
+        let chiefScreen = app.descendants(matching: .any)["chief-screen"]
+        func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }
+        /// A drag that holds still before it lets go, so the release speed is zero.
+        func slowDrag(_ from: XCUICoordinate, _ to: XCUICoordinate) {
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: 400, thenHoldForDuration: 0.8)
+        }
+        func flick(_ from: XCUICoordinate, _ to: XCUICoordinate) {
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: 2500, thenHoldForDuration: 0)
+        }
+        func step(_ name: String) { print("SIDEBAR-STEP \(name) \(Date().timeIntervalSince1970)") }
+        app.openSidebar()
+        let resting = chief.frame.minX
+        // VoiceOver keeps the modal Sidebar layer, so its close must sit inside it.
+        let layer = app.descendants(matching: .any)["sidebar-layer"]
+        XCTAssertTrue(layer.exists, "The Sidebar layer is not one accessibility container")
+        XCTAssertTrue(layer.descendants(matching: .any)["Close sidebar"].exists, "VoiceOver has no close inside the Sidebar")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(chief.waitForNonExistence(timeout: 5), "A tap on the dim did not close the Sidebar")
+        /// The panel is back at its resting place within the settle time.
+        func restsOpen(_ message: String) {
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline, !(chief.exists && abs(chief.frame.minX - resting) < 1) { usleep(50_000) }
+            XCTAssertTrue(chief.exists, message)
+            XCTAssertEqual(chief.frame.minX, resting, accuracy: 1, message)
+        }
+        func closes(_ message: String) {
+            XCTAssertTrue(chief.waitForNonExistence(timeout: 5), message)
+            XCTAssertFalse(chiefScreen.exists, "\(message): a card opened")
+        }
+
+        step("edge-short")
+        slowDrag(at(0.005, 0.5), at(0.3, 0.5))
+        XCTAssertTrue(chief.waitForNonExistence(timeout: 5), "An edge drag released short of half stayed open")
+        step("edge-flick")
+        flick(at(0.005, 0.5), at(0.25, 0.5))
+        restsOpen("A short fast edge flick did not open the Sidebar")
+
+        step("panel-short")
+        slowDrag(at(0.6, 0.6), at(0.4, 0.6))
+        restsOpen("A drag on the panel released short of half did not return open")
+        step("panel-stretch")
+        slowDrag(at(0.3, 0.6), at(0.95, 0.6))
+        restsOpen("A drag past fully open did not return to rest")
+        step("panel-vertical")
+        slowDrag(at(0.4, 0.6), at(0.42, 0.3))
+        restsOpen("A vertical drag on the panel moved the Sidebar")
+        step("panel-long")
+        slowDrag(at(0.7, 0.6), at(0.1, 0.6))
+        closes("A long drag on the panel did not close the Sidebar")
+
+        app.openSidebar()
+        step("card-long")
+        slowDrag(chief.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)), at(0.05, chief.frame.midY / app.frame.height))
+        closes("A drag that starts on a card did not close the Sidebar")
+
+        app.openSidebar()
+        step("dim-short")
+        slowDrag(at(0.97, 0.5), at(0.8, 0.5))
+        restsOpen("A short drag on the dim did not return open")
+        step("dim-long")
+        slowDrag(at(0.97, 0.5), at(0.25, 0.5))
+        closes("A long drag on the dim did not close the Sidebar")
+
+        app.openSidebar()
+        step("panel-flick")
+        flick(at(0.6, 0.6), at(0.45, 0.6))
+        closes("A short fast flick on the panel did not close the Sidebar")
+
+        // A rotation while open keeps the panel fully open at the new width.
+        app.openSidebar()
+        step("rotate")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.buttons["sidebar-settings"].waitForExistence(timeout: 5))
+        usleep(1_000_000)
+        XCTAssertGreaterThanOrEqual(chief.frame.minX, 0, "After a rotation the panel is cut off at the leading edge")
+        XCUIDevice.shared.orientation = .portrait
+        restsOpen("After rotating back the panel is out of place")
+
+        // A card still opens on a tap.
+        step("card-tap")
+        chief.tap()
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8), "A tap on a card did not open it")
+        XCTAssertTrue(chief.waitForNonExistence(timeout: 5))
+        step("done")
     }
 
     /// The same destinations on a bad connection. Each page is read once online, then the

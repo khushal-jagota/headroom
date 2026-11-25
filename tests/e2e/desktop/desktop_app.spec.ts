@@ -10,15 +10,33 @@
  * storage on the app's own scheme survives them, and a server change drops it.
  */
 import { createServer } from 'node:net';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Page } from '@playwright/test';
-import { WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test, withDatabase } from '../support/fixtures.ts';
+import { REPO_ROOT, WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test, withDatabase } from '../support/fixtures.ts';
 import { launchDesktopApp, waitForScreens } from '../support/desktop.ts';
+import { createTicketConversation, post } from '../support/conversation.ts';
 
+type NativeRequest = { id: number; url: string; ended: boolean };
 type ForwardedRequest = { path: string; method: string; identity: string | null; origin: string | null };
 
 const WORKSPACE = 'section[data-screen="workspace"]';
+
+// The screen snapshot checks real files. Keep builds under TMPDIR, then give each
+// server the same private, immutable copy of those files for this test run.
+let desktopScreensRoot: string;
+test.beforeAll(() => {
+  desktopScreensRoot = mkdtempSync(join(tmpdir(), 'desktop-test-screens-'));
+  for (const path of ['web/dist', 'assets', 'static'])
+    cpSync(realpathSync(join(REPO_ROOT, path)), join(desktopScreensRoot, path), { recursive: true });
+});
+test.afterAll(() => { rmSync(desktopScreensRoot, { recursive: true, force: true }); });
+test.use({
+  server: async ({ serverFactory }, use) => use(await serverFactory({ appRoot: desktopScreensRoot })),
+  railServer: async ({ serverFactory }, use) => use(await serverFactory({ appRoot: desktopScreensRoot, host: 'test_host', databaseName: 'rail-proof.db' })),
+});
+
 
 /** An address where nothing listens. */
 async function closedAddress(): Promise<string> {
@@ -31,7 +49,10 @@ async function closedAddress(): Promise<string> {
 
 /** First launch always requires the person's explicit choice. */
 async function connectLocal(page: Page, address: string): Promise<void> {
-  await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+  await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.fill('#address', address);
   await page.click('#connect');
 }
@@ -64,7 +85,12 @@ async function savedSession(page: Page): Promise<string> {
   );
 }
 
-test('the screens reach the server through the app, and links leave it', async ({ server }) => {
+test('the screens reach the server through the app, and links leave it', async ({ serverFactory, newContext }, testInfo) => {
+  // Screen verification requires real files, while builds remain under TMPDIR.
+  const appRoot = mkdtempSync(join(tmpdir(), 'desktop-forward-screens-'));
+  for (const path of ['web/dist', 'assets', 'static'])
+    cpSync(realpathSync(join(REPO_ROOT, path)), join(appRoot, path), { recursive: true });
+  const server = await serverFactory({ appRoot });
   const ticketId = (
     await cli(server, ['ticket', 'create', '--input-json', '-'], {
       stdin: JSON.stringify({
@@ -104,6 +130,22 @@ test('the screens reach the server through the app, and links leave it', async (
     }, server.base);
 
 
+    await desktop.app.evaluate(({ session }, base) => {
+      const requests: { id: number; url: string; ended: boolean }[] = [];
+      (globalThis as { nativeRequests?: typeof requests }).nativeRequests = requests;
+      const filter = { urls: [`${base}/*`] };
+      session.defaultSession.webRequest.onSendHeaders(filter, (details: { id: number; url: string }) => {
+        requests.push({ id: details.id, url: details.url, ended: false });
+      });
+      const ended = (details: { id: number }) => {
+        for (const request of requests) if (request.id === details.id) request.ended = true;
+      };
+      session.defaultSession.webRequest.onCompleted(filter, ended);
+      session.defaultSession.webRequest.onErrorOccurred(filter, ended);
+    }, server.base);
+    const nativeRequests = () => desktop.app.evaluate(() =>
+      (globalThis as { nativeRequests?: NativeRequest[] }).nativeRequests ?? []);
+
     // Read: the ticket screen shows the server's ticket.
     await page.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
     const title = page.locator('.ticket-title');
@@ -134,7 +176,7 @@ test('the screens reach the server through the app, and links leave it', async (
         };
         return fetchDesktopCompatibility(address);
       }, server.base);
-      expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+      expect(compatibility).toEqual({ minimum_bridge_version: 2 });
     }, { timeout: WAIT_MS * 3 });
 
     await test.step('the native forward identifies API reads and files', async () => {
@@ -202,15 +244,93 @@ test('the screens reach the server through the app, and links leave it', async (
     expect(await page.evaluate(() => (window as unknown as { panels: { storedServerAddress(): Promise<string> } }).panels.storedServerAddress())).toBe(server.base);
     expect(await pageUrl(page)).toMatch(/^panels:\/\/app\//);
 
-    await test.step('the native forward identifies an open live stream', async () => {
-      // EventSource is the production stream API. Closing it does not wait for an
-      // endless forwarded response body to settle its cancellation promise.
-      await page.evaluate(() => new Promise<void>((resolve, reject) => {
-        const source = new EventSource('/api/changes');
-        source.onopen = () => { source.close(); resolve(); };
-        source.onerror = () => { source.close(); reject(new Error('The forwarded change stream did not open.')); };
-      }));
-    }, { timeout: WAIT_MS * 3 });
+    await test.step('closed page streams release native upstream requests', async () => {
+      const started = performance.now();
+      for (let index = 0; index < 8; index++) {
+        const marker = `desktop-close-${index}`;
+        await page.evaluate(marker => new Promise<void>((resolve, reject) => {
+          const source = new EventSource(`/api/changes?proof=${marker}`);
+          (window as unknown as { proofStream: EventSource }).proofStream = source;
+          source.onopen = () => resolve();
+          source.onerror = () => reject(new Error('The forwarded change stream did not open.'));
+        }), marker);
+        await expect.poll(async () => (await nativeRequests()).some(request => request.url.includes(marker) && !request.ended), { timeout: WAIT_MS }).toBe(true);
+        await page.evaluate(() => (window as unknown as { proofStream: EventSource }).proofStream.close());
+        await expect.poll(async () => {
+          const requests = (await nativeRequests()).filter(request => request.url.includes(marker));
+          return requests.length > 0 && requests.every(request => request.ended);
+        }, { timeout: WAIT_MS }).toBe(true);
+      }
+      console.log(`DESKTOP_STREAM_CLOSURE_MS ${Math.round(performance.now() - started)}`);
+    });
+
+    await test.step('eight Ticket selections and rapid replacements retain usable streams', async () => {
+      const started = performance.now();
+      const tickets: { id: string; title: string; brief: string }[] = [];
+      for (let index = 1; index <= 8; index++) {
+        const ticket = { ...newTicket(`Desktop navigation ${index}`), brief: `Desktop navigation body ${index}.` };
+        const created = await api.post(server, '/api/tickets', ticket);
+        tickets.push({ id: String(created.id), ...ticket });
+      }
+      const checkTicket = async (target: Page, ticket: typeof tickets[number]) => {
+        await target.evaluate(id => { location.hash = `#/workspace/${id}`; }, ticket.id);
+        await expect(target.locator('.ticket-title')).toHaveText(ticket.title, { timeout: WAIT_MS });
+        await expect(target.getByText(ticket.brief, { exact: true })).toBeVisible({ timeout: WAIT_MS });
+      };
+      for (const ticket of tickets) await checkTicket(page, ticket);
+      await captureSuccess(page, 'desktop-eight-tickets.png');
+
+      const selectionStream = (request: NativeRequest, id: string) => {
+        const url = new URL(request.url);
+        return url.pathname === '/api/navigation/view/events' &&
+          JSON.parse(url.searchParams.get('view') ?? '{}').selected?.id === id;
+      };
+      // Replace each scope as soon as its upstream request starts, before its body settles.
+      for (const ticket of tickets) {
+        await page.evaluate(id => { location.hash = `#/workspace/${id}`; }, ticket.id);
+        await expect.poll(async () => (await nativeRequests()).some(request =>
+          selectionStream(request, ticket.id) && !request.ended), { timeout: WAIT_MS }).toBe(true);
+      }
+      const current = tickets.at(-1)!;
+      await expect(page.locator('.ticket-title')).toHaveText(current.title, { timeout: WAIT_MS });
+      const retired = tickets.slice(0, -1).map(ticket => ticket.id);
+      await expect.poll(async () => (await nativeRequests()).filter(request =>
+        retired.some(id => selectionStream(request, id)) && !request.ended), { timeout: WAIT_MS }).toEqual([]);
+      await expect.poll(async () => (await nativeRequests()).filter(request =>
+        new URL(request.url).pathname === '/api/navigation/view/events' && !request.ended)
+        .map(request => JSON.parse(new URL(request.url).searchParams.get('view')!).selected?.id), { timeout: WAIT_MS }).toEqual([current.id]);
+      const read = await page.evaluate(async () => (await fetch('/api/meta')).status);
+      expect(read).toBe(200);
+      await api.patch(server, `/api/tickets/${current.id}`, { title: 'Desktop navigation live update' });
+      await expect(page.locator('.ticket-title')).toHaveText('Desktop navigation live update', { timeout: WAIT_MS });
+      current.title = 'Desktop navigation live update';
+
+      // The diagnostic control shares this exact private server and its eight Tickets.
+      const context = await newContext();
+      const browserPage = await context.newPage();
+      await browserPage.goto(server.base);
+      await waitForScreens(browserPage, WORKSPACE);
+      for (const ticket of tickets) await checkTicket(browserPage, ticket);
+      await captureSuccess(browserPage, 'browser-eight-tickets.png');
+      await browserPage.close();
+      const trace = JSON.stringify(await nativeRequests(), null, 2);
+      await testInfo.attach('native-stream-requests', { body: trace, contentType: 'application/json' });
+      if (process.env.PANELS_UI_PROOF_DIR)
+        writeFileSync(join(process.env.PANELS_UI_PROOF_DIR, 'native-stream-requests.json'), trace);
+      console.log(`DESKTOP_NAVIGATION_AND_CONTROL_MS ${Math.round(performance.now() - started)}`);
+    });
+
+    await test.step('compressed responses keep decoded bytes and remove obsolete headers', async () => {
+      const path = '/api/tickets?detail=full';
+      const compressed = await fetch(`${server.base}${path}`, { headers: { 'accept-encoding': 'gzip' } });
+      expect(compressed.headers.get('content-encoding')).toBe('gzip');
+      const expected = await compressed.text();
+      const decoded = await page.evaluate(async path => {
+        const response = await fetch(path, { headers: { 'accept-encoding': 'gzip' } });
+        return { text: await response.text(), encoding: response.headers.get('content-encoding'), length: response.headers.get('content-length') };
+      }, path);
+      expect(decoded).toEqual({ text: expected, encoding: null, length: null });
+    });
 
     await test.step('forwarded requests share identity and the server retains it', async () => {
       const forwarded = await desktop.app.evaluate(() => (globalThis as { forwardedRequests?: ForwardedRequest[] }).forwardedRequests ?? []);
@@ -222,7 +342,7 @@ test('the screens reach the server through the app, and links leave it', async (
         return JSON.parse(request.identity!);
       });
       const nativeIdentity = identities[0];
-      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 2, device_id: expect.any(String) });
       for (const identity of identities) expect(identity).toEqual(nativeIdentity);
       // The server received and retained these facts, independent of the observation above.
       expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
@@ -240,6 +360,75 @@ test('the screens reach the server through the app, and links leave it', async (
     }, { timeout: WAIT_MS * 3 });
   } finally {
     await test.step('close the desktop app', () => desktop.app.close(), { timeout: WAIT_MS * 3 });
+    rmSync(appRoot, { recursive: true, force: true });
+  }
+});
+
+test('a link in a message opens in the browser, and a page of the connected server opens in the app', async ({ railServer }) => {
+  const server = railServer;
+  const conversationId = 'desktop-link-conversation';
+  const ticketId = await createTicketConversation(server, { conversationId, title: 'Ticket with links' });
+  const otherId = String((await api.post(server, '/api/tickets', newTicket('Ticket the link opens'))).id);
+  await post(server, `/api/test/signals/${conversationId}/message`, {
+    kind: 'ticket',
+    id: ticketId,
+    label: 'Proof Worker',
+    text: `A test copy runs at https://panels.example.org:8473, and [the ticket](${server.base}/#/workspace/${otherId}) is here.`,
+  });
+  const desktop = await launchDesktopApp({ localServerAddress: server.base });
+  try {
+    const page = desktop.window;
+    await connectLocal(page, server.base);
+    await waitForScreens(page, WORKSPACE);
+    await page.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
+    await page.locator('[data-conversation-expand]').dispatchEvent('click');
+    const links = page.locator('.markdown-block a');
+    await expect(links).toHaveCount(2, { timeout: WAIT_MS });
+    await desktop.app.evaluate(({ dialog }) => {
+      const shown: string[] = [];
+      (globalThis as { shownDialogs?: string[] }).shownDialogs = shown;
+      dialog.showMessageBox = (async (_window: unknown, options: { detail?: string }) => {
+        shown.push(options.detail ?? '');
+        return { response: 0, checkboxChecked: false };
+      }) as unknown as typeof dialog.showMessageBox;
+    });
+    // A press as the person makes it: the mouse at the link, not a call on the element.
+    // Playwright's own click waits for a navigation that the shell cancels, so it is not used.
+    const press = async (index: number) => {
+      const place = () => page.evaluate((i) => {
+        const link = document.querySelectorAll('.markdown-block a')[i]!;
+        link.scrollIntoView({ block: 'center' });
+        const { x, y, height } = link.getBoundingClientRect();
+        return { x, y, height, hit: document.elementFromPoint(x + 3, y + height / 2) === link };
+      }, index);
+      // The conversation is still moving into place when its first link appears.
+      let box = await place();
+      for (let settled = 0; settled < 3; ) {
+        await page.waitForTimeout(100);
+        const next = await place();
+        settled = next.x === box.x && next.y === box.y && next.hit ? settled + 1 : 0;
+        box = next;
+      }
+      await page.mouse.click(box.x + 3, box.y + box.height / 2);
+    };
+
+    await press(0);
+    await expect.poll(desktop.openedOutside, { timeout: WAIT_MS }).toEqual(['https://panels.example.org:8473/']);
+
+    // The connected server's own page opens in the app, not in the browser.
+    await press(1);
+    await expect.poll(() => pageUrl(page), { timeout: WAIT_MS }).toBe(`panels://app/#/workspace/${otherId}`);
+    await expect(page.locator('.ticket-title')).toHaveText('Ticket the link opens', { timeout: WAIT_MS });
+    expect(await desktop.openedOutside()).toEqual(['https://panels.example.org:8473/']);
+
+    // A link the app cannot open says so.
+    await page.evaluate(() => window.open('ftp://files.example.org/report', '_blank'));
+    await expect
+      .poll(() => desktop.app.evaluate(() => (globalThis as { shownDialogs?: string[] }).shownDialogs ?? []), { timeout: WAIT_MS })
+      .toEqual([expect.stringContaining('ftp://files.example.org/report')]);
+    expect(await desktop.openedOutside()).toEqual(['https://panels.example.org:8473/']);
+  } finally {
+    await desktop.app.close();
   }
 });
 
@@ -251,8 +440,11 @@ test('setup works offline, and the app keeps an address and window place', async
   const place = { x: 120, y: 80, width: 1000, height: 700 };
   try {
     const page = first.window;
-    await expect(page.getByRole('heading', { name: 'Where will Panels live?' })).toBeVisible({ timeout: WAIT_MS });
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await expect(page.getByRole('heading', { name: 'Where does Panels run?' })).toBeVisible({ timeout: WAIT_MS });
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS * 2 });
     expect(await pageUrl(page)).toBe('panels://setup/');
 
@@ -378,29 +570,31 @@ test('the app reopens with the last session, marks it until the server replaces 
   }
 
   // With the server gone, the last session still shows at once, with its mark.
-  const other = await serverFactory();
+  const other = await serverFactory({ appRoot: desktopScreensRoot });
   await stopServer(server);
   const third = await launchDesktopApp({ localServerAddress: nothing, userData: first.userData });
   try {
     const page = third.window;
     await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
     await expect(railRow(page)).toBeVisible();
-    await expect(savedMark(page)).toBeVisible({ timeout: WAIT_MS });
-    // Once navigation gives up on the server, the line says so, and the status settles.
-    await expect(page.locator('[data-navigation-health="reconnecting"]:visible')).toBeVisible({ timeout: WAIT_MS });
+    await expect(page.locator('[data-shell-status]:visible')).toContainText("Can't reach Panels", { timeout: WAIT_MS });
+    // The desktop warning replaces the navigation detail in this state.
     await expect(page.locator('[data-shell-status]:visible [data-out]')).toHaveCount(0);
     await captureSuccess(page, 'desktop-last-session-offline.png');
 
     // Another server has other Tickets, so nothing of the last session shows under it.
     await third.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.loadURL('panels://setup/'));
-    await page.getByRole('button', { name: 'Return to current server' }).click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
-    await expect(page.locator('[data-desktop-offline]')).toBeVisible({ timeout: WAIT_MS });
-    await expect(page.locator('[data-desktop-offline]')).toContainText(server.base);
+    await page.getByRole('button', { name: 'Server connection details' }).click();
+    await expect(page.getByRole('dialog')).toContainText(server.base);
     await captureSuccess(page, 'desktop-cannot-reach-server.png');
-    await page.getByRole('link', { name: 'Change server', exact: true }).click();
+    await page.getByRole('link', { name: 'Change server…', exact: true }).click();
     await expect.poll(() => pageUrl(page)).toBe('panels://setup/');
-    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('radio', { name: 'On this Mac', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: 'Yes, connect to it', exact: false }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS });
     await page.fill('#address', other.base);
     await page.click('#connect');

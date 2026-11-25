@@ -20,6 +20,7 @@ import {
 } from '../../../conversation/contracts.ts';
 import { ConversationTurnEnding } from '../../../conversation/events.ts';
 import type { UserInputAnswer } from '../../../conversation/events.ts';
+import { answer_file_references } from '../../../conversation/user_input_attachments.ts';
 import {
   ComposedMessageDoesNotContainSenderContent,
   MessageText,
@@ -53,7 +54,14 @@ import {
   CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
 } from './configuration.ts';
-import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } from './events.ts';
+import {
+  ClaudeEvents,
+  composer_catalog,
+  durable_session_id,
+  validate_message,
+  result_matches_background_task,
+  is_background_result,
+} from './events.ts';
 import { ClaudeAsks } from './asks.ts';
 import {
   CLAUDE_CAPABILITIES,
@@ -114,6 +122,12 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private session_model: string | null = null;
   private session_reasoning_effort: string | null = null;
   private turn: TurnInFlight | null = null;
+  // A refused activation still names SDK work until its raw result arrives.
+  private agent_turn_activation: {
+    promise: Promise<void>;
+    task_id: string;
+    run_id: string | null;
+  } | null = null;
   private last_ended_turn: TurnInFlight | null = null;
   private reader: Promise<void> | null = null;
   private stopping: Promise<void> | null = null;
@@ -259,6 +273,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   /** Keep the first reason the wire failed, so a later refusal can say why. */
   private break_wire(why: string, cause: unknown = null): void {
     this.wire_broken = true;
+    this.agent_turn_activation = null;
     this.wire_failure ??= { why, cause };
   }
   /** The live effort this prompt applies, or null. The core asks `claude_selection_transition`
@@ -373,6 +388,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
+    if (this.agent_turn_activation !== null) await this.agent_turn_activation.promise;
     const reasoning_effort = this.effort_to_apply(options);
     const client = this.connected_client();
     this.require_live_wire();
@@ -440,6 +456,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: { sender_content?: MessageContent | null; sender_label: string },
   ): Promise<B.BackendSteerOutcome> {
+    // A steer belongs to its named current turn, never to a pending replacement.
     const sender_content = options.sender_content ?? content;
     const turn = this.turn;
     const refused = (reason: R, detail: string | null = null) =>
@@ -502,9 +519,11 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     return new B.BackendSteerUncertain({ composed_content_delivered: !native_command });
   }
   async cancel_running_turn(): Promise<void> {
+    const activation = this.agent_turn_activation;
+    if (activation !== null) await activation.promise;
     const turn = this.turn;
-    if (!turn) return;
-    turn.cancel_requested = true;
+    if (!turn && activation === null) return;
+    if (turn) turn.cancel_requested = true;
     const client = this.connected_client();
     let still_queued: ReadonlySet<string>;
     try {
@@ -517,6 +536,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       this.break_wire('claude did not confirm cancellation of every queued command');
       throw new B.PromptWriteFailed('claude did not confirm cancellation of every queued command');
     }
+    if (!turn) return;
     turn.owned_steer_uuids.clear();
     settle_parked_asks(turn);
     try {
@@ -538,7 +558,10 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     request_id: string,
     answers: readonly UserInputAnswer[],
   ): Promise<AnswerFate> {
-    return this.asks.answer_user_input(request_id, answers);
+    return this.asks.answer_user_input(
+      request_id,
+      answer_file_references(answers, this.message_files, this.resolved_start.conversation_id),
+    );
   }
   async withdraw_delivery(): Promise<boolean> {
     return true;
@@ -678,6 +701,53 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     const session_id = durable_session_id(message);
     if (session_id !== null) await this.note_session_id(session_id);
     if (this.wire_broken) return;
+    let result_names: ReadonlySet<string> | undefined;
+    const activation = this.agent_turn_activation;
+    if (message.type === 'result' && activation !== null) {
+      const matches = result_matches_background_task(
+        message,
+        activation.task_id,
+        activation.run_id,
+      );
+      if (this.turn === null || matches || is_background_result(message)) {
+        if (this.turn === null || matches) this.agent_turn_activation = null;
+        result_names = this.connected_client().user_message_uuids_for_result(
+          typeof message.uuid === 'string' ? message.uuid : null,
+        );
+        // A batched result can also own the new prompt. Its UUID ownership takes precedence.
+        if (
+          this.turn === null ||
+          ![...result_names].some((uuid) => this.turn!.sent_user_message_uuids.has(uuid))
+        )
+          return;
+      }
+    }
+    const wake_reason = this.events.agent_turn_reason(message);
+    if (this.turn === null && this.agent_turn_activation === null && wake_reason !== null) {
+      const pending = (async () => {
+        const token = await this.sink.start_agent_turn?.(wake_reason, this.reader_cancel?.signal);
+        if (token !== null && token !== undefined && !this.wire_broken && this.turn === null)
+          this.turn = new TurnInFlight(token);
+      })();
+      const activation = {
+        promise: pending,
+        task_id: String(message.task_id),
+        run_id: typeof message.run_id === 'string' ? message.run_id : null,
+      };
+      this.agent_turn_activation = activation;
+      try {
+        await pending;
+      } catch (error) {
+        if (this.agent_turn_activation === activation) this.agent_turn_activation = null;
+        throw error;
+      } finally {
+        if (
+          this.agent_turn_activation === activation &&
+          (this.turn !== null || this.wire_broken || this.reader_cancel?.signal.aborted)
+        )
+          this.agent_turn_activation = null;
+      }
+    }
     if (await this.events.take_background(message)) return;
     const turn = this.turn;
     if (!turn) {
@@ -688,7 +758,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     if (message.type === 'stream_event') await this.events.stream_event(turn, message);
     else if (message.type === 'assistant') await this.events.assistant_message(turn, message);
     else if (message.type === 'user') await this.events.user_message(turn, message);
-    else if (message.type === 'result') await this.result_message(turn, message);
+    else if (message.type === 'result') await this.result_message(turn, message, result_names);
     else if (message.type === 'system' && message.subtype === 'compact_boundary')
       await this.sink.report(turn.token, new B.ContextCompacted());
   }
@@ -713,11 +783,15 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     for (const uuid of turn.owned_steer_uuids)
       if (client.user_message_is_settled(uuid)) turn.owned_steer_uuids.delete(uuid);
   }
-  private async result_message(turn: TurnInFlight, message: ClaudeSdkMessage): Promise<void> {
+  private async result_message(
+    turn: TurnInFlight,
+    message: ClaudeSdkMessage,
+    result_names?: ReadonlySet<string>,
+  ): Promise<void> {
     const client = this.connected_client();
-    const named = client.user_message_uuids_for_result(
-      typeof message.uuid === 'string' ? message.uuid : null,
-    );
+    const named =
+      result_names ??
+      client.user_message_uuids_for_result(typeof message.uuid === 'string' ? message.uuid : null);
     // Claude runs turns of its own, such as one for a task notification after a resume. Their
     // results name none of this turn's messages, so they neither end nor charge this turn.
     if (

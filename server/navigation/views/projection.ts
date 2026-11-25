@@ -31,7 +31,7 @@ function attention(sql: ReadSql, conversation: string | null | undefined): Fact 
  * When the owner's running turn began to wait on an ask, or null if it is not waiting. Only an
  * owner's current conversation can be running, and the owners that hold messages hold asks.
  */
-function askWaitingSince(
+export function askWaitingSince(
   sql: ReadSql,
   kind: string,
   owner: Fact,

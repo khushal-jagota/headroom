@@ -1,3 +1,4 @@
+import { clear_owner_send_payload } from '../owner_send_receipts.ts';
 import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { conversation_machine_id } from '../../../machines/conversation_machine.ts';
@@ -266,32 +267,32 @@ export class ConversationStorePrimitives {
       destination: conversation_machine_id(sql, conversation_id) ?? HOME_MACHINE_ID,
     }));
   }
+  reserve_turn_number_in_transaction(tx: TransactionSql, conversation_id: string): number {
+    const facts = tx.get<{ maximum: number }>(
+      'SELECT COALESCE(MAX(turn_number),0) AS maximum FROM conversation_lifecycle_facts WHERE conversation_id=?',
+      [conversation_id],
+    )!;
+    const occurrence = tx.get<{ maximum: number }>(
+      'SELECT COALESCE(MAX(turn_number),0) AS maximum FROM conversation_turn_occurrences WHERE conversation_id=?',
+      [conversation_id],
+    )!;
+    const number = Math.max(facts.maximum, occurrence.maximum) + 1;
+    const epoch = tx.get<{ epoch: string }>(
+      'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
+    );
+    if (epoch === undefined) throw new Error('conversation runtime epoch is absent');
+    tx.run('INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)', [
+      conversation_id,
+      number,
+      randomUUID().replaceAll('-', ''),
+      epoch.epoch,
+    ]);
+    return number;
+  }
   reserve_turn(conversation_id: string, requests: readonly StartRequest[] = []): number {
     return this.database.write(
       (tx) => {
-        const facts = tx.get<{ maximum: number }>(
-          'SELECT COALESCE(MAX(turn_number),0) AS maximum ' +
-            'FROM conversation_lifecycle_facts WHERE conversation_id=?',
-          [conversation_id],
-        )!;
-        const occurrence = tx.get<{ maximum: number }>(
-          'SELECT COALESCE(MAX(turn_number),0) AS maximum ' +
-            'FROM conversation_turn_occurrences WHERE conversation_id=?',
-          [conversation_id],
-        )!;
-        const number = Math.max(facts.maximum, occurrence.maximum) + 1;
-        const epoch = tx.get<{ epoch: string }>(
-          'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
-        );
-        if (epoch === undefined) {
-          throw new Error('conversation runtime epoch is absent');
-        }
-        tx.run('INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)', [
-          conversation_id,
-          number,
-          randomUUID().replaceAll('-', ''),
-          epoch.epoch,
-        ]);
+        const number = this.reserve_turn_number_in_transaction(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
@@ -449,7 +450,8 @@ export class ConversationStorePrimitives {
     return this.database.read(
       (sql) =>
         sql.get(
-          "SELECT 1 FROM conversation_events WHERE conversation_id=? AND kind='prompt' LIMIT 1",
+          'SELECT 1 FROM conversation_events INDEXED BY sqlite_autoindex_conversation_events_1 ' +
+            "WHERE conversation_id=? AND kind='prompt' LIMIT 1",
           [conversation_id],
         ) !== undefined,
     );
@@ -938,6 +940,7 @@ export class ConversationStore
           created_at,
         ],
       );
+      clear_owner_send_payload(tx, conversation_id, payload);
       for (const operation of operations) {
         if (
           'sender_message_id' in payload &&
@@ -1575,7 +1578,7 @@ export class ConversationStore
       return {
         value: result,
         payloads: result.written.map((row) => row.payload),
-        always_announce: in_commit !== null || options.always_announce,
+        always_announce: options.always_announce,
       };
     });
   }

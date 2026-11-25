@@ -15,6 +15,9 @@
   import MarkdownBlock from "../MarkdownBlock.svelte";
   import VisibleMessageImage from "./VisibleMessageImage.svelte";
   import ConversationFileCard from "./ConversationFileCard.svelte";
+  import LocalMediaTile from "./LocalMediaTile.svelte";
+  import type { LocalMediaPiece } from "../../lib/conversation/localSentMedia";
+  import { mediaSizeOf } from "../../lib/mediaFrame";
   import { base64DecodedByteCount } from "../../lib/conversation/pendingFiles";
   import {
     conversationFileHref,
@@ -28,7 +31,8 @@
     presentationRowKey = null,
     bubble = false,
     failed = false,
-    footer
+    footer,
+    backdrops
   }: {
     presentationRowKey?: string | null;
     /** The person's own message: one bubble. v8 (6): what they attached sits inside it,
@@ -38,17 +42,21 @@
     failed?: boolean;
     /** What the bubble says under its words: "Not delivered · …" and its actions (B5). */
     footer?: Snippet;
-    content: readonly (MessagePiece | SentMessagePiece)[];
+    content: readonly Piece[];
+    /** The browser's own copy of a picture or video this browser sent, by the piece's
+     *  place in `content`. It sits under the stored one until that has loaded. */
+    backdrops?: ReadonlyMap<number, string>;
     /** Which conversation's files these pieces name. A file is fetched under the
      *  conversation that kept it, so a piece can never reach another one's. */
     conversationId: string;
   } = $props();
-  const isMediaFile = (piece: MessagePiece | SentMessagePiece) =>
-    piece.piece === "image" || (piece.piece === "file" && /^(image|video)\//.test(piece.media_type));
+  type Piece = MessagePiece | SentMessagePiece | LocalMediaPiece;
+  const isMediaFile = (piece: Piece) =>
+    piece.piece === "image" || piece.piece === "local_media" || (piece.piece === "file" && /^(image|video)\//.test(piece.media_type));
   // Two or more pictures or videos sent side by side are laid out together as a grid.
   // In a bubble, words written one after another share one bubble.
   let runs = $derived.by(() => {
-    const result: { at: number; pieces: { piece: MessagePiece | SentMessagePiece; at: number }[] }[] = [];
+    const result: { at: number; pieces: { piece: Piece; at: number }[] }[] = [];
     content.forEach((piece, at) => {
       const last = result[result.length - 1];
       if (last && isMediaFile(piece) && isMediaFile(last.pieces[0].piece)) last.pieces.push({ piece, at });
@@ -69,11 +77,15 @@
   let lastWordsAt = $derived(wordRuns.at(-1)?.at ?? null);
   /** v9 (19): a bubble whose one attachment is one image is as wide as that image (min 240);
    *  its words wrap to it. */
-  let oneImage = $derived(attachedRuns.length === 1 && attachedRuns[0].pieces.length === 1 && attachedRuns[0].pieces[0].piece.piece === "image");
+  let oneImage = $derived(attachedRuns.length === 1 && attachedRuns[0].pieces.length === 1 && isOneImage(attachedRuns[0].pieces[0].piece));
+  /** The sent picture and the recorded one make the same bubble. */
+  function isOneImage(piece: Piece): boolean {
+    return piece.piece === "image" || (piece.piece === "local_media" && piece.kind === "image");
+  }
   const presentations = getContext<TextPresentationRegistry | undefined>(conversationTextPresentations);
 </script>
 
-{#snippet drawn(piece: MessagePiece | SentMessagePiece, at: number)}
+{#snippet drawn(piece: Piece, at: number)}
   {#if piece.piece === "text"}
     <MarkdownBlock text={piece.text} registerPresentation={presentationRowKey !== null && presentations ? (host, presentation) => presentations.register(presentationRowKey!, at, host, presentation) : undefined} />
   {:else if piece.piece === "image"}
@@ -83,7 +95,13 @@
         ? `data:${piece.media_type};base64,${piece.data}`
         : conversationFileHref(conversationId, piece.stored_file_id)}
       alt={piece.file_name ?? "an image in this message"}
+      size={"data" in piece ? null : mediaSizeOf(piece)}
+      backdrop={backdrops?.get(at)}
     />
+  {:else if piece.piece === "local_media"}
+    <LocalMediaTile media={piece} />
+  {:else if piece.piece === "attachment_upload" || piece.piece === "video_upload"}
+    <span class="message-attachment-reference" data-message-upload-reference>Attached file</span>
   {:else if piece.piece === "file"}
     <ConversationFileCard
       href={"data" in piece
@@ -92,6 +110,8 @@
       fileName={piece.file_name}
       mediaType={piece.media_type}
       byteCount={"data" in piece ? base64DecodedByteCount(piece.data) : piece.byte_count}
+      mediaSize={"data" in piece ? null : mediaSizeOf(piece)}
+      backdrop={backdrops?.get(at)}
     />
   {/if}
 {/snippet}

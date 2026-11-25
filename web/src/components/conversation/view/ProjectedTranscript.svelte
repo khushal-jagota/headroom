@@ -18,10 +18,9 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
-  import { turnHeadAtTop } from '../../../lib/conversation/view/liveEdge';
   import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
-  let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+  let { activityUncertain = false, reader, models, ownSenderLabel, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
       withdrawnDisplayIds?: ReadonlySet<string>;
@@ -31,7 +30,6 @@
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
-      livenessPulse: number;
   } = $props();
   const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
   /** The key request the composer is asking in its own place; drawn there, not here. */
@@ -86,26 +84,18 @@
     previousDisplay = retained;
     return retained;
   });
-  /** v5.1: turn timing has one place, the top of the turn. A running turn's head ("Working ·
-   *  2m 14s" with its spinner) stands where "Worked for 7m" stands on a finished one; nothing
-   *  counts at the tail of the transcript. */
+  /** Turn timing has one place, the top of the turn. A running turn's head ("Working for
+   *  2m 14s" with its spinner) stands where "Worked for 7m" stands on a finished one, a pending
+   *  ask included; nothing counts at the tail of the transcript. */
   const drawnSlots = $derived(displaySlots);
-  /** What a running turn waits on the person for: its ask is docked over the composer. */
-  function turnWaiting(item: ConversationViewItem & { kind: 'turn' }): 'permission' | 'question' | null {
-      if (item.settled || reader.status?.turn_key !== item.key) return null;
-      return reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null;
-  }
   /** A turn the person stopped ends with its one line ("Stopped after 8m 45s"). Focus shows
    *  only that line; Full also heads the turn with "Worked for …", as it does every turn. */
   function headDrawn(item: ConversationViewItem & { kind: 'turn' }): boolean {
-      return turnHeadAtTop(item, reader.status) && (reader.lens === 'full' || !(item.settled && item.ending === 'interrupted'));
+      return reader.lens === 'full' || !(item.settled && item.ending === 'interrupted');
   }
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
-          // A turn held by the person has no head: the docked ask says so, once.
-          // v6: a live turn's head is the live edge at the end of the transcript, not here.
           return headDrawn(item)
-              && !(turnWaiting(item) !== null && !activityUncertain)
               && (!item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0);
       // In Full a run of more than one call is drawn as its summary line.
       if (item.kind === 'work_group')
@@ -130,7 +120,7 @@
   }
   /** Where each drawn item stands in the thread's rhythm (design direction 2.5), from what
    *  it is and what was drawn before it. Items that draw nothing take no space. */
-  type Rhythm = 'first' | 'turn' | 'meta' | 'block' | 'row' | 'none';
+  type Rhythm = 'first' | 'turn' | 'break' | 'meta' | 'block' | 'row' | 'none';
   type Beat = 'prompt' | 'head' | 'work' | 'prose' | 'other';
   const presentation = $derived.by(() => {
       const result = new Set<string>();
@@ -155,7 +145,7 @@
           if (item !== null && before.has(item.key)) previous = null;
           if (item !== null && item.kind === 'turn' && !presentation.has(item.key)) { turnOpens = true; result.set(slot.key, 'none'); continue; }
           let beat: Beat | null;
-          if (slot.local !== null || item !== null && isMessageRow(item)) beat = 'prompt';
+          if (slot.local !== null || item !== null && (isMessageRow(item) || item.kind === 'row' && item.row_kind === 'agent_turn_started')) beat = 'prompt';
           else if (item === null || !presentation.has(item.key)) beat = null;
           else if (item.kind === 'turn') beat = 'head';
           else if (item.kind === 'work_group' || item.row_kind === 'tool_call') beat = 'work';
@@ -163,8 +153,12 @@
           else beat = 'other';
           if (beat === null) { result.set(slot.key, 'none'); continue; }
           const opens = turnOpens; turnOpens = false;
+          // An agent message, or an agent-started turn, straight after an agent message (no
+          // prompt or turn break between them) is set off by a short break, not a bare gap.
+          const agentStarted = item !== null && item.kind === 'row' && item.row_kind === 'agent_turn_started';
           result.set(slot.key,
               previous === null ? 'first'
+              : previous === 'prose' && (beat === 'prose' || agentStarted) ? 'break'
               // A message keeps its hover row's room under it (4 + 24, and 4 clear): what
               // follows it stands a turn's gap below, whatever it is.
               : beat === 'prompt' || beat === 'head' || opens || messageBeat(previous) ? 'turn'
@@ -180,7 +174,7 @@
   function messageBeat(beat: Beat | null): boolean {
       return beat === 'prompt' || beat === 'prose';
   }
-  /** A line drawn after the last item (live output, the stopped line, the live edge) keeps
+  /** A line drawn after the last item (live output, the stopped line, the stopped line) keeps
    *  the turn gap under a message too. */
   const endsWithMessage = $derived(layout.endsWithMessage);
   const liveOutputDrawn = $derived(reader.lens === 'full' && (reader.status?.live_output?.byte_count ?? 0) > 0);
@@ -241,8 +235,7 @@
       return { destroy: () => observer.disconnect() };
   }
 </script>
-<!-- The live edge after the transcript reads data-conversation-ends-with-message (app.css). -->
-<div class="c2-transcript" data-conversation-transcript data-conversation-ends-with-message={endsWithMessage && trailing === null ? '' : undefined}>
+<div class="c2-transcript" data-conversation-transcript>
   {#if reader.status?.diagnostics_expired}<p class="diagnostic-expiry-notice" data-conversation-diagnostics-expired>Some diagnostic history expired.</p>{/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
@@ -262,7 +255,7 @@
       {#if item.kind==='turn'}
         <div use:demand={item}>
           {#if headDrawn(item)}
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
           {/if}
         </div>
       {:else if item.kind==='work_group'}

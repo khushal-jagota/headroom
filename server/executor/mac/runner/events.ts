@@ -1,5 +1,6 @@
 /** Native events share the command owner's asks and one durable publication door. */
 import {
+  AgentTurnStarted,
   ToolCallStarted,
   ToolCallProgress,
   ToolCallFinished,
@@ -19,6 +20,8 @@ import { as_object, encode_backend_event, ExecutorValidationError } from '../../
 import type { ChildReference, TurnToken } from '../../wire.generated.ts';
 import type { MacEventsDependencies, MacRunnerEventsContract } from './lifecycle_contracts.ts';
 import { bounded_detail, same_wire } from './logic/outcomes.ts';
+import { randomUUID } from 'node:crypto';
+import { decode_value } from '../../protocol.ts';
 import { same_reference } from '../../child_reference.ts';
 
 function bounded_event(event: BackendEventValue): BackendEventValue {
@@ -41,6 +44,64 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
   }
   event_sink(reference: ChildReference): BackendEventSink {
     return {
+      start_agent_turn: async (reason, signal) => {
+        // Older homes cannot decode this event. Keep their native reader unblocked.
+        if (this.dependencies.supports_agent_turns?.() !== true) return null;
+        const confirm = this.dependencies.confirm_agent_turn;
+        if (confirm === undefined)
+          throw new ExecutorValidationError('agent turn receipt channel is unavailable');
+        const child = this.dependencies.native_children.get(reference.child_id);
+        if (child === null || !same_reference(child.reference, reference)) return null;
+        if (child.pending_agent_turn != null) return child.pending_agent_turn.promise;
+        const cancelled = new AbortController();
+        const abort = () => cancelled.abort();
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) cancelled.abort();
+        const promise = this.dependencies.sources.source_work(reference, async () => {
+          if (cancelled.signal.aborted) return null;
+          const submission_id = randomUUID();
+          // Register before publication: ordinary event receipts leave no spool row.
+          const receipt = confirm(submission_id, cancelled.signal);
+          // Publication can fail before the waiter settles. Retain its rejection now.
+          void receipt.catch(() => {});
+          try {
+            const [method, arguments_] = encode_backend_event(new AgentTurnStarted({ reason }));
+            await this.dependencies.publication.add({
+              submission_id,
+              conversation_id: reference.conversation_id,
+              kind: 'backend_event',
+              payload: as_object(
+                { child: reference, method, turn: null, arguments: arguments_ },
+                'BackendEvent',
+              ),
+            });
+            const accepted = await receipt;
+            if (
+              cancelled.signal.aborted ||
+              accepted === null ||
+              accepted.result.applied !== true ||
+              accepted.result.turn == null
+            )
+              return null;
+            const token = decode_value(accepted.result.turn, 'TurnToken');
+            const current = this.dependencies.native_children.get(reference.child_id);
+            if (current !== child || !same_reference(current.reference, reference)) return null;
+            child.active_turn = token;
+            return token;
+          } finally {
+            cancelled.abort();
+            await receipt.catch(() => {});
+          }
+        });
+        const pending = { promise, cancelled };
+        child.pending_agent_turn = pending;
+        try {
+          return await promise;
+        } finally {
+          signal?.removeEventListener('abort', abort);
+          if (child.pending_agent_turn === pending) child.pending_agent_turn = null;
+        }
+      },
       report: async (turn, input) => {
         const event = bounded_event(input);
         // All events share the outbox sequence. A server pause cannot discard deltas

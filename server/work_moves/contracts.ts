@@ -23,3 +23,38 @@ export interface WorkMoveBatchResult {
 export interface WorkMoveStatus {
   move_everything_machine_id: string | null;
 }
+
+/** Browser operations retain progress independently of the request and screen. */
+export type WorkMovePhase =
+  | 'queued'
+  | 'stopping'
+  | 'verifying'
+  | 'recording'
+  | 'recovering'
+  | 'starting'
+  | 'complete'
+  | 'failed';
+export interface WorkMovePhaseTime {
+  phase: WorkMovePhase;
+  started_at_ms: number;
+  finished_at_ms: number | null;
+}
+export interface WorkMoveItem {
+  conversation_id: string | null;
+  owner: WorkMoveOwner;
+  title: string;
+  phase: WorkMovePhase;
+  phases: WorkMovePhaseTime[];
+  result: WorkMoveResult | null;
+}
+export interface WorkMoveOperation {
+  operation_id: string;
+  machine_id: string;
+  everything: boolean;
+  started_at_ms: number;
+  finished_at_ms: number | null;
+  items: WorkMoveItem[];
+}
+export interface WorkMoveOperationsResponse {
+  operations: WorkMoveOperation[];
+}

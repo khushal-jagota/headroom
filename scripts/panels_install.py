@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the server and machine code, or join an extra machine, without a source checkout.
 
-This bootstrap uses Python's standard library and the authenticated GitHub CLI.
+This bootstrap uses Python's standard library and the official public releases.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def preflight(args: argparse.Namespace, target: str) -> None:
         raise ValueError("Use a --port from 1 through 65535.")
     if args.command == "home":
         command_link = Path.home() / ".local/bin/panels"
-        if command_link.exists() or command_link.is_symlink():
+        if not getattr(args, "skip_command_link", False) and (command_link.exists() or command_link.is_symlink()):
             raise ValueError(
                 f"The panels command already exists: {command_link}. It will not be replaced."
             )
@@ -166,17 +166,15 @@ def preflight(args: argparse.Namespace, target: str) -> None:
 
 
 # --- Release source --------------------------------------------------------------------
-# The only part of this script that knows where releases come from: GitHub Releases
-# of one repository, read with the GitHub CLI login. The rest of the script
-# uses find_release(), download_release() and release_update_token(). Another source
-# replaces this section and nothing else.
+# The only part of this script that knows where releases come from: the official
+# public GitHub Releases. The rest of the script uses find_release() and download_release().
 
 REPOSITORY = "khushal-jagota/headroom"
 PUBLICATION_WORKFLOW = "publish-typescript-release.yml"
 
 
 class DownloadRedirect(urllib.request.HTTPRedirectHandler):
-    """GitHub's artifact redirect must not disclose its token to blob storage."""
+    """Release asset redirects must keep HTTPS."""
 
     def redirect_request(
         self,
@@ -187,23 +185,15 @@ class DownloadRedirect(urllib.request.HTTPRedirectHandler):
         headers: HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
-        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None:
-            redirected.remove_header("Authorization")
-        return redirected
-
-
-def _github_token() -> str:
-    return _run("gh", "auth", "token").stdout.strip()
+        if not newurl.startswith("https://"):
+            raise ValueError("The release download redirect must use HTTPS.")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _api(
     path: str, destination: Path | None = None, accept: str = "application/vnd.github+json"
 ) -> Any:
-    token = _github_token()
     headers = {"Accept": accept, "User-Agent": "panels-install"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPOSITORY}/{path}", headers=headers
     )
@@ -216,17 +206,9 @@ def _api(
                 shutil.copyfileobj(response, stream, 1024 * 1024)
     except urllib.error.HTTPError as error:
         raise ValueError(
-            f"GitHub refused release access ({error.code}). Check the GitHub CLI login."
+            f"GitHub refused the public release request ({error.code})."
         ) from None
     return None
-
-
-def release_update_token() -> str:
-    """The credential the installed home reads its updates with. It never enters argv or output."""
-    token = _github_token()
-    if not token:
-        raise ValueError("Log in to the GitHub CLI before installation: gh auth login")
-    return token
 
 
 def find_release(target: str, command: str, revision: str | None, work: Path) -> dict[str, Any]:
@@ -517,7 +499,12 @@ def parser() -> argparse.ArgumentParser:
         help="Home service label. Joins use their fixed machine service.",
     )
     result.add_argument("--port", type=int, default=8767)
+    result.add_argument("--time-zone", help="Home only: IANA time zone for daily attention.")
     result.add_argument("--isolated-providers", action="store_true")
+    result.add_argument(
+        "--skip-command-link", action="store_true",
+        help="Home only: leave ~/.local/bin/panels untouched and use ROOT/app/bin/panels.",
+    )
     result.add_argument("--home")
     result.add_argument("--machine-id")
     return result
@@ -571,6 +558,8 @@ def main() -> None:
     args = parser().parse_args()
     try:
         target = host_target()
+        if args.command == "join" and args.skip_command_link:
+            raise ValueError("--skip-command-link is a home installation option.")
         if args.command == "join" and args.service is not None:
             raise ValueError("A join uses its fixed machine service. Omit --service.")
         if args.command == "join" and target == "darwin" and args.root is not None:
@@ -584,6 +573,8 @@ def main() -> None:
             else Path.home() / ".local/share/panels-home"
         )
         if args.command == "join":
+            if args.time_zone is not None:
+                raise ValueError("Use --time-zone only for a home installation.")
             if not args.home or not args.machine_id:
                 raise ValueError(
                     "Join needs --home URL and --machine-id from the owner's join command."
@@ -631,11 +622,12 @@ def main() -> None:
                     "root": str(args.root),
                     "service": args.service,
                     "port": args.port,
+                    **({"owner_time_zone": args.time_zone} if args.time_zone is not None else {}),
                     "isolated_providers": args.isolated_providers,
+                    "skip_command_link": args.skip_command_link,
                     "archive": str(archive),
                     "archive_sha256": receipt["archive_sha256"],
                     "revision": receipt["revision"],
-                    "update_token": release_update_token(),
                 }
             elif mac_node is not None:
                 command = [

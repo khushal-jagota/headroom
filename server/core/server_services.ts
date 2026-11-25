@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { begin_startup_phase } from './startup_diagnostics.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
+import { BackendPickerResources } from '../conversation/snapshot/resource_versions.ts';
 import { createAreasRuntime } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { buildClock } from './clock.ts';
@@ -84,7 +85,10 @@ export class ServerServices {
     (value, stop) => value.close(stop),
     (value) => value.settled(),
   );
-  readonly areas = createAreasRuntime(() => this.environments.value?.resourceProviders ?? []);
+  readonly areas = createAreasRuntime(() => [
+    ...(this.environments.value?.resourceProviders ?? []),
+    ...(this.backend.value ? [new BackendPickerResources(this.backend.value)] : []),
+  ]);
   readonly conversationWrites = new ConversationHttpWriteScope();
   readonly recorded_usage = this.resources.service<RecordedUsageService>(
     'recorded usage',

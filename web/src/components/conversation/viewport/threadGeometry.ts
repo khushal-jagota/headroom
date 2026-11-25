@@ -4,11 +4,12 @@ import {
   SENT_MESSAGE_TOP_GAP_PIXELS
 } from "./viewportConfiguration";
 
-/** v5.4: Jump to latest shows only when the newest content is more than one transcript
- *  viewport below the visible area. Closer than that, the reader can see the transcript is
- *  near its end. `distancePixels` is how far the thread must still scroll to reach it. */
+/** Jump to latest shows whenever the newest content is more than the "near the newest line"
+ *  margin below the visible area, so it shows whenever the reader is not at the bottom.
+ *  `distancePixels` is how far the thread must still scroll to reach it. A thread with no
+ *  height (hidden) never shows it. */
 export function jumpToLatestWanted(distancePixels: number, viewportHeightPixels: number): boolean {
-  return viewportHeightPixels > 0 && distancePixels > viewportHeightPixels;
+  return viewportHeightPixels > 0 && distancePixels > NEAR_NEWEST_LINE_PIXELS;
 }
 
 export type ThreadReading = {

@@ -18,7 +18,10 @@ import { CodexAppServerBackendChild } from './adapter.ts';
 import type { CodexClient } from './adapter.ts';
 import { Deferred } from '../../../core/deferred.ts';
 
-async function setup(message_files = {} as ConversationMessageFiles) {
+async function setup(
+  message_files = {} as ConversationMessageFiles,
+  start_agent_turn?: B.BackendEventSink['start_agent_turn'],
+) {
   let handler!: CodexServerMessageHandler;
   let next = 0;
   const pending = new Map<number, Deferred<unknown>>();
@@ -31,7 +34,12 @@ async function setup(message_files = {} as ConversationMessageFiles) {
     async stop() {},
     async request(method, params) {
       calls.push([method, params]);
-      if (method === 'thread/start') return { thread: { id: 'thread', ephemeral: false } };
+      if (method === 'thread/start') {
+        await handler.on_notification('thread/started', {
+          thread: { id: 'thread', parentThreadId: null },
+        });
+        return { thread: { id: 'thread', ephemeral: false } };
+      }
       if (method === 'skills/list') return { data: [] };
       if (method === 'plugin/installed') return { marketplaces: [] };
       if (method === 'app/installed') return { apps: [] };
@@ -68,7 +76,7 @@ async function setup(message_files = {} as ConversationMessageFiles) {
     child_processes: new ChildProcesses(),
     launch: { argv: ['/never/run/codex', 'app-server'] },
     resolved_start: start,
-    event_sink: { report },
+    event_sink: { report, start_agent_turn },
     message_files,
     client_factory(options) {
       handler = options.handler;
@@ -360,6 +368,355 @@ test('records Codex last input separately from cumulative usage', async () => {
     expect(
       state.report.mock.calls.find(([, event]) => event instanceof B.TokenUsageReported)?.[1],
     ).toMatchObject({ input_tokens: 90000, context_input_tokens: 12000 });
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Gap: string-only answers never prove that a native request carries an attachment path with readable bytes.
+test('Codex receives a readable managed file reference in its structured answer and retries missing files', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { ConversationMessageFiles } =
+    await import('../../../conversation/record/message_files.ts');
+  const { MessageFile } = await import('../../../conversation/message_content.ts');
+  const { UserInputAnswer } = await import('../../../conversation/events.ts');
+  const root = mkdtempSync(join(tmpdir(), 'codex-answer-'));
+  const files = new ConversationMessageFiles(join(root, 'record.sqlite'));
+  const state = await setup(files);
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    state.reply(1, { turn: { id: 'native', status: 'inProgress' } });
+    await writing;
+    await state.handler.on_server_request('item/tool/requestUserInput', 7, {
+      threadId: 'thread',
+      turnId: 'native',
+      itemId: 'question',
+      questions: [
+        {
+          id: 'proof',
+          header: 'Proof',
+          question: 'What proof?',
+          isOther: true,
+          isSecret: false,
+          options: [],
+        },
+      ],
+    });
+    const request = state.report.mock.calls.find(
+      ([, event]) => event instanceof B.UserInputRequested,
+    )![1] as B.UserInputRequested;
+    await expect(
+      state.child.answer_user_input(request.request.request_id, [
+        new UserInputAnswer({
+          question_id: 'proof',
+          answers: [],
+          attachments: [
+            new MessageFile({
+              stored_file_id: 'missing',
+              file_name: 'missing.txt',
+              media_type: 'text/plain',
+              byte_count: 1,
+            }),
+          ],
+        }),
+      ]),
+    ).rejects.toBeInstanceOf(B.UserInputAnswerWriteFailed);
+    expect(state.client.respond).not.toHaveBeenCalled();
+    const bytes = Buffer.from('native Codex answer proof');
+    const kept = await files.keep('conversation', bytes, { media_type: 'text/plain' });
+    await state.child.answer_user_input(request.request.request_id, [
+      new UserInputAnswer({
+        question_id: 'proof',
+        answers: [],
+        attachments: [
+          new MessageFile({
+            stored_file_id: kept.stored_file_id,
+            file_name: 'proof.txt',
+            media_type: 'text/plain',
+            byte_count: bytes.length,
+          }),
+        ],
+      }),
+    ]);
+    const native = vi.mocked(state.client.respond).mock.calls.at(-1)![1] as {
+      answers: { proof: { answers: string[] } };
+    };
+    const reference = native.answers.proof.answers[0].match(/is available at (.+)\.$/)![1];
+    expect(readFileSync(reference)).toEqual(bytes);
+  } finally {
+    await state.child.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Risk: a root turn ends before its direct agent, so the completion never reaches Panels.
+// Existing prompted-turn cases cover neither child-thread events nor background lifetimes.
+test('tracks direct sub-agent work beyond the root turn and deduplicates terminal notices', async () => {
+  const admit = vi.fn(async () => null);
+  const state = await setup(undefined, admit);
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    await state.handler.on_notification('turn/started', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'inProgress', error: null },
+    });
+    state.reply(1, { turn: { id: 'root-turn', status: 'inProgress' } });
+    await writing;
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'spawn',
+        tool: 'spawnAgent',
+        senderThreadId: 'thread',
+        receiverThreadIds: ['child'],
+        prompt: 'Inspect the result',
+        agentsStates: { child: { status: 'running' } },
+      },
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'completed', error: null },
+    });
+    expect(admit).not.toHaveBeenCalled();
+    const completed = {
+      threadId: 'child',
+      turn: { id: 'child-turn', status: 'completed', error: null },
+    };
+    await state.handler.on_notification('turn/completed', {
+      ...completed,
+      threadId: 'unrelated',
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toHaveLength(0);
+    await state.handler.on_notification('turn/completed', completed);
+    await state.handler.on_notification('turn/completed', completed);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:child',
+          task_description: 'Inspect the result',
+        }),
+      ],
+    ]);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [null, new B.BackgroundTaskEnded({ task_id: 'agent:child', task_status: 'completed' })],
+    ]);
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'later-root-turn',
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'resume',
+        tool: 'resumeAgent',
+        senderThreadId: 'thread',
+        receiverThreadIds: ['resumed-child'],
+        prompt: null,
+        agentsStates: { 'resumed-child': { status: 'running' } },
+      },
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'resumed-child',
+      turn: { id: 'resumed-turn', status: 'failed', error: null },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded).at(-1),
+    ).toEqual([
+      null,
+      new B.BackgroundTaskEnded({ task_id: 'agent:resumed-child', task_status: 'failed' }),
+    ]);
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: code-mode sub-agents emit no root collaboration item, only native child events.
+test('tracks code-mode activity without a collaboration tool item', async () => {
+  const state = await setup();
+  try {
+    await state.handler.on_notification('thread/started', {
+      thread: { id: 'metadata-child', parentThreadId: 'thread' },
+    });
+    await state.handler.on_notification('thread/started', {
+      thread: { id: 'nested', parentThreadId: 'child' },
+    });
+    for (const method of ['item/started'])
+      await state.handler.on_notification(method, {
+        threadId: 'thread',
+        turnId: 'root-turn',
+        item: {
+          type: 'subAgentActivity',
+          id: 'spawn',
+          kind: 'started',
+          agentThreadId: 'child',
+        },
+      });
+    for (const id of ['child', 'nested', 'metadata-child']) {
+      await state.handler.on_notification('turn/started', {
+        threadId: id,
+        turn: { id: `${id}-turn`, status: 'inProgress', error: null },
+      });
+      await state.handler.on_notification('turn/completed', {
+        threadId: id,
+        turn: { id: `${id}-turn`, status: 'completed', error: null },
+      });
+    }
+    await state.handler.on_notification('item/completed', {
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'subAgentActivity',
+        id: 'spawn',
+        kind: 'started',
+        agentThreadId: 'child',
+      },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:child',
+          task_description: 'Codex sub-agent',
+        }),
+      ],
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'agent:metadata-child',
+          task_description: 'Codex sub-agent',
+        }),
+      ],
+    ]);
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [null, new B.BackgroundTaskEnded({ task_id: 'agent:child', task_status: 'completed' })],
+      [
+        null,
+        new B.BackgroundTaskEnded({ task_id: 'agent:metadata-child', task_status: 'completed' }),
+      ],
+    ]);
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: native turns have no prompted token and their output is silently lost.
+test('admits a native root turn and records its output and ending under its core token', async () => {
+  const token = { conversation_id: 'conversation', turn_number: 2 };
+  const admit = vi.fn(async () => token);
+  const state = await setup(undefined, admit);
+  try {
+    await state.handler.on_notification('turn/started', {
+      threadId: 'thread',
+      turn: { id: 'native', status: 'inProgress', error: null },
+    });
+    await state.handler.on_notification('item/agentMessage/delta', {
+      threadId: 'thread',
+      turnId: 'native',
+      itemId: 'message',
+      delta: 'Resumed',
+    });
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'native', status: 'completed', error: null },
+    });
+    expect(admit).toHaveBeenCalledOnce();
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.AgentMessageCompleted),
+    ).toEqual([[token, new B.AgentMessageCompleted({ content: text_message_content('Resumed') })]]);
+    expect(state.report.mock.calls.find(([, event]) => event instanceof B.TurnEnded)?.[0]).toEqual(
+      token,
+    );
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: a pending native activation receipt prevents client drain on shutdown.
+test('cancels a pending native admission before stopping the client', async () => {
+  const admitted = new Deferred<void>();
+  const state = await setup(undefined, async (_reason, signal) => {
+    admitted.resolve();
+    await new Promise<void>((resolve) =>
+      signal!.addEventListener('abort', () => resolve(), { once: true }),
+    );
+    return null;
+  });
+  const notification = state.handler.on_notification('turn/started', {
+    threadId: 'thread',
+    turn: { id: 'native', status: 'inProgress', error: null },
+  });
+  await admitted.promise;
+  await state.child.stop();
+  await notification;
+  expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
+});
+
+// Risk: foreground commands cause wake prompts, or a command outlives its parent unnoticed.
+// Existing coverage proves agents, not commandExecution items that remain inProgress.
+test('reports only commands that outlive their parent and consumes their late terminal item', async () => {
+  const state = await setup();
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    state.reply(1, { turn: { id: 'root-turn', status: 'inProgress' } });
+    await writing;
+    const command = (id: string, status: string) => ({
+      threadId: 'thread',
+      turnId: 'root-turn',
+      item: {
+        type: 'commandExecution',
+        id,
+        command: 'sleep 25',
+        cwd: '/workspace',
+        status,
+        aggregatedOutput: null,
+      },
+    });
+    await state.handler.on_notification('item/started', command('foreground', 'inProgress'));
+    await state.handler.on_notification('item/completed', command('foreground', 'completed'));
+    await state.handler.on_notification('item/started', command('background', 'inProgress'));
+    expect(
+      state.report.mock.calls.some(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toBe(false);
+    await state.handler.on_notification('turn/completed', {
+      threadId: 'thread',
+      turn: { id: 'root-turn', status: 'completed', error: null },
+    });
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskStarted),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskStarted({
+          task_id: 'command:background',
+          task_description: 'sleep 25',
+        }),
+      ],
+    ]);
+    await state.handler.on_notification('item/completed', command('background', 'completed'));
+    expect(
+      state.report.mock.calls.filter(([, event]) => event instanceof B.BackgroundTaskEnded),
+    ).toEqual([
+      [
+        null,
+        new B.BackgroundTaskEnded({ task_id: 'command:background', task_status: 'completed' }),
+      ],
+    ]);
   } finally {
     await state.child.stop();
   }

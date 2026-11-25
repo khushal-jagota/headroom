@@ -1,66 +1,77 @@
 # The command line
 
-`panels` is Headroom's record, reached over HTTP. The browser is Khushal's main surface. The command is how a Worker acts, how the Chief or a Manager acts from its own process, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
+`panels` is Headroom's record, reached over HTTP. The browser is the owner's main surface. The command is how every agent reads and changes Panels, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
+
+Agents use it for three jobs. They talk to someone. They work on their own record: a Worker reads its Ticket, files its proposal, and writes its recap. And the Chief and Managers supervise what is below them: they see what needs whom, decide proposals, and create and steer Tickets. The rest of the tree serves pages and data, owner configuration, and the host.
 
 ## Who is calling
 
-The command name grants nothing. Headroom gives each agent conversation a private launch token in its environment. The CLI sends it automatically; the server resolves the conversation and its current principal. Role and workspace ids are context, not credentials. The server admits or refuses that caller with the same rule as the browser. On the live host, a terminal with no identity is unidentified: it can read and send a message to Chief, and nothing else. Owner writes go through the web app or the iOS app. See [Who may act](authority.md).
+The command name grants nothing. Headroom gives each agent conversation a private launch token in its environment. The CLI sends it automatically, and the server resolves the conversation and its current principal. The server admits or refuses that caller with the same rule as the browser. On the live host, a terminal with no identity is unidentified: it can read and send a message to Chief, and nothing else. Owner writes go through the web app or the iOS app. See [Who may act](authority.md).
 
-Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
+Role and workspace variables, such as `PLAN_ACTOR`, `PLAN_TICKET_ID`, and `PLAN_MANAGER_ID`, are context, not credentials. The CLI uses them to choose the caller's own record and the caller's help.
 
-If an operation has no dedicated command, use `panels api METHOD PATH --input-json FILE --json`. Use `-` for JSON on stdin. This command sends the same conversation credential as every other Panels command. Agents do not copy tokens or construct identity headers. On a remote Worker, the existing executor transport still decides which operations are supported.
-
-For example, Chief writes its recap with:
-
-```sh
-printf '%s\n' '{"recap":"The current work awaits a decision."}' |
-  panels api PUT /api/workers/chief-of-staff/recap --input-json - --json
-```
+If an operation has no dedicated command, `panels api METHOD PATH --input-json FILE --json` calls the route with the same credential. Agents do not copy tokens or construct identity headers. Agent calls pass through machine code and its relay to the same server routes. The relay converts document numbers to JSON numbers before validation and refuses integers that it cannot carry exactly. The executor transport still decides which operations are supported.
 
 ## What it is made of
 
-- **Ordinary roots**, shown in help, for people and supervising agents:
-  - `send-message` addresses Khushal, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door. Every message requires an explicit recipient.
-  - `machine list` reads named destinations and availability. Owner commands register extra machines and replace their credentials.
-  - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
-  - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
-  - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
-- **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
-- **Hidden commands** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, and `api`.
-- **Server lifecycle commands**, also hidden, that use the server's local sockets instead of HTTP. `restart` asks the supervisor, over its control socket, to replace the application. `server-event-loop-tasks` asks the application, over its own socket beside that one, what it is waiting on: each asyncio task on its event loop, with its name, coroutine, the line it is awaiting, and its age, oldest first. A stall inside a task leaves every thread idle, so a stack dump cannot show it. The command only reads. A very long list stops at a size limit and says how many tasks it left out. A loop blocked by synchronous code cannot answer; a stack dump shows that case.
+A command is `panels <thing> <action>`. The things are the things in the product: Ticket, Manager, Review, page, goal. No group is named for a role. Each job has one command.
+
+- **For everyone.** `send-message` addresses the owner, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door. It needs exactly one recipient. `recap` writes the recap of whoever calls it: a Worker's Ticket, a Manager, or the Chief.
+- **For a Worker, on its own Ticket.** `ticket show` reads the Ticket and its workflow guide. `ticket propose` files the proposal for the current Stage. `preview` publishes a running app; see [previews](previews.md).
+- **For the Chief and Managers, on what is below them.** `review` reads the queue that waits on the owner. `ticket list`, `ticket show`, and `ticket history` read Tickets and what was said. `ticket approve` and `ticket send-back` decide a parked proposal. `ticket create`, `edit`, and `schema` make and correct Tickets. `ticket backlog`, `resume`, `delete`, `block`, `unblock`, `assign`, and `complete` steer them. `ticket restart-worker` and `recheck-worker-cleanup` repair a stalled Worker. `ticket request-recap` and `manager request-recap` ask for a fresh recap. `manager list`, `show`, `create`, `set`, `delete`, `settle`, and `artifact` keep the Managers.
+- **Pages and data.** `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md). `project` and `machine` read and edit the catalog and the named destinations.
+- **Owner configuration.** `skill` and `worker-type` reach the owner-only [skill](skills.md) and [Worker type](worker-types.md) writers.
+- **The host.** `serve`, `restart`, `environment`, `executor`, and `stalls` run the server, the [Mac executor](executor.md), and [environments](environments.md). Services and installers call them by name. `restart` asks the supervisor, over its local control socket, to replace the application.
 
 ## How reads and writes work
 
-A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
+**The caller's own record is the default.** A Worker that runs `ticket show` reads its own Ticket, and `ticket propose` files on it. A Manager that runs `manager show` reads itself. A command that changes another record, such as `ticket backlog`, `resume`, or `delete`, always names it.
 
-`ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. A machine rename never moves work. The owner can use `machine move-work MACHINE_ID` with `--ticket ID`, `--manager ID` or `--chief` for an explicit move. After a server move, `--everything` moves unfinished Tickets, active Managers and the Chief to the server's new machine. Each result says whether the work moved and reports any refusal. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
+**Every Ticket carries one need word.** It says what the Ticket waits on, and from whom: the owner to approve, answer, complete a stage, or reply; an agent holder to approve; or working, ready, blocked, errored, backlog, or done. It comes from the grouping the browser shows the Ticket under, so an agent and the owner read the same state. Backlog and done win over every other fact, so a deferred or finished Ticket never reads as waiting on anyone. Human output shows the waits as `Owner: approve`, `Chief: approve`, or `Manager: approve`. `ticket list --needs` filters on the word. A Manager's counts use the same words and keep backlog and done in their own buckets.
 
-`ticket list --active` selects unfinished Tickets outside backlog. The default list remains an inventory that includes deferred Tickets. Manager rollups exclude deferred children, while a Manager workspace keeps the complete child inventory and its backlog marks.
+**Lists show live work by default and say what they left out.** `ticket list` shows Tickets that are neither backlogged nor done, ordered by need and then by recent activity. `--backlog`, `--done`, or `--all` widen it, and its footer counts what it did not show. `manager list` shows active Managers and counts the settled ones it left out. Ticket and Manager lists include each recap and its age.
 
-Ticket and Manager lists include each recap and its age. Missing recaps and unknown ages are explicit. Ticket overviews also flag a stage change since the recap. JSON carries the recap timestamp, so agents can calculate its age.
+**Review is one read.** `review` returns the cards that wait on the owner, oldest first, from the same source as the browser and iPhone [Review](review.md). Each card says why it waits: a proposal, a message, or a question. If the source is not yet trustworthy, the command says Review is unavailable rather than showing an empty queue.
 
-`ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).
+**A show is a header and parts.** The caller names the parts to expand. The Ticket header leads with its need, Stage, ceiling, holder, and active blockers. `ticket history` prints the conversation's messages as text, oldest first, and counts other events. `manager show` gives the purpose, the recap, the held goals, the count of Tickets by need, and which document the browser displays with its read and edit commands.
 
-A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
+**Decisions pin what was read.** `ticket approve` needs the new ceiling, and `--holder` names who supervises next: `owner`, `chief`, or a Manager. Without it, the holder is the caller. `ticket send-back` carries the guidance into the Worker's prompt. A separate message does not replace that guidance. Both pin the proposal revision from their own read, or from `--expected-proposal-revision` for a proposal the caller inspected earlier.
 
-To send a proposal back, use `panels ticket proposal ID revise --body-file guidance.md` or `--message` with inline guidance. Use `--body-file -` to read stdin. A separate message does not replace this guidance.
+**Creation validates the whole Ticket before one write.** `ticket create` sends one object to the same route as the browser. `ticket schema create` and `ticket schema edit` print the keys those objects accept, from the list the server validates with. A new Ticket starts from a preset or custom stages. `machine_id` chooses its destination from `machine list`, and omission selects the home. A machine rename never moves work. The owner can use `machine move-work MACHINE_ID` with `--ticket ID`, `--manager ID` or `--chief` for an explicit move. After a server move, `--everything` moves unfinished Tickets, active Managers and the Chief to the server's new machine. Blockers go in the object or later through `ticket block`. A running Ticket needs `--force` to delete.
 
-Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
+## One way to pass input
+
+Text comes from stdin, from `--message TEXT`, or from `--body-file FILE`, where `-` also means stdin. The three `set`-style commands take `--value` instead of `--message`, because the text is a field value. JSON objects come from stdin or from `--input-json FILE`. `--json` only selects JSON output. More than one source, or empty text, is an error. A command that needs input never waits on a terminal: it fails and names the three ways to supply it.
+
+## Help for the caller
+
+Every command declares who it is for: a Worker on its own Ticket, a supervisor, everyone, data, configuration, or the host. `panels --help` in an agent conversation prints a short card for that role, grouped by job, and names the other groups. With no agent role it prints every group. Each description is one line that says what the command does. `api` stays hidden.
+
+## Removed names fail with their replacement
+
+A conversation that started before a change still holds old skill text. So a removed command or option is not kept as an alias. It fails with one line that names its replacement, such as `Use: panels ticket propose < PROPOSAL_FILE`. The replacements come from one stated table of removed names. A wrong name that is not in the table lists the commands of its group, and may ask `Did you mean …?`. A guess by spelling is never printed as the replacement.
+
+`panels skill check` reads the same command tree that the CLI declares, so a skill that names a removed command is reported.
+
+A machine updates after the server, so for a time an older command line calls a newer server. The Ticket list route keeps the parameters that older command lines and the iPhone app send. For the minutes of an install, a newer command line can call an older server. A read that needs the newer server then refuses and says to run it again, rather than print an answer without the need word.
 
 ## What the CLI feeds
 
-A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advances). `send-message` feeds a conversation. Operator commands feed the host. None of these are a side channel into a model: an agent learns something only when a prompt its conversation actually sent carries it.
+A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advances). `send-message` feeds a conversation. Host commands feed the host. None of these are a side channel into a model: an agent learns something only when a prompt its conversation actually sent carries it.
 
 ## Decisions that shape it
 
 - One set of writers. The CLI adds no rule of its own, so the browser and the command cannot disagree.
+- The command line shows what the browser shows: the same need word and the same Review.
 - Identity comes from the environment Headroom set, not from a flag the caller chooses.
-- Help shows the roots a person or a supervisor needs. Specialist and operator groups stay hidden until a skill names them.
+- Old names fail loudly with their replacement instead of living on as aliases.
 
 ## Code
 
-- `server/cli/main.ts`: the command tree. `server/cli/http.ts`: the HTTP client and launch credential.
-- `server/lifecycle/control.ts`: the control socket and its messages. `server/lifecycle/cli.ts`: the event loop tasks command.
+- `server/cli/main.ts`: the entry. `server/cli/commands.ts`: the command tree, with each command's audience. `server/cli/http.ts`: the HTTP client and launch credential.
+- `server/navigation/views/logic.ts`: the need word, beside the browser's grouping.
+- `server/lifecycle/control.ts`: the control socket and its messages.
 - Each domain's `cli/` folder holds its own group, such as `server/credentials/cli/` and `server/goals/cli/`. The routes they call are in each domain's `routes.ts`.
+- `server/skills/staleness.ts`: the skill check, which reads `create_commands`.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._

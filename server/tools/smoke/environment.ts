@@ -76,7 +76,10 @@ export async function create_environment(
     flag: 'wx',
     mode: 0o600,
   });
-  await write_default_backend_peer(root, source);
+  // The Linux runtime supervisor rebuilds PATH around the account’s .local/bin.
+  const peer_bin = join(environment.HOME!, '.local/bin');
+  await mkdir(peer_bin, { recursive: true, mode: 0o700 });
+  await write_default_backend_peer(root, source, peer_bin);
   // Every other driver's executable is absent, so only the peer answers.
   const peer_driver = built_in_driver_of(DEFAULT_BACKEND_INSTANCE_ID);
   const absent_executables = BUILT_IN_MANIFESTS.filter((driver) => driver !== peer_driver).flatMap(
@@ -92,7 +95,7 @@ export async function create_environment(
   );
   return {
     ...environment,
-    PATH: join(root, 'bin') + ':/usr/bin:/bin',
+    PATH: peer_bin + ':' + join(root, 'bin') + ':/usr/bin:/bin',
     LANG: 'C.UTF-8',
     TMPDIR: join(root, 'tmp'),
     TMP: join(root, 'tmp'),

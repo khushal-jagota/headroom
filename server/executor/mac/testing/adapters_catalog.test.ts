@@ -1,3 +1,4 @@
+import { fixture } from '../../../tests/ticket_fixture.ts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -134,7 +135,7 @@ it('joins failing siblings once and retains all history across a failed native c
   vi.spyOn(codex_catalog, 'probe_codex_model_catalog').mockRejectedValue(failure);
   vi.spyOn(claude_catalog, 'probe_claude_model_catalog').mockRejectedValue(claude_failure);
   const host = {
-    database: {},
+    database: fixture(),
     environment: {},
     panels_server_url: 'http://127.0.0.1:1',
     worker_process_root: '/synthetic',

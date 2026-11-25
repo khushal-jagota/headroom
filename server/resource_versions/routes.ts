@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { resource_epoch } from './epoch.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { requiredQuery, scalarQueries } from '../list_reads/http.ts';
 import type { ResourceProvider } from './contracts.ts';
-import { checkedKey, parseKeys } from './logic/index.ts';
+import { checkedKey, parseKeys, revisionFor } from './logic/index.ts';
 import { capture, providers } from './registry.ts';
 import { stringify_numeric_response } from '../core/http/numeric_intake.ts';
 export function createRoutes(
@@ -14,16 +14,16 @@ export function createRoutes(
     app.setReplySerializer((payload, statusCode) =>
       stringify_numeric_response(payload, statusCode >= 200 && statusCode < 300),
     );
-    const epoch = randomUUID();
+    const epoch = resource_epoch(app);
     app.get<{ Querystring: { keys?: string } }>('/resource-versions', async (request, reply) => {
       const query = scalarQueries(request.query);
       if (!requiredQuery(query.keys, 'keys', reply)) return;
       const keys = parseKeys(query.keys);
       const resources = services.database.read((sql) =>
-        keys.map((key) => {
-          const snapshot = capture(providers, sql, request, checkedKey(key));
-          return { key, revision: snapshot?.revision ?? null };
-        }),
+        keys.map((key) => ({
+          key,
+          revision: revisionFor(key, (checked) => capture(providers, sql, request, checked)),
+        })),
       );
       return { epoch, resources };
     });

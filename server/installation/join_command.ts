@@ -19,7 +19,7 @@ export function join_command(
     throw new Error('The home returned an invalid machine credential');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(machine_id))
     throw new Error('The home returned an invalid machine identity');
-  const route = `repos/${RELEASE_REPOSITORY}/contents/scripts/panels_install.py?ref=${revision}`;
+  const script = `https://raw.githubusercontent.com/${RELEASE_REPOSITORY}/${revision}/scripts/panels_install.py`;
   const arguments_ = [
     'join',
     '--home',
@@ -30,11 +30,11 @@ export function join_command(
     revision,
   ];
   return (
-    'panels_join_script=$(mktemp) && gh api -H ' +
-    shell_quote('Accept: application/vnd.github.raw+json') +
-    ' ' +
-    shell_quote(route) +
-    ' > "$panels_join_script" && python3 "$panels_join_script" ' +
+    'panels_join_script=$(mktemp) && curl --disable --fail --silent --show-error ' +
+    "--location --proto '=https' --proto-redir '=https' --output " +
+    '"$panels_join_script" ' +
+    shell_quote(script) +
+    ' && python3 "$panels_join_script" ' +
     arguments_.map(shell_quote).join(' ')
   );
 }

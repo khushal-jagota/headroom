@@ -157,3 +157,14 @@ test('command admission preserves integer digits, holder kinds, and Unicode boun
   expect(stringify_numeric_json(result)).toContain('"expected_proposal_revision":' + revision);
   expect(db.read((sql) => lookup(sql, original.id, 'large', OWNER))).toEqual(result);
 });
+
+// The command body reads whole numbers as JsonNumber, so a video's size must still pass admission.
+test('command admission accepts an upload piece with a size and refuses a half size', () => {
+  const base = command(1, 'send_back');
+  const piece = { piece: 'attachment_upload', upload_id: 'vu_1' };
+  const size = { width: new JsonNumber('160'), height: new JsonNumber('96') };
+  expect(() => parse_command({ ...base, attachments: [{ ...piece, ...size }] })).not.toThrow();
+  expect(() => parse_command({ ...base, attachments: [{ ...piece, width: size.width }] })).toThrow(
+    'image or file piece',
+  );
+});

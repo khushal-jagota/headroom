@@ -31,7 +31,7 @@ describe("message-specific settlement", () => {
     const row = transcriptRows(feedWithCommittedEvents(emptyConversationFeed(), [event]))[0];
     expect(row.kind).toBe("prompt_refused");
     if (row.kind === "prompt_refused") expect(row.sentence).toBe(detail);
-    expect(recordedMessageFateSentence([event], "queued", null)).toBe(`not delivered · ${detail}`);
+    expect(recordedMessageFateSentence([event], "queued", null)).toBe("Not delivered. The selected model is unavailable.");
   });
 
   it("reports intentional suppression with its reason", () => {
@@ -41,7 +41,7 @@ describe("message-specific settlement", () => {
 
   it("provides a readable model refusal before its persisted detail arrives", () => {
     expect(fateSentence({ fate: "refused", refusal_reason: "model_resolution_failed" }))
-      .toBe("not delivered · the selected model could not be resolved");
+      .toBe("Not delivered. The selected model is unavailable.");
   });
 
   it("settles only the referenced unminted uncertain row", () => {
@@ -79,7 +79,7 @@ describe("message-specific settlement", () => {
 });
 
 it("keeps errored Tickets in a Manager's nested attention groups", () => {
-  const broken = { ...ticketFacts({ agent_state: "errored", ticket_status: "agent" }),
+  const broken = { ...ticketFacts({ agent_state: "errored", ticket_status: "agent_owned" }),
     id: "broken", title: "Broken work", };
   expect(workspaceAttentionGroups([broken]).map((group) => [group.key, group.cards[0].id]))
     .toEqual([["errored", broken.id]]);

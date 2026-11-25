@@ -558,11 +558,15 @@ export class VpsFiles {
       if (!command || command.child.executor_incarnation !== identity.executor_incarnation)
         throw absent;
       const args = command.arguments;
-      const allowed =
-        (args.kind === 'write_prompt' || args.kind === 'steer') &&
-        [...args.content, ...(args.sender_content ?? [])].some(
-          (piece) => 'stored_file_id' in piece && piece.stored_file_id === stored_file_id,
-        );
+      const pieces =
+        args.kind === 'answer_user_input'
+          ? args.answers.flatMap((answer) => answer.attachments ?? [])
+          : args.kind === 'write_prompt' || args.kind === 'steer'
+            ? [...args.content, ...(args.sender_content ?? [])]
+            : [];
+      const allowed = pieces.some(
+        (piece) => 'stored_file_id' in piece && piece.stored_file_id === stored_file_id,
+      );
       if (!allowed) throw absent;
       await this.inbox.runs.authority(command.child);
       check(signal);

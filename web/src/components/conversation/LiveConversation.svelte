@@ -29,8 +29,9 @@
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
-  import { ATTACHMENT_NOT_READ_BACK, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
+  import { ATTACHMENT_NOT_READ_BACK, editablePiecesFromRecorded, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
   import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
+  import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from "../../lib/conversation/ownerSend";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     heldPromptIsInLens,
@@ -44,6 +45,8 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { refreshScreen } from "../../lib/resourceVersions/refresh";
+  import { withinScreenWait } from "../../lib/mutate";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import SystemLine from "./SystemLine.svelte";
@@ -53,7 +56,6 @@
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
-    outgoingMessagesByPlace,
     outgoingReceiptBatches,
     retainOutgoingPresentations,
     recallOutgoingMessages,
@@ -211,25 +213,23 @@
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
    *  nothing: a frame with no words in it moves this and touches no row. */
-  let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
   /** Sends whose confirmed queue fate precedes the next server snapshot. */
-  let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
   let fateNoteIsTerminal = $state(false);
   let fateNoteMessageId = $state<string | null>(null);
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
-  /** A send from the dock that the machine turned away: its words stay in the composer, and
-   *  this reason stands under it, because the bubble that says so is in the closed
-   *  transcript. Cleared by the next send and by opening the conversation. */
-  let dockedUndeliveredReason = $state<string | null>(null);
-  $effect(() => { if (conversationState !== "rest") dockedUndeliveredReason = null; });
   let askNote = $state<string | null>(null);
   let askNoteKey = $state<string | null>(null);
+  /** The asks that the server took an answer for. A card stays until the tail says that
+   *  its ask is over, and a second press in that moment must not send a second answer. */
+  let answeredPermissionAsk: string | null = null;
+  let answeredUserInput: string | null = null;
   let busy = $state(false);
+  let outgoingReady = $state(false);
   let opening = $state(false);
   // Focus or Full is one reading preference for this browser: it opens the way it was left.
   let lens = $state<ConversationLens>(conversationLensPreference());
@@ -278,6 +278,9 @@
     const pending=view?.pending_user_input;
     return pending&&pending.request_id===askStatus?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
+  // An ask that is over can come again under the same id, so its answer is forgotten.
+  $effect(() => { if (ask === null) answeredPermissionAsk = null; });
+  $effect(() => { if (userInput === null) answeredUserInput = null; });
   let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
     askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
@@ -297,11 +300,30 @@
   // What the composer has picked, so a refused message sent again from the thread runs
   // under the model the person is looking at — the one its next step asks them to choose.
   let composerSelection: ComposerRunSelection | null = null;
+  let pane: ReturnType<typeof ConversationPane> | undefined;
+  const sendOwner = $derived<SendOwner | null>(
+    uploadOwner && uploadOwner.kind !== "conversation" ? { kind: uploadOwner.kind, id: uploadOwner.id } : null
+  );
+  const sendStatusChecks = new Set<string>();
   // Resend on a message the conversation turned away: the same words and kept files, read
   // back from the conversation, as a new message. Queued behind a running turn, started
   // otherwise, as the composer would send it.
   setContext<ResendRecordedMessage>(RESEND_RECORDED_MESSAGE, {
     available: () => !readOnly,
+    edit: async (recordedIn, content) => {
+      if (readOnly || recordedIn !== openedId) return false;
+      const {pieces, needsReattachment} = await editablePiecesFromRecorded(recordedIn, content);
+      return !readOnly && recordedIn === openedId && editUnsentMessage(pieces, needsReattachment);
+    },
+    editLocal: async messageId => {
+      const candidate = sentMessages.find(message => message.messageId === messageId);
+      if (readOnly || !candidate || (candidate.knownFate !== "not_sent" && candidate.knownFate !== "machine_offline")) return false;
+      const editable = candidate.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload");
+      if (!editUnsentMessage(editable, editable.length !== candidate.content.length)) return false;
+      // Keep the attempted payload available after reload. The live draft holds
+      // its image and file objects only while the composer stays mounted.
+      return true;
+    },
     resend: async (recordedIn, content, refusedSequence) => {
       if (readOnly || recordedIn !== openedId) return false;
       let pieces: SentMessagePiece[];
@@ -311,6 +333,7 @@
         errorNote = error instanceof Error ? error.message : ATTACHMENT_NOT_READ_BACK;
         return false;
       }
+      if (readOnly || recordedIn !== openedId) return false;
       return send(pieces, running ? "queue" : "steer", {
         model: composerSelection?.pickedModel ?? null,
         reasoningEffort: composerSelection?.pickedReasoningEffort ?? null,
@@ -319,6 +342,13 @@
       }, undefined, undefined, refusedSequence);
     }
   });
+  function editUnsentMessage(content: readonly SentMessagePiece[], reattachFile: boolean): boolean {
+    const edited = pane?.takeBackUnsentMessage(content) ?? false;
+    if (!edited) errorNote = "Finish your current draft before editing this message.";
+    else errorNote = reattachFile ? "Attach any missing files again before sending." : null;
+    return edited;
+  }
+
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -361,9 +391,9 @@
           );
           if (latestOwnerMessage > previouslyReadThrough && latestOwnerMessage <= advanced) {
             refreshedReadThrough.set(reading.conversation_id, advanced);
-            // The server accepted this read. Ask mounted queries for current truth,
+            // The server accepted this read. Start the ordinary refresh for current truth,
             // even if the owner switched conversations while the request was pending.
-            void queryClient.invalidateQueries();
+            void refreshScreen();
           }
           if (view?.conversation_id === reading.conversation_id) {
             view = {
@@ -404,30 +434,15 @@
     pickerBackends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );
   let current = $derived<RunValues>({model:view?.model??null,reasoningEffort:view?.reasoning_effort??null});
-  let serverHeldSenderIds = $derived(
-    new Set((view?.held_prompts ?? []).filter((held) =>
-      heldPromptIsInLens(held, lens, senderLabel)
-    ).flatMap((held) =>
-      held.sender_message_id == null ? [] : [held.sender_message_id]
-    ))
-  );
   const admittedMessageIds = $derived(new Set(reader?.pages.flatMap(page => page.items)
     .filter(item => item.kind === "row" && ["prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded"].includes(item.row_kind))
     .flatMap(item => item.kind === "row" && item.sender_message_id ? [item.sender_message_id] : []) ?? []));
   const committedMessageIds = $derived(new Set([...acknowledgedMessageIds, ...admittedMessageIds]));
-  let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
-    composerStackMessageIds,
-    serverHeldSenderMessageIds: serverHeldSenderIds,
-    recordedSenderMessageIds: committedMessageIds
-  }));
-  let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
-  let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
-  const withdrawnDisplayIds = $derived(new Set(stackOutgoingMessages.map(message => message.displayMessageId ?? message.messageId)));
   let visibleHeldRows = $derived(heldPromptRows(
     (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)
       && (held.sender_message_id == null || !committedMessageIds.has(held.sender_message_id)
         && !sentMessages.some(message => message.messageId === held.sender_message_id && message.accepted))),
-    stackOutgoingMessages
+    []
   ));
 
   // A queued or accepted-steer note describes traffic that a turn ending settles. A
@@ -488,7 +503,6 @@
       opening = false;
       view = null;
       reader = null;
-      composerStackMessageIds = [];
       void adoptUnopenedPersistence(persistenceKey);
       return;
     }
@@ -497,6 +511,9 @@
 
   async function adopt(id: string): Promise<void> {
     closeStream();
+    outgoingReady = false;
+    sentMessages = [];
+    activePersistenceId = null;
     openedId = id;
     // Restoring this tab's messages is part of opening. App recovery must not start
     // a second opening while that asynchronous restoration still owns the first.
@@ -511,11 +528,8 @@
     // A reload can happen after the first request reached the server but before its
     // response moved this tab's recovery pointer. Reconcile the owner's stable identity
     // into the canonical Conversation before looking for remembered messages there.
-    const persistenceMoved = (
-      persistenceKey !== id
-        ? await moveRememberedOutgoingMessages(persistenceKey, id)
-        : true
-    );
+    const persistenceMoved = readOnly || persistenceKey === id
+      || await moveRememberedOutgoingMessages(persistenceKey, id);
     if (openedId !== id) return;
     activePersistenceId = persistenceMoved ? id : persistenceKey;
     if (!persistenceMoved) {
@@ -524,21 +538,25 @@
     // Whatever this tab was still holding for this conversation when it was last here.
     const recalled = await recallOutgoingMessages(activePersistenceId);
     if (openedId !== id) return;
-    sentMessages = reserveRecalledOutgoingMessages(recalled);
-    composerStackMessageIds = sentMessages
-      .filter((message) => message.knownFate === "waiting_for_the_agent")
-      .map((message) => message.messageId);
+    sentMessages = reserveRecalledOutgoingMessages(recalled.filter(message =>
+      !message.settledConversationId || message.settledConversationId === id
+    ));
+    outgoingReady = true;
+    void checkSendReceipts();
     await openConversation(id);
   }
 
   async function adoptUnopenedPersistence(storageKey: string): Promise<void> {
+    outgoingReady = false;
+    sentMessages = [];
+    activePersistenceId = null;
     const recalled = reserveRecalledOutgoingMessages(await recallOutgoingMessages(storageKey));
     if (openedId !== null || conversationId !== null || persistenceKey !== storageKey) return;
     activePersistenceId = storageKey;
     sentMessages = recalled;
-    composerStackMessageIds = sentMessages
-      .filter((message) => message.knownFate === "waiting_for_the_agent")
-      .map((message) => message.messageId);
+    outgoingReady = true;
+    theRecordHasBeenRead();
+    void checkSendReceipts();
   }
 
   function closeStream(): void {reader?.close();reader=null;}
@@ -574,7 +592,6 @@
     const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
-      livenessPulse++;
       if(local.coverage!==lastCoverage){
         lastCoverage=local.coverage;
         void refreshView(id);
@@ -663,18 +680,6 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  /** Send, having already drawn the message.
-   *
-   * The message is this browser's before it is anybody else's: its words and pictures are
-   * here, so it is given its id and the instant it was sent and put in the thread straight
-   * away.
-   *
-   * How it ends decides what happens to the copy, and there are three endings rather than
-   * two. The server saying no means this message reached nothing: the copy goes and its
-   * content goes back to the person who composed it. The server saying yes means the copy waits for
-   * its row. No answer at all is neither — the message may have arrived and may not, so
-   * the copy stays saying exactly that and the words are not put back.
-   */
   async function reconcileLocalSend(messageId: string): Promise<boolean> {
     for (const key of new Set([activePersistenceId, openedId, conversationId, persistenceKey])) {
       if (!key) continue;
@@ -693,16 +698,15 @@
     sendContext?: ComposerSendContext,
     reconcilesSequence?: number
   ): Promise<boolean> {
-    if (readOnly) return false;
+    if (readOnly || !outgoingReady) return false;
     if (sendContext?.destination && (sendContext.destination.kind !== uploadOwner?.kind || sendContext.destination.id !== uploadOwner?.id)) {
       errorNote = "This pending message belongs to another destination. Return it to the original composer.";
       return false;
     }
     errorNote = null;
     fateNote = null;
-    dockedUndeliveredReason = null;
     // Save the words before transport, but draw them only after their destination is known.
-    const message = { ...mintOutgoingMessage({
+    const message: OutgoingMessage = { ...mintOutgoingMessage({
       content,
       senderLabel,
       mode,
@@ -710,8 +714,20 @@
       pickedReasoningEffort: picked.reasoningEffort,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
-    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}),
+    }), queueWhilePending: sendContext?.queueWhilePending ?? (mode === "queue" && running), ...(sendContext ? {
+      messageId: sendContext.messageId,
+      sentAtUnixMilliseconds: sendContext.sentAtUnixMilliseconds ?? Date.now(),
+      attachmentNames: sendContext.attachmentNames
+    } : {}), ...(displayMessageId ? {displayMessageId} : {}),
       ...(reconcilesSequence === undefined ? {} : {reconcilesSequence}) };
+    const body = sendBodyFor({
+      message, current, picked,
+      conversationId: sendContext ? sendContext.expectedConversationId : sendOwner ? openedId ?? conversationId : started ? openedId : null
+    });
+    if (sendOwner) {
+      const { conversation_id, backend_key, model, reasoning_effort } = body;
+      message.sendTarget = { conversation_id, backend_key, model, reasoning_effort };
+    }
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -733,87 +749,100 @@
     }
     activePersistenceId = persistenceConversationId;
     try {
-      // The conversation this message is for is one the record has answered for. Holding
-      // an id is not the same as one existing — a Ticket names its conversation before
-      // this pane has read it, and the dev page puts a name in the address before anything
-      // has been started under it — so an id nothing has answered for says none.
-      const delivered = await sendMessage(
-        sendBodyFor({ message, current, picked, conversationId: sendContext ? sendContext.expectedConversationId : started ? openedId : null })
-      );
-      // The answer is the fate, with the conversation it happened in alongside it.
-      const fate = delivered;
-      if (
-        delivered.conversation_id !== null
-        && delivered.conversation_id !== persistenceConversationId
-      ) {
-        if (await moveRememberedOutgoingMessages(
-          persistenceConversationId,
-          delivered.conversation_id
-        )) {
-          activePersistenceId = delivered.conversation_id;
-        } else {
-          activePersistenceId = persistenceConversationId;
-          errorNote = "The browser could not carry the pending file into this conversation.";
-        }
-      }
-      if (delivered.conversation_id !== null && delivered.conversation_id !== openedId) {
-        // The message made a conversation. Pointed at it and opened, without recalling:
-        // what this browser is holding is the message being sent right now, which is newer
-        // than anything remembered.
-        openedId = delivered.conversation_id;
-        await openConversation(delivered.conversation_id);
-      }
-      const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
-      // A durable refusal/uncertainty speaks on its bubble, not a second receipt.
-      fateNote = terminalFate && delivered.conversation_id === null ? fateSentence(fate) : null;
-      fateNoteIsTerminal = terminalFate;
-      fateNoteMessageId = terminalFate ? message.messageId : null;
-      if (terminalFate) {
-        // A durable outcome replaces this same display slot. It is not a failed
-        // transport retry: restoring the old message would create a second copy.
-        const recordedOutcome = delivered.conversation_id !== null;
-        if (recordedOutcome) acknowledgedMessageIds.add(message.messageId);
-        await stopDrawing(message.messageId, recordedOutcome);
-        await refreshView();
-        return recordedOutcome;
-      }
-      if (fate.fate === "started" || fate.fate === "injected") {
-        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId ? {...candidate, accepted:true} : candidate));
-      }
-      // Held for a busy agent: it has reached nothing yet, and it says so rather than
-      // sitting there looking like a message something is answering.
-      if (fate.fate === "queued" && !committedMessageIds.has(message.messageId)) {
-        if (message.displayMessageId) acknowledgedMessageIds.delete(message.displayMessageId);
-        await whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
-        if (!composerStackMessageIds.includes(message.messageId)) {
-          composerStackMessageIds = [...composerStackMessageIds, message.messageId];
-        }
-      }
-      await refreshView();
-      return true;
+      const delivered = await sendMessage(body);
+      return await applySendResult(message, delivered);
     } catch (error) {
-      // The correlated record already settled this send. A later transport failure
-      // cannot return its words to the composer or undo that committed destination.
-      if (committedMessageIds.has(message.messageId)) return true;
-      // The machine the conversation runs on is away: the message stays in the thread,
-      // not delivered, with its reason, rather than going back with the server's words.
-      const machineOffline = theMachineIsOfflineRefusal(error);
-      if (machineOffline !== null) {
-        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId
-          ? {...candidate, knownFate: "machine_offline" as const, refusal: machineOffline} : candidate));
-        if (conversationState !== "rest") return true;
-        dockedUndeliveredReason = machineOffline.reason;
-        return false;
+      return await applySendError(message, error);
+    }
+  }
+
+  async function applySendResult(
+    message: OutgoingMessage, delivered: DeliveredMessage
+  ): Promise<boolean> {
+    if (!sentMessages.some(candidate => candidate.messageId === message.messageId)) return true;
+    // Only the canonical conversation pointer can open a conversation. A valid retry can
+    // return a receipt for a conversation that has since been reset.
+    const id = delivered.conversation_id;
+    const destinationIsCurrent = id !== null && id === openedId;
+    const awaitingFirstLink = id !== null && openedId === null && conversationId === null;
+    switch (delivered.fate) {
+      case "started":
+      case "injected":
+        if (!destinationIsCurrent && !awaitingFirstLink) {
+          await stopDrawing(message.messageId);
+          return true;
+        }
+        await updateOutgoing(message.messageId, {accepted: true, settledConversationId: id ?? undefined});
+        break;
+      case "queued":
+        if (destinationIsCurrent || awaitingFirstLink) await updateOutgoing(message.messageId, {
+          knownFate: "waiting_for_the_agent", settledConversationId: id ?? undefined
+        });
+        else await stopDrawing(message.messageId);
+        break;
+      case "refused":
+      case "suppressed":
+        if (!message.sendTarget) {
+          errorNote = fateSentence(delivered);
+          await stopDrawing(message.messageId);
+          return false;
+        }
+        await updateOutgoing(message.messageId, {
+          knownFate: "not_sent",
+          failureNote: fateSentence(delivered) ?? "The message did not reach the agent."
+        });
+        break;
+      case "uncertain":
+        await updateOutgoing(message.messageId, {
+          knownFate: "agent_unconfirmed",
+          failureNote: "The agent did not confirm receipt."
+        });
+        break;
+    }
+    if (destinationIsCurrent && id !== null) void refreshView(id);
+    return true;
+  }
+
+  async function applySendError(message: OutgoingMessage, error: unknown): Promise<boolean> {
+    if (committedMessageIds.has(message.messageId)) return true;
+    const machineOffline = theMachineIsOfflineRefusal(error);
+    if (theServerRefusedTheSend(error)) {
+      if (message.sendTarget) {
+        await updateOutgoing(message.messageId, {
+          knownFate: machineOffline ? "machine_offline" : "not_sent",
+          refusal: machineOffline ?? undefined,
+          failureNote: sentenceFor(error)
+        });
+        return true;
       }
       errorNote = sentenceFor(error);
-      if (theServerRefusedTheSend(error)) {
-        await stopDrawing(message.messageId);
-        return false;
-      }
-      await whatIsKnownAbout(message.messageId, "answer_never_came_back");
-      errorNote = null; // The retained bubble now states this unanswered transport outcome.
-      return true;
+      await stopDrawing(message.messageId);
+      return false;
     }
+    await updateOutgoing(message.messageId, {knownFate: "answer_never_came_back"});
+    void checkSendReceipts([message]);
+    return true;
+  }
+
+  async function checkSendReceipts(messages = sentMessages): Promise<void> {
+    const owner = sendOwner;
+    if (owner === null || readOnly) return;
+    await Promise.all(messages.map(async message => {
+      if (message.accepted || acknowledgedMessageIds.has(message.messageId) || sendStatusChecks.has(message.messageId)
+        || message.knownFate === "not_sent" || message.knownFate === "machine_offline"
+        || message.knownFate === "agent_unconfirmed" || message.knownFate === "nothing_yet" && messages === sentMessages) return;
+      sendStatusChecks.add(message.messageId);
+      try {
+        const result = await readOwnerSend(owner, message.messageId);
+        if (result && !readOnly && owner.kind === sendOwner?.kind && owner.id === sendOwner.id) {
+          await applySendResult(message, result);
+        }
+      } catch {
+        // The stored send is available for the next connection or a manual retry.
+      } finally {
+        sendStatusChecks.delete(message.messageId);
+      }
+    }));
   }
 
   async function holdOnTo(
@@ -830,7 +859,6 @@
       }
     }
     sentMessages = messages;
-    composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
     if (persistenceConversationId !== null) {
       return rememberOutgoingMessages(persistenceConversationId, messages.filter(message => !acknowledgedMessageIds.has(message.messageId)));
     }
@@ -839,43 +867,67 @@
 
   function forgetUndurableMessage(messageId: string): void {
     sentMessages = sentMessages.filter((message) => message.messageId !== messageId);
-    composerStackMessageIds = composerStackMessageIds.filter((candidate) => candidate !== messageId);
     releaseOutgoingMessageImages(messageId);
     releaseOutgoingMessageFiles(messageId);
   }
 
-  /** Send the same words again, as a new message.
-   *
-   * A new name and a new instant, because that is what this is. The first one may have
-   * arrived, and nothing here retries a message behind a person's back — so if it did
-   * arrive, the conversation ends up with two, which is the person's choice to make and
-   * not this browser's guess.
-   *
-   * The uncertain copy goes first and comes back if the send does not get away. That order
-   * is what lets a message carrying pictures or files be sent again at all: the tab's byte
-   * budget counts every copy it is holding, and two copies of the same attachment would
-   * not fit through it.
-   */
-  async function sendTheseWordsAgain(senderMessageId: string): Promise<void> {
-    const uncertain = sentMessages.find((message) => message.messageId === senderMessageId);
-    if (uncertain === undefined) return;
-    acknowledgedMessageIds.add(senderMessageId);
-    await stopDrawing(senderMessageId, true);
-    const away = await send(uncertain.content, uncertain.mode, {
-      model: uncertain.pickedModel ?? null,
-      reasoningEffort: uncertain.pickedReasoningEffort ?? null,
-      effortIsSet: uncertain.effortIsSet,
-      backendKey: uncertain.pickedBackend
-    }, uncertain.displayMessageId ?? uncertain.messageId);
-    if (away) return;
-    // The server turned it away, so the words are nowhere. Put the copy back rather than
-    // let a person lose what they wrote to a button they pressed.
-    if (!reserveOutgoingMessageImages(uncertain)) return;
-    if (!reserveOutgoingMessageFiles(uncertain)) {
-      releaseOutgoingMessageImages(senderMessageId);
-      return;
+  async function sendTheseWordsAgain(messageId: string): Promise<void> {
+    const message = sentMessages.find(candidate => candidate.messageId === messageId);
+    const owner = sendOwner;
+    if (!message || !owner || readOnly || sendStatusChecks.has(messageId)) return;
+    const currentDestination = () => conversationId ?? openedId;
+    const currentOwner = () => !readOnly && owner.kind === sendOwner?.kind && owner.id === sendOwner.id;
+    const startingDestination = currentDestination();
+    sendStatusChecks.add(messageId);
+    let repeated = false;
+    try {
+      const known = await readOwnerSend(owner, messageId);
+      if (!currentOwner() || !sentMessages.some(candidate => candidate.messageId === messageId)) return;
+      if (known && known.fate !== "refused" && known.fate !== "suppressed") {
+        await applySendResult(message, known);
+        return;
+      }
+      const target = message.sendTarget;
+      // Older attempts do not carry the original request settings. Only a real refusal
+      // authorizes a new send from one of those attempts.
+      const failed = known !== null || message.knownFate === "not_sent" || message.knownFate === "machine_offline";
+      if (!target && !failed) return;
+      const originalConversation = known?.conversation_id ?? target?.conversation_id ?? null;
+      if (failed && (originalConversation !== currentDestination() || startingDestination !== currentDestination())) {
+        errorNote = "This message belongs to an earlier conversation.";
+        return;
+      }
+      if (failed) {
+        await stopDrawing(messageId);
+        if (!currentOwner() || startingDestination !== currentDestination()) return;
+        const away = await send(message.content, message.mode, {
+          model: message.pickedModel ?? null,
+          reasoningEffort: message.pickedReasoningEffort ?? null,
+          effortIsSet: message.effortIsSet,
+          backendKey: message.pickedBackend
+        }, message.displayMessageId ?? message.messageId);
+        if (!away) await holdOnTo([...sentMessages, message]);
+        return;
+      }
+      if (!target || !sentMessages.some(candidate => candidate.messageId === messageId)) return;
+      repeated = true;
+      const result = await postOwnerSend(ownerSendPath(owner), {
+        ...target,
+        mode: message.mode,
+        sender_label: message.senderLabel,
+        sender_message_id: message.messageId,
+        sent_at_unix_milliseconds: message.sentAtUnixMilliseconds,
+        content: message.content,
+        reconciles_sequence: message.reconcilesSequence
+      });
+      await applySendResult(message, result);
+    } catch (error) {
+      sendStatusChecks.delete(messageId);
+      if (repeated && currentOwner()) await applySendError(message, error);
+      else errorNote = sentenceFor(error);
+    } finally {
+      sendStatusChecks.delete(messageId);
     }
-    await holdOnTo([...sentMessages, uncertain]);
   }
 
   function stopDrawing(messageId: string, retainPresentation = false): Promise<boolean> {
@@ -883,22 +935,18 @@
     return holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
   }
 
-  function whatIsKnownAbout(
-    messageId: string,
-    knownFate: OutgoingMessageKnownFate
-  ): Promise<boolean> {
-    return holdOnTo(
-      sentMessages.map((message) =>
-        message.messageId === messageId ? { ...message, knownFate } : message
-      )
+  function updateOutgoing(messageId: string, changes: Partial<OutgoingMessage>): Promise<boolean> {
+    const messages = sentMessages.map(message =>
+      message.messageId === messageId ? {...message, ...changes} : message
     );
+    return holdOnTo(messages);
   }
 
   async function stop(): Promise<void> {
     if (readOnly || openedId === null) return;
     try {
       await interruptConversation(openedId);
-      await refreshView();
+      void refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -911,19 +959,27 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(heldPromptId: string, forEdit = false): Promise<void> {
-    if (readOnly || openedId === null) return;
+  async function discard(heldPromptId: string, forEdit = false): Promise<boolean> {
+    if (readOnly || openedId === null) return false;
     errorNote = null;
+    const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
+    let discarded: boolean;
     try {
-      const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
-      await discardHeldPrompt(openedId, heldPromptId, forEdit);
-      // Taken back to edit: the record keeps no row for it, so nothing else takes this
-      // tab's copy off the screen. Its words are in the composer now.
-      if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
-      await refreshView();
+      ({ discarded } = await discardHeldPrompt(openedId, heldPromptId, forEdit));
     } catch (error) {
       errorNote = sentenceFor(error);
+      // No answer is not a refusal: the server can still discard the message. Only the
+      // record says what happened, so this one case waits for it.
+      await refreshView();
+      return !(view?.held_prompts ?? []).some((held) => held.held_prompt_id === heldPromptId);
     }
+    // Taken back to edit: the record keeps no row for it, so nothing else takes this
+    // tab's copy off the screen. Its words are in the composer now.
+    if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
+    // The write is answered. The row leaves when the record is read again, and the
+    // caller waits for that only a short, limited time.
+    await withinScreenWait(refreshView());
+    return discarded;
   }
 
   async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
@@ -942,7 +998,7 @@
         fateNoteIsTerminal = true;
         fateNoteMessageId = promotedMessageId;
       }
-      await refreshView();
+      await withinScreenWait(refreshView());
     } catch (error) {
       errorNote = sentenceFor(error);
     }
@@ -951,6 +1007,7 @@
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
     if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    if (answeredPermissionAsk === askId) return;
     askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
@@ -959,7 +1016,8 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take that answer. Cancelling the turn always works.";
-      await refreshView();
+      if (fate !== "refused") answeredPermissionAsk = askId;
+      void refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -967,9 +1025,10 @@
     }
   }
 
-  async function submitUserInput(answers: UserInputAnswers): Promise<void> {
+  async function submitUserInput(answers: UserInputAnswers): Promise<boolean> {
     const requestId = userInput?.requestId;
-    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return false;
+    if (answeredUserInput === requestId) return false;
     askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
@@ -978,9 +1037,12 @@
       askNote = fate !== "refused"
         ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take those answers. You can try again or stop the turn.";
-      await refreshView();
+      if (fate !== "refused") answeredUserInput = requestId;
+      void refreshView();
+      return fate !== "refused";
     } catch (error) {
       askNote = sentenceFor(error);
+      return false;
     } finally {
       busy = false;
     }
@@ -997,12 +1059,11 @@
       return;
     }
     closeStream();
-    // The old conversation's activity has been killed, so nothing this tab was holding for
-    // it is going anywhere. It is let go before the id changes, or it would be left behind
-    // under a name nothing here answers to any more.
-    void holdOnTo([]);
-    composerStackMessageIds = [];
+    // Leave saved sends under the conversation where they were attempted.
+    sentMessages = [];
+    activePersistenceId = null;
     openedId = null;
+    void adoptUnopenedPersistence(persistenceKey);
     view = null;
     reader = null;
     fateNote = null;
@@ -1050,6 +1111,7 @@
   $effect(() => tellWhenAWaitRunsOut(sentMessages, (told) => void holdOnTo(told)));
 
   onMount(() => {
+    if (conversationId === null) void adoptUnopenedPersistence(persistenceKey);
     // App recovery also repairs a transcript whose own stream stalled silently.
     // Unknown sends still need receipt recovery when their transcript is not visible.
     // The subscription's initial value is not a reconnect: opening owns that read.
@@ -1059,12 +1121,14 @@
       const cameBack = nowReachable && reachable === false;
       reachable = nowReachable;
       if (!cameBack) return;
+      void checkSendReceipts();
       const transcriptIsVisible = documentIsVisible && conversationState !== "rest";
       if (!transcriptIsVisible && !anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
       readTheRecordAgain();
     });
     const onVisible = (): void => {
       if (document.visibilityState !== "visible") return;
+      void checkSendReceipts();
       // Coming back to the tab is the same read as opening it: what has happened since
       // the row this reader holds?
       readTheRecordAgain();
@@ -1082,11 +1146,11 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
+  bind:this={pane}
   onPreviewRunSelection={(selection) => { composerSelection = selection; }}
   title={title ?? null}
   subtitle={subtitle ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
-  {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
@@ -1094,7 +1158,7 @@
   workspaceFolder={view?.workspace_path_policy === "executor_default"
     ? "Panels workspace (Mac)" : view?.workspace_folder ?? null}
   {reader}
-  {acknowledgedMessageIds}
+  acknowledgedMessageIds={committedMessageIds}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   draftKey={persistenceKey}
@@ -1103,11 +1167,10 @@
   transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
-  outgoingMessages={transcriptOutgoingMessages}
+  outgoingMessages={sentMessages}
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
-  {livenessPulse}
   {running}
   {ask}
   {userInput}
@@ -1129,7 +1192,6 @@
   recordedCredentialRequest={view?.pending_credential_request ?? null}
   fateNote={visibleFateNote}
   errorNote={errorNote ?? pickerReadError}
-  undeliveredReason={dockedUndeliveredReason}
   {connectionTrouble}
   {readOnly}
   {historyOwner}
@@ -1141,11 +1203,11 @@
   bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
-  composerDisabled={busy || opening}
+  sendAvailable={outgoingReady}
   onSend={(content, mode, picked, context) => send(content, mode, picked, undefined, context)}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
-  onSubmitUserInput={(answers) => void submitUserInput(answers)}
+  onSubmitUserInput={submitUserInput}
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(heldPromptId, forEdit) => discard(heldPromptId, forEdit)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}

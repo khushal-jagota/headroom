@@ -26,7 +26,7 @@ import type { ProviderOptionDescriptor, SelectProviderOptionDescriptor } from ".
 import type { OutgoingMessage } from "./outgoing";
 import type { TranscriptRow } from "./transcript";
 import type { ConversationViewItem, CredentialRequestRowBody } from "./view/contracts";
-import { refusalSentence } from "./transcript";
+import { messageNotDelivered, refusalSentence } from "./transcript";
 import { latestMessageOutcomes } from "./messageOutcome";
 
 // --- what an ask offers ------------------------------------------------------------------
@@ -359,7 +359,7 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
     case "injected":
       return "steered into the running turn";
     case "refused":
-      return `not delivered · ${refusalSentence(fate.refusal_reason)}`;
+      return messageNotDelivered(refusalSentence(fate.refusal_reason));
     case "uncertain":
       return "delivery uncertain · do not resend";
     case "suppressed":
@@ -376,7 +376,7 @@ export function recordedMessageFateSentence(
     case "prompt":
     case "prompt_discarded": return null;
     case "prompt_delivery_refused":
-      return `not delivered · ${refusalSentence(outcome.payload.refusal_reason, outcome.payload.refusal_detail)}`;
+      return messageNotDelivered(refusalSentence(outcome.payload.refusal_reason));
     case "prompt_delivery_uncertain": return "delivery uncertain · do not resend";
     default: return fallback;
   }

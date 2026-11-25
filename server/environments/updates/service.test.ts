@@ -90,7 +90,18 @@ test('a newer offer retains machine failure and recomputes interruption at the p
   vi.spyOn(service as unknown as { launch(): void }, 'launch').mockImplementation(() => {});
   try {
     service.start();
+    vi.mocked(service.ready_release).mockReturnValueOnce(null);
+    expect(service.status()).toMatchObject({
+      state: 'up_to_date',
+      activity: 'busy',
+      allowed_actions: [],
+    });
     const offered = service.status();
+    expect(offered).toMatchObject({
+      state: 'available',
+      activity: 'busy',
+      allowed_actions: ['update'],
+    });
     expect(offered.machines[0]).toMatchObject({
       state: 'failed',
       can_retry: true,

@@ -14,7 +14,11 @@ export const antigravity_driver: AgentDriver<null> = {
   manifest: antigravity_manifest,
   // agy reads AGENTS.md (and GEMINI.md) from its workspace.
   home_instructions_file: 'AGENTS.md',
-  capabilities: ACP_CHILD_CAPABILITIES,
+  capabilities: {
+    ...ACP_CHILD_CAPABILITIES,
+    // agy 1.5.14 resumes itself after an async command completes (live ACP probe).
+    turns: { ...ACP_CHILD_CAPABILITIES.turns, wakesOnBackgroundCompletion: true },
+  },
   plan_selection_transition: acp_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: antigravity_models,

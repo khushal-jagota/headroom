@@ -20,7 +20,7 @@ Each machine entry contains:
 | `present` | Whether the machine has a current lease. |
 | `build_id` | Last reported content identity, or null for an unknown or historical identity. |
 | `target_build_id` | Publication content identity for this platform, or null when unavailable. |
-| `changed` | Whether the target requires another machine build. Missing identities count as changed. |
+| `changed` | Whether the target requires another machine build. When the publication has a build identity, a missing machine identity counts as changed. Older publications without a target build identity compare the machine’s reported application revision with the release revision. |
 | `state` | One of the states below. |
 | `attempt_id` | Server attempt that owns this machine target, or null without a target. Use it in the retry URL. It can differ from the top-level attempt after a newer server attempt fails. |
 | `request_id` | Current machine request, or null before a request exists. |

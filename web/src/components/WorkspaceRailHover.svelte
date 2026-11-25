@@ -42,9 +42,11 @@
   let activity = $derived(preview.activity === "Working" ? elapsed.seconds !== null ? `Working · ${formatDuration(elapsed.seconds)}` : preview.activity
     : workerSetup ? workerSetupSentence(workerSetup, setupElapsed.seconds) : preview.activity);
   const health=createQuery(() => ({...queries.executorHealth(worker?.machine_id),enabled:worker?.locale === "macos"}));
+  const machines = createQuery(() => queries.machines());
+  const machineName = $derived(machines.data?.machines.find(item => item.machine_id === worker?.machine_id)?.name);
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
   let macHealth = $derived(health.isError ? undefined : health.data);
-  let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker) : null) ?? macPresenceLabel(macHealth) ?? MACHINE_ACTIVITY_UNKNOWN
+  let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker, machineName) : null) ?? macPresenceLabel(macHealth, undefined, undefined, machineName) ?? MACHINE_ACTIVITY_UNKNOWN
     : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);

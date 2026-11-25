@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until Khushal presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
+Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until the owner presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
 ```text
 push to main ─┬→ Linux build once → seal → admit → boot and stop ───────────────┐
@@ -35,7 +35,7 @@ A release brings its own Node packages, so installation never runs a package ins
 
 The host supplies the glibc loader and a short named list of system libraries, Node 22.18.0 or newer, media tools such as `ffprobe`, and every credential. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract, and Panels checks the host against it before it offers the release. Panels accepts only version 2, the Node release.
 
-An update checks a new release the way a normal installer does: against what the release says about itself, never against what the running version expects. The archive must match the receipt, the unpacked tree must match its own manifest, contract and inventory, its launch files must exist, and the host must meet its contract. The running version does not run release code before the swap. The installer's health check after the swap, with rollback, proves that the release runs. The heavier probe, which loads every server dependency and runs the backend tools, belongs to publication, where it checks a release that the same code built.
+An update checks a new release the way a normal installer does: against what the release says about itself, never against what the running version expects. The archive must match the receipt, the unpacked tree must match its own manifest, contract and inventory, its launch files must exist, and the host must meet its contract. The running version does not run release code before the swap. The installer's health check after the swap, with rollback, proves that the release runs. The heavier probe, which loads every server dependency and runs the backend tools, belongs to publication, where it checks a release that the same code built. On Linux and Mac, that probe first resolves the server entrypoints’ static runtime imports inside the package without application execution.
 
 Claude, Codex and Antigravity conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 
@@ -45,7 +45,7 @@ The workflow also keeps the Actions publication for the transition. The deployed
 
 ## How an install happens
 
-**Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from a push to `main`. It reads complete server publications from GitHub Releases, with the source revision and proof from `publish-typescript-release.yml` in its own repository. It does not need the original Actions artifacts or run records. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets the release's runtime contract, and keeps the matching Mac runtime. A release accepts a database at its own schema revision or at an earlier revision on its own step chain (the Python baseline's last revision, or an earlier TypeScript schema step). An older revision, or an unknown, ahead, or divergent one, is refused, and a backup does not change that. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.
+**Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from a push to `main`. It orders stable server publications from every page of GitHub Releases by publication time, newest first, with the source revision and proof from `publish-typescript-release.yml` in its own repository. It does not need the original Actions artifacts or run records. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets the release's runtime contract, and keeps the matching Mac runtime. A release accepts a database at its own schema revision or at an earlier revision on its own step chain (the Python baseline's last revision, or an earlier TypeScript schema step). An older revision, or an unknown, ahead, or divergent one, is refused, and a backup does not change that. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.
 
 **The press.** Only the owner can press **Update**, and a press always starts the update. Running work is never asked, stopped, or waited for by the server. The card names the work that the update interrupts, for information. There is no wait for idle, no confirmation, no cancel, and no paused state. The server checks Ticket integrity and the release schema, writes the trial marker, and launches the installer. This takes seconds.
 
@@ -81,7 +81,7 @@ Every update ends as done or failed. A failed update writes its reason to the jo
 
 ## The server and each machine
 
-The server keeps its own update attempt. Each registered machine keeps a separate state and retry. A new offer does not erase a failed machine's retry. The server compares machine content identities and skips unchanged builds and their downloads. Machines without a content identity count as changed.
+The server keeps its own update attempt. Each registered machine keeps a separate state and retry. A new offer does not erase a failed machine's retry. The server compares machine content identities and skips unchanged builds and their downloads. A known target build requires a matching machine identity. Older publications without machine build identities use the machine’s reported application revision to recognize completion.
 
 The machine channel retains targets for absent machines. Changed machines activate only after the server succeeds. A machine failure leaves its previous runtime available. Linux archive readiness survives a server restart through validation of the retained archive.
 
@@ -129,4 +129,4 @@ The archive digest detects damage after a write. If a write reaches the installe
 - `scripts/dev`: the npm launcher for development.
 - `ops/panels-environments/`: user units.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-24._

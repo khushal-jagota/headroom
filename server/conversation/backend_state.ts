@@ -3,11 +3,8 @@ import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { built_in_driver_of } from '../drivers/built_in_manifests.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import {
-  HOME_MACHINE_ID,
-  ORIGINAL_MAC_MACHINE_ID,
-  legacy_machine_id,
-} from '../execution_identity.ts';
+import { HOME_MACHINE_ID, legacy_machine_id } from '../execution_identity.ts';
+import { read_presence } from '../executor/vps_presence_store.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
@@ -18,57 +15,74 @@ import type {
 } from './backend_usage/contracts.ts';
 export class BackendStateStore {
   private readonly database: Database;
+  private readonly capability_sources = new Map<string, string>();
   constructor(database: Database) {
     this.database = database;
+    database.read((sql) => {
+      for (const row of sql.all<{ machine_id: string; backend_key: string }>(
+        'SELECT machine_id,backend_key FROM machine_backend_state WHERE capabilities_json IS NOT NULL',
+      ))
+        this.capability_sources.set(
+          JSON.stringify([row.machine_id, row.backend_key]),
+          capability_source(sql, row.machine_id, row.backend_key),
+        );
+    });
   }
   read_usage(
     backend_key: BackendInstanceId,
     machine_id = HOME_MACHINE_ID,
   ): CachedBackendUsage | null {
-    if (machine_id !== HOME_MACHINE_ID) {
-      const row = this.database.read((sql) =>
-        sql.get<{ usage_json: string | null }>(
-          'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
-          [machine_id, backend_key],
-        ),
-      );
-      if (!row?.usage_json) return null;
-      const value = JSON.parse(row.usage_json);
-      return {
-        observed_at: new Date(value.observed_at),
-        windows: value.windows.map((window: Record<string, unknown>) => ({
-          ...window,
-          resets_at: new Date(window.resets_at as string),
-        })),
-      };
-    }
-    return this.database.read((sql) => read_cached_backend_usage(sql, backend_key));
+    return this.database.read((sql) => backend_card_state(sql).read_usage(backend_key, machine_id));
   }
+
   read_machine_capabilities(
     machine_id: string,
     backend_key: BackendInstanceId,
-  ): { can_sign_in: boolean; reports_allowance_usage: boolean } {
+  ): { can_sign_in: boolean; reports_allowance_usage: boolean } | null {
     const row = this.database.read((sql) =>
       sql.get<{ capabilities_json: string | null }>(
         'SELECT capabilities_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
         [machine_id, backend_key],
       ),
     );
-    return row?.capabilities_json
-      ? JSON.parse(row.capabilities_json)
-      : { can_sign_in: false, reports_allowance_usage: false };
+    return row?.capabilities_json ? JSON.parse(row.capabilities_json) : null;
+  }
+  capability_source(machine_id: string, backend_key: BackendInstanceId): string {
+    return this.database.read((sql) => capability_source(sql, machine_id, backend_key));
+  }
+  capabilities_current(
+    machine_id: string,
+    backend_key: BackendInstanceId,
+    source: string,
+  ): boolean {
+    return this.capability_sources.get(JSON.stringify([machine_id, backend_key])) === source;
   }
   keep_machine_capabilities(
     machine_id: string,
     backend_key: BackendInstanceId,
     value: { can_sign_in: boolean; reports_allowance_usage: boolean },
-  ): void {
-    this.database.write((tx) => {
+    source = this.capability_source(machine_id, backend_key),
+  ): boolean {
+    const existing = this.read_machine_capabilities(machine_id, backend_key);
+    if (
+      existing !== null &&
+      existing.can_sign_in === value.can_sign_in &&
+      existing.reports_allowance_usage === value.reports_allowance_usage
+    ) {
+      if (this.capability_source(machine_id, backend_key) !== source) return false;
+      this.capability_sources.set(JSON.stringify([machine_id, backend_key]), source);
+      return true;
+    }
+    const kept = this.database.write((tx) => {
+      if (capability_source(tx, machine_id, backend_key) !== source) return false;
       tx.run(
-        'INSERT INTO machine_backend_state(machine_id,backend_key,capabilities_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET capabilities_json=excluded.capabilities_json',
+        'INSERT INTO machine_backend_state(machine_id,backend_key,capabilities_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET capabilities_json=excluded.capabilities_json WHERE capabilities_json IS NOT excluded.capabilities_json',
         [machine_id, backend_key, JSON.stringify(value)],
       );
+      return true;
     });
+    if (kept) this.capability_sources.set(JSON.stringify([machine_id, backend_key]), source);
+    return kept;
   }
   keep_successful_usage(result: BackendUsageResult, machine_id = HOME_MACHINE_ID): void {
     if (result.outcome !== 'succeeded' || result.observed_at === null)
@@ -267,8 +281,6 @@ function machine_name(sql: ReadSql, machine: string): string {
     machine_id,
   ]);
   if (!row) throw new PlannerError('validation', 'Unknown machine destination', { machine_id });
-  if (machine_id === HOME_MACHINE_ID && row.name === 'VPS') return 'the VPS';
-  if (machine_id === ORIGINAL_MAC_MACHINE_ID && row.name === 'Mac') return 'the Mac';
   return row.name;
 }
 export function require_usable_model(
@@ -295,4 +307,43 @@ export function write_model_enablement(
       'ON CONFLICT(backend_key,model_id) DO UPDATE SET enabled=excluded.enabled',
     [backend_key, model_id, Number(enabled)],
   );
+}
+
+/** A reconnect or a new provider snapshot invalidates capability observations, not unrelated writes. */
+export function capability_source(sql: ReadSql, machine_id: string, backend_key: string): string {
+  const presence = read_presence(sql, machine_id);
+  return JSON.stringify([
+    presence?.executor_incarnation ?? null,
+    presence?.continuous_since_ms ?? null,
+    presence?.identity?.connection_generation ?? null,
+    presence?.lease?.driver_kinds ?? [],
+    sql.get<{ snapshot_json: string }>(
+      'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
+      [machine_id, backend_key],
+    )?.snapshot_json ?? null,
+  ]);
+}
+export function backend_card_state(sql: ReadSql) {
+  return {
+    read_usage(
+      backend_key: BackendInstanceId,
+      machine_id = HOME_MACHINE_ID,
+    ): CachedBackendUsage | null {
+      if (machine_id === HOME_MACHINE_ID) return read_cached_backend_usage(sql, backend_key);
+      const row = sql.get<{ usage_json: string | null }>(
+        'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
+        [machine_id, backend_key],
+      );
+      if (!row?.usage_json) return null;
+      const value = JSON.parse(row.usage_json);
+      return {
+        observed_at: new Date(value.observed_at),
+        windows: value.windows.map((window: Record<string, unknown>) => ({
+          ...window,
+          resets_at: new Date(window.resets_at as string),
+        })),
+      };
+    },
+    read_disabled_models: (backend_key: BackendInstanceId) => disabled_models(sql, backend_key),
+  };
 }

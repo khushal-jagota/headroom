@@ -170,7 +170,6 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     // older home server refuses the route, so a failed report only costs the display.
     let reports = Promise.resolve();
     const report_setup = (step: WorkerSetupReport['step']) => {
-      if (ticket_id === null) return;
       reports = reports
         .then(() => this.options.report_worker_setup(entry.reference, step))
         .catch((error: unknown) => console.warn(`Worker setup report (${step}) failed`, error));
@@ -264,6 +263,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           workspace: prepared.workspace,
           lock: new FifoLock(),
           active_turn: null,
+          pending_agent_turn: null,
           open_tool_calls: new Set(),
           background_task_ids: new Set(),
           model: localized_start.model,
@@ -302,7 +302,10 @@ export class MacNativeChildren implements MacNativeChildrenContract {
   }
   begin_retirement(reference: ChildReference): void {
     const entry = this.entries.get(reference.child_id);
-    if (entry && same_reference(entry.reference, reference)) entry.retiring = true;
+    if (entry && same_reference(entry.reference, reference)) {
+      entry.retiring = true;
+      entry.child?.pending_agent_turn?.cancelled.abort();
+    }
   }
   stop_child(reference: ChildReference, invoking: () => void): Promise<void> {
     const entry = this.entries.get(reference.child_id);
@@ -401,7 +404,10 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     const actual = this.actual;
     this.closed = true;
     const entries = [...this.entries.values()];
-    for (const entry of entries) entry.retiring = true;
+    for (const entry of entries) {
+      entry.retiring = true;
+      entry.child?.pending_agent_turn?.cancelled.abort();
+    }
     // Every call retries retained native/publisher close capabilities, even while
     // the original actual chain still joins a provider start that needs that stop.
     const observe = (operation: () => Promise<void>, bounded: boolean) =>
