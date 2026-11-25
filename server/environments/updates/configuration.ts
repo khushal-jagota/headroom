@@ -2,6 +2,7 @@
 export const SUPPORTED_UPDATE_SCHEMA_FLOOR = 'video_upload_ledger';
 export const UPDATE_ARTIFACT_RETENTION_DAYS = 30;
 export const UPDATE_AVAILABILITY_REFRESH_SECONDS = 60;
+export const UPDATE_SEND_DRAIN_SECONDS = 30;
 export const UPDATE_HEALTH_TIMEOUT_SECONDS = 300;
 export const UPDATE_INSTALL_DEADLINE_SECONDS = 900;
 // More than twice the measured backup rate (2.7 GB in about 60 s).

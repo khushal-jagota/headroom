@@ -33,4 +33,4 @@ The machine state values are `current` (no required build change), `available` (
 
 Contracts live in `contracts.ts`. Executor channel contracts live in `../../executor/wire.schema.json`.
 
-At cutover, accepted sends drain before writes close. The new home waits for compatible, credentialed traffic over its local executor socket while ordinary work stays frozen. The machine retries its lease during the trial. Only the installer can keep the candidate and admit work.
+At cutover, Panels refuses new sends and waits up to 30 seconds for accepted messages. The installer then proceeds. On restart, undelivered messages leave the queue and ordinary owner receipts record their outcome. The new home waits for compatible, credentialed traffic over its local executor socket while ordinary work stays frozen. The machine retries its lease during the trial. Only the installer can keep the candidate and admit work.

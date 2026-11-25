@@ -924,3 +924,54 @@ test('an accepted queued send drains even when worker readiness polling is disab
     await owned.close();
   }
 });
+
+test('a stuck queued send times out, the installer starts, and the next home reports it undelivered', async () => {
+  const launch = vi.fn(async () => {});
+  const owned = await owned_server({ launch }, { worker_readiness: false });
+  const message = 'stuck-accepted-message';
+  try {
+    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    const first = await (await owned.send('running before update')).json();
+    expect(first.fate).toBe('started');
+    const queued = await (await owned.send(message)).json();
+    expect(queued.fate).toBe('queued');
+    const pressed = performance.now();
+    expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
+      200,
+    );
+    await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce(), {
+      timeout: 35000,
+      interval: 100,
+    });
+    expect(performance.now() - pressed).toBeGreaterThanOrEqual(30000);
+    expect((await owned.status()).attempt.state).toBe('installing');
+    expect((await owned.send('new send during cutover')).status).toBe(503);
+    await owned.server.close({ deadline: performance.now() / 1000 + 5 });
+
+    // Boot another home from the database left by the stop. Pending owner receipts
+    // settle in ordinary conversation startup on either side of an upgrade or rollback.
+    const restarted = await owned_server(undefined, {
+      worker_readiness: false,
+      before_start(root) {
+        copyFileSync(owned.path, join(root, 'data/planner.db'));
+      },
+    });
+    try {
+      const lookup = await fetch(
+        restarted.server.address +
+          '/api/conversation/owner-sends/' +
+          message +
+          '?owner_kind=chief&owner_id=chief',
+      );
+      expect(lookup.status).toBe(200);
+      expect(await lookup.json()).toMatchObject({
+        delivery: { conversation_id: first.conversation_id, fate: 'refused' },
+      });
+      expect(await restarted.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    await owned.close();
+  }
+}, 45000);

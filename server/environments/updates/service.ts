@@ -30,6 +30,7 @@ import {
   STAGED_APP_PREFIX,
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
+  UPDATE_SEND_DRAIN_SECONDS,
 } from './configuration.ts';
 import { install_deadline_seconds } from './logic/install_deadline.ts';
 import type {
@@ -592,7 +593,9 @@ export class UpdateService {
         owns_send_admission = conversation.workspace_admission.close_starts();
         if (!owns_send_admission) throw new Error('Send admission is already closed.');
       }
-      while (conversation?.has_pending_update_sends()) {
+      // Startup records any undelivered owner messages when the installer restarts the home.
+      const send_deadline = AbortSignal.timeout(UPDATE_SEND_DRAIN_SECONDS * 1000);
+      while (!send_deadline.aborted && conversation?.has_pending_update_sends()) {
         await delay(ATTEMPT_OBSERVER_SECONDS * 1000);
         if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
       }
