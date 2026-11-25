@@ -1,6 +1,7 @@
 /** Repository-scoped external reads. Credentials stay outside records and errors. */
 import { open } from 'node:fs/promises';
 import type { ArtifactSource, PublishedUpdate, UpdateProvider } from './contracts.ts';
+import { UPDATE_AVAILABILITY_REFRESH_SECONDS } from './configuration.ts';
 import { is_object, parse_release } from './codec.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
@@ -26,6 +27,7 @@ export interface GitHubUpdateProviderOptions {
 }
 export class GitHubUpdateProvider implements UpdateProvider {
   readonly repository: string;
+  readonly refresh_interval_seconds: number;
   private readonly token_file: string | null;
   private readonly fetch: typeof fetch;
   private readonly target: RuntimeTarget;
@@ -37,6 +39,8 @@ export class GitHubUpdateProvider implements UpdateProvider {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid update repository');
     this.repository = repository;
     this.token_file = token_file;
+    this.refresh_interval_seconds =
+      token_file === null ? 15 * 60 : UPDATE_AVAILABILITY_REFRESH_SECONDS;
     this.fetch = options.fetch ?? globalThis.fetch;
     this.target = options.target ?? LINUX_HOME;
   }

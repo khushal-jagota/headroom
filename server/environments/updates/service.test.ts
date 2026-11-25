@@ -8,6 +8,7 @@ import type { Database } from '../../core/database/contracts.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { FileUpdateAttemptStore } from './attempts.ts';
 import type { MachineUpdateState, PublishedUpdate } from './contracts.ts';
+import { GitHubUpdateProvider } from './provider.ts';
 import { UpdateService } from './service.ts';
 import { attempt_body } from './routes.ts';
 
@@ -44,12 +45,15 @@ test('a newer offer retains machine failure and recomputes interruption at the p
   };
   const interrupted = vi.fn().mockReturnValue(['First agent']);
   const attempts = new FileUpdateAttemptStore(join(root, 'attempt.json'), () => {});
+  let now = 10_000;
+  const provider = new GitHubUpdateProvider('owner/repo', null);
   const available = vi
-    .fn<() => Promise<PublishedUpdate | null>>()
+    .spyOn(provider, 'available')
     .mockRejectedValueOnce(new Error('catalog unavailable'))
     .mockResolvedValue(null);
   const service = new UpdateService({
-    provider: { available, download_artifact: async () => {} },
+    provider,
+    now: () => now,
     attempts,
     runtime: {
       database: {} as Database,
@@ -97,6 +101,14 @@ test('a newer offer retains machine failure and recomputes interruption at the p
     });
     await expect(service.prefetch()).rejects.toThrow('catalog unavailable');
     expect(service.status().state).toBe('check_unavailable');
+    now += 899;
+    service.status();
+    await Promise.resolve();
+    expect(available).toHaveBeenCalledTimes(1);
+    now += 1;
+    service.status();
+    await Promise.resolve();
+    expect(available).toHaveBeenCalledTimes(2);
     await service.prefetch();
     expect(service.status().state).toBe('up_to_date');
     vi.spyOn(service, 'ready_release').mockReturnValue(release);

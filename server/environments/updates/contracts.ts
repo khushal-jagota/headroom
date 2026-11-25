@@ -139,6 +139,7 @@ export type UpdateExperience = readonly [
   string | null,
 ];
 export interface UpdateProvider {
+  readonly refresh_interval_seconds?: number;
   available(proof_artifact_id?: number): Promise<PublishedUpdate | null>;
   download_artifact(
     artifact_id: number,
