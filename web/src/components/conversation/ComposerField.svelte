@@ -505,7 +505,7 @@
   .composer-field :global(.composer-field-send:is(.sent, .failed)),
   .composer-field.is-reply-strip :global(.composer-field-send:is(.sent, .failed)) { opacity: 1; }
   .composer-field :global(.composer-field-send.sent),
-  .composer-field.is-reply-strip :global(.composer-field-send.sent) { color: var(--accent-done); background-color: color-mix(in srgb, var(--accent-done) 18%, var(--cv-control, transparent)); }
+  .composer-field.is-reply-strip :global(.composer-field-send.sent) { background-color: var(--accent-done); color: var(--surface-ink); }
   .composer-field :global(.composer-field-send.failed),
-  .composer-field.is-reply-strip :global(.composer-field-send.failed) { color: var(--accent-error); background-color: color-mix(in srgb, var(--accent-error) 18%, var(--cv-control, transparent)); }
+  .composer-field.is-reply-strip :global(.composer-field-send.failed) { background-color: var(--accent-error); color: var(--surface-ink); }
 </style>
