@@ -1,4 +1,4 @@
-import { reason_to_keep } from './safety.ts';
+import { inspect_workspace_safety } from './safety.ts';
 import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { prepare_agent_home } from '../../agent_homes/agent_home.ts';
 import { dirname, join, resolve } from 'node:path';
@@ -157,6 +157,20 @@ async function repair_previous(
   if (removed && (await registered(repository, join(root, WORKTREE_DIRECTORY), null, options)))
     throw new Error('Retired checkout is missing but its former path remains registered');
 }
+async function fetch_published_revision(
+  destination: string,
+  revision: string,
+  options: WorkspaceOptions,
+): Promise<void> {
+  if (!/^[0-9a-f]{40,64}$/.test(revision)) throw new Error('Published Ticket revision is invalid.');
+  // The source proved publication. Fetch its exact commit without requiring the
+  // local Ticket branch to exist on origin or selecting a newer remote tip.
+  const fetched = await git(destination, ['fetch', 'origin', revision], options);
+  const recovered = await git(destination, ['rev-parse', 'FETCH_HEAD^{commit}'], options);
+  if (fetched.returncode || recovered.returncode || recovered.stdout.trim() !== revision)
+    throw new Error('The published Ticket revision is unavailable on origin.');
+}
+
 async function recover_published_checkout(
   root: string,
   destination: string,
@@ -178,24 +192,25 @@ async function recover_published_checkout(
     throw new Error('Published Ticket checkout identity is invalid.');
   if ((await git(destination, ['check-ref-format', '--branch', branch], options)).returncode)
     throw new Error('Published Ticket branch is invalid.');
-  const reason = await reason_to_keep(root, undefined, new Set(), options);
+  const { reason, advertised_refs } = await inspect_workspace_safety(
+    root,
+    undefined,
+    new Set(),
+    options,
+  );
   if (reason) throw new Error(`Cannot recover published work: ${reason}`);
-  const fetched = await git(destination, ['fetch', 'origin', `refs/heads/${branch}`], options);
-  if (
-    fetched.returncode ||
-    (await git(destination, ['merge-base', '--is-ancestor', revision, 'FETCH_HEAD'], options))
-      .returncode
-  )
-    throw new Error('The published Ticket revision is unavailable on its remote branch.');
+  await fetch_published_revision(destination, revision, options);
   const local = await git(
     destination,
     ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
     options,
   );
   if (local.returncode === 0) {
+    const remote_revisions = [...new Set(advertised_refs.get(destination)?.values() ?? [])];
+    if (!remote_revisions.length) throw new Error('Cannot verify the destination Ticket branch.');
     const unpublished = await git(
       destination,
-      ['rev-list', '-n', '1', branch, '--not', 'FETCH_HEAD'],
+      ['rev-list', '-n', '1', branch, '--not', ...remote_revisions],
       options,
     );
     if (unpublished.returncode || unpublished.stdout.trim())
@@ -276,7 +291,7 @@ export async function prepare_workspace(
         const cloned = await with_mirror(repository_url, options, (mirror) => {
           const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
           if (mirror !== null) args.push('--reference', mirror, '--dissociate');
-          const source_branch = repository?.published_branch ?? default_branch;
+          const source_branch = default_branch;
           if (source_branch !== null) args.push('--branch', source_branch);
           args.push('--', repository_url, temporary);
           return git(root, args, options);
@@ -292,14 +307,7 @@ export async function prepare_workspace(
           );
         }
         const revision = repository?.published_revision;
-        if (revision != null && !/^[0-9a-f]{40,64}$/.test(revision))
-          throw new Error('Published Ticket revision is invalid.');
-        if (
-          revision != null &&
-          (await git(temporary, ['merge-base', '--is-ancestor', revision, 'HEAD'], options))
-            .returncode
-        )
-          throw new Error('The published Ticket revision is unavailable on its remote branch.');
+        if (revision != null) await fetch_published_revision(temporary, revision, options);
         const switched = await git(
           temporary,
           revision == null ? ['switch', '-c', branch] : ['switch', '-C', branch, revision],

@@ -587,6 +587,17 @@
       if (!retainedIds.has(id)) acknowledgedMessageIds.delete(id);
     }
   }
+  /** The open whose first read failed, and the note it left. The reader keeps retrying on its
+   *  own, and opening the pane can replace it, so the first good snapshot of any reader of
+   *  that conversation is the end of that open, as if it had never failed. */
+  let failedOpen:{id:string;note:string}|null=null;
+  function finishFailedOpen(local:ConversationViewReader):void{
+    const {note}=failedOpen!;
+    failedOpen=null;
+    // Only the note this open left. A send failure or any later note is not its to clear.
+    if(errorNote===note)errorNote=null;
+    void reconcileReceipts(local).then(()=>{if(reader===local)theRecordHasBeenRead();}).catch(()=>undefined);
+  }
   /** One cancellable reader per selected lens and visible transcript demand. */
   function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
     // Read before closing: a closed reader forgets its status.
@@ -596,6 +607,7 @@
     const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
+      if(!local.trouble&&failedOpen?.id===id)finishFailedOpen(local);
       if(local.coverage!==lastCoverage){
         lastCoverage=local.coverage;
         void refreshView(id);
@@ -628,7 +640,8 @@
       view=snapshot;
       void refreshComposerCatalog(id);
       const local=attachReader(id);
-      await local.connect();
+      try{await local.connect();}
+      catch(error){failedOpen={id,note:sentenceFor(error)};throw error;}
       if(reader!==local)return;
       await reconcileReceipts(local);
       theRecordHasBeenRead();

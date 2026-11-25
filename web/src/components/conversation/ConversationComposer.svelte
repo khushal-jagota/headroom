@@ -16,7 +16,7 @@
    * is still inside that first word the eligible catalog entries are offered under it.
    * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
@@ -133,6 +133,7 @@
     disabled = false,
     sendAvailable = true,
     showRunPicker = true,
+    queue,
     onSend,
     onStop,
     onAnswer,
@@ -211,6 +212,8 @@
     sendAvailable?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
     showRunPicker?: boolean;
+    /** The messages waiting for the agent, drawn as a tray on the box's top edge. */
+    queue?: Snippet;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -1312,6 +1315,7 @@
   data-conversation-composer
 >
   <div class="chat-box-stack">
+    {@render queue?.()}
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
