@@ -24,7 +24,6 @@
   let {
     readError = null,
     onRetry,
-    scrollPanel = false,
     view,
     snapshots = $bindable(),
     models,
@@ -34,6 +33,7 @@
     showUsage = false,
     tonedMark = false,
     below = false,
+    align = "left",
     chevron = "typed",
     label = "Model",
     attributes = {},
@@ -44,7 +44,6 @@
     /** Scoped transport failure; it supplies no canonical launch judgment. */
     readError?: string | null;
     onRetry?: () => Promise<void>;
-    scrollPanel?: boolean;
     view: ModelPickerView;
     snapshots: readonly BackendSnapshot[];
     models: readonly BackendModel[];
@@ -60,6 +59,7 @@
     /** The composer draws the provider mark in its chip's text tone rather than its colours. */
     tonedMark?: boolean;
     below?: boolean;
+    align?: "left" | "right";
     label?: string;
     attributes?: Record<string, string | undefined>;
     afterChoose?: () => void;
@@ -198,8 +198,8 @@
   listLabel={showing === "models" ? "Models" : "Reasoning efforts"}
   kind="rail"
   {chevron}
-  {scrollPanel}
   {below}
+  {align}
   attributes={{ "data-conversation-model-picker": "", ...attributes }}
   panelBusy={pickerBusy}
   bind:controller={picker}

@@ -2,6 +2,7 @@
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import type { CredentialRequestRowBody } from "../../lib/conversation/view/contracts";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
+  import { floatingPanel } from "../../lib/floatingPanel";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
@@ -572,7 +573,7 @@
             </svg>
           </button>
           {#if menuOpen}
-            <div class="chat-overflow-menu" data-conversation-options-menu>
+            <div class="chat-overflow-menu" data-conversation-options-menu popover="manual" {@attach floatingPanel(menuButton, "bottom-end")}>
               {#if !readOnly}
                 <div class="chat-overflow-actions" role="menu" aria-label="Conversation">
                   {#if running && onStop}

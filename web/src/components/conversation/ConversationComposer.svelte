@@ -1098,11 +1098,9 @@
   });
 
   // --- popovers --------------------------------------------------------------------------------
-  /** Every popover the composer opens (add, catalog, model, delivery) opens from the box's top
-   *  edge, at its trigger, and floats over whatever stands above the box (the queue tray, the
-   *  task pill, the transcript's last lines) on the raised plane, its ring and shadow setting it
-   *  off. Nothing steps aside for it, so nothing jumps when it opens or closes. A composer that
-   *  has had to scroll draws its popovers in its own flow (app.css). */
+  /** Every popover the composer opens (add, catalog, model, delivery) floats over whatever
+   *  stands near it on the raised plane, its ring and shadow setting it off. Nothing steps
+   *  aside for it, so nothing jumps when it opens or closes. */
   const DISMISSIBLE_POPOVERS = ".listbox-picker-panel, .chat-add-menu";
   /** A press outside an open menu only closes it. Its click would otherwise land on whatever the
    *  menu was floating over (a queued message's Send now, the task pill, the resting dock's
@@ -1275,26 +1273,6 @@
     if (from <= 0 || Math.abs(to - from) < 1 || typeof box.animate !== "function") return;
     box.animate([{ height: `${from}px`, overflow: "clip" }, { height: `${to}px`, overflow: "clip" }], { duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" });
     if (shown) box.querySelector<HTMLElement>(".chat-ask")?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease-out" });
-  });
-
-  /** v6: menus open with their bottom 8px above the composer's top edge. Each menu's anchor
-   *  (+, the model chip, the Steer chip) learns how far it stands under that edge. */
-  function liftMenus(): void {
-    const box = boxElement;
-    if (box === null) return;
-    const top = box.getBoundingClientRect().top;
-    for (const anchor of box.querySelectorAll<HTMLElement>(".chat-add, [data-conversation-model-picker], [data-conversation-send-mode]"))
-      anchor.style.setProperty("--c2-menu-lift", `${Math.max(0, anchor.getBoundingClientRect().top - top)}px`);
-  }
-  $effect(() => {
-    const box = boxElement;
-    if (box === null) return;
-    const observer = new ResizeObserver(() => liftMenus());
-    observer.observe(box);
-    const mutations = new MutationObserver(() => liftMenus());
-    mutations.observe(box, { childList: true, subtree: true });
-    liftMenus();
-    return () => { observer.disconnect(); mutations.disconnect(); };
   });
 
   onMount(() => {
@@ -1813,15 +1791,7 @@
   }
 
   /* --- popovers -------------------------------------------------------------------------------- */
-  /* A menu opens from the control that opened it, as a native dropdown does: its bottom 8px
-     above the composer's top edge (--c2-menu-lift is how far each anchor stands under that
-     edge, measured), its edge on the button's edge (the add menu from +'s left, the model and
-     delivery pickers from their chips' right). It overlays what is above and never moves it.
-     Their height is capped by the room over the composer (app.css, the dock). */
-  .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
-  .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
-    left: auto;
-    right: 0;
-    bottom: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
-  }
+  /* The add menu and the model and delivery pickers float in the top layer from their own
+     buttons (lib/floatingPanel). The command catalog stays over the box. */
+  .chat-box :global(.chat-menu) { z-index: 40; }
 </style>

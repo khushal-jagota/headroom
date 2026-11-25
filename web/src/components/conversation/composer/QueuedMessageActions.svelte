@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { floatingPanel } from "../../../lib/floatingPanel";
 
   let {
     heldPromptId,
@@ -118,6 +119,8 @@
       tabindex="-1"
       aria-label="Queued message"
       hidden={!open}
+      popover="manual"
+      {@attach open && floatingPanel(trigger, "top-end")}
       data-conversation-held-menu
       onkeydown={moveMenuFocus}
       onfocusout={(event) => {
@@ -208,10 +211,6 @@
   .chat-qrow-more:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   .chat-qrow-menu[hidden] { display: none; }
   .chat-qrow-menu {
-    position: absolute;
-    z-index: 30;
-    inset-inline-end: 0;
-    bottom: calc(100% + var(--cv-s2));
     width: max-content;
     min-width: 160px;
     display: grid;

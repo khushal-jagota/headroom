@@ -34,6 +34,7 @@
   readError={view.readError}
   {onRetry}
   chevron="none"
+  align="right"
   view={view.picker}
   bind:snapshots
   models={view.pickerSource.models}
