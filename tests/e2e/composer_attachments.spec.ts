@@ -401,8 +401,9 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
   expect(received.filter((text) => text.includes(chiefText))).toHaveLength(1);
   expect(chiefSends).toEqual([`${server.base}/api/chief/conversation/send`]);
   await expect(chief.locator('.chat-att')).toHaveCount(0);
-  const chiefMessage = chief.locator('[data-review-outgoing]').filter({ hasText: chiefText });
-  await expect(chiefMessage.getByRole('status')).toHaveText('Sent');
+  // The empty Review page does not keep a delivered message or its "Sent" status.
+  await expect(chief.locator('[data-review-outgoing]').filter({ hasText: chiefText })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Chief' })).toHaveCount(0);
   await page.close();
   console.log(`Review reply attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing signal host`);
 });

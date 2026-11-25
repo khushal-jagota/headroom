@@ -14,10 +14,12 @@
   import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
 
-  let { composer, onEdit, busy = false }: {
+  let { composer, onEdit, busy = false, hideSent = false }: {
     composer: ReviewReplyComposer;
     onEdit: () => void;
     busy?: boolean;
+    /** The empty Review page shows a send only while it is in flight or needs him. */
+    hideSent?: boolean;
   } = $props();
 
   const view = $derived(composer.queueView);
@@ -25,7 +27,8 @@
     (view?.held_prompts ?? []).filter(prompt => heldPromptIsInLens(prompt, 'focus', 'owner')), []
   ), 'owner', new Set()));
   const heldIds = $derived(new Set(held.map(message => message.messageId)));
-  const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)));
+  const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)
+    && !(hideSent && attempt.status === 'sent')));
   const queue = $derived(held.filter(belongsInHeldQueue));
   const pendingQueue = $derived(attempts.filter(queueAttempt));
 
