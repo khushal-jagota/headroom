@@ -108,6 +108,7 @@ export const DARWIN_HOME_INSTALLER_SOURCE_FILES = [
   'server/executor/protocol_errors.ts',
   'server/conversation/snapshot/commands.ts',
   'server/conversation/snapshot/environment.ts',
+  'server/conversation/snapshot/cli_locations.ts',
 ] as const;
 export const DARWIN_HOME_INSTALLER_PACKAGE_ROOTS = [...INSTALLER_PACKAGE_ROOTS] as const;
 export const DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT =

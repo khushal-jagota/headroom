@@ -4,6 +4,7 @@
    * that already works looks exactly as it did. */
   import {
     BACKENDS_PAGE_SURROUNDINGS,
+    backendCanBeReSignedIn,
     backendCanBeSignedIn,
     signInCaveat,
     signInIsPending,
@@ -36,7 +37,8 @@
     returnUrl = "";
   });
   const shows = $derived(backendCanBeSignedIn(snapshot)
-    && (snapshot.identity?.status === "unauthenticated" || signInIsPending(signInState.signIn)));
+    && (snapshot.identity?.status === "unauthenticated" || backendCanBeReSignedIn(snapshot)
+      || signInIsPending(signInState.signIn)));
 </script>
 
 {#if shows}
@@ -89,6 +91,9 @@
       </form>
     {:else}
       {@const caveat = signInCaveat(snapshot, BACKENDS_PAGE_SURROUNDINGS)}
+      {#if backendCanBeReSignedIn(snapshot) && snapshot.identity?.detail}
+        <p class="sign-in-caveat" data-backend-sign-in-detail>{snapshot.identity.detail}</p>
+      {/if}
       {#if caveat}
         <p class="sign-in-caveat" data-backend-sign-in-caveat>{caveat}</p>
       {/if}

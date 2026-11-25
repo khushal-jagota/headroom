@@ -7,14 +7,16 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 
+import BackendGuidedSignIn from "../src/components/conversation/BackendGuidedSignIn.svelte";
 import BackendSignInBlock from "../src/components/conversation/BackendSignInBlock.svelte";
+import { backendCanBeReSignedIn, backendNeedsGuidedSignIn } from "../src/lib/conversation/backendSignIn";
 import type { SignInPageState } from "../src/lib/conversation/backendSignInSession";
 import type { BackendSignIn, BackendSnapshot } from "../src/lib/conversation/wire";
 
-function snapshot(status: "authenticated" | "unauthenticated"): BackendSnapshot {
+function snapshot(status: "authenticated" | "unauthenticated" | "unknown", detail: string | null = null): BackendSnapshot {
   return {
     backend_key: "codex", can_sign_in: true, installed: true, executable_path: null, version: null,
-    identity: { status, account_label: null, detail: null, login_command: null },
+    identity: { status, account_label: null, detail, login_command: null },
     available_models: [], reasoning_effort_options: [], cached_usage: null, update_advisory: null,
     diagnoses: []
   };
@@ -81,5 +83,30 @@ describe("the sign-in block", () => {
       { ...idle, signIn: signIn({ state: "unconfirmed", user_code: null }) });
     expect(body).toContain("Codex reported a sign-in and Panels could not confirm a usable credential.");
     expect(body).toContain("data-backend-sign-in-start");
+  });
+});
+
+describe("expired and guided sign-in", () => {
+  it("explains an expired Codex login and warns before a re-sign-in", () => {
+    const expired = snapshot("unknown", "This saved login expired and codex has not refreshed it yet.");
+    expect(backendCanBeReSignedIn(expired)).toBe(true);
+    expect(backendCanBeReSignedIn(snapshot("authenticated"))).toBe(false);
+    expect(backendCanBeReSignedIn(snapshot("unknown"))).toBe(false); // an old CLI or a failed read has no login detail
+    const body = draw(expired, idle);
+    expect(body).toContain("This saved login expired");
+    expect(body).toContain("data-backend-sign-in-caveat");
+  });
+
+  it("guides a signed-out backend that Panels cannot sign in, and shows its command to copy", () => {
+    const claude = { ...snapshot("unauthenticated"), backend_key: "claude", can_sign_in: false,
+      identity: { status: "unauthenticated", account_label: null, detail: null, login_command: "claude auth login" } } as BackendSnapshot;
+    expect(backendNeedsGuidedSignIn(claude)).toBe(true);
+    expect(backendNeedsGuidedSignIn(snapshot("unauthenticated"))).toBe(false);
+    const body = render(BackendGuidedSignIn, { props: {
+      label: "Claude", machineName: "Mac 1", command: "claude auth login", checking: false, onCheck: () => {}
+    } }).body;
+    expect(body).toContain("claude auth login");
+    expect(body).toContain("Mac 1");
+    expect(body).toContain("data-backend-guided-check");
   });
 });
