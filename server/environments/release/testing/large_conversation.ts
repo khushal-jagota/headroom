@@ -58,10 +58,12 @@ export async function seed_active_histories(
     brief: '',
     worker_type: 'coding',
     employee_launch_model: 'TEST',
+    machine_id,
     project_id: project.id,
     ceiling: 'needs_brief',
   });
   assert.equal(typeof ticket.id, 'string');
+  assert.equal(ticket.machine_id, machine_id);
   const managerConversation = 'qualification-' + randomUUID();
   const ticketConversation = 'qualification-' + randomUUID();
   for (const id of [managerConversation, ticketConversation])
