@@ -1,3 +1,4 @@
+import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../../updates/configuration.ts';
 /** Execute the normal owner action against the previously installed home and its existing machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -10,6 +11,7 @@ import { recorded_failure_detail } from '../../../conversation/logic/backend_eve
 import { chromium } from 'playwright';
 import {
   check_large_conversation,
+  archive_histories,
   seed_active_histories,
   check_committed_views,
 } from './large_conversation.ts';
@@ -268,6 +270,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       workspace,
     );
     phase = 'retrying the update';
+    const retryStarted = performance.now();
     const retried = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -279,6 +282,7 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     assert.ok(retryResponse.ok(), await retryResponse.text());
     phase = 'checking the release feed, home and enrolled machines';
     const enrolled = [HOME_MACHINE_ID, o.machine_id];
+    let trialTiming;
     let first_views: Awaited<ReturnType<typeof check_committed_views>> | undefined;
     await wait_for(async () => {
       const journal = await readJournal();
@@ -286,6 +290,14 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       if (journal.state === 'failed' || journal.steps?.rollback_failed)
         throw new Error('Installer retry failed: ' + recorded_failure_detail(journal.detail));
       if (journal.state === 'done' && !first_views) {
+        const started = Date.parse(journal.steps.service_started);
+        const healthy = Date.parse(journal.steps.healthy);
+        assert.ok(Number.isFinite(started) && healthy >= started);
+        trialTiming = {
+          press_to_commit_seconds: (performance.now() - retryStarted) / 1000,
+          service_started_to_healthy_seconds: (healthy - started) / 1000,
+          health_deadline_seconds: UPDATE_HEALTH_TIMEOUT_SECONDS,
+        };
         first_views = await check_committed_views(url, histories);
       }
       const status = await read_status();
@@ -400,7 +412,9 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
           restored_home_machine: missingMachine?.label,
           recovered_conversation: recovered.conversation_id,
           original_linux_start: originalStart,
+          trial_timing: trialTiming,
           first_views,
+          archive_histories,
           large_conversations,
           publication: JSON.parse(await readFile(join(o.base, 'feed/publication.json'), 'utf8')),
         },

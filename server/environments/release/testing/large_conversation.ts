@@ -6,11 +6,14 @@ import { canonical_principal, issue_launch_token } from '../../../agent_identity
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BACKEND_INSTANCE_ID } from '../../../drivers/built_in.ts';
 import type { Principal } from '../../../core/contracts.ts';
+import { VIEW_PROJECTION_VERSION } from '../../../conversation/views/contracts.ts';
 import { append_projection } from '../../../conversation/views/data/writer.ts';
 import type { ConversationEventKind } from '../../../conversation/events.ts';
 import { conversation_event_payload_from_canonical_json } from '../../../conversation/record/codec.ts';
 import { createDatabase, type TransactionSql } from '../../../core/database/index.ts';
 
+export const archive_histories = 448;
+const archivePrefix = 'qualification-archive-';
 const owner = { kind: 'owner', id: 'owner' };
 interface ActiveHistory {
   principal: Principal;
@@ -41,17 +44,23 @@ export async function seed_active_histories(
     assert.ok(response.ok, route + ': ' + raw);
     return JSON.parse(raw);
   };
-  const project = await post('/api/projects', { name: 'Conversation qualification' });
+  const project = await post('/api/projects', { name: 'Conversation qualification', summary: '' });
+  assert.equal(typeof project.id, 'string');
   const manager = await post('/api/managers', {
     title: 'Active qualification Manager',
+    goal: '',
     project_id: project.id,
   });
+  assert.equal(typeof manager.id, 'string');
+  assert.equal(manager.settled, false);
   const ticket = await post('/api/tickets', {
     title: 'Unfinished qualification Ticket',
+    brief: '',
     worker_type: 'coding',
     project_id: project.id,
     ceiling: 'needs_brief',
   });
+  assert.equal(typeof ticket.id, 'string');
   const managerConversation = 'qualification-' + randomUUID();
   const ticketConversation = 'qualification-' + randomUUID();
   for (const id of [managerConversation, ticketConversation])
@@ -84,10 +93,36 @@ export async function seed_active_histories(
   ];
   const db = createDatabase(join(base, 'installed/data/planner.db'));
   try {
-    const seeded = histories.map((h) => ({ ...h, through: db.write((tx) => seed_history(tx, h)) }));
+    // Archived conversations have durable events but no current employee pointer.
+    // Their shorter transcripts sort before the active ones in the background rebuild queue.
+    db.write((tx) => {
+      for (let index = 0; index < archive_histories; index++) {
+        const conversation = archivePrefix + index;
+        tx.run(
+          'INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,created_at,machine_id) SELECT ?,backend_key,model,workspace_folder,access,created_at,machine_id FROM conversations WHERE conversation_id=?',
+          [conversation, chiefConversation],
+        );
+        seed_history(tx, {
+          conversation,
+          principal: histories[0]!.principal,
+          turns: 1 + (index % 3),
+        });
+      }
+    });
+    const seeded = histories.map((h) =>
+      db.write((tx) => {
+        const through = seed_history(tx, h);
+        bind_history(tx, h);
+        return { ...h, through };
+      }),
+    );
     // The historical facts and rows are synthetic. Mark all three saved projections
     // as version 5 in one short transaction immediately before the press.
     return db.write((tx) => {
+      const archived = tx.run(
+        "UPDATE conversation_view_state SET projection_version=5 WHERE conversation_id GLOB 'qualification-archive-*'",
+      );
+      assert.equal(archived.changes, archive_histories);
       for (const h of histories)
         tx.run('UPDATE conversation_view_state SET projection_version=5 WHERE conversation_id=?', [
           h.conversation,
@@ -106,7 +141,10 @@ export async function seed_active_histories(
   }
 }
 
-function seed_history(tx: TransactionSql, { conversation, principal, turns }: ActiveHistory) {
+function seed_history(
+  tx: TransactionSql,
+  { conversation, principal, turns }: Pick<ActiveHistory, 'conversation' | 'principal' | 'turns'>,
+) {
   const last = tx.get<{ latest_sequence: number }>(
     'SELECT latest_sequence FROM conversations WHERE conversation_id=?',
     [conversation],
@@ -173,6 +211,9 @@ function seed_history(tx: TransactionSql, { conversation, principal, turns }: Ac
     sequence,
     conversation,
   ]);
+  return sequence;
+}
+function bind_history(tx: TransactionSql, { conversation, principal }: ActiveHistory) {
   if (principal.kind === 'ticket') {
     tx.run("UPDATE tickets SET conversation_id=? WHERE id=? AND stage!='done'", [
       conversation,
@@ -189,7 +230,6 @@ function seed_history(tx: TransactionSql, { conversation, principal, turns }: Ac
     );
   }
   assert.deepEqual(canonical_principal(tx, conversation), principal);
-  return sequence;
 }
 
 /** One parallel read per active view immediately after the install journal commits.
@@ -206,7 +246,7 @@ export async function check_committed_views(url: string, histories: InheritedHis
       );
       assert.equal(response.status, 200, principal.kind + ' initial view: ' + response.status);
       const snapshot = await response.json();
-      assert.equal(snapshot.page.projection_version, 6);
+      assert.equal(snapshot.page.projection_version, VIEW_PROJECTION_VERSION);
       assert.equal(snapshot.page.conversation_id, conversation);
       assert.ok(snapshot.coverage.through_sequence >= through);
       assert.ok(JSON.stringify(snapshot.page.items).includes(historyMarker(principal)));
