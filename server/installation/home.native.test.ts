@@ -34,6 +34,7 @@ import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts
 import { observe_promise } from '../core/promise_observer.ts';
 import { run_release_command } from '../environments/release/process.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { atomic_write_json } from '../environments/updates/attempts.ts';
 import { read_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import { authenticate_loaded_job } from '../environments/updates/darwin/logic/launchd.ts';
@@ -49,6 +50,7 @@ import type { WorkerProcess } from '../worker_supervision/contracts.ts';
 
 const admitted =
   process.env.GITHUB_ACTIONS === 'true' && process.env.PANELS_NATIVE_HOME_TEST === '1';
+const MINI_BUILD_MS = 360_000;
 const revision = 'a'.repeat(40);
 const supervisor = fileURLToPath(new URL('../lifecycle/supervisor.ts', import.meta.url));
 const paths = fileURLToPath(new URL('../lifecycle/paths.ts', import.meta.url));
@@ -107,11 +109,14 @@ test.skipIf(!admitted)(
 
     const report: Record<string, unknown> = {
       system,
+      fixture_root: base,
       architecture: process.arch,
       boundary:
         'Actual installer and native services; injected mini-app extraction, admission and database initialization. No sealed-package claim.',
       cases: [],
     };
+    const save_report = () =>
+      atomic_write_json(join(evidence, `first-home-${system}.json`), report);
     const cases = report.cases as Record<string, unknown>[];
     const original_environment = service_environment.home_service_environment;
     const hostile_path =
@@ -133,8 +138,8 @@ test.skipIf(!admitted)(
       if (system === 'darwin') {
         mini_builds = await build_native_mini_homes(base, {
           child_processes: build_processes,
-          signal: AbortSignal.timeout(360_000),
-          deadline: performance.now() / 1000 + 360,
+          signal: AbortSignal.timeout(MINI_BUILD_MS),
+          deadline: (performance.now() + MINI_BUILD_MS) / 1000,
         });
         report.mini_builds = mini_builds;
         report.boundary =
@@ -144,6 +149,7 @@ test.skipIf(!admitted)(
         const started = performance.now(),
           record: Record<string, unknown> = { fault };
         cases.push(record);
+        save_report();
         const token = randomUUID().replaceAll('-', ''),
           // Keep Linux's root-local Unix socket within its native pathname limit.
           root = join(base, token.slice(0, 12)),
@@ -537,6 +543,7 @@ test.skipIf(!admitted)(
             expect(case_children_settled).toBe(true);
             record.seconds = (performance.now() - started) / 1000;
             record.resource_paths = [...retained.keys()];
+            save_report();
             if (system === 'darwin')
               await cp(join(root, 'logs'), join(evidence, 'home-logs-' + token), {
                 recursive: true,
@@ -575,12 +582,7 @@ test.skipIf(!admitted)(
         throw error;
       } finally {
         hostile_path?.mockRestore();
-        report.fixture_root = base;
-        await mkdir(evidence, { recursive: true });
-        await writeFile(
-          join(evidence, `first-home-${system}.json`),
-          JSON.stringify(report, null, 2) + '\n',
-        );
+        save_report();
         // Failed proofs also leave their retired inputs accessible after children settle.
         if (system === 'darwin' && case_children_settled && !report.build_cleanup_error)
           for (const name of [
@@ -599,5 +601,5 @@ test.skipIf(!admitted)(
       }
     }
   },
-  600_000,
+  600_000 + (process.platform === 'darwin' ? MINI_BUILD_MS : 0),
 );
