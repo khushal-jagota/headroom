@@ -6,7 +6,7 @@ import { UPDATE_STARTING_LIMIT_MS } from "./config";
 import type { InstallUpdateBody, UpdateStatus } from "./contracts";
 
 /** One owner press, mapped to its contract route. */
-export type UpdateActionRequest = { action: "install" | "retry" | "retry_mac" }
+export type UpdateActionRequest = { action: "install" | "retry" }
   | { action: "retry_machine"; machine_id: string };
 
 /** The server answer a press that starts an update was made against, until the answer moves.
@@ -34,11 +34,7 @@ export function updateActionRoute(status: UpdateStatus, request: UpdateActionReq
     return { path: `/api/updates/attempts/${encodeURIComponent(machine.attempt_id)}/machines/${encodeURIComponent(machine.machine_id)}/retry` };
   }
   if (!status.attempt) throw new Error("This update changed. Refresh and try again.");
-  const attempt = `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}`;
-  switch (request.action) {
-    case "retry": return { path: `${attempt}/retry` };
-    case "retry_mac": return { path: `${attempt}/retry-mac` };
-  }
+  return { path: `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}/retry` };
 }
 
 let pressInFlight = false;

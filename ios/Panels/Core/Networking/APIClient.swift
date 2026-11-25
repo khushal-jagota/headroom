@@ -142,7 +142,6 @@ struct APIClient: Sendable {
     func manager(_ id: String) async throws -> ManagerDetail { try await get("/api/managers/\(id)/workspace") }
     func chief() async throws -> ChiefDetail { try await get("/api/workers/chief-of-staff/settings") }
     func chiefConversation() async throws -> ConversationReference { try await get("/api/chief/conversation") }
-    func deployment() async throws -> DeploymentStatus { try await get("/api/deployment-status") }
     func artifacts(owner: ArtifactOwner, directory: String = "", offset: Int = 0) async throws -> ArtifactPage {
         try await get("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: String(offset))])
     }

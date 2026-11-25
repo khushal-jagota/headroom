@@ -16,7 +16,6 @@ export type UpdateCard = {
   action?: { label: string; does: UpdateCardAction };
   detail?: string;
   track?: boolean;
-  sentence?: boolean;
 };
 
 export type UpdatePresentationInput = {
@@ -45,9 +44,7 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
     const updating = (starting || status?.state === "updating") && Number.isFinite(deadline) && now < deadline;
     return { state: updating ? "updating" : "unreachable", dimmed: true };
   }
-  if (starting || status?.state === "updating") return { state: "updating", dimmed: false };
-  // Panels rolled back, so its failure is the news.
-  if (status?.state === "failed") return { state: "failed", dimmed: false };
+  if (starting) return { state: "updating", dimmed: false };
   if (!status) return { state: null, dimmed: false };
   if (status.state === "up_to_date" || status.state === "check_unavailable") {
     const until = updateConfirmationUntil(status);

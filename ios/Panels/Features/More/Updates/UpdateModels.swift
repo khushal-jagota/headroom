@@ -119,7 +119,6 @@ struct PanelsUpdateStatus: Decodable, Sendable {
         case "updating": return "Updating…"
         case "failed": return "Update didn't install"
         case "check_unavailable" where !installedWithoutLatestCheck: return "Couldn’t check for updates"
-        case "mac_failed", "mac_unreachable": return "Machine update needs attention"
         default:
             if needsAttention { return "Machine update needs attention" }
             if machines.contains(where: { $0.state == "updating" }) { return "Updating machines…" }

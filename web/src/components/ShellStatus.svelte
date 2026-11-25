@@ -229,7 +229,7 @@
         {#if card}
           <span class="status-base">
             <span class="status-mark" aria-hidden="true"></span>
-            <span class:status-sentence={card.sentence} class:status-word={!card.sentence} class="swap" data-out={textOut ? "" : undefined}>{card.word}</span>
+            <span class="status-word swap" data-out={textOut ? "" : undefined}>{card.word}</span>
             {#if card.action && !desktopUnreachable}
               <button type="button" class="swap status-action" data-out={textOut ? "" : undefined}
                 data-shell-refresh={card.action.does === "refresh" ? "" : undefined} onclick={activate}>{card.action.label}</button>
@@ -329,7 +329,6 @@
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .navigation-health[data-state="changing"] .status-mark { background: var(--accent-bright); animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .status-sentence { min-width: 0; }
   .status-action { flex: none; margin-left: auto; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 660; cursor: pointer; }
   .status-action:hover { text-decoration: underline; }
   .status-info { flex: none; width: 16px; height: 16px; margin-left: var(--space-1); padding: 0; border: var(--border-hairline) solid currentColor; border-radius: var(--radius-pill); background: transparent; color: inherit; font: 600 10px/14px var(--font-ui); opacity: .75; cursor: pointer; }

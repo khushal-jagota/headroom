@@ -109,7 +109,6 @@
 		84CBD48D3F44E1018A4AEAD4 /* OfflineOperationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC1F9D9C0E32D764BD0CD642 /* OfflineOperationTests.swift */; };
 		855C9EFEE174F69B3324D3CF /* UpdateCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654B00819D0FA78B4A03B35C /* UpdateCard.swift */; };
 		85805A6EE34B87BDBAC3E1B3 /* ResourceRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61464E0DA3E99724D3937A70 /* ResourceRefreshTests.swift */; };
-		85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761B3507C34F559D58C84476 /* DeploymentStrip.swift */; };
 		879EEAAEAC965C8C99800D5E /* TicketProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03DBCE9A46181847779DEAE1 /* TicketProposalCard.swift */; };
 		899DF94735CFE95536C8149E /* UsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A9D0A1C2870A01499137AB /* UsageView.swift */; };
 		89D67A459D954F01FBB525F3 /* ArtifactWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D511DD068442406687AA4FB /* ArtifactWebView.swift */; };
@@ -316,7 +315,6 @@
 		737B356E4B2DABD8765C96EE /* NotificationDeliveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDeliveryTests.swift; sourceTree = "<group>"; };
 		737FC42E901264ADCDFF7A75 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		741481F6DBCA50ACCA06895A /* ResourceVersions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourceVersions.swift; sourceTree = "<group>"; };
-		761B3507C34F559D58C84476 /* DeploymentStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeploymentStrip.swift; sourceTree = "<group>"; };
 		7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerModels.swift; sourceTree = "<group>"; };
 		79018B81134DF732BD330243 /* ResourceRead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourceRead.swift; sourceTree = "<group>"; };
 		797F6ED31B68860565B1FEA8 /* ReviewChiefMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewChiefMessage.swift; sourceTree = "<group>"; };
@@ -505,7 +503,6 @@
 		39EC58EDFE09C3AEBE3C13D6 /* Components */ = {
 			isa = PBXGroup;
 			children = (
-				761B3507C34F559D58C84476 /* DeploymentStrip.swift */,
 				D90961A8FB03CFDE65907BCA /* FormSheet.swift */,
 				2A008FF2BE0EE350DEA44FC9 /* RingRefreshControl.swift */,
 				34B24A1AA8C73389437FE3B3 /* RingSpinner.swift */,
@@ -1268,7 +1265,6 @@
 				20C309706CC5E0D237E32796 /* ConversationSpeech.swift in Sources */,
 				3B0AA690FA1724DCCCF6029D /* DecisionOperationContracts.swift in Sources */,
 				617FC37F0E982A119E607ADB /* DecisionSheets.swift in Sources */,
-				85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */,
 				0925E5A5AA7330A8DCA9B070 /* DisplayCacheConfiguration.swift in Sources */,
 				4209F9578C5CCF67DD299F41 /* FormSheet.swift in Sources */,
 				5CAADBB6AED24D1E9F0E4E50 /* GoalAPI.swift in Sources */,
