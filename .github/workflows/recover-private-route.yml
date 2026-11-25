@@ -1,3 +1,4 @@
+# Operator recovery for the existing publisher deployment. Fresh homes use installer-generated services.
 name: Recover private route
 on:
   workflow_dispatch:

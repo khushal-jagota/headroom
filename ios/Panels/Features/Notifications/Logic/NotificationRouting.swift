@@ -29,8 +29,8 @@ enum NotificationRouting {
 #if DEBUG
         // The one-off fixture host is the only HTTP notification origin. This
         // does not let a payload choose a host or alter the selected server.
-        if parts.scheme == "http", ["localhost", "127.0.0.1"].contains(parts.host), let url = parts.url,
-           LocalStore.server(url) == LocalStore.server(AppStore.configuredBaseURL) { return true }
+        if let url = parts.url, SettingsServerAddress.fixtureOrigin(url.absoluteString) != nil,
+           let selected = AppStore.configuredBaseURL, LocalStore.server(url) == LocalStore.server(selected) { return true }
 #endif
         return false
     }

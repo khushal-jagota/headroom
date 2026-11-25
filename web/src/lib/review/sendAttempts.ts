@@ -46,7 +46,7 @@ export async function recallReviewAttempts(
     const id = value.messageId;
     if (seen.has(id) || !metadataFor(value, id)) continue;
     const pendingUploads = Array.isArray(value.pendingUploads) ? value.pendingUploads.map(upload => ({
-      ...upload, file: undefined, previewUrl: undefined,
+      ...upload, file: undefined, previewUrl: undefined, localVideoUrl: undefined,
       phase: upload.uploadId ? 'validating' as const : 'interrupted' as const
     })) : undefined;
     const message = stored.get(id) ?? (pendingUploads?.length ? value.attachmentOnlyMessage : undefined);
@@ -72,7 +72,7 @@ export async function rememberReviewAttempts(
   const previous = window.sessionStorage.getItem(metadataKey);
   const next = attempts.map(({ message, pendingUploads, ...metadata }) => ({
     messageId: message.messageId, ...metadata,
-    pendingUploads: pendingUploads?.map(({ file: _file, previewUrl: _previewUrl, ...upload }) => upload),
+    pendingUploads: pendingUploads?.map(({ file: _file, previewUrl: _previewUrl, localVideoUrl: _localVideoUrl, ...upload }) => upload),
     attachmentOnlyMessage: message.content.length === 0 ? message : undefined,
     bodyUploadIds: bodyUploadIds(message)
   }));

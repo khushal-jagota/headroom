@@ -12,7 +12,7 @@ routines or replacement recurring reviews.
 
 Existing personal Tickets keep their identity, records, proposals, and ordinary Stage
 gates. Their removal from the catalog does not cancel them, complete them, grant agent
-permission, or widen their ceiling. Preserve all 19 personal Tickets. Cancellation
+permission, or widen their ceiling. Preserve existing personal Tickets. Cancellation
 applies only to the predecessor's reviewed planning cohort. Do not expand that cohort.
 
 # Creating a Ticket
@@ -67,9 +67,7 @@ or replacement recurring reviews.
 
 Read `panels machine list` before you choose a destination. Use its stable identity as
 `machine_id` in the create object, or use `ticket create --machine-id ID`.
-If you omit the destination, the Ticket uses the home. The destination stays fixed
-after creation. A machine rename never moves work. Work for an away machine waits there.
-The Chief and Managers stay on the home.
+If you omit the destination, the Ticket uses the default home destination. Work waits while its machine is away. Only an authorized move can change the destination. A machine rename never moves work. Chief and Manager conversations use the home by default and keep their recorded destination until moved.
 
 The legacy `locale` values `vps` and `macos` identify only the original home and Mac.
 Use machine identity for new Tickets. Do not infer identity from the machine name,

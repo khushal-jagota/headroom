@@ -16,3 +16,13 @@ Record the decision in `server/ios_compatibility/review.json`:
 The check in `server/ios_compatibility/check.ts` runs before publication and reads the review from the published commit. A stale record fails it. The digest covers all production TypeScript under `server/`, a fixed list of JSON inputs, and any driver scripts under `src/planner/`. This includes serializers and business logic because they can change native behavior without a route edit. Unrelated server changes still need an explicit no-impact review.
 
 Do not treat a successful digest check as device evidence. A Mac with Xcode and a signed TestFlight build must check the app against the reachable server before the owner declares live readiness.
+
+## Ticket ownership status release
+
+The Ticket status wire value is `agent_owned`. The display label is “Agent owned”. The previous value was `agent`.
+
+The minimum iPhone build is **11**, the first build with the renamed status. Builds 9 and 10 decode a string but put an idle owned Ticket in the wrong group. Their reads and actions receive the existing HTTP 426 `ios_update_required` response. Build 11 retains the update-required latch and draft storage behavior.
+
+The minimum desktop bridge version is **2**. Bridge 1 also misclassifies the renamed status. Its API reads and actions receive HTTP 426 `desktop_update_required`. GET and HEAD `/api/meta` remain available so the native updater can read the new floor and request an app update. The new desktop shell reports bridge 2.
+
+Publish the matching client builds with this server release. An old client must update before it can resume work. A signed-device check and signed desktop release remain release-owner work; CI host tests and the unsigned simulator build do not prove distribution or device readiness.

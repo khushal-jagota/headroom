@@ -7,17 +7,24 @@
   import { conversationFileTarget, resolvePreview } from "../../lib/filePreview";
   import { attachmentByteLabel } from "./composer/attachments";
   import { fileOpensAsText, friendlyFileType } from "../../lib/conversation/fileTypes";
+  import type { MediaSize } from "../../lib/mediaFrame";
 
   let {
     href,
     fileName,
     byteCount,
-    mediaType = ""
+    mediaType = "",
+    mediaSize = null,
+    backdrop
   }: {
     href: string;
     fileName: string;
     byteCount: number;
     mediaType?: string;
+    /** A picture's or video's recorded size, so its box is right before it loads. */
+    mediaSize?: MediaSize | null;
+    /** This browser's own copy of a picture or video it sent. */
+    backdrop?: string;
   } = $props();
 
   let target = $derived(conversationFileTarget(href, fileName));
@@ -30,7 +37,7 @@
 
 {#if target && media}
   <article class="conversation-file-card conversation-file-card--media" data-conversation-piece="file" data-conversation-file-name={fileName}>
-    <FilePreview {target} mode="embedded" knownSizeLabel={attachmentByteLabel(byteCount)} download={{href, fileName}} />
+    <FilePreview {target} mode="embedded" knownSizeLabel={attachmentByteLabel(byteCount)} download={{href, fileName}} {mediaSize} {backdrop} />
   </article>
 {:else if target}
   <article class="conversation-file-card cv-file" data-conversation-piece="file" data-conversation-file-name={fileName}>

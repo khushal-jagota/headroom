@@ -151,15 +151,14 @@ describe("queued messages in the pane", () => {
     const { body } = render(PaneWithQueryClient, {
       props: { ...base, conversationState: "opened", running: true, reader, heldPromptRows: [held("a", "After that, log each 429")] }
     });
-    const edge = body.indexOf("data-conversation-live-edge");
+    const working = body.indexOf("data-conversation-alive-word");
     expect(body).toContain("Sub-agent 'Check tests' finished");
     expect(body).toContain('data-conversation-row="agent_turn_started"');
     expect(body).toContain('data-conversation-system-mark="spinner"');
-    expect(body).toContain("Working");
-    expect(body.indexOf('data-conversation-row="agent_turn_started"')).toBeLessThan(edge);
-    expect(edge).toBeGreaterThan(-1);
-    expect(body.indexOf("data-conversation-held-stack")).toBeGreaterThan(edge);
-    expect(edge).toBeLessThan(body.indexOf("data-conversation-box"));
+    expect(body).not.toContain("data-conversation-live-edge");
+    expect(working).toBeGreaterThan(body.indexOf('data-conversation-row="agent_turn_started"'));
+    expect(body.indexOf("data-conversation-held-stack")).toBeGreaterThan(working);
+    expect(working).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
   it("offer no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {

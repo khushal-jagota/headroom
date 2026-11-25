@@ -50,7 +50,9 @@ export function ticketSectionHeading(section:TicketSection,view:EffectiveNavigat
     : row.blocked || row.ticket_status==='blocked' ? 'Blocked on'
     : facts.agent_state==='errored' ? 'Error working on'
       : facts.assigned ? 'Your step:' : row.stage==='needs_brief' ? 'Waiting for'
-        : agentHoldsTicket(facts) ? 'Currently working on' : row.gating_field==='consequences' ? 'At' : 'Waiting at';
+        : facts.agent_state==='setting_up' ? 'Setting up for'
+        : facts.agent_state==='working' ? 'Currently working on'
+          : agentHoldsTicket(facts) || row.gating_field==='consequences' ? 'At' : 'Waiting at';
 }
 
 export function ticketSectionRunLabel(section:TicketSection,view:EffectiveNavigationView | null | undefined):string | null {
@@ -63,7 +65,7 @@ export function ticketSectionFieldState(section:TicketSection,view:EffectiveNavi
   const row=section.record.value,lc=section.lifecycle;
   const facts=ticketSectionFacts(section,view);
   const status=row.ticket_status==='awaiting_approval' ? 'awaiting_approval' : facts.assigned ? 'assigned'
-    : facts.agent_state==='errored' ? 'errored' : agentHoldsTicket(facts) ? 'agent' : row.ticket_status;
+    : facts.agent_state==='errored' ? 'errored' : agentHoldsTicket(facts) ? 'agent_owned' : row.ticket_status;
   return ticketStageVisualStateFor(lc,{ticketStage:row.stage,ticketStatus:status,fieldName:field,
     fieldHasProposal:row.proposal_field===field});
 }

@@ -11,9 +11,11 @@
    * a settled turn that said more than its answer folds those earlier messages, and the
    * head is the one place to open them.
    *
-   * While the turn runs it counts, honestly, from the moment the prompt landed. The mark
-   * turns for as long as the line shows: the server saying the turn runs is the only word it follows. It is drawn as the
-   * conversation's one system line (SystemLine).
+   * While the turn runs it counts, honestly, from the moment the prompt landed, in the slot
+   * where "Worked for" stands once it ends, so settling changes the words and nothing moves.
+   * The mark hangs in the gutter, so it can leave without shifting them. It turns for as long
+   * as the line shows, a pending ask included: the server saying the turn runs is the only word
+   * it follows. It is drawn as the conversation's one system line (SystemLine).
    */
   import {
     earlierMessagesSentence,
@@ -32,7 +34,6 @@
     toolCallCount = 0,
     foldedMessageCount = 0,
     expanded = false,
-    waiting = null,
     onToggle
   }: {
     activityUncertain?: boolean;
@@ -48,9 +49,6 @@
     foldedMessageCount?: number;
     /** Whether this turn's earlier messages are showing. */
     expanded?: boolean;
-    /** What the running turn is waiting on the person for, if anything. A turn held by a
-     *  question or an approval is not working, and its head must not say it is. */
-    waiting?: "permission" | "question" | null;
     /** Opens and closes the turn's earlier messages. Absent where the reading shows them. */
     onToggle?: () => void;
   } = $props();
@@ -61,10 +59,7 @@
   let foldCount = $derived(onToggle === undefined ? "" : earlierMessagesSentence(foldedMessageCount));
   // A turn that stopped without an ending, with nothing it said or did, has nothing it can
   // honestly say: its own status line already says what happened.
-  // A turn held by the person draws no head: the ask docked over the composer says it waits,
-  // in its own words, and a clock here would claim progress that is not being made.
-  let held = $derived(!settled && waiting !== null && !activityUncertain);
-  let visible = $derived(!held && (!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0));
+  let visible = $derived(!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0);
 </script>
 
 {#if visible}
@@ -75,8 +70,7 @@
     data-conversation-turn-stopped={stopped ? "true" : undefined}
     data-conversation-turn-expanded={expanded ? "true" : "false"}
   >
-    {#if settled}
-      {#if foldCount !== ""}
+    {#if settled && foldCount !== ""}
         <!-- The one place to open what this turn said before its answer. -->
         <SystemLine>
           <button
@@ -92,23 +86,23 @@
             <svg class="c2-turn-chevron" class:is-open={expanded} viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
           </button>
         </SystemLine>
-      {:else}
-        <SystemLine data-conversation-turn-settled-head="">
-          <span data-conversation-turn-label>{foldLabel}</span>
-        </SystemLine>
-      {/if}
     {:else}
-      <!-- It turns while the line shows, quiet or not. Unknown
+      <!-- One line for the live and the plain settled head, so the mark leaves it in place
+           (150 ms) and "Working for" and "Worked for" stand on the same words. Unknown
            activity has no mark, because nothing is known to be running. -->
       <SystemLine
-        mark={activityUncertain ? null : "spinner"}
-        role="status"
-        data-conversation-alive=""
+        mark={settled || activityUncertain ? null : "spinner"}
+        hangMark
+        role={settled ? undefined : "status"}
+        data-conversation-alive={settled ? undefined : ""}
+        data-conversation-turn-settled-head={settled ? "" : undefined}
       >
-        {#if activityUncertain}
+        {#if settled}
+          <span data-conversation-turn-label>{foldLabel}</span>
+        {:else if activityUncertain}
           <span data-conversation-alive-word>Current activity on this machine is unknown.</span>
         {:else}
-          <span data-conversation-alive-word>Working</span>{#if elapsed.seconds !== null}<span aria-hidden="true">{" · "}</span><span data-conversation-alive-clock>{formatDuration(elapsed.seconds)}</span>{/if}
+          <span data-conversation-alive-word>{elapsed.seconds === null ? "Working" : "Working for"}</span>{#if elapsed.seconds !== null}{" "}<span data-conversation-alive-clock>{formatDuration(elapsed.seconds)}</span>{/if}
         {/if}
       </SystemLine>
     {/if}

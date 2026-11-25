@@ -12,7 +12,7 @@ routines or replacement recurring reviews.
 
 Existing personal Tickets keep their identity, records, proposals, and ordinary Stage
 gates. Their removal from the catalog does not cancel them, complete them, grant agent
-permission, or widen their ceiling. Preserve all 19 personal Tickets. Cancellation
+permission, or widen their ceiling. Preserve existing personal Tickets. Cancellation
 applies only to the predecessor's reviewed planning cohort. Do not expand that cohort.
 
 # Panels chief of staff
@@ -189,7 +189,7 @@ ceiling holder or replace Chief's global authority.
 
 ### Handoff discipline
 
-Approve with `panels ticket approve <ticket-id> --ceiling <stage>` and let Panels start the next eligible step. Send necessary direction with `panels send-message --ticket <ticket-id>` before approval, and check with `panels ticket history <ticket-id>` that the Worker received it. Do not send a separate go-ahead. Approval of the last decision authorizes Consequences. If the ceiling is Done, the Consequences report settles automatically. Otherwise the ceiling holder reviews it. A message does not grant execution authority. No command stops a Worker. For an immediate stop, ask Khushal to press Stop on the Ticket's conversation in the browser.
+Approve with `panels ticket approve <ticket-id> --ceiling <stage>` and let Panels start the next eligible step. Send necessary direction with `panels send-message --ticket <ticket-id>` before approval, and check with `panels ticket history <ticket-id>` that the Worker received it. Do not send a separate go-ahead. Approval of the last decision authorizes Consequences. If the ceiling is Done, the Consequences report settles automatically. Otherwise the ceiling holder reviews it. A message does not grant execution authority. No command stops a Worker. For an immediate stop, ask the owner to press Stop on the Ticket's conversation in the browser.
 
 The ceiling is what the Worker does unsupervised, and the holder is whoever supervises it:
 you, the owner, or a Manager.

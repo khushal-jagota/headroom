@@ -823,7 +823,7 @@
         <span class="lead">Become disgustingly productive.</span>
         <span class="rest">Panels <span class="verbs">pauses and pings</span> to help you run more agents with less headache.</span>
       </h1>
-      <div class="cta"><a class="pill" href="#get">Get Panels</a></div>
+      <div class="cta"><a class="pill" href="https://github.com/khushal-jagota/headroom/blob/main/ops/mac-home/installation.md">Get Panels</a></div>
       <p class="platforms">Works with Codex and Claude Code. Mac and Linux.</p>
     </div>
 
@@ -997,7 +997,7 @@ function pvData(key){
   if(key==='chief')return {k:['Chief','Opus 5.5 high','Idle'],t:'Chief of Staff',r:waiting()?`${waiting()} things wait for you. ${count('agent')} agents are working.`:`Nothing needs you. ${count('agent')} agents are working.`,d:'Holds the work across every project.'};
   const mi=/^m(\d)$/.exec(key); if(mi){const g=MG[+mi[1]];return {k:['Manager','Opus 5.5 high','Idle'],t:g.name,r:g.r,d:`${g.proj} · On track`}}
   const x=T[key]; const w=x.s==='agent';
-  return {k:['VPS 1','claude-sonnet-5-5 high',w?'Working':'Idle'],t:x.t,r:x.r||'Just started.',d:x.d||'Working on Brief.',need:x.s==='approve',e:w?(x.e??8):null,id:key};
+  return {k:['Home','claude-sonnet-5-5 high',w?'Working':'Idle'],t:x.t,r:x.r||'Just started.',d:x.d||'Working on Brief.',need:x.s==='approve',e:w?(x.e??8):null,id:key};
 }
 const fmt=s=>s<60?`${s}s`:`${Math.floor(s/60)}m ${String(s%60).padStart(2,'0')}s`;
 function showPv(el){

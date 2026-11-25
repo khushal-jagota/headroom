@@ -20,13 +20,13 @@ import UserNotifications
     private let registrationEnabled: Bool
     private let environment: String
     private let replyOutbox: Outbox
-    private let selectedServer: () -> URL
+    private let selectedServer: () -> URL?
     private let postLocalNotification: (UNNotificationRequest) async -> Void
 
     init(registrationEnabled: Bool = (Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsRegistrationEnabled") as? String) == "YES",
          environment: String = Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsEnvironment") as? String ?? "development",
          replyOutbox: Outbox? = nil,
-         selectedServer: @escaping () -> URL = { AppStore.configuredBaseURL },
+         selectedServer: @escaping () -> URL? = { AppStore.configuredBaseURL },
          postLocalNotification: @escaping (UNNotificationRequest) async -> Void = { request in
              try? await UNUserNotificationCenter.current().add(request)
          }) {
@@ -104,7 +104,10 @@ import UserNotifications
         }
         // A text response launches the app without requiring a SwiftUI scene.
         // Read the same selected server that an ordinary launch uses.
-        let selected = selectedServer()
+        guard let selected = selectedServer() else {
+            await reportUnsentReply("Connect to your Panels home before you reply.", notificationID: notificationID)
+            return
+        }
         let api = client.flatMap { LocalStore.server($0.baseURL) == LocalStore.server(selected) ? $0 : nil }
             ?? APIClient(baseURL: selected)
         do {
@@ -131,7 +134,9 @@ import UserNotifications
         content.sound = .default
         // A tap opens the selected server's Review. Do not reuse an invalid or
         // different-server payload, and never place reply text or errors here.
-        content.userInfo = ["server_url": selectedServer().absoluteString, "route": "/#/review"]
+        if let selected = selectedServer() {
+            content.userInfo = ["server_url": selected.absoluteString, "route": "/#/review"]
+        }
         let request = UNNotificationRequest(identifier: notificationID + ".reply-not-sent", content: content, trigger: nil)
         await postLocalNotification(request)
     }

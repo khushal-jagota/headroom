@@ -4,7 +4,12 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
-import type { WorkspaceMarker, WorkspaceOptions, WorkspaceState } from '../contracts.ts';
+import type {
+  WorkspaceMarker,
+  WorkspaceOptions,
+  WorkspaceState,
+  WorkspaceSafetyInspection,
+} from '../contracts.ts';
 import { remove_darwin_workspace } from './darwin_removal.ts';
 import {
   admit,
@@ -63,6 +68,34 @@ export async function reason_to_keep(
   states?: ReadonlyMap<string, WorkspaceState>,
   active_ticket_ids: ReadonlySet<string> = new Set(),
   options: WorkspaceOptions = {},
+): Promise<string | null> {
+  return (await inspect_workspace_safety(root, states, active_ticket_ids, options)).reason;
+}
+
+/** Keep the remote evidence from the same safety check for a move's branch proof. */
+export async function inspect_workspace_safety(
+  root: string,
+  states?: ReadonlyMap<string, WorkspaceState>,
+  active_ticket_ids: ReadonlySet<string> = new Set(),
+  options: WorkspaceOptions = {},
+): Promise<WorkspaceSafetyInspection> {
+  const advertised_refs = new Map<string, ReadonlyMap<string, string>>();
+  const reason = await workspace_safety_problem(
+    root,
+    states,
+    active_ticket_ids,
+    options,
+    advertised_refs,
+  );
+  return { reason, advertised_refs };
+}
+
+async function workspace_safety_problem(
+  root: string,
+  states: ReadonlyMap<string, WorkspaceState> | undefined,
+  active_ticket_ids: ReadonlySet<string>,
+  options: WorkspaceOptions,
+  advertised_refs: Map<string, ReadonlyMap<string, string>>,
 ): Promise<string | null> {
   root = admit(root, options);
   if (process.platform !== 'linux' && process.platform !== 'darwin')
@@ -131,17 +164,41 @@ export async function reason_to_keep(
         return `no origin copy can be verified for ${checkout}`;
       const hashes = new Set<string>();
       {
-        const fetched = await git(checkout, ['fetch', '--prune', 'origin'], options),
-          advertised = await git(checkout, ['ls-remote', '--heads', '--tags', 'origin'], options);
-        if (fetched.returncode || advertised.returncode)
-          return `remote verification failed for ${checkout}`;
+        const advertised = await git(
+          checkout,
+          ['ls-remote', '--heads', '--tags', 'origin'],
+          options,
+        );
+        if (advertised.returncode) return `remote verification failed for ${checkout}`;
+        const refs = new Map<string, string>();
+        advertised_refs.set(checkout, refs);
         for (const line of advertised.stdout.trim().split('\n').filter(Boolean)) {
-          const commit = line.split(/\s+/)[0]!;
-          if (
-            (await git(checkout, ['cat-file', '-e', `${commit}^{commit}`], options)).returncode ===
-            0
-          )
-            hashes.add(commit);
+          const [revision, ref] = line.split(/\s+/);
+          if (revision && ref) refs.set(ref, revision);
+        }
+        const revisions = [...new Set(refs.values())];
+        if (revisions.length) {
+          // Single-branch partial clones lack unrelated advertised commits. Fetch them together
+          // before object inspection, so cat-file does not lazily fetch each missing ref.
+          // This proof uses the current advertisement, never stale remote-tracking refs.
+          const fetched = await git(
+            checkout,
+            ['fetch', '--filter=blob:none', '--no-tags', 'origin', ...revisions],
+            options,
+          );
+          if (fetched.returncode) return `remote object verification failed for ${checkout}`;
+          // Peeling tags and excluding unavailable objects retains the same ancestry proof.
+          const checked = await git(
+            checkout,
+            ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+            options,
+            revisions.map((revision) => `${revision}^{commit}\n`).join(''),
+          );
+          const objects = checked.stdout.trim().split('\n');
+          if (checked.returncode || objects.length !== revisions.length)
+            return `remote object verification failed for ${checkout}`;
+          for (const [index, line] of objects.entries())
+            if (/^[0-9a-f]{40,64} commit$/.test(line)) hashes.add(revisions[index]!);
         }
       }
       if (!hashes.size) return `no remote copy can be verified for ${checkout}`;

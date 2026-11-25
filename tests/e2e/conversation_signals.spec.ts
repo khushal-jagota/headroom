@@ -39,7 +39,7 @@ async function marks(root: Locator, working: boolean, message: boolean): Promise
   }
 }
 
-const WORKING_LINE = /^Working(?: · (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/;
+const WORKING_LINE = /^Working(?: for (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/;
 
 test('test_exact_conversation_signals_cross_runtime_stream_and_surfaces', async ({
   signalServer,

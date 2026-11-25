@@ -1,13 +1,13 @@
 # Notifications
 
-A notification is a phone or desktop push for a kind of attention Khushal opted into, sent at the moment that attention newly becomes true. Notifications exist so Khushal does not have to keep Headroom open to learn that something is waiting on him.
+A notification is a phone or desktop push for a kind of attention the owner selected, sent at the moment that attention newly becomes true. Notifications exist so the owner can see when something needs attention while Headroom is closed.
 
 ## What it is made of
 
 - **Subjects.** Tickets, the Chief, Managers, and Panels itself (for the stall alarm). Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
-- **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
+- **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to the owner.
 - **Edges.** A flag flipping from false to true is an edge. Apart from the stall alarm below, an edge is the only thing that can notify.
-- **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
+- **The policy.** One decision door that turns an edge into a push or drops it, according to the owner's preferences.
 - **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link. The iPhone app uses APNs. A running desktop app holds a live stream instead; see [Desktop app](#desktop-app).
 - **The stall alarm.** Panels itself is a subject with one switch, Stalled work. The stall watchdog unit sends it when work stops moving or the server's stall checker stops; it has no edge and does not pass the policy, but it reads that switch. See [Executor](executor.md) for the watchdog.
 - **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
@@ -66,11 +66,14 @@ The desktop app holds one live stream, `GET /api/notifications/desktop`, while i
 The native app uses Apple Push Notification service (APNs). Press and hold a message notification to reply after device authentication. The app saves that reply in its ordinary outbox, addressed to the original conversation. The outbox sends it again with the same identity until the server answers. The action can launch the app in the background without an extension. The system permits one bounded delivery attempt, and pending work resumes when the app next opens. The browser keeps its
 existing Web Push path. Each path records delivery separately for the same attention
 edge and notification preference. Native retries stop after five minutes or five attempts.
-No Apple credentials means no native network calls and no claim of successful delivery.
+Native push for other homes is deferred. The stock app does not require the owner to provision Apple credentials.
+
+## Publisher configuration for iOS push
+
 The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
 Blue Door Labs. Release signing requests production APNs.
 
-The live service reads these settings from `~/.config/panels/panels-live.env`.
+The publisher’s live service reads these settings from `~/.config/panels/panels-live.env`.
 Its launcher passes them to the server:
 
 - `PLAN_APNS_KEY_PATH`: the private `.p8` key file, outside source control.
@@ -90,7 +93,7 @@ Debug and Simulator builds keep it disabled unless explicitly enabled.
 The `.p8` key stays on the server. It does not belong in the app or its build inputs.
 See [the native setup guide](../ios/NOTIFICATIONS.md) for private key setup, app settings, and the physical delivery check.
 
-The owner must deploy the server and install the new signed TestFlight build separately.
+For the publisher’s native push check, deploy the server and install the signed TestFlight build separately.
 Check native reads, an explicit owner action, foreground refresh, and conversation output.
 Enable notifications, then trigger a permitted attention edge while the app is closed.
 Check lock-screen delivery and the destination after a tap. A simulator injection does

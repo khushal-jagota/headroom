@@ -6,7 +6,7 @@ import type { PendingComposerSend } from "./videoUploads/localSends";
 export type PendingMessagePresentation =
   | { kind: "held"; row: HeldPromptRow; position: number; count: number }
   | { kind: "upload"; failed: boolean; note: string; files: readonly {
-      name: string; progress: number | null; note: string;
+      name: string; progress: number | null; note: string; failed: boolean;
     }[] };
 
 export const TRANSCRIPT_SEND_ACTIONS = Symbol("transcript-send-actions");
@@ -50,7 +50,8 @@ export function transcriptOutgoing(
         ? Math.min(100, Math.floor(file.receivedBytes * 100 / file.byteCount)) : null,
       note: file.phase === "ready" ? "Uploaded"
         : file.phase === "failed" || file.phase === "interrupted" ? file.error ?? "Attach again"
-        : file.phase === "validating" ? "Checking file…" : "Uploading…"
+        : file.phase === "validating" ? "Checking file…" : "Uploading…",
+      failed: file.phase === "failed" || file.phase === "interrupted"
     }));
     const failed = entry.phase === "failed" || entry.phase === "interrupted"
       || (entry.attempt.draftBeforeSend.pendingVideos ?? []).some(file => file.phase === "failed" || file.phase === "interrupted");

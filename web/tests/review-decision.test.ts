@@ -49,7 +49,7 @@ function receipt(saved: SavedDecision, outcome: "applied" | "refused" = "applied
     expected_proposal_revision: saved.command.expected_proposal_revision,
     outcome, transition: outcome === "applied" ? {
       stage: "needs_implementation", ceiling: "needs_implementation", ceiling_holder: { kind: "owner", id: "owner" },
-      ticket_status: "agent", pending_proposal_revision: 3
+      ticket_status: "agent_owned", pending_proposal_revision: 3
     } : null,
     error: outcome === "refused" ? { code: "validation", message: "This changed, review again", detail: {} } : null,
     created_at: 123

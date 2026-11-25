@@ -1,6 +1,6 @@
-# VPS
+# Diagnostics
 
-The VPS page is a glance at the machine that runs Headroom: CPU, memory, load, disk, network, services, and processes, with short trends. It exists so Khushal can see whether the host is healthy without a separate monitoring login. It does not deploy, back up, or alert.
+Diagnostics shows the health of the machine that runs Headroom: CPU, memory, load, disk, network, services, and processes, with short trends. It exists so the owner can see whether the host is healthy without a separate monitoring login. It does not deploy, back up, or alert.
 
 ## What it is made of
 

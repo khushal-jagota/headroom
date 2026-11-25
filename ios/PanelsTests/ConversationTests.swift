@@ -18,10 +18,15 @@ import UniformTypeIdentifiers
     }
 
     func testRemoteAnswerEvidenceDoesNotClaimApplicationWhilePending() throws {
-        for (fate, text) in [("saved", "delivery to Mac is pending"), ("applied", "applied on Mac"), ("unconfirmed", "Application is unconfirmed")] {
+        let expectedEvidence = [
+            ("saved", "Delivery to the worker machine is pending."),
+            ("applied", "The worker machine applied your answer."),
+            ("unconfirmed", "the app cannot confirm delivery."),
+        ]
+        for (fate, text) in expectedEvidence {
             let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
             let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(json.utf8))
-            XCTAssertTrue(body.answerSentence?.contains(text) == true)
+            XCTAssertTrue(body.answerSentence?.contains(text) == true, "Wrong evidence for \(fate)")
         }
     }
 

@@ -1,4 +1,4 @@
-/** Settings on installed iOS builds 9 and 10 still reads this key, directly or by revision. */
+/** Settings on installed iOS build 11 reads this key, directly or by revision. */
 import type { ResourceProvider } from '../../resource_versions/contracts.ts';
 import type { FileUpdateAttemptStore } from './attempts.ts';
 import { add_seconds, instant } from './logic/experience.ts';

@@ -263,7 +263,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0013_owner_send_receipts',
+      to_revision: 'ts_0015_owner_time_zone',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -278,10 +278,12 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0011_remove_tickets_blocks',
         'ts_0012_empty_attachments',
         'ts_0013_owner_send_receipts',
+        'ts_0014_work_move_operations',
+        'ts_0015_owner_time_zone',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0013_owner_send_receipts'],
+      revision: ['ts_0015_owner_time_zone'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);

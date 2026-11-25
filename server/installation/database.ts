@@ -13,6 +13,7 @@ async function run_candidate_database_entry(
   args: readonly string[],
   execution: ReleaseExecution,
   node_executable: string,
+  owner_time_zone?: string,
 ): Promise<void> {
   assert_release_execution(execution);
   if ([app, ...args, node_executable].some((value) => !isAbsolute(value) || value.includes('\0')))
@@ -29,6 +30,9 @@ async function run_candidate_database_entry(
           TMPDIR: state,
           PATH: dirname(node_executable) + ':/usr/local/bin:/usr/bin:/bin',
           LANG: 'C.UTF-8',
+          ...(owner_time_zone === undefined
+            ? {}
+            : { PLAN_INSTALL_OWNER_TIME_ZONE: owner_time_zone }),
         },
       },
       execution,
@@ -44,6 +48,7 @@ export async function initialize_candidate_home_database(
   execution: ReleaseExecution,
   node_executable: string,
   machine_root?: string,
+  owner_time_zone?: string,
 ): Promise<void> {
   await run_candidate_database_entry(
     app,
@@ -51,6 +56,7 @@ export async function initialize_candidate_home_database(
     [path, ...(machine_root ? [machine_root] : [])],
     execution,
     node_executable,
+    owner_time_zone,
   );
 }
 /** A moved database must pass its integrity test and the installed app's schema admission. */

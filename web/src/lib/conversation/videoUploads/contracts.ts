@@ -35,6 +35,12 @@ export type PendingVideo = {
   file?: File;
   /** Browser-local raster preview; never persisted. */
   previewUrl?: string;
+  /** Browser-local video, for the sent message's first frame; never persisted. */
+  localVideoUrl?: string;
+  /** A picture's or video's size as this browser shows it, read from the file at attach
+   *  time. It goes out with the upload piece, so the sent message keeps this box. */
+  width?: number;
+  height?: number;
 };
 export type ComposerSendContext = {
   queueWhilePending?: boolean;

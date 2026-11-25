@@ -196,7 +196,7 @@ import XCTest
         let ask = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
         // An earlier read on this phone, such as the read-ahead before the connection dropped.
         await ReviewMessageDecision().load(item: item(), api: api)
-        await ReviewAskDecision().load(item: ask, api: api)
+        await ReviewAskDecision().load(item: ask, api: api, viewFreshAt: Date())
         await LocalStore.shared.flushCache()
         ReviewMessageProtocol.state.offline = true
         let message = ReviewMessageDecision()
@@ -206,7 +206,7 @@ import XCTest
         let marked = await message.markRead()
         XCTAssertTrue(marked)
         let answer = ReviewAskDecision()
-        await answer.load(item: ask, api: api)
+        await answer.load(item: ask, api: api, viewFreshAt: Date())
         XCTAssertTrue(answer.available)
         let question = try XCTUnwrap(answer.userInput?.questions.first)
         answer.toggle("Blue", in: question)
@@ -223,6 +223,115 @@ import XCTest
         let sent = try XCTUnwrap(bodies.first { $0["request_id"] != nil })
         XCTAssertEqual(sent["request_id"] as? String, "request-1")
         XCTAssertEqual(sent["answers"] as? [String: [String: [String]]], ["colour": ["answers": ["Blue"]]])
+    }
+    /// Risk: offline, a card this phone never read has no saved copy, so it waits and
+    /// cannot act. The saved view's bound and ask stand in: Mark read reaches only the
+    /// newest message the view knew, so a later one stays unread, and the ask is answered
+    /// with the view's own IDs. A run the card did read always wins over the bound.
+    func testOfflineCardsNeverReadActOnTheSavedView() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        ReviewMessageProtocol.state.offline = true
+        // The server has message 67 since the view was saved with 66 as its newest.
+        ReviewMessageProtocol.state.newMessage = true
+        var unread = item(); unread.latestOwnerMessageSequence = 66
+        let message = ReviewMessageDecision()
+        await message.load(item: unread, api: api, shownAt: .now)
+        XCTAssertNil(message.error)
+        XCTAssertFalse(message.loaded)
+        XCTAssertEqual(message.markReadThrough, 66)
+        let marked = await message.markRead()
+        XCTAssertTrue(marked)
+        var ask = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+        ask.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-1", title: "Run ls", detail: "ls", options: [
+            .init(optionId: "allow", label: "Allow", optionKind: "allow_once"), .init(optionId: "reject", label: "Reject", optionKind: "reject_once")]), pendingUserInput: nil)
+        let answer = ReviewAskDecision()
+        await answer.load(item: ask, api: api, viewFreshAt: Date())
+        XCTAssertTrue(answer.available)
+        XCTAssertTrue(answer.answerPermission(try XCTUnwrap(answer.approveOption), item: ask, api: api))
+        ReviewMessageProtocol.state.offline = false
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ReviewMessageProtocol.state.bodies.count < 2, ContinuousClock.now < deadline {
+            await Outbox.shared.drain(api: api)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let bodies = ReviewMessageProtocol.state.bodies
+        XCTAssertEqual(bodies.filter { $0["through_sequence"] != nil }.map { $0["through_sequence"] as? Int }, [66])
+        let sent = try XCTUnwrap(bodies.first { $0["ask_id"] != nil })
+        XCTAssertEqual(sent["ask_id"] as? String, "ask-1")
+        XCTAssertEqual(sent["option_id"] as? String, "allow")
+        // Once read, the displayed run bounds Mark read, even below a higher window bound.
+        unread.latestOwnerMessageSequence = 70
+        ReviewMessageProtocol.state.newMessage = false
+        let read = ReviewMessageDecision()
+        await read.load(item: unread, api: api, shownAt: .now)
+        XCTAssertEqual(read.markReadThrough, 66)
+    }
+    /// Risk: the view's ask is older than a read, for example one answered on the web while
+    /// another now waits, and replaces it, so the card answers a dead ask. The view's ask
+    /// stands in only for a read made before it was raised, or for no read at all.
+    func testWindowAskStandsInOnlyForAnOlderRead() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        ReviewMessageProtocol.state.ask = true
+        defer { clean(api) }
+        func ask(raisedAt: Double) -> ReviewItem {
+            var item = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: raisedAt, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+            item.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-window", title: "Run ls", detail: nil, options: [
+                .init(optionId: "allow", label: "Allow", optionKind: "allow_once")]), pendingUserInput: nil)
+            return item
+        }
+        let stale = ask(raisedAt: Date().timeIntervalSince1970 - 3600)
+        // A live read after the view's ask was raised wins, online and offline after it.
+        let live = ReviewAskDecision()
+        await live.load(item: stale, api: api, viewFreshAt: Date())
+        XCTAssertEqual(live.userInput?.requestId, "request-1")
+        await LocalStore.shared.flushCache()
+        ReviewMessageProtocol.state.offline = true
+        await live.load(item: stale, api: api, viewFreshAt: Date())
+        XCTAssertEqual(live.userInput?.requestId, "request-1")
+        // A saved read newer than the view's ask wins too.
+        let saved = ReviewAskDecision()
+        await saved.load(item: stale, api: api, viewFreshAt: Date())
+        XCTAssertEqual(saved.userInput?.requestId, "request-1")
+        // An ask raised after the saved read replaces it.
+        let newer = ReviewAskDecision()
+        await newer.load(item: ask(raisedAt: Date().timeIntervalSince1970 + 60), api: api, viewFreshAt: Date())
+        XCTAssertEqual(newer.permission?.askId, "ask-window")
+    }
+    /// Risk: a view kept for hours offline, in memory or saved, still offers its ask after
+    /// the turn moved on. The view's ask stands in only while its last fresh snapshot is
+    /// under an hour old, both when the card takes it and when it is answered later.
+    func testWindowAskWaitsOnceTheViewIsAnHourOld() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        ReviewMessageProtocol.state.offline = true
+        defer { clean(api) }
+        var item = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+        item.pendingAsk = ReviewAskState(isRunning: true, pendingPermissionAsk: .init(askId: "ask-window", title: "Run ls", detail: nil, options: [
+            .init(optionId: "allow", label: "Allow", optionKind: "allow_once")]), pendingUserInput: nil)
+        let now = Date()
+        let old = ReviewAskDecision()
+        await old.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-2 * 60 * 60), now: now)
+        XCTAssertNil(old.permission)
+        XCTAssertFalse(old.available)
+        let recent = ReviewAskDecision()
+        await recent.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-10 * 60), now: now)
+        XCTAssertEqual(recent.permission?.askId, "ask-window")
+        XCTAssertTrue(recent.available)
+        // The same card shown again two hours later, with no fresh view since.
+        await recent.load(item: item, api: api, viewFreshAt: now.addingTimeInterval(-10 * 60), now: now.addingTimeInterval(2 * 60 * 60))
+        XCTAssertNil(recent.permission)
+        XCTAssertFalse(recent.loaded)
+        // A tap past the hour on a card still showing the view's ask puts it back to waiting.
+        let shown = ReviewAskDecision()
+        await shown.load(item: item, api: api, viewFreshAt: now, now: now)
+        let allow = try XCTUnwrap(shown.approveOption)
+        XCTAssertFalse(shown.answerPermission(allow, item: item, api: api, now: now.addingTimeInterval(2 * 60 * 60)))
+        XCTAssertNil(shown.permission)
+        XCTAssertFalse(shown.loaded)
+        XCTAssertTrue(Outbox.shared.entries(LocalStore.server(api.baseURL), conversationID: "c").isEmpty, "Nothing was saved to send")
     }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()

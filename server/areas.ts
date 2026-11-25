@@ -1,3 +1,4 @@
+import { observe_move_delivery } from './work_moves/delivery_events.ts';
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
 import { observe_shutdown } from './conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
@@ -87,7 +88,10 @@ export function createAreasRuntime(
     return {
       ...deployment_participants(config.db_path),
       ...(local_child_custody === undefined ? {} : { local_child_custody }),
-      event_participant: observe_credential_requests,
+      event_participant(tx, conversation_id, payloads) {
+        observe_move_delivery(tx, conversation_id, payloads, clock.now().getTime());
+        return observe_credential_requests(tx, conversation_id, payloads);
+      },
       startup_participant: reconcile_credential_requests,
       integer_now: () => clock.nowUnix(),
       all_are_notices: all_sender_messages_are_manager_notices,

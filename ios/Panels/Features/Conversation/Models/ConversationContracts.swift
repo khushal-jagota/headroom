@@ -74,9 +74,9 @@ struct ConversationBody: Equatable, Codable, Sendable {
     var answerFate: String? = nil
     var answerSentence: String? {
         switch answerFate {
-        case "saved": "Answer saved on VPS; delivery to Mac is pending."
-        case "applied": "Answer applied on Mac."
-        case "unconfirmed": "Answer saved on VPS; the original Mac request is gone. Application is unconfirmed."
+        case "saved": "The home saved your answer. Delivery to the worker machine is pending."
+        case "applied": "The worker machine applied your answer."
+        case "unconfirmed": "The home saved your answer. The original request is gone, so the app cannot confirm delivery."
         default: nil
         }
     }

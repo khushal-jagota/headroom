@@ -27,6 +27,11 @@ struct ReviewItem: Identifiable, Equatable, Sendable {
     var ownerReadThroughSequence = 0
     /// False when the owner has moved on to another conversation: read only.
     var addressCurrent = true
+    /// The newest message to the owner when the view was built: the Mark read bound for a
+    /// message card that never read its run.
+    var latestOwnerMessageSequence: Int? = nil
+    /// The ask the view carried, for an ask card that cannot read its conversation.
+    var pendingAsk: ReviewAskState? = nil
     var isProposal: Bool { reviewItemType == "proposal" }
     var isMessage: Bool { reviewItemType == "message" }
     var isAsk: Bool { reviewItemType == "ask" }
@@ -60,4 +65,34 @@ struct ReviewItem: Identifiable, Equatable, Sendable {
         self.conversationId = conversationId; self.ownerKind = ownerKind; self.ownerId = ownerId
         self.ownerReadThroughSequence = ownerReadThroughSequence; self.addressCurrent = addressCurrent
     }
+}
+
+/// The ask an agent's running turn waits on, read from its conversation as the web's
+/// ReviewAskCard reads it (`GET /api/conversation/conversations/{id}`).
+struct ReviewAskState: Decodable, Equatable, Sendable {
+    struct PermissionOption: Codable, Equatable, Sendable { let optionId: String; let label: String; let optionKind: String }
+    struct Permission: Codable, Equatable, Sendable {
+        let askId: String
+        let title: String
+        let detail: String?
+        let options: [PermissionOption]
+    }
+    struct Option: Codable, Equatable, Sendable { let label: String; let description: String? }
+    struct Question: Codable, Equatable, Sendable {
+        let questionId: String
+        let header: String?
+        let question: String
+        let options: [Option]
+        let multiSelect: Bool
+        let allowOther: Bool
+        /// The owner may answer in words.
+        var takesWords: Bool { allowOther || options.isEmpty }
+    }
+    struct UserInput: Codable, Equatable, Sendable { let requestId: String; let questions: [Question] }
+    let isRunning: Bool
+    let pendingPermissionAsk: Permission?
+    let pendingUserInput: UserInput?
+    var waiting: Bool { pendingPermissionAsk != nil || pendingUserInput != nil }
+    /// Which ask this is: its permission ask ID or its question's request ID.
+    var askIdentity: String? { pendingPermissionAsk?.askId ?? pendingUserInput?.requestId }
 }

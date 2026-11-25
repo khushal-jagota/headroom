@@ -12,6 +12,7 @@
   } from "../lib/filePreview";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import { readManagedFile } from "../lib/managedFileRead";
+  import { mediaFrame, revealWhenLoaded, type MediaSize } from "../lib/mediaFrame";
 
   let {
     target,
@@ -20,7 +21,9 @@
     visited = [],
     knownSizeLabel,
     download,
-    linkText
+    linkText,
+    mediaSize = null,
+    backdrop
   }: {
     target: FilePreviewTarget;
     mode?: "embedded" | "full";
@@ -30,6 +33,11 @@
     download?: { href: string; fileName: string };
     /** The words the author wrote for this link, which read as part of the sentence. */
     linkText?: string;
+    /** An embedded picture's or video's recorded size. Without one, a conversation fits it
+     *  into a fixed frame. Either way its box is drawn before it loads. */
+    mediaSize?: MediaSize | null;
+    /** This browser's own copy of a picture or video it sent, drawn under the stored one. */
+    backdrop?: string;
   } = $props();
 
   const MEDIA_FETCH_FAILED = "file fetch failed";
@@ -59,6 +67,10 @@
   let inline = $derived(!showsMedia && !showsDocument);
 
   let isCard = $derived(mode === "embedded" && showsDocument);
+  /** An embedded picture or video: its box is drawn at once, and the media inside it once
+   *  it comes into view. */
+  let embeddedMedia = $derived(mode === "embedded" && showsMedia && (resolved.kind === "image" || resolved.kind === "video"));
+  let frame = $derived(mediaFrame(mediaSize));
   function clipping(element: HTMLElement) {
     const inner = element.firstElementChild;
     const measure = () => element.classList.toggle("file-preview-clip--cut",
@@ -70,15 +82,24 @@
     return { destroy: () => observer.disconnect() };
   }
 
-  let naturallyWide = $state(false);
-  let duration = $state(0);
-  $effect(() => { resolved.href; naturallyWide = false; duration = 0; });
+  /** The video's length, for the address it was read from. */
+  let measuredDuration = $state<{ href: string; seconds: number } | null>(null);
+  let duration = $derived(measuredDuration?.href === resolved.href ? measuredDuration.seconds : 0);
   function clock(seconds: number) {
     return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   }
   function openViewer(event: MouseEvent, kind: "image" | "video") {
     openMediaViewer({ href: resolved.href, label: resolved.label, kind,
       downloadName: download?.fileName ?? resolved.label }, event.currentTarget as HTMLElement);
+  }
+
+  /** The video's length, also when its metadata loaded before this listener was attached. */
+  function readDuration(video: HTMLVideoElement) {
+    const href = resolved.href;
+    const read = () => { measuredDuration = { href, seconds: video.duration }; };
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) read();
+    video.addEventListener("loadedmetadata", read);
+    return { destroy: () => video.removeEventListener("loadedmetadata", read) };
   }
 
   function onMediaError() {
@@ -172,33 +193,39 @@
       </div>
       <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} />
     </article>
-  {:else if !visible && !inline}
-    <span aria-hidden="true"></span>
-  {:else if showsMedia && mode === "embedded" && resolved.kind === "image"}
+  {:else if embeddedMedia && resolved.kind === "image"}
     <button type="button" class="file-preview-media" data-media-open="image"
+      data-media-frame={frame.kind} style={frame.style}
       aria-label={`Open ${resolved.label}`} onclick={event => openViewer(event, "image")}>
-      <img
-        class="file-preview-image"
-        class:file-preview-media--wide={naturallyWide}
-        src={resolved.href}
-        alt={resolved.label}
-        decoding="async"
-        onload={event => { naturallyWide = (event.currentTarget as HTMLImageElement).naturalWidth >= 120; }}
-        onerror={onMediaError}
-      />
+      {#if backdrop}<img class="file-preview-backdrop" src={backdrop} alt="" aria-hidden="true" />{/if}
+      {#if visible}
+        <img
+          class="file-preview-image"
+          src={resolved.href}
+          alt={resolved.label}
+          decoding="async"
+          use:revealWhenLoaded
+          onerror={onMediaError}
+        />
+      {/if}
     </button>
-  {:else if showsMedia && mode === "embedded" && resolved.kind === "video"}
+  {:else if embeddedMedia && resolved.kind === "video"}
     <button type="button" class="file-preview-media file-preview-media--video" data-media-open="video"
+      data-media-frame={frame.kind} style={frame.style}
       aria-label={`Play ${resolved.label}`} onclick={event => openViewer(event, "video")}>
-      <!-- The browser draws the first frame as a poster; the expanded view plays it. -->
-      <video class="file-preview-video-poster" class:file-preview-media--wide={naturallyWide}
-        src={`${resolved.href}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"
-        onloadedmetadata={event => { const video = event.currentTarget as HTMLVideoElement;
-          naturallyWide = video.videoWidth >= 120; duration = video.duration; }}
-        onerror={onMediaError}></video>
+      {#if backdrop}<video class="file-preview-backdrop" src={`${backdrop}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"></video>{/if}
+      {#if visible}
+        <!-- The browser draws the first frame as a poster; the expanded view plays it. -->
+        <video class="file-preview-video-poster"
+          src={`${resolved.href}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"
+          use:revealWhenLoaded use:readDuration
+          onerror={onMediaError}></video>
+      {/if}
       <span class="file-preview-media-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg></span>
       {#if Number.isFinite(duration) && duration > 0}<span class="file-preview-media-duration">{clock(duration)}</span>{/if}
     </button>
+  {:else if !visible && !inline}
+    <span aria-hidden="true"></span>
   {:else if showsMedia && resolved.kind === "image"}
     <img
       class="file-preview-image"

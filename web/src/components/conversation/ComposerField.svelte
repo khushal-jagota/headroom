@@ -89,8 +89,8 @@
     /** The microphone, first of the controls at the right. */
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
-     *  while it goes. */
-    send?: Control & { ready: boolean; sending: boolean; allowWhileIntake?: boolean };
+     *  while it goes, then for a moment a green tick (`result` "sent"), a red cross ("failed"), or an amber question mark ("unsure": it may not have arrived). */
+    send?: Control & { ready: boolean; sending: boolean; result?: 'sent' | 'failed' | 'unsure'; allowWhileIntake?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -149,6 +149,7 @@
         const replacement = current.filter((entry) => !replaced.includes(entry));
         publishAttachmentDraft(key, [...replacement, attachment]);
         void transfers.start(attachment);
+        void transfers.measure(attachment);
       } catch (problem) {
         intakeError = problem instanceof Error ? problem.message : "The attachment could not be read.";
         onError?.(problem);
@@ -449,6 +450,9 @@
             type="button"
             class="composer-field-send"
             class:on={send.ready}
+            class:sent={send.result === 'sent' && !send.sending}
+            class:failed={send.result === 'failed' && !send.sending}
+            class:unsure={send.result === 'unsure' && !send.sending}
             aria-label={send.label}
             aria-busy={send.sending}
             disabled={send.disabled || (intakeBusy && !send.allowWhileIntake)}
@@ -457,6 +461,12 @@
           >
             {#if send.sending}
               <span class="composer-field-spinner" aria-hidden="true"></span>
+            {:else if send.result === 'sent'}
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+            {:else if send.result === 'unsure'}
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9.2a3 3 0 1 1 4.6 2.5c-1 .6-1.6 1.2-1.6 2.3M12 17.5h.01" /></svg>
+            {:else if send.result === 'failed'}
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
             {:else}
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
             {/if}
@@ -496,4 +506,12 @@
   .composer-field.is-reply-strip :global(.composer-field-tool svg) { width: 18px; height: 18px; stroke-width: 1.6; }
   .composer-field.is-reply-strip :global(.composer-field-send) { background-color: var(--cv-control); color: var(--cv-t3); }
   .composer-field.is-reply-strip :global(.composer-field-send.on) { background-color: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+  .composer-field :global(.composer-field-send:is(.sent, .failed, .unsure)),
+  .composer-field.is-reply-strip :global(.composer-field-send:is(.sent, .failed, .unsure)) { opacity: 1; }
+  .composer-field :global(.composer-field-send.sent),
+  .composer-field.is-reply-strip :global(.composer-field-send.sent) { background-color: var(--accent-done); color: var(--surface-ink); }
+  .composer-field :global(.composer-field-send.unsure),
+  .composer-field.is-reply-strip :global(.composer-field-send.unsure) { background-color: var(--accent-attention); color: var(--surface-ink); }
+  .composer-field :global(.composer-field-send.failed),
+  .composer-field.is-reply-strip :global(.composer-field-send.failed) { background-color: var(--accent-error); color: var(--surface-ink); }
 </style>

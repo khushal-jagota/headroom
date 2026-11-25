@@ -4,7 +4,7 @@ import { workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDis
 import type { ManagerWorkspaceTicket } from "../src/lib/types";
 const ticket = (id:string, overrides:Partial<ManagerWorkspaceTicket> = {}): ManagerWorkspaceTicket => ({
   id, title:id, recap:"",recap_preview:"", is_backlogged:false, stage:"needs_implementation", activity_at:1,
-  ticket_status:"agent", has_pending_proposal:false,
+  ticket_status:"agent_owned", has_pending_proposal:false,
   gating_field:null, blocked:false, worker_type:"coding", awaiting_reply:false, awaiting_answer:false, awaiting_approval:false, awaiting_agent_approval:false, assigned:false, agent_state:"idle", conversation_id:`conversation-${id}`,
   ...overrides
 });

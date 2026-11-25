@@ -48,7 +48,7 @@ struct ConversationNavigation: ViewModifier {
     @State private var pageVisible = false
     /// The docked surface's last height. While a pushed page covers this one, the same
     /// room stays at the bottom, so the page's scroll position is not clamped to a shorter
-    /// inset and Back returns to where Khushal left it.
+    /// inset and Back returns to where the owner left it.
     @State private var surfaceHeight: CGFloat = 0
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
@@ -261,7 +261,7 @@ private struct ConversationSurface: View {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                     TicketMachineLabel(locale: model.machineLocale)
                     if TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
-                        Text("Current activity on Mac is unknown.")
+                        Text(TicketMachine.unknownActivityText(model.machineLocale))
                         Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
                     }
                 }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)

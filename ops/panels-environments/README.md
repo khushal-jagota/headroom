@@ -1,7 +1,7 @@
-# Panels single-user operating inputs
+# Existing Linux deployment
 
-These checked-in files describe the Linux operating surface. They do not
-modify a host by themselves.
+These files belong to the existing publisher deployment and recovery runner.
+For a fresh home, use the [installer and its generated services](../mac-home/installation.md).
 
 The VPS has one Panels identity: the existing UID-1000 `vps` user. Source lives at
 `~/projects/Panels/Panels`; the deployed app and live state live at
@@ -41,7 +41,7 @@ Worker checks use temporary databases and scratch servers, never the live databa
 `panels-stall-watchdog.timer` runs `panels stalls watchdog` every 30 seconds, outside the
 live service, so a stuck server can still raise an alarm. Each run opens the live
 database read-only, alarms once on each stall the server's checker has recorded and on
-a checker heartbeat older than 90 seconds, pushes to Khushal's subscribed browsers and
+a checker heartbeat older than 90 seconds, pushes to the owner's subscribed browsers and
 devices unless the Panels "Stalled work" notification is switched off, and messages the
 Chief through the live server (best effort, 10 seconds). Its record of what it has
 already alarmed on is `data/stall-watchdog/stall-watchdog-state.json`. Native push needs

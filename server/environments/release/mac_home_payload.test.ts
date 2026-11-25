@@ -83,6 +83,8 @@ it('composes the Mac home from the selected files and schema frontier', async ()
       'server/skills/seeds/panels/SKILL.md',
       'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
+      'web/src/lib/conversation/attachmentPolicy.ts',
+      'server/environments/release/static_imports.ts',
       'assets/tokens.css',
       'assets/app.css',
       'assets/fonts/InterVariable.woff2',

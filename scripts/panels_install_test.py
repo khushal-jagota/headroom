@@ -89,6 +89,16 @@ class ServerWithoutHostNode(unittest.TestCase):
                 for target in ("linux", "darwin"):
                     with self.subTest(target=target):
                         panels_install.preflight(args, target)
+                # The home opt-out must pass this outer preflight too. The sealed
+                # installer test covers its writes and rollback.
+                command = home / ".local/bin/panels"
+                command.parent.mkdir(parents=True)
+                command.write_text("existing live command")
+                with self.assertRaisesRegex(ValueError, "panels command already exists"):
+                    panels_install.preflight(args, "linux")
+                args.skip_command_link = True
+                panels_install.preflight(args, "linux")
+                self.assertEqual(command.read_text(), "existing live command")
 
 
 class BootstrapEntryPath(unittest.TestCase):
@@ -116,7 +126,6 @@ class BootstrapEntryPath(unittest.TestCase):
                         root / "archive", {"revision": "a" * 40, "archive_sha256": "b" * 64}
                     )),
                     patch.object(panels_install, "extract_bootstrap", side_effect=unpack),
-                    patch.object(panels_install, "release_update_token", return_value="fixture"),
                     patch.object(panels_install, "run_installer") as launch,
                 ):
                     panels_install.main()

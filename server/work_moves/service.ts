@@ -2,7 +2,7 @@
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
-import { PromptDeliveryRefused } from '../conversation/contracts.ts';
+import { PromptDeliveryQueued, PromptDeliveryRefused } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { require_usable_model } from '../conversation/backend_state.ts';
 import { read_machine } from '../machines/data.ts';
@@ -17,7 +17,12 @@ import * as conversations from '../runtime/conversation_start.ts';
 import { read_ticket } from '../tickets/data/index.ts';
 import { read_manager } from '../managers/data.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
-import type { WorkMoveRequest, WorkMoveResult, WorkMoveBatchResult } from './contracts.ts';
+import type {
+  WorkMoveRequest,
+  WorkMoveResult,
+  WorkMoveBatchResult,
+  WorkMovePhase,
+} from './contracts.ts';
 import {
   read_work,
   work_agent_key,
@@ -35,6 +40,11 @@ export interface WorkMoveServices {
 export async function move_work(
   services: WorkMoveServices,
   request: WorkMoveRequest,
+  progress: (
+    phase: WorkMovePhase,
+    conversation_id?: string,
+    delivery_pending?: boolean,
+  ) => void = () => {},
 ): Promise<WorkMoveResult> {
   const { database, system, registry, now } = services;
   const { owner, machine_id } = request;
@@ -67,10 +77,14 @@ export async function move_work(
       if (previous.machine_id === machine_id)
         return { owner, title, machine_id, moved: false, error: null };
       // The link remains current until both exact process cleanup and the Git proof succeed.
+      progress('stopping');
       if (previous.conversation_id !== null) await system.kill(previous.conversation_id);
+      progress('verifying');
       const proof = await registry.work_move_source(previous.machine_id, owner);
+      progress('recording');
       database.write((tx) => write_work_destination(tx, owner, previous, machine_id, proof, now()));
       moved = true;
+      progress('recovering');
       const record = database.read((sql) => read_work(sql, owner).record);
       const prompt =
         'The owner moved your work to this machine. This is a fresh conversation. ' +
@@ -91,10 +105,13 @@ export async function move_work(
           conversations.worker_resolve(database, ticket),
           { conversation_id: conversations.new_conversation_id(), now: now() },
         );
+        progress('recovering', linked.conversation_id);
         const fate = await system.send(linked.conversation_id, text_message_content(prompt), {
           sender_label: 'machine move',
+          sender_message_id: `work-move:${conversations.new_conversation_id()}`,
           mode: 'queue',
         });
+        if (fate instanceof PromptDeliveryQueued) progress('queued', linked.conversation_id, true);
         if (fate instanceof PromptDeliveryRefused)
           throw new PlannerError(
             'validation',
@@ -108,6 +125,8 @@ export async function move_work(
                 database,
                 database.read((sql) => read_manager(sql, owner.id).item),
               );
+        const created_conversation_id = conversations.new_conversation_id();
+        progress('recovering', created_conversation_id);
         const delivered = await conversations.send_to_agent_conversation(
           system,
           database,
@@ -116,6 +135,7 @@ export async function move_work(
           values,
           {
             conversation_id: null,
+            created_conversation_id,
             sender_label: 'machine move',
             sender_message_id: `work-move:${conversations.new_conversation_id()}`,
             mode: 'queue',
@@ -123,6 +143,8 @@ export async function move_work(
             retain_created_conversation: true,
           },
         );
+        if (delivered.fate instanceof PromptDeliveryQueued && delivered.conversation_id !== null)
+          progress('queued', delivered.conversation_id, true);
         if (delivered.fate instanceof PromptDeliveryRefused)
           throw new PlannerError(
             'validation',

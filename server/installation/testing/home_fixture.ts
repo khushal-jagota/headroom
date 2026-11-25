@@ -36,7 +36,7 @@ export async function home_install_fixture() {
   writeFileSync(foreign, 'existing account data');
   const controller = new AbortController(),
     owner = new ChildProcesses();
-  const request: HomeInstallSubmission = {
+  const request = {
     root: join(base, 'new-parent', 'home'),
     service: 'com.panels.test',
     port: await unused_port(),
@@ -45,7 +45,7 @@ export async function home_install_fixture() {
     archive_sha256: 'a'.repeat(64),
     revision: 'b'.repeat(40),
     update_token: 'gho_fixtureUpdateToken0123456789',
-  };
+  } satisfies HomeInstallSubmission;
   const unit = join(account, '.config/systemd/user/com.panels.test.service');
   const events: string[] = [];
   const service: HomeServicePlan = {

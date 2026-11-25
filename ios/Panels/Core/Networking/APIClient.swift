@@ -46,7 +46,6 @@ struct ServerReadFailure: LocalizedError, Sendable {
 
 /// Shared reads and Ticket machine catalogue transport.
 struct APIClient: Sendable {
-    static let defaultBaseURL = URL(string: "https://panels-vps.tail687c57.ts.net")!
     let baseURL: URL
     var session: URLSession = .shared
 
@@ -145,6 +144,10 @@ struct APIClient: Sendable {
     func artifacts(owner: ArtifactOwner, directory: String = "", offset: Int = 0) async throws -> ArtifactPage {
         try await get("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: String(offset))])
     }
+    /// The first page of a file list as this phone last read it.
+    @MainActor func cachedArtifacts(owner: ArtifactOwner, directory: String = "") -> ArtifactPage? {
+        cached("/api/artifact-catalog/\(owner.kind.rawValue)/\(owner.id)", query: [.init(name: "directory", value: directory), .init(name: "offset", value: "0")])
+    }
 }
 
 enum TicketFilter: String, CaseIterable, Sendable { case active, backlogged, done }
@@ -156,12 +159,17 @@ extension APIClient {
         (path == "/api/workers" || path.hasPrefix("/api/tickets") ||
          path.hasPrefix("/api/managers") || path.hasPrefix("/api/worker-types") ||
          path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" || path == "/api/drivers" ||
-         path.hasPrefix("/api/conversation/conversations/"))
+         path.hasPrefix("/api/conversation/conversations/") || path.hasPrefix("/api/artifact-catalog/ticket/"))
     }
     @MainActor func cached<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> T? {
+        cachedRead(path, query: query)?.value
+    }
+    /// A saved response with the time it was saved.
+    @MainActor func cachedRead<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> (value: T, saved: Date)? {
         guard let url = try? url(path, query: query),
-              let row = try? LocalStore.shared.record(server: LocalStore.server(baseURL), kind: "cache", id: url.absoluteString) else { return nil }
-        return try? Self.decoder().decode(T.self, from: row.payload)
+              let row = try? LocalStore.shared.record(server: LocalStore.server(baseURL), kind: "cache", id: url.absoluteString),
+              let value = try? Self.decoder().decode(T.self, from: row.payload) else { return nil }
+        return (value, row.updated)
     }
     @MainActor func cachedTicket(_ id: String) -> TicketDetail? {
         cached("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)])

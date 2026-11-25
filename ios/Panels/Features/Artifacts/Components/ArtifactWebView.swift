@@ -1,9 +1,12 @@
 import SwiftUI
 import WebKit
 
-/// Loads managed HTML from its Panels URL with ordinary browser navigation.
+/// Loads managed HTML from its Panels URL with ordinary browser navigation. A page opened
+/// offline from its saved copy loads through its page source instead.
 struct ArtifactWebView: UIViewRepresentable {
     let url: URL
+    /// Serves the saved copy when the page opened from it offline.
+    var source: ArtifactPageSource? = nil
     var desktopPreview = false
     var reloadSignal = 0
     let failed: (String) -> Void
@@ -11,11 +14,17 @@ struct ArtifactWebView: UIViewRepresentable {
     let reload: () -> Void
     let navigated: (URL) -> Void
     let openExternal: (URL) -> Void
+    /// The load of the artifact's own page failed; true when it could not reach the server.
+    /// Other navigations, such as a followed link, never report here.
+    var pageFailed: (Bool) -> Void = { _ in }
+    /// A page finished: its address and the files it loaded (images, styles, scripts).
+    var loaded: (URL, [URL]) -> Void = { _, _ in }
 
-    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal) }
+    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal, pageFailed: pageFailed, loaded: loaded) }
     func makeUIView(context: Context) -> ArtifactWebContainer {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        if let source { configuration.setURLSchemeHandler(source, forURLScheme: ArtifactPageSource.scheme) }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.isOpaque = false
         view.backgroundColor = .clear
@@ -34,16 +43,18 @@ struct ArtifactWebView: UIViewRepresentable {
         if context.coordinator.url != url {
             context.coordinator.url = url
             context.coordinator.reloadSignal = reloadSignal
-            container.webView.load(URLRequest(url: url))
+            context.coordinator.pageNavigation = container.webView.load(URLRequest(url: url))
         } else if context.coordinator.reloadSignal != reloadSignal {
             context.coordinator.reloadSignal = reloadSignal
-            container.webView.reload()
+            context.coordinator.pageNavigation = container.webView.reload()
         }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         var url: URL?
         var reloadSignal = 0
+        /// The navigation that loads the artifact's own page.
+        weak var pageNavigation: WKNavigation?
         weak var mainView: WKWebView?
         private var urlObservation: NSKeyValueObservation?
         func observeNavigation(in view: WKWebView) {
@@ -60,9 +71,13 @@ struct ArtifactWebView: UIViewRepresentable {
         let reload: () -> Void
         let navigated: (URL) -> Void
         let openExternal: (URL) -> Void
+        let pageFailed: (Bool) -> Void
+        let loaded: (URL, [URL]) -> Void
         @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
-        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void) {
+        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void,
+             pageFailed: @escaping (Bool) -> Void, loaded: @escaping (URL, [URL]) -> Void) {
             self.failed = failed; self.ready = ready; self.reload = reload; self.navigated = navigated; self.openExternal = openExternal
+            self.pageFailed = pageFailed; self.loaded = loaded
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
@@ -153,12 +168,26 @@ struct ArtifactWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
+            pageFailure(navigation, error)
+        }
+        private func pageFailure(_ navigation: WKNavigation?, _ error: Error) {
+            guard let navigation, navigation === pageNavigation, (error as NSError).code != NSURLErrorCancelled else { return }
+            pageFailed(ServerReadFailure.isPassing(error))
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if let note = ServerReadFailure.note(error) { failed(note) }
+            pageFailure(navigation, error)
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if webView === mainView, let url = webView.url { navigated(url) }
+            if webView === mainView, let url = webView.url {
+                navigated(url)
+                // Fetches and beacons are the page's own requests, never files to keep.
+                let script = "performance.getEntriesByType('resource').filter(e => !['fetch', 'xmlhttprequest', 'beacon'].includes(e.initiatorType)).map(e => e.name)"
+                webView.evaluateJavaScript(script) { [weak self] result, _ in
+                    let files = (result as? [String] ?? []).compactMap(URL.init(string:))
+                    self?.loaded(url, files)
+                }
+            }
             ready()
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failed("The preview stopped. Try loading it again.") }

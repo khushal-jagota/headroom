@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until Khushal presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
+Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until the owner presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
 ```text
 staging PR or push → server and web suites
@@ -35,7 +35,7 @@ A release brings its own Node packages, so installation never runs a package ins
 
 Linux supplies the glibc loader and the system libraries listed in the runtime contract. The host supplies credentials and media tools such as `ffprobe`. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract, and Panels checks the host against it before it offers the release. Panels accepts only version 2, the Node release.
 
-An update checks a new release the way a normal installer does: against what the release says about itself, never against what the running version expects. The archive must match the receipt, the unpacked tree must match its own manifest, contract and inventory, its launch files must exist, and the host must meet its contract. The running version does not run release code before the swap. The installer's health check after the swap, with rollback, proves that the release runs. The heavier probe, which loads every server dependency and runs the backend tools, belongs to publication, where it checks a release that the same code built.
+An update checks a new release the way a normal installer does: against what the release says about itself, never against what the running version expects. The archive must match the receipt, the unpacked tree must match its own manifest, contract and inventory, its launch files must exist, and the host must meet its contract. The running version does not run release code before the swap. The installer's health check after the swap, with rollback, proves that the release runs. The heavier probe, which loads every server dependency and runs the backend tools, belongs to publication, where it checks a release that the same code built. On Linux and Mac, that probe first resolves the server entrypoints’ static runtime imports inside the package without application execution.
 
 Claude, Codex and Antigravity conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 

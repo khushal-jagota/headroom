@@ -56,15 +56,14 @@ describe("a turn's head", () => {
     expect(unknown).not.toContain("data-conversation-live-mark");
   });
 
-  it("draws nothing while the turn waits on the person: the docked ask says so, once", () => {
-    for (const waiting of ["permission", "question"] as const) {
-      const html = render(TurnAnchor, {
-        props: { settled: false, startedAtUnixMilliseconds: Date.now() - 75_000, waiting, toolCallCount: 1, onToggle: () => {} }
-      }).body;
-      expect(html).not.toContain("data-conversation-turn");
-      expect(html).not.toContain("Working");
-      expect(html).not.toContain("Waiting");
-    }
+  it("hangs its mark in the gutter live and settled, so settling moves nothing", () => {
+    const running = render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now() - 75_000 }
+    }).body.replace(/<!--[^]*?-->/g, "");
+    expect(running).toContain("is-hanging");
+    const settled = render(TurnAnchor, { props: { settled: true, durationSeconds: 420 } }).body;
+    expect(settled).toContain("is-hanging");
+    expect(settled).toContain("Worked for 7m");
   });
 });
 

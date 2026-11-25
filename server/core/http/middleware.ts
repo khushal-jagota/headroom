@@ -18,6 +18,7 @@ import type { Clock } from '../clock.ts';
 import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
 import { is_executor_link_connection } from './executor_link.ts';
+import { ClientLiveStreams, count_live_stream } from './live_streams/index.ts';
 import { SERVER_LOCATION_PATH } from '../../server_link/contracts.ts';
 export interface WorkspaceAdmission {
   operation(): {
@@ -82,6 +83,8 @@ export function installMiddleware(
   client_versions?: { database: Database; clock: Clock },
 ): void {
   const identities = new WeakMap<FastifyRequest, ClientIdentity>();
+  const live_streams = new ClientLiveStreams();
+  app.decorateRequest('count_live_stream', null);
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
       const path = new URL(request.url, 'http://localhost').pathname;
@@ -133,10 +136,22 @@ export function installMiddleware(
           .send({ error: { code: 'validation', message: (error as Error).message, detail: {} } });
         return;
       }
-      if (client) identities.set(request, client);
+      if (client) {
+        identities.set(request, client);
+        let counted = false;
+        request.count_live_stream = () => {
+          if (counted || reply.raw.destroyed || reply.raw.writableEnded) return;
+          counted = true;
+          const close = live_streams.open(client, request.routeOptions.url!);
+          reply.raw.once('finish', close);
+          reply.raw.once('close', close);
+        };
+      }
       if (
         client?.kind === 'desktop' &&
-        !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+        path.startsWith('/api/') &&
+        !(path === '/api/meta' && ['GET', 'HEAD'].includes(request.method)) &&
+        request.method !== 'OPTIONS' &&
         !supported_desktop_bridge(client)
       ) {
         reply
@@ -247,6 +262,8 @@ export function installMiddleware(
     return payload.pipe(limited);
   });
   app.addHook('onSend', async (request, reply, payload) => {
+    if (String(reply.getHeader('content-type') ?? '').startsWith('text/event-stream'))
+      count_live_stream(reply);
     const client = identities.get(request);
     identities.delete(request);
     if (client && client_versions && reply.statusCode !== 401 && reply.statusCode !== 403)

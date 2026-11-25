@@ -21,7 +21,7 @@ struct SettingsPlaces: View {
         Section {
             place("All goals", symbol: "target", route: .goals)
             place("Usage", symbol: "chart.bar", route: .usage)
-            place("VPS", symbol: "server.rack", route: .vps)
+            place("Diagnostics", symbol: "server.rack", route: .vps)
         }
     }
 

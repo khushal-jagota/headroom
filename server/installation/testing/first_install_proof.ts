@@ -15,6 +15,7 @@ import {
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
@@ -22,6 +23,7 @@ import { LinuxWorkerProcesses } from '../../platform_runtime/linux/worker_proces
 import type { WorkerProcess } from '../../worker_supervision/contracts.ts';
 import { record_native_processes } from './native_process_births.ts';
 import { check_home_port } from '../home.ts';
+import { RELEASE_REPOSITORY } from '../../environments/release/source.ts';
 import { run_release_command } from '../../environments/release/process.ts';
 import type { ReleaseExecution } from '../../environments/release/contracts.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
@@ -87,15 +89,16 @@ await writeFile(
   ),
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
-for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
+for (const key of Object.keys(environment))
+  if (key.startsWith('PLAN_') || key === 'GH_TOKEN' || key === 'GITHUB_TOKEN')
+    delete environment[key];
 if (qualifying) {
   // The public predecessor compares its entry URL with argv literally.
   const temporary = join(base, 'tmp');
   await mkdir(temporary, { recursive: true, mode: 0o700 });
   environment.TMPDIR = await realpath(temporary);
 }
-// Retain the runner's tools but exclude every PATH entry named node. This proves the
-// downloaded Python bootstrap and native server jobs do not need a host Node.
+// Only historical bootstraps can need gh to read a credential. Fresh installs have neither gh nor Node.
 const no_node_bin = join(base, 'host-without-node');
 await mkdir(no_node_bin);
 const linked = new Set<string>();
@@ -108,7 +111,7 @@ for (const directory of (environment.PATH ?? '').split(':').filter(Boolean)) {
     throw error;
   }
   for (const name of names) {
-    if (name === 'node' || linked.has(name)) continue;
+    if (name === 'node' || (!qualifying && name === 'gh') || linked.has(name)) continue;
     await symlink(join(directory, name), join(no_node_bin, name));
     linked.add(name);
   }
@@ -246,12 +249,15 @@ try {
   await mkdir(bin, { recursive: true });
   await mkdir(join(home, '.codex'), { recursive: true, mode: 0o700 });
   await write_default_backend_peer(base, source, bin);
+  const bootstrap = qualifying
+    ? join(base, 'predecessor-install.py')
+    : join(source, 'scripts/panels_install.py');
   install_attempted = true;
   const installed = await run(
     'first-install',
     [
       'python3',
-      qualifying ? join(base, 'predecessor-install.py') : join(source, 'scripts/panels_install.py'),
+      bootstrap,
       'home',
       '--root',
       root,
@@ -259,6 +265,7 @@ try {
       service,
       '--port',
       String(port),
+      ...(qualifying ? [] : ['--time-zone', 'Asia/Tokyo']),
       '--archive',
       archive,
       '--receipt',
@@ -273,6 +280,21 @@ try {
     installed.includes('Installed Panels at ' + root + '.'),
     'The native home installer returned without reporting the installation',
   );
+  if (!qualifying) {
+    await absent(join(root, 'data/secrets/update-token'));
+    const record = new DatabaseSync(join(root, 'data/planner.db'), { readOnly: true });
+    try {
+      assert.equal(
+        record.prepare('SELECT owner_time_zone FROM attention_history_metadata').get()
+          ?.owner_time_zone,
+        'Asia/Tokyo',
+      );
+    } finally {
+      record.close();
+    }
+    report.install_defaults =
+      'The selected reporting time zone was saved and no update token was written.';
+  }
   // The native package can boot while its shared styles are absent. Check the
   // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
   const styles_started = performance.now();
@@ -334,6 +356,15 @@ try {
   const command = output.split('\n').find((line) => line.startsWith('panels_join_script='));
   const credential = output.split('\n').find((line) => /^[A-Za-z0-9_-]{43}$/.test(line));
   assert.ok(command && credential, 'The actual join command must supply a private credential');
+  // The public predecessor fetched the same pinned script through the GitHub contents API.
+  const historical_api = qualifying && command.includes(' && gh api ');
+  const script_source = historical_api
+    ? `repos/${RELEASE_REPOSITORY}/contents/scripts/panels_install.py?ref=${revision}`
+    : `https://raw.githubusercontent.com/${RELEASE_REPOSITORY}/${revision}/scripts/panels_install.py`;
+  assert.ok(
+    command.includes(shell_quote(script_source) + (historical_api ? ' > ' : ' && python3 ')),
+  );
+  if (!historical_api) assert.match(command, / && curl /);
   const private_input = join(base, 'join-credential');
   await writeFile(private_input, credential + '\n', { flag: 'wx', mode: 0o600 });
   join_attempted = true;
@@ -350,7 +381,11 @@ try {
           shell_quote(machine_receipt) +
           ' < "$FIRST_INSTALL_CREDENTIAL"',
       ],
-      { ...environment, FIRST_INSTALL_CREDENTIAL: private_input },
+      {
+        ...no_node_environment,
+        ...(historical_api ? { GH_TOKEN: process.env.GH_TOKEN } : {}),
+        FIRST_INSTALL_CREDENTIAL: private_input,
+      },
     );
   } finally {
     await rm(private_input, { force: true });

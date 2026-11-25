@@ -3,7 +3,12 @@ import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import { readable_tool_call_detail } from '../../tool_detail.ts';
 import type { ConversationEventPayload, PromptEventPayload } from '../../events.ts';
 import type { MessageContent } from '../../message_content.ts';
-import { MessageFile, MessageImage, MessageText } from '../../message_content.ts';
+import {
+  MessageFile,
+  MessageImage,
+  MessageText,
+  media_size_entries,
+} from '../../message_content.ts';
 import {
   SENT_AFTER_ROW_LIMIT_MILLISECONDS,
   SENT_BEFORE_ROW_LIMIT_MILLISECONDS,
@@ -27,6 +32,7 @@ export function content_pieces(content: MessageContent): ViewMessagePiece[] {
         stored_file_id: piece.stored_file_id,
         media_type: piece.media_type,
         file_name: piece.file_name,
+        ...media_size_entries(piece.media_size),
       };
     }
     if (piece instanceof MessageFile) {
@@ -36,6 +42,7 @@ export function content_pieces(content: MessageContent): ViewMessagePiece[] {
         media_type: piece.media_type,
         file_name: piece.file_name,
         byte_count: piece.byte_count,
+        ...media_size_entries(piece.media_size),
       };
     }
     throw new Error('message content contains an unknown piece');

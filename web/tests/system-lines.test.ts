@@ -195,15 +195,18 @@ describe("the room under a message for its hover row", () => {
     const html = render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: "owner" } }).body;
     return { html, gaps: [...html.matchAll(/data-conversation-view-key="([^"]+)"[^>]*data-rhythm="([^"]+)"/g)].map(([, key, rhythm]) => `${key}:${rhythm}`) };
   }
-  it("puts a turn's gap after every message, also between two agent messages", () => {
-    const { gaps, html } = rhythms([message("e1", 1, "m1"), message("e2", 2, null), message("e3", 3, null), message("e4", 4, "m4")]);
-    expect(gaps).toEqual(["e1:first", "e2:turn", "e3:turn", "e4:turn"]);
-    // The live edge drawn after the transcript reads that it ends with a message.
-    expect(html).toContain("data-conversation-ends-with-message");
+  const agentStarted = (key: string, sequence: number): ConversationViewItem => ({
+    kind: "row", key, row_kind: "agent_turn_started", sender_message_id: null, source_sequence: sequence,
+    order: { sequence, slot: 0 }, changed_through_sequence: sequence, created_at: 1, turn_key: null, work_group_key: null,
+    fold_rule: "never", body: { kind: "inline", value: { kind: "agent_turn_started", reason: "Sub-agent 'Check tests' finished" } }
+  } as ConversationViewItem);
+  it("puts a turn's gap after a message, and a short break between agent messages and before an agent-started turn", () => {
+    const { gaps } = rhythms([message("e1", 1, "m1"), message("e2", 2, null), message("e3", 3, null), message("e4", 4, "m4"), agentStarted("e5", 5), message("e6", 6, null), agentStarted("e7", 7)]);
+    // A prompt or an agent-started turn after a person's message keeps the plain gap.
+    expect(gaps).toEqual(["e1:first", "e2:turn", "e3:break", "e4:turn", "e5:turn", "e6:turn", "e7:break"]);
   });
   it("gives the line drawn after the last message the same gap", () => {
     const { html } = rhythms([message("e1", 1, "m1")], { stopped_without_ending: true });
     expect(html).toMatch(/data-conversation-row="turn_stopped"[^>]*data-rhythm="turn"|data-rhythm="turn"[^>]*data-conversation-row="turn_stopped"/);
-    expect(html).not.toContain("data-conversation-ends-with-message");
   });
 });
