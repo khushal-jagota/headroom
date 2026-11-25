@@ -116,6 +116,7 @@ export function mark_recipient_attempt(
   conversation_id: string,
   messages: readonly Message[],
   turn_number: number,
+  native_transport: 'local' | 'mailbox',
 ): readonly RecipientAttempt[] {
   return database.write((tx) =>
     messages.flatMap((message) => {
@@ -128,8 +129,8 @@ export function mark_recipient_attempt(
       if (!row) return [];
       require_recipient_target(tx, submission_id);
       tx.run(
-        "UPDATE recipient_deliveries SET state='dispatching' WHERE submission_id=? AND attempt_id=?",
-        [submission_id, row.attempt_id],
+        "UPDATE recipient_deliveries SET state='dispatching',native_transport=? WHERE submission_id=? AND attempt_id=?",
+        [native_transport, submission_id, row.attempt_id],
       );
       if (message.held_prompt_id)
         tx.run(
@@ -283,4 +284,31 @@ export function recipient_messages_for_command(
       )
       .map((row) => decode_recipient_message(row.payload)),
   );
+}
+
+/** A queued native command must still belong to its recorded target at machine fetch. */
+export function recipient_command_is_current(sql: ReadSql, command_id: string): boolean {
+  const links = sql.all<{
+    submission_id: string;
+    attempt_id: string;
+    expected_attempt: string;
+    state: string;
+  }>(
+    'SELECT c.submission_id,c.attempt_id,r.attempt_id AS expected_attempt,r.state FROM recipient_delivery_commands c JOIN recipient_deliveries r USING(submission_id) WHERE c.command_id=?',
+    [command_id],
+  );
+  for (const link of links) {
+    if (
+      link.attempt_id !== link.expected_attempt ||
+      !['pending', 'held', 'dispatching'].includes(link.state)
+    )
+      return false;
+    try {
+      require_recipient_target(sql, link.submission_id);
+    } catch (error) {
+      if (error instanceof RecipientDeliveryStale) return false;
+      throw error;
+    }
+  }
+  return true;
 }

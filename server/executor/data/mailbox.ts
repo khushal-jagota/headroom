@@ -1,4 +1,7 @@
-import { link_recipient_command } from '../../message_delivery/data/recipient_deliveries.ts';
+import {
+  link_recipient_command,
+  recipient_command_is_current,
+} from '../../message_delivery/data/recipient_deliveries.ts';
 /**
  * Scoped mailbox SQL assumes an authorized caller and a caller-owned SQL capability.
  * Poll/result callers require transport ingress, protocol and current-identity admission.
@@ -743,6 +746,7 @@ export async function prepare_fetch(
           make('replacement_refused', 'refused', 'executor_process_replaced');
           make('replacement_uncertain', 'uncertain', 'executor_process_replaced');
         } else {
+          make('recipient_changed', 'refused', 'delivery_withdrawn');
           switch (operation(command.value)) {
             case 'steer':
               make('steer_turn_not_running', 'refused', 'steer_turn_not_running');
@@ -838,6 +842,15 @@ export function fetch(
     if (withdrawn_ids.has(command.command_id) || moved_conversations.has(row.conversation_id))
       continue;
     if (row.state === 'waiting') {
+      if (!recipient_command_is_current(tx, command.command_id)) {
+        const outcome = prepared_value(entry.outcomes.get('recipient_changed')!);
+        tx.run(
+          "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_sequence=?",
+          [outcome.text, now, counter(row.sequence)],
+        );
+        settled.push([command, outcome.result]);
+        continue;
+      }
       if (row.conversation_id !== null && !facts.has(row.conversation_id))
         facts.set(row.conversation_id, read_facts(tx, row.conversation_id));
       const reason = expiry_reason(command, facts.get(row.conversation_id ?? '') ?? [], now);

@@ -378,6 +378,8 @@ export interface BackendEventSink {
   record_local_child_custody?(identity: LocalChildIdentity): Promise<void>;
 }
 export interface BackendChild {
+  /** A child with this reference receives prompts through the durable executor mailbox. */
+  readonly reference?: ChildReference;
   readonly stop_outside_lock: boolean;
   /** Refuse a CLI below the backend's feature floor before any launch record is written. */
   confirm_cli_compatible?(): Promise<void>;

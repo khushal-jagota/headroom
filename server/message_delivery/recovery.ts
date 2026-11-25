@@ -8,7 +8,7 @@ import {
   finish_recipient_delivery,
 } from './data/recipient_deliveries.ts';
 import { prompt_row, refused_row, uncertain_row } from '../conversation/runtime/messages.ts';
-import { PromptDeliveryRefusalReason } from '../conversation/contracts.ts';
+import { PromptQueueReason, PromptDeliveryRefusalReason } from '../conversation/contracts.ts';
 
 export function resume_recipient_deliveries(host: SqliteProcessConversationSystem): void {
   const database = host.options.store.start_admission_database;
@@ -16,11 +16,12 @@ export function resume_recipient_deliveries(host: SqliteProcessConversationSyste
     sql.all<{
       submission_id: string;
       attempt_id: string;
+      native_transport: 'mailbox' | 'local' | null;
       conversation_id: string;
       payload: string;
       state: string;
     }>(
-      "SELECT submission_id,attempt_id,conversation_id,payload,state FROM recipient_deliveries WHERE state IN ('pending','dispatching') ORDER BY delivery_order",
+      "SELECT submission_id,attempt_id,native_transport,conversation_id,payload,state FROM recipient_deliveries WHERE state IN ('pending','dispatching') ORDER BY delivery_order",
     ),
   );
   for (const row of rows) {
@@ -32,36 +33,86 @@ export function resume_recipient_deliveries(host: SqliteProcessConversationSyste
       continue;
     if (row.state === 'dispatching') {
       const evidence = database.read((sql) =>
-        sql.all<{ outcome_json: string | null; state: string }>(
-          "SELECT c.outcome_json,c.state FROM executor_commands c JOIN recipient_delivery_commands d ON d.command_id=c.command_id WHERE d.submission_id=? AND c.operation IN ('write_prompt','steer')",
+        sql.all<{ outcome_json: string | null; state: string; operation: string }>(
+          "SELECT c.outcome_json,c.state,c.operation FROM executor_commands c JOIN recipient_delivery_commands d ON d.command_id=c.command_id WHERE d.submission_id=? AND c.operation IN ('write_prompt','steer')",
           [row.submission_id],
         ),
       );
-      // The retained native admission owns this exact command until its result arrives.
-      if (evidence.some((row) => row.state === 'waiting' || row.state === 'delivered')) continue;
-      const outcomes = evidence.flatMap((row) =>
-        row.outcome_json === null ? [] : [JSON.parse(row.outcome_json)],
-      );
-      const accepted = outcomes.some(
-        (outcome) =>
-          outcome.child_outcome?.disposition === 'succeeded' &&
-          ['prompt_accepted', 'steer_accepted'].includes(outcome.child_outcome?.result?.kind),
-      );
-      const refused =
-        outcomes.length > 0 &&
-        outcomes.every((outcome) => outcome.child_outcome?.disposition === 'refused');
-      host.options.store.append_events(row.conversation_id, [
-        accepted
-          ? prompt_row(message, message.requested_mode ?? 'queue')
-          : refused
-            ? refused_row(
-                message,
-                message.requested_mode ?? 'queue',
-                PromptDeliveryRefusalReason.write_to_backend_failed,
-              )
-            : uncertain_row(message, message.requested_mode ?? 'queue', 'delivery uncertain'),
-      ]);
-      continue;
+      if (row.native_transport === 'mailbox' && evidence.length === 0) {
+        // A machine cannot receive input without its durable command row.
+        database.write((tx) =>
+          tx.run(
+            "UPDATE recipient_deliveries SET state='pending' WHERE submission_id=? AND attempt_id=?",
+            [row.submission_id, row.attempt_id],
+          ),
+        );
+      } else {
+        // The retained native admission owns this exact command until its result arrives.
+        if (evidence.some((row) => row.state === 'waiting' || row.state === 'delivered')) continue;
+        const outcomes = evidence.flatMap((row) =>
+          row.outcome_json === null ? [] : [JSON.parse(row.outcome_json)],
+        );
+        const accepted = outcomes.some(
+          (outcome) =>
+            outcome.child_outcome?.disposition === 'succeeded' &&
+            ['prompt_accepted', 'steer_accepted'].includes(outcome.child_outcome?.result?.kind),
+        );
+        const steer_refused =
+          outcomes.length > 0 &&
+          evidence.every((row) => row.operation === 'steer') &&
+          outcomes.every(
+            (outcome) =>
+              outcome.child_outcome?.disposition === 'refused' ||
+              (outcome.child_outcome?.disposition === 'succeeded' &&
+                outcome.child_outcome?.result?.kind === 'steer_refused'),
+          );
+        if (steer_refused) {
+          const task = own_recipient_delivery(host, async () => {
+            const state = host.conversation_state(row.conversation_id);
+            if (!state) return;
+            try {
+              database.read((sql) => require_recipient_target(sql, row.submission_id));
+            } catch (error) {
+              if (!(error instanceof RecipientDeliveryStale)) throw error;
+              const written = host.options.store.append_events(row.conversation_id, [
+                refused_row(
+                  message,
+                  message.requested_mode ?? 'queue',
+                  PromptDeliveryRefusalReason.no_such_conversation,
+                  error.message,
+                ),
+              ]);
+              host.note_written(state, written);
+              return;
+            }
+            await state.lock.run(() => {
+              const held = host.hold_prompt(state, {
+                ...message,
+                queue_reason: PromptQueueReason.steer_refused,
+              });
+              finish_recipient_delivery(database, row, held);
+            });
+            host.schedule_drain(state);
+          });
+          void task.catch((error) => console.error('refused steer recovery failed', error));
+          continue;
+        }
+        const refused =
+          outcomes.length > 0 &&
+          outcomes.every((outcome) => outcome.child_outcome?.disposition === 'refused');
+        host.options.store.append_events(row.conversation_id, [
+          accepted
+            ? prompt_row(message, message.requested_mode ?? 'queue')
+            : refused
+              ? refused_row(
+                  message,
+                  message.requested_mode ?? 'queue',
+                  PromptDeliveryRefusalReason.write_to_backend_failed,
+                )
+              : uncertain_row(message, message.requested_mode ?? 'queue', 'delivery uncertain'),
+        ]);
+        continue;
+      }
     }
     try {
       database.read((sql) => require_recipient_target(sql, row.submission_id));

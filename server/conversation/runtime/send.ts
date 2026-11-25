@@ -1,3 +1,4 @@
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
 import {
   admit_recipient_delivery,
   finish_recipient_delivery,
@@ -24,7 +25,7 @@ import { PlannerError } from '../../core/contracts.ts';
 import { require_message_content } from '../message_content.ts';
 import type { Message } from './contracts.ts';
 import * as controls from './controls.ts';
-import { refused_row, same_message, outcome_fate } from './messages.ts';
+import { refused_row, uncertain_row, same_message, outcome_fate } from './messages.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { randomUUID } from 'node:crypto';
@@ -221,6 +222,30 @@ async function send_owned(
         message.sender_message_id,
       ),
     );
+    if (!is_shutdown_business_cancellation(error)) {
+      const pending = host.options.store.start_admission_database.read((sql) =>
+        sql.get<{ state: string }>('SELECT state FROM recipient_deliveries WHERE submission_id=?', [
+          `${state.record.conversation_id}:${message.sender_message_id}`,
+        ]),
+      );
+      if (pending && ['pending', 'dispatching'].includes(pending.state)) {
+        const payload =
+          pending.state === 'dispatching'
+            ? uncertain_row(message, mode, 'delivery uncertain')
+            : refused_row(
+                message,
+                mode,
+                R.write_to_backend_failed,
+                'Recipient delivery failed before a native prompt.',
+              );
+        const rows = await host.persist(state, () =>
+          host.options.store.append_events(state.record.conversation_id, [payload], {
+            recording_receipt: message.recording_receipt,
+          }),
+        );
+        host.note_written(state, rows);
+      }
+    }
     throw error;
   } finally {
     if (message.sender_message_id !== null) {

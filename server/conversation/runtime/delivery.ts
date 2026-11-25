@@ -391,6 +391,7 @@ export async function deliver_prompt(
       state.record.conversation_id,
       survivors,
       reservation.token.turn_number,
+      target.reference ? 'mailbox' : 'local',
     );
     const accepted = await with_recipient_attempts(recipient_attempts, () =>
       host.native_operation(() =>

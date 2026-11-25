@@ -131,54 +131,81 @@ test.each(['conversation', 'generation'] as const)(
   },
 );
 
-// These two crash snapshots distinguish resumable work from a possible native effect.
+// Crash snapshots distinguish resumable work, known non-arrival, and a possible native effect.
 // They reuse the same record and process fixture rather than create another host.
-test.each(['pending', 'dispatching'] as const)(
-  'restart reconciles the %s dispatch boundary without guessing',
-  async (state) => {
-    const f = setup();
-    await f.start();
-    await expect(
-      f.core.send('core', text_message_content('surviving input'), {
-        sender_label: 'Owner',
-        sender_message_id: 'crash-boundary',
-        recording_receipt: {
-          sender_id: '',
-          submission_id: 'crash-boundary',
-          admitted: () => {
-            throw new Error('crash after commit');
-          },
+test.each([
+  'pending',
+  'dispatching',
+  'steer_refused',
+  'local_failure',
+  'mailbox_unattempted',
+] as const)('restart reconciles the %s dispatch boundary without guessing', async (state) => {
+  const f = setup();
+  await f.start();
+  await expect(
+    f.core.send('core', text_message_content('surviving input'), {
+      sender_label: 'Owner',
+      sender_message_id: 'crash-boundary',
+      mode: state === 'steer_refused' ? 'steer' : 'queue',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'crash-boundary',
+        admitted: () => {
+          if (state === 'local_failure') throw new Error('crash after commit');
+          throw new DOMException('crash after commit', 'AbortError');
         },
-      }),
-    ).rejects.toThrow('crash after commit');
-    if (state === 'dispatching')
-      f.database.write((tx) =>
-        tx.run(
-          "UPDATE recipient_deliveries SET state='dispatching' WHERE submission_id='core:crash-boundary'",
-        ),
+      },
+    }),
+  ).rejects.toThrow('crash after commit');
+  if (state === 'dispatching' || state === 'steer_refused' || state === 'mailbox_unattempted')
+    f.database.write((tx) =>
+      tx.run(
+        "UPDATE recipient_deliveries SET state='dispatching' WHERE submission_id='core:crash-boundary'",
+      ),
+    );
+  if (state === 'mailbox_unattempted')
+    f.database.write((tx) =>
+      tx.run(
+        "UPDATE recipient_deliveries SET native_transport='mailbox' WHERE submission_id='core:crash-boundary'",
+      ),
+    );
+  if (state === 'steer_refused')
+    f.database.write((tx) => {
+      tx.run(
+        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,outcome_json) VALUES('refused-steer','old','steer','core','child',1,'{}','finished',1,?)",
+        [
+          JSON.stringify({
+            child_outcome: { disposition: 'succeeded', result: { kind: 'steer_refused' } },
+          }),
+        ],
       );
-    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
-    const restarted = setup({ restart_of: f.database });
-    try {
-      resume_recipient_deliveries(restarted.core);
-      if (state === 'pending') {
-        const child = await restarted.child;
-        await vi.waitFor(async () =>
-          expect((await child.inspect()).delivered_text).toEqual(['Role\n\nsurviving input']),
-        );
-      } else {
-        expect(restarted.children).toHaveLength(0);
-        expect(restarted.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
-          'prompt_delivery_uncertain',
-        ]);
-      }
-      resume_recipient_deliveries(restarted.core);
-      expect(restarted.children).toHaveLength(state === 'pending' ? 1 : 0);
-    } finally {
-      await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+      tx.run(
+        "INSERT INTO recipient_delivery_commands SELECT 'refused-steer',submission_id,attempt_id FROM recipient_deliveries WHERE submission_id='core:crash-boundary'",
+      );
+    });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database });
+  try {
+    resume_recipient_deliveries(restarted.core);
+    if (state === 'pending' || state === 'steer_refused' || state === 'mailbox_unattempted') {
+      const child = await restarted.child;
+      await vi.waitFor(async () =>
+        expect((await child.inspect()).delivered_text).toEqual(['Role\n\nsurviving input']),
+      );
+    } else {
+      expect(restarted.children).toHaveLength(0);
+      expect(restarted.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+        state === 'local_failure' ? 'prompt_delivery_refused' : 'prompt_delivery_uncertain',
+      ]);
     }
-  },
-);
+    resume_recipient_deliveries(restarted.core);
+    expect(restarted.children).toHaveLength(
+      state === 'pending' || state === 'steer_refused' || state === 'mailbox_unattempted' ? 1 : 0,
+    );
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
 
 // A failed delivery commit must not leave a cleared recap without its obligation.
 test('recap clearing and recipient custody commit or roll back together', async () => {

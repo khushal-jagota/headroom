@@ -21,6 +21,7 @@ export const recipient_deliveries_step: SchemaStep = {
       payload TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('pending','held','dispatching','delivered','refused','uncertain','discarded')),
       attempt_id TEXT NOT NULL,
+      native_transport TEXT CHECK(native_transport IN ('local','mailbox')),
       outcome TEXT
     )`);
     tx.run(

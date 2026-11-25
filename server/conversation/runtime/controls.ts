@@ -392,6 +392,7 @@ async function attempt_steer(
       state.record.conversation_id,
       [message],
       token.turn_number,
+      child.reference ? 'mailbox' : 'local',
     );
     outcome = await with_recipient_attempts(recipient_attempts, () =>
       host.native_operation(() =>
