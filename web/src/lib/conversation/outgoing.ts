@@ -3,6 +3,7 @@ import type { PendingMessagePresentation } from "./transcriptOutgoing";
  * replace its presentation when the server knows what happened. */
 import { ConversationWireError, type ConversationEvent, type OwnerSendBody, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
 import { PlannerFetchError } from "../api";
+import { mediaSizeOf } from "../mediaFrame";
 import { SEND_REQUEST_LIMIT_MS } from "../requestLimit/config";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 import {
@@ -893,7 +894,8 @@ function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
   if (value === null || typeof value !== "object") return null;
   const piece = value as Record<string, unknown>;
   if ((piece.piece === "video_upload" || piece.piece === "attachment_upload") && typeof piece.upload_id === "string" && piece.upload_id !== "") {
-    return { piece: piece.piece, upload_id: piece.upload_id };
+    // A picture's or video's measured size stays with it, so a message sent after a restore keeps its box.
+    return { piece: piece.piece, upload_id: piece.upload_id, ...(mediaSizeOf(piece as { width?: number; height?: number }) ?? {}) };
   }
   if (piece.piece === "text") {
     return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;
