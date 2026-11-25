@@ -11,7 +11,7 @@ import { attachmentTransfersFor, clearAttachmentDraft, openAttachmentDraft, pend
 import { videoUploadAdapter } from '../conversation/videoUploads/adapter';
 import type { PendingAttachment, UploadDestination } from '../conversation/videoUploads/contracts';
 import {
-  discardHeldPrompt, messageContentText, openConversationTail, promoteHeldPrompt, readConversation,
+  messageContentText, openConversationTail, readConversation,
   type ConversationView, type DeliveredMessage, type SentMessagePiece
 } from '../conversation/wire';
 import { readReviewDraft, saveReviewDraft } from './messages';
@@ -236,28 +236,6 @@ export class ReviewReplyComposer {
       clearTimeout(retry);
       closeTail?.();
     };
-  }
-
-  async discardHeld(heldPromptId: string, words?: string): Promise<boolean> {
-    const id = this.uploadDestination.expected_conversation_id;
-    if (!id || this.submitting) return false;
-    const senderId = this.queueView?.held_prompts.find(row => row.held_prompt_id === heldPromptId)?.sender_message_id;
-    const { discarded } = await discardHeldPrompt(id, heldPromptId, words !== undefined);
-    if (!discarded || id !== this.uploadDestination.expected_conversation_id) return false;
-    if (this.queueView?.conversation_id === id) {
-      this.queueView = { ...this.queueView, held_prompts: this.queueView.held_prompts.filter(row => row.held_prompt_id !== heldPromptId) };
-    }
-    if (words !== undefined) {
-      this.text = [this.text.trimEnd(), words].filter(Boolean).join('\n\n');
-    }
-    if (senderId) await this.#remove(senderId);
-    return true;
-  }
-
-  async promoteHeld(heldPromptId: string, mode: 'send_now' | 'steer'): Promise<void> {
-    const id = this.uploadDestination.expected_conversation_id;
-    if (!id || this.submitting) return;
-    await promoteHeldPrompt(id, heldPromptId, mode);
   }
 
   #disposeIfIdle(): void {
@@ -548,46 +526,6 @@ export class ReviewReplyComposer {
         return;
       }
       await this.#post(outgoing);
-    } finally {
-      this.submitting = false;
-      this.#disposeIfIdle();
-      void this.#pump();
-    }
-  }
-
-  canRetry(attempt: ReviewOutgoingReply): boolean {
-    return attempt.status === 'failed' || attempt.status === 'connection-failed'
-      || attempt.status === 'upload-failed' && Boolean(attempt.pendingUploads?.every(upload => !uploadFailed(upload) || upload.file));
-  }
-
-  async retry(attempt: ReviewOutgoingReply): Promise<void> {
-    if (this.submitting || this.#checking.has(attempt.message.messageId)) return;
-    if (!this.canRetry(attempt)) return;
-    if (attempt.status === 'upload-failed') {
-      this.#update(attempt.message.messageId, { status: 'uploading', note: null });
-      await Promise.all((attempt.pendingUploads ?? []).filter(uploadFailed).map(upload => this.#transfers.start(upload)));
-      void this.#pump();
-      return;
-    }
-    this.submitting = true;
-    this.error = null;
-    const original = this.attempts;
-    try {
-      const message = attempt.status === 'failed'
-        ? {
-            ...mintOutgoingMessage({ content: attempt.message.content, senderLabel: attempt.message.senderLabel, mode: attempt.message.mode }),
-            ownerReadThroughSequence: attempt.message.ownerReadThroughSequence
-          }
-        : attempt.message;
-      const next: ReviewOutgoingReply = { conversationId: attempt.conversationId, message, postedUploads: attempt.postedUploads, status: 'sending', note: null };
-      this.attempts = this.attempts.map(candidate => candidate.message.messageId === attempt.message.messageId ? next : candidate);
-      if (!await this.#store(this.attempts)) {
-        this.attempts = original;
-        throw new Error('The reply could not be saved in this browser.');
-      }
-      await this.#post(next, attempt.status === 'connection-failed');
-    } catch (problem) {
-      this.error = problem;
     } finally {
       this.submitting = false;
       this.#disposeIfIdle();
