@@ -4,7 +4,7 @@ import { render } from "svelte/server";
 import { performUpdateAction, settleUpdateStarting, updateStarting, updateActionRoute } from "../src/lib/updates/api";
 import { UPDATE_CONFIRMATION_MS } from "../src/lib/updates/config";
 import { atUpdateDeadline } from "../src/lib/updates/deadline";
-import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, machineUpdateLabel, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
+import { updateCard, updateOfferWarnings, cardMachines, machineUpdateLabel, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
 import type { UpdateStatus, MachineUpdateState } from "../src/lib/updates/contracts";
 import MachineRows from "../src/lib/updates/MachineRows.svelte";
 
@@ -158,32 +158,28 @@ describe("the update card", () => {
         { kind: "desktop", device_id: "desk", version: "1", bridge_version: 2 },
         { kind: "machine", device_id: "Office", version: "1", protocol_version: 7, outbox_format: 2 },
       ] };
-    expect(deviceUpdateWarnings(offered)).toEqual([
+    expect(updateOfferWarnings(offered, "available")).toEqual([
       "Your iPhone needs the TestFlight update first.", "Your desktop app needs an update first.",
       "Office needs an update to continue.",
     ]);
-    expect(deviceUpdateWarnings({ ...offered, available: status.available })).toEqual([]);
+    expect(updateOfferWarnings({ ...offered, available: status.available }, "available")).toEqual([]);
     const compatible = offered.client_versions.map(identity => ({ ...identity, build: 20, bridge_version: 3, protocol_version: 6 }));
-    expect(deviceUpdateWarnings({ ...offered, client_versions: compatible })).toEqual([]);
-    expect(deviceUpdateWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 3, outbox_format: 2 }] }))
+    expect(updateOfferWarnings({ ...offered, client_versions: compatible }, "available")).toEqual([]);
+    expect(updateOfferWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 3, outbox_format: 2 }] }, "available"))
       .toEqual(["Office needs an update to continue."]);
-    expect(deviceUpdateWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 6, outbox_format: 1 }] }))
+    expect(updateOfferWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 6, outbox_format: 1 }] }, "available"))
       .toEqual(["Office needs an update to continue."]);
   });
 
-  it("names affected agents before Update and uses the press snapshot afterwards", () => {
+  it("warns about running agents only while offering an update that interrupts them", () => {
     const interruption = { stops_agents: true, agents: ["Release proof", "Inbox cleanup"], machine_ids: ["desk"] };
-    const offered = { ...status, interruption, activity: "busy" as const };
-    expect(interruptionText(cardInterruption(offered))).toBe("This update stops your agents");
-    expect(cardInterruption(offered)?.agents).toEqual(["Release proof", "Inbox cleanup"]);
-    expect(interruptionText(status.interruption)).toBe("Your agents keep running");
-    const pressed = { ...offered, state: "updating" as const, attempt: { ...attempt, interruption: status.interruption } };
-    expect(cardInterruption(pressed)).toBe(status.interruption);
-    expect(cardInterruption({ ...pressed, attempt })).toBeNull();
-    expect(cardInterruption(offered, "updating")).toBe(interruption);
-    for (const state of ["failed", "machines", "refresh_needed", "unreachable"] as const)
-      expect(cardInterruption({ ...pressed, attempt: { ...attempt, interruption } }, state)).toBeNull();
-    expect(interruptionText(null)).toBeNull();
+    const offered = { ...status, interruption };
+    expect(updateOfferWarnings(offered, "available")).toEqual(["This update will interrupt running agents"]);
+    expect(updateOfferWarnings(status, "available")).toEqual([]);
+    for (const state of ["updating", "failed", "machines", "refresh_needed", "unreachable"] as const) {
+      expect(updateOfferWarnings(offered, state)).toEqual([]);
+      expect(updateOfferWarnings({ ...offered, attempt: { ...attempt, interruption } }, state)).toEqual([]);
+    }
   });
 });
 

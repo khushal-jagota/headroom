@@ -1,6 +1,6 @@
 import { UPDATE_CONFIRMATION_MS } from "../config";
 import type { ConnectionStatus } from "../../changeStream";
-import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../contracts";
+import type { UpdateStatus, MachineUpdateState } from "../contracts";
 
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
@@ -105,24 +105,13 @@ export function machineUpdateLabel(machine: MachineUpdateState): string {
   }
 }
 
-export function interruptionText(interruption: UpdateInterruption | null): string | null {
-  if (!interruption) return null;
-  return interruption.stops_agents ? "This update stops your agents" : "Your agents keep running";
-}
-
-/** An available offer is not evidence of what an earlier press interrupted. */
-export function cardInterruption(status: UpdateStatus, presentation: UpdateCardState | UpdateStatus["state"] = status.state): UpdateInterruption | null {
-  if (presentation === "available" || (presentation === "updating" && status.state === "available"))
-    return status.interruption;
-  if (presentation === "updating" && status.state === "updating") return status.attempt?.interruption ?? null;
-  return null;
-}
-
-/** Offer requirements can differ from the requirements of the running server. */
-export function deviceUpdateWarnings(status: UpdateStatus): string[] {
-  const compatibility = status.available?.compatibility;
-  if (!compatibility) return [];
+/** Only the update on offer can warn about the work and devices it will affect. */
+export function updateOfferWarnings(status: UpdateStatus, presentation: UpdateCardState | null): string[] {
+  if (presentation !== "available" || status.state !== "available" || !status.available) return [];
   const warnings = new Set<string>();
+  if (status.interruption?.stops_agents) warnings.add("This update will interrupt running agents");
+  const compatibility = status.available.compatibility;
+  if (!compatibility) return [...warnings];
   for (const identity of status.client_versions) {
     if (identity.kind === "ios" && identity.build !== undefined && identity.build < compatibility.ios.minimum_build) {
       warnings.add("Your iPhone needs the TestFlight update first.");
