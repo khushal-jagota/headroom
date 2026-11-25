@@ -18,7 +18,7 @@ final class TextSelectionTests: XCTestCase {
         defer { app.terminate() }
         app.openReviewCards()
 
-        // Copy one word, then expand to the whole title through the native menu.
+        // Copy one word, then expand the title range with the native selection handle.
         // Different pasted values prove a real range rather than a no-op long press.
         let reviewTitle = readable("Approve offline", in: app)
         XCTAssertTrue(reviewTitle.waitForExistence(timeout: 8))
@@ -39,8 +39,11 @@ final class TextSelectionTests: XCTestCase {
         start.press(forDuration: 1.1, thenDragTo: end)
         XCTAssertTrue(app.buttons["review.openTicket"].exists, "Text selection must not skip the Review card")
         XCTAssertTrue(reviewTitle.isHittable)
-        let fullSelection = systemAction("Select All", in: app)
-        if fullSelection.waitForExistence(timeout: 1) { fullSelection.tap() }
+        // The first drag ends inside the first glyph. The native leading grabber
+        // sits above that insertion point; move it past the text's leading edge.
+        // The failed run's screenshot showed that Copy otherwise omits the initial A.
+        reviewTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: -0.2))
+            .press(forDuration: 0.1, thenDragTo: reviewTitle.coordinate(withNormalizedOffset: CGVector(dx: -0.05, dy: -0.2)))
         let rangeCopy = systemAction("Copy", in: app)
         XCTAssertTrue(rangeCopy.waitForExistence(timeout: 3), "The selection drag must leave a real native Copy action")
         capture(app, "review-title-selection-without-card-swipe")
@@ -205,9 +208,16 @@ final class TextSelectionTests: XCTestCase {
 
     @MainActor private func copy(_ text: XCUIElement, in app: XCUIApplication, capture name: String) {
         XCTAssertTrue(text.isHittable)
-        text.press(forDuration: 1.1)
-        let selectAll = systemAction("Select All", in: app)
-        if selectAll.waitForExistence(timeout: 1) { selectAll.tap() }
+        if text.elementType == .textView {
+            // These fixture values each occupy one line. Start on the final word
+            // and extend its range past the first glyph. The native menu can hide
+            // Select All in overflow, so its first page does not prove a full range.
+            text.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5))
+                .press(forDuration: 1.1, thenDragTo: text.coordinate(withNormalizedOffset: CGVector(dx: -0.05, dy: 0.5)))
+        } else {
+            // SwiftUI's static text uses the system's whole-text Copy menu.
+            text.press(forDuration: 1.1)
+        }
         let copy = systemAction("Copy", in: app)
         XCTAssertTrue(copy.waitForExistence(timeout: 3), "The real system Copy menu must be available")
         capture(app, name)

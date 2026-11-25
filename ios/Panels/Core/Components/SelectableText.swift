@@ -170,13 +170,14 @@ struct PanelsSelectableText: UIViewRepresentable {
             setSelection(textView.selectedRange.length > 0)
         }
         func textViewDidEndEditing(_ textView: UITextView) { setSelection(false) }
-        func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange,
-                      interaction: UITextItemInteraction) -> Bool {
-            // The native menu owns long-press link actions. A normal tap uses the same
-            // SwiftUI route handler as the surrounding Markdown.
-            guard interaction == .invokeDefaultAction else { return true }
-            openURL(URL)
-            return false
+        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem,
+                      defaultAction: UIAction) -> UIAction? {
+            // Only the primary link tap changes routes. UIKit retains its native
+            // long-press menu because no menu configuration is overridden.
+            guard case .link(let url) = textItem.content else { return defaultAction }
+            return UIAction(title: defaultAction.title, image: defaultAction.image) { [weak self] _ in
+                self?.openURL(url)
+            }
         }
     }
 }
