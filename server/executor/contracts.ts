@@ -60,6 +60,16 @@ export interface HeldFileLocation {
 export interface FileOperationOptions {
   readonly signal?: AbortSignal;
 }
+/** A regular file held from digest through the final positional read. */
+export interface InputFileReader {
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
 export interface InputFile {
   readonly path: string;
   readonly sha256: string;

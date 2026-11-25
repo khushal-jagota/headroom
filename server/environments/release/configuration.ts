@@ -26,7 +26,6 @@ export const ARCHIVE_GZIP_LEVEL = 1;
 export const NODE_RUNTIME_EXECUTABLES = ['bin/panels', 'bin/panels-launcher'] as const;
 /** Files the Mac home build checks for in its own tree. An update never checks a new release against this list. */
 export const NODE_RUNTIME_FILES = [
-  'runtime/installer-files.json',
   'server/lifecycle/foreground_main.ts',
   'server/lifecycle/managed_main.ts',
   'server/lifecycle/application.ts',
@@ -48,7 +47,13 @@ export const NODE_RUNTIME_FILES = [
   'server/node_modules/better-sqlite3/package.json',
   ...driver_files_under('server/'),
 ] as const;
+// The server imports these web modules as executable code on every native target.
+export const HOME_WEB_SOURCE_FILES = [
+  'web/src/lib/conversation/view/contracts.ts',
+  'web/src/lib/conversation/attachmentPolicy.ts',
+] as const;
 export const SHARED_RUNTIME_FILES = [
+  ...HOME_WEB_SOURCE_FILES,
   'web/dist/index.html',
   ...driver_files_under('agent_backends/'),
 ] as const;

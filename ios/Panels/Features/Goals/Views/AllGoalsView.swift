@@ -54,12 +54,12 @@ struct AllGoalsView: View {
                 }
                 VStack(spacing: 0) {
                     ForEach(goals.filter { let values = readings($0); return filters.matches($0, current: values.0, target: values.1) }) { goal in
-                        NavigationLink(value: AppRoute.goal(goal.id)) { row(goal) }.buttonStyle(.plain)
+                        NavigationLink(value: AppRoute.goal(goal.id)) { row(goal) }.buttonStyle(.plain).systemCopyText(displayName(goal))
                         Divider()
                     }
                 }
-                if loaded, goals.isEmpty { Text("No goals").foregroundStyle(PanelsTheme.Goal.faint) }
-                if loaded, !goals.isEmpty, !goals.contains(where: { let values = readings($0); return filters.matches($0, current: values.0, target: values.1) }) { Text("No goals match these filters").foregroundStyle(PanelsTheme.Goal.faint) }
+                if loaded, goals.isEmpty { Text("No goals").textSelection(.enabled).foregroundStyle(PanelsTheme.Goal.faint) }
+                if loaded, !goals.isEmpty, !goals.contains(where: { let values = readings($0); return filters.matches($0, current: values.0, target: values.1) }) { Text("No goals match these filters").textSelection(.enabled).foregroundStyle(PanelsTheme.Goal.faint) }
             }.padding(24)
         }.panelsScreen().panelsNavigationTitle("All goals").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             .screenLoadState("goals", hasContent: loaded, error: error) { await load() }
@@ -117,7 +117,7 @@ struct AllGoalsView: View {
                     Picker("State", selection: $draft.state) { Text("All").tag("all"); Text("Active").tag("active"); Text("Inactive").tag("inactive") }
                     Picker("Completion", selection: $draft.completion) { Text("All").tag("all"); Text("Done").tag("done"); Text("Not done").tag("open") }
                 }
-            }.panelsScreen().navigationTitle(column.title).navigationBarTitleDisplayMode(.inline)
+            }.panelsScreen().panelsNavigationTitle(column.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Clear") { clear(column) } }
                     ToolbarItem(placement: .confirmationAction) { Button("Apply") { filters = draft; selectedFilter = nil } }

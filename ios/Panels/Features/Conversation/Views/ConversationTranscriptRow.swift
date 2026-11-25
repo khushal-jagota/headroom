@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The server chooses each row's mode and position. This view supplies the native
 /// form: a message, turn head, work disclosure, tool call or quiet system line.
@@ -6,6 +7,8 @@ struct ConversationTranscriptRow: View {
     let row: ConversationRow
     @Bindable var model: ConversationModel
     let activityUnknown: Bool
+    var answerNote: String? = nil
+    private var displayedNote: String? { answerNote ?? row.note }
     @Environment(AppStore.self) private var store
     @State private var toolExpanded = false
     @State private var progress: String?
@@ -166,7 +169,7 @@ struct ConversationTranscriptRow: View {
     private func output(_ text: String) -> some View {
         let lines = min(17, text.split(separator: "\n", omittingEmptySubsequences: false).count)
         return ScrollView([.horizontal, .vertical]) {
-            Text(text).font(.system(.subheadline, design: .monospaced)).textSelection(.enabled)
+            PanelsSelectableText(text, font: .monospacedSystemFont(ofSize: outputLineHeight * 0.75, weight: .regular), color: UIColor(PanelsTheme.text))
                 .fixedSize(horizontal: true, vertical: false).padding(10)
         }
         .frame(height: CGFloat(max(1, lines)) * outputLineHeight + 20)
@@ -203,9 +206,8 @@ struct ConversationTranscriptRow: View {
 
     @ViewBuilder private var system: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(systemText).textSelection(.enabled)
-                .font(ConversationTypography.body)
-            if let note = row.note { Text(note).font(ConversationTypography.metadata) }
+            PanelsSelectableText(systemText, font: .preferredFont(forTextStyle: .subheadline), color: UIColor(PanelsTheme.faint))
+            if let note = displayedNote { PanelsSelectableText(note, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.faint)) }
 
         }.font(ConversationTypography.body).foregroundStyle(PanelsTheme.faint)
     }
@@ -238,8 +240,8 @@ struct ConversationTranscriptRow: View {
                 }
                 if !row.text.isEmpty { markdown(row.text) }
             }
-            if !row.own, let note = row.note {
-                Text(note).font(ConversationTypography.metadata).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
+            if !row.own, let note = displayedNote {
+                PanelsSelectableText(note, font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.faint)).frame(minHeight: 28)
             }
         }
         .opacity(row.presentation == .narration ? 0.75 : 1)

@@ -63,7 +63,7 @@ struct ArtifactViewerView: View {
             } else if let error {
                 ContentUnavailableView {
                     Label("Couldn't open artifact", systemImage: "doc.badge.ellipsis")
-                } description: { Text(error) } actions: {
+                } description: { Text(error).textSelection(.enabled) } actions: {
                     Button("Try again") { loadVersion += 1 }.buttonStyle(.bordered)
                 }
             } else {
@@ -78,13 +78,13 @@ struct ArtifactViewerView: View {
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
-        .panelsScreen()
         .modifier(ArtifactDockSurface(dock: dock, conversationID: conversationID, textEntry: textEntry))
+        .panelsScreen()
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text((path as NSString).lastPathComponent).font(PanelsTheme.TypeScale.artifactTitle).lineLimit(1).truncationMode(.middle)
+                PanelsSelectableText((path as NSString).lastPathComponent, font: .preferredFont(forTextStyle: .subheadline), color: UIColor(PanelsTheme.text), lineLimit: 1)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { Task { await share() } } label: { Image(systemName: "square.and.arrow.up") }
@@ -101,7 +101,7 @@ struct ArtifactViewerView: View {
             get: { shareError != nil }, set: { if !$0 { shareError = nil } }
         )) {
             Button("OK", role: .cancel) { shareError = nil }
-        } message: { Text(shareError ?? "") }
+        } message: { Text(shareError ?? "").textSelection(.enabled) }
         .sheet(isPresented: $sharePresented) {
             if let shareDocument { ArtifactShareSheet(document: shareDocument).presentationDetents([.medium, .large]) }
             else if let shareURL { ArtifactURLShareSheet(url: shareURL).presentationDetents([.medium, .large]) }
@@ -159,7 +159,7 @@ struct ArtifactViewerView: View {
             ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).panelsRefreshable { await load() }
         case .text where document.text != nil:
             ScrollView {
-                Text(document.text!).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                PanelsSelectableText(document.text!, font: .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular), color: UIColor(PanelsTheme.text))
                     .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
             }.panelsRefreshable { await load() }
         case .image:
@@ -176,7 +176,7 @@ struct ArtifactViewerView: View {
         else {
             ContentUnavailableView {
                 Label(document.localURL.lastPathComponent, systemImage: "doc")
-            } description: { Text("Share this file to open it in another app.") } actions: {
+            } description: { Text("Share this file to open it in another app.").textSelection(.enabled) } actions: {
                 Button("Share file") { Task { await share() } }.buttonStyle(.bordered)
             }
         }

@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
 import ImageIO
+import CoreTransferable
 
 struct ConversationComposer: View {
     @Bindable var model: ConversationModel
@@ -64,7 +65,7 @@ struct ConversationComposer: View {
         }
         if !model.attachments.isEmpty || model.preparingPhoto {
             ConversationAttachmentTray(pieces: model.attachments, preparingPhotoNames: model.preparingPhotos.values.sorted(),
-                preparing: model.preparingDraftPhotos, conversationText: !reviewReply) { index in
+                preparing: model.preparingDraftPhotos, conversationText: !reviewReply, preparingVideos: Array(model.preparingVideos.values)) { index in
                 guard model.attachments.indices.contains(index) else { return }
                 model.attachments.remove(at: index)
             }
@@ -155,7 +156,7 @@ struct ConversationComposer: View {
                         .font(.system(size: min(iconSize, 28), weight: .medium)).foregroundStyle(PanelsTheme.ink)
                         .frame(width: typeSize.isAccessibilitySize ? 40 : 30, height: typeSize.isAccessibilitySize ? 40 : 30).background(PanelsTheme.strong, in: Circle())
                         .frame(width: 44, height: 44)
-                }.disabled(speech.starting || speech.transcribing || model.sending || model.preparingPhoto)
+                }.disabled(speech.starting || speech.transcribing || model.sending || model.preparingPhoto || model.failedAttachment != nil)
                     .accessibilityLabel(speech.recording ? "Stop recording" : stopsTurn ? "Stop turn" : card || !model.attachments.isEmpty ? "Send message" : "Record voice input")
             }.padding(.horizontal, card ? 1 : 2).padding(.bottom, card ? 1 : 0)
     }
@@ -224,6 +225,7 @@ struct ConversationAttachmentTray: View {
     var preparingPhotoNames: [String] = []
     var preparing = false
     var conversationText = true
+    var preparingVideos: [ConversationModel.VideoPreparation] = []
     var remove: ((Int) -> Void)? = nil
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -231,12 +233,21 @@ struct ConversationAttachmentTray: View {
                 ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
                     ConversationAttachmentTile(piece: piece, preparing: preparing && piece.piece == "image", conversationText: conversationText, remove: remove.map { action in { action(index) } })
                 }
+                ForEach(preparingVideos) { video in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(video.fileName).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                        ProgressView(value: video.progress).frame(width: 150)
+                        PanelsSelectableText(video.progress > 0 ? "Compressing video… \(Int(video.progress * 100))%" : "Preparing video…", font: .preferredFont(forTextStyle: .footnote), color: UIColor(PanelsTheme.muted))
+                    }.font(conversationText ? ConversationTypography.body : PanelsTheme.TypeScale.small).padding(10)
+                        .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityIdentifier("conversation-video-preparing")
+                }
                 ForEach(Array(preparingPhotoNames.enumerated()), id: \.offset) { _, name in
                     HStack(spacing: 8) {
                         RingSpinner(size: .compact)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name).lineLimit(1).truncationMode(.middle)
-                            Text("Preparing photo…").foregroundStyle(PanelsTheme.muted)
+                            Text(name).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                            Text("Preparing photo…").textSelection(.enabled).foregroundStyle(PanelsTheme.muted)
                         }.font(PanelsTheme.TypeScale.small)
                     }
                     .padding(10).background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
@@ -259,7 +270,7 @@ struct ConversationAttachmentTile: View {
     @ScaledMetric(relativeTo: .body) private var side = 64.0
     private var name: String { piece.fileName ?? (piece.piece == "image" ? "Image" : "File") }
     private var kind: String { let ext = (name as NSString).pathExtension.uppercased(); return ext.isEmpty ? "FILE" : String(ext.prefix(4)) }
-    private var byteCount: Int { (piece.data?.utf8.count ?? 0) / 4 * 3 }
+    private var byteCount: Int64 { piece.localVideo?.byteCount ?? Int64((piece.data?.utf8.count ?? 0) / 4 * 3) }
     var body: some View {
         Group {
             if piece.piece == "image" {
@@ -270,13 +281,18 @@ struct ConversationAttachmentTile: View {
                 .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 HStack(spacing: 8) {
-                    Text(kind)
+                    Text(kind).textSelection(.enabled)
                         .font(PanelsTheme.TypeScale.caption.weight(.semibold)).foregroundStyle(PanelsTheme.muted)
                         .frame(width: 40, height: 40).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(conversationText ? ConversationTypography.body : PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
+                        Text(name).textSelection(.enabled).font(conversationText ? ConversationTypography.body : PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
+                        Text(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)).textSelection(.enabled)
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+                        if let error = piece.preparationError ?? piece.localVideo?.preparationError {
+                            PanelsSelectableText(error, font: .preferredFont(forTextStyle: .caption2), color: UIColor(PanelsTheme.muted))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("conversation-video-error")
+                        }
                     }.frame(maxWidth: 160, alignment: .leading)
                 }
                 .padding(.leading, 8).padding(.trailing, remove == nil ? 10 : 30)
@@ -286,7 +302,7 @@ struct ConversationAttachmentTile: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(PanelsTheme.border))
         .overlay(alignment: .bottom) {
             if preparing {
-                Text("Preparing photo…").font(PanelsTheme.TypeScale.caption)
+                Text("Preparing photo…").textSelection(.enabled).font(PanelsTheme.TypeScale.caption)
                     .padding(3).background(PanelsTheme.surface)
             }
         }
@@ -344,6 +360,22 @@ struct ImagePaste: ViewModifier {
     }
 }
 
+/// Photos owns the received URL only during this import. Keep a private copy for preparation.
+private struct PickedVideo: Transferable, Sendable {
+    let url: URL
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .movie) { received in
+            let source = received.file
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).appendingPathExtension(source.pathExtension)
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.copyItem(at: source, to: destination)
+            }.value
+            return PickedVideo(url: destination)
+        }
+    }
+}
+
 /// The Attach sheet and the pickers it opens, adding to one composer model. The Command
 /// row shows only where `command` is given.
 private struct AttachmentPickers: ViewModifier {
@@ -362,33 +394,59 @@ private struct AttachmentPickers: ViewModifier {
             .sheet(isPresented: $isPresented, onDismiss: open) {
                 AttachSheet(cameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera), commands: command != nil) { choice = $0 }
             }
-            .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
+            .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
             .onChange(of: picture) { _, selected in
                 guard let selected else { return }
                 Task {
                     do {
-                        guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
-                        let type = selected.supportedContentTypes.first ?? .jpeg
-                        await model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
+                        if let type = selected.supportedContentTypes.first(where: { $0.conforms(to: .movie) }) {
+                            await model.attachVideo(fileName: "Video." + (type.preferredFilenameExtension ?? "mov"), load: {
+                                guard let video = try await selected.loadTransferable(type: PickedVideo.self) else {
+                                    throw CocoaError(.fileReadUnknown)
+                                }
+                                return video.url
+                            }, release: { try? FileManager.default.removeItem(at: $0) })
+                        } else {
+                            guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
+                            let type = selected.supportedContentTypes.first ?? .jpeg
+                            await model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
+                        }
                         picture = nil
                     } catch { model.error = error.localizedDescription }
                 }
             }
             .sheet(isPresented: $camera) {
-                ConversationCamera { image in
+                ConversationCamera { capture in
                     camera = false
-                    if let image {
+                    switch capture {
+                    case .photo(let image):
                         Task { await model.attachPhoto(fileName: "Photo.jpg") { image.jpegData(compressionQuality: 0.85) } }
+                    case .video(let url):
+                        Task { await model.attachVideo(fileName: url.lastPathComponent, load: { url },
+                                                      release: { try? FileManager.default.removeItem(at: $0) }) }
+                    case .failure(let message):
+                        Task {
+                            await model.attachVideo(fileName: "Video.mov", load: {
+                                throw NSError(domain: "VideoAttachment", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+                            })
+                        }
+                    case nil: break
                     }
                 }.ignoresSafeArea()
             }
             .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
                 do {
                     let url = try result.get()
-                    let access = url.startAccessingSecurityScopedResource()
-                    defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    let data = try Data(contentsOf: url)
-                    Task { await model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent) }
+                    Task {
+                        let access = url.startAccessingSecurityScopedResource()
+                        defer { if access { url.stopAccessingSecurityScopedResource() } }
+                        let type = UTType(filenameExtension: url.pathExtension)
+                        if type?.conforms(to: .movie) == true || ["mp4", "mov", "webm", "m4v"].contains(url.pathExtension.lowercased()) {
+                            await model.attachVideo(fileName: url.lastPathComponent, load: { url })
+                        } else {
+                            await model.attachFile(url, type: type)
+                        }
+                    }
                 } catch { model.error = error.localizedDescription }
             }
     }

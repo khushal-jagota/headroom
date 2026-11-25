@@ -80,11 +80,11 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The machine destination defaults to the home at creation. The owner can move a Ticket to another registered machine. The source must prove that repository work is clean and pushed, and that the old agent stopped. A fresh conversation starts from the same Ticket record and the published work branch. The stage, proposal, ceiling, assignment and backlog state stay. Private agent memory does not transfer. Settings → Machines edits its name, icon, and color. These display edits never move work. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
+The machine destination defaults to the home at creation. The owner can move a Ticket to another registered machine. The source must prove that the old agent stopped and that repository work is clean, with every commit already on origin. An untouched Ticket can move even when its branch does not exist on origin. A fresh conversation starts from the same Ticket record, branch, and exact source revision. The stage, proposal, ceiling, assignment and backlog state stay. Private agent memory does not transfer. Settings → Machines edits its name, icon, and color. These display edits never move work. The browser and iPhone show the stored machine name on work and conversation surfaces. A rename follows the shared machines read. Older or unmatched records retain their locale label. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
 
 The browser accepts a move before it completes. Panels stores its progress, so the owner can leave and return. The move shows each phase, elapsed time, and any refusal or startup failure with a next step. A server interruption ends the progress with an explicit failure rather than replaying a partial move. The command line keeps its final-result response.
 
-The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The owner registers extra destinations in Settings → Machines. See [Extra machines](executor.md).
+The clients use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The owner registers extra destinations in Settings → Machines. See [Extra machines](executor.md).
 
 ## Where it shows up
 
@@ -103,4 +103,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `server/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.ts`, `proposal_routing.ts`, `resolution.ts`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-24._
+_Last verified: 2026-11-25._

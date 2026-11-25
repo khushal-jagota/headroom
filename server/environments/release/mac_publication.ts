@@ -23,6 +23,7 @@ export async function validate_mac_publication(
   artifact_id: number,
   build_result: string,
   execution: ReleaseExecution,
+  signed_promotion = false,
 ): Promise<PublishedMacUpdate> {
   assert_release_execution(execution);
   if (build_result !== 'success' || !Number.isSafeInteger(artifact_id) || artifact_id < 1)
@@ -37,7 +38,9 @@ export async function validate_mac_publication(
     value.schema_version !== 1 ||
     typeof value.build_id !== 'string' ||
     !/^[0-9a-f]{64}$/.test(value.build_id) ||
-    value.repeat_build_id !== value.build_id ||
+    (signed_promotion
+      ? Object.hasOwn(value, 'repeat_build_id')
+      : value.repeat_build_id !== value.build_id) ||
     typeof value.launcher_sha256 !== 'string' ||
     !/^[0-9a-f]{64}$/.test(value.launcher_sha256) ||
     !/^[0-9a-f]{40}$/.test(source.source_sha) ||

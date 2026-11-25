@@ -5,10 +5,12 @@ interface ServerMeta extends ScreenMeta {
   app_sha: string | null;
   compatibility?: { desktop_shell?: { minimum_bridge_version?: unknown } };
 }
-export interface ScreenPresentation { root: string; appSha: string | null; serverUpdate: boolean }
+export interface ScreenPresentation { root: string; appSha: string | null; serverUpdate: boolean; screenRecovery: boolean }
 interface Dependencies {
   address(): string | null;
   canActivate(): boolean;
+  prepareActivation?(): Promise<boolean>;
+  cancelActivation?(): Promise<void> | void;
   request(path: string, signal: AbortSignal): Promise<Response>;
   requireBridgeVersion(required: number): Promise<boolean>;
   present(value: ScreenPresentation, reload: boolean): void;
@@ -18,17 +20,20 @@ export class ScreenController {
   private generation = 0;
   private busy: Promise<void> | null = null;
   private serverUpdate = false;
+  private screenRecovery = false;
+  get recovery(): boolean { return this.screenRecovery; }
   private stopped = false;
   private started = false;
   constructor(readonly store: ScreenStore, private readonly dependencies: Dependencies) {}
   private show(reload: boolean): void {
-    this.dependencies.present({ root: this.store.root, appSha: this.store.current?.appSha ?? null, serverUpdate: this.serverUpdate }, reload);
+    this.dependencies.present({ root: this.store.root, appSha: this.store.current?.appSha ?? null, serverUpdate: this.serverUpdate, screenRecovery: this.screenRecovery }, reload);
   }
   async connect(): Promise<void> {
     this.generation++;
     this.store.select(this.dependencies.address(), !this.started);
     this.started = true;
     this.serverUpdate = false;
+    this.screenRecovery = this.store.rejected !== null;
     this.show(false);
     // A prior server's pending request must settle before the new probe owns the store.
     await this.busy;
@@ -54,6 +59,7 @@ export class ScreenController {
           this.store.cleanup();
           const changed = !this.serverUpdate;
           this.serverUpdate = true;
+          this.screenRecovery = false;
           this.show(changed);
           return;
         }
@@ -80,16 +86,32 @@ export class ScreenController {
           const allowed = await this.dependencies.requireBridgeVersion(floor);
           if (!current()) return;
           if (allowed && this.dependencies.canActivate()) {
-            const confirmed = await this.meta();
-            if (!current() || !this.dependencies.canActivate() || confirmed.screens?.sha256 !== digest || confirmed.app_sha !== latest.app_sha || confirmed.compatibility?.desktop_shell?.minimum_bridge_version !== floor) return;
-            const copy = this.store.current;
-            if (copy?.digest !== digest || copy.appSha !== latest.app_sha) {
-              this.store.activate({ digest, appSha: typeof latest.app_sha === 'string' ? latest.app_sha : null });
-              this.serverUpdate = false;
-              this.show(true);
-            } else if (this.serverUpdate) {
-              this.serverUpdate = false;
-              this.show(true);
+            const selected = this.store.current;
+            const replacing = selected?.digest !== digest || selected.appSha !== latest.app_sha || this.serverUpdate || this.screenRecovery;
+            let prepared = false;
+            let activated = false;
+            try {
+              if (replacing && this.dependencies.prepareActivation) {
+                prepared = true;
+                if (!await this.dependencies.prepareActivation()) return;
+              }
+              const confirmed = await this.meta();
+              if (!current() || !this.dependencies.canActivate() || confirmed.screens?.sha256 !== digest || confirmed.app_sha !== latest.app_sha || confirmed.compatibility?.desktop_shell?.minimum_bridge_version !== floor) return;
+              const copy = this.store.current;
+              if (copy?.digest !== digest || copy.appSha !== latest.app_sha) {
+                this.store.activate({ digest, appSha: typeof latest.app_sha === 'string' ? latest.app_sha : null });
+                activated = true;
+                this.serverUpdate = false;
+                this.screenRecovery = false;
+                this.show(true);
+              } else if (this.serverUpdate || this.screenRecovery) {
+                activated = true;
+                this.serverUpdate = false;
+                this.screenRecovery = false;
+                this.show(true);
+              }
+            } finally {
+              if (prepared && !activated) await this.dependencies.cancelActivation?.();
             }
           }
         }
@@ -108,6 +130,7 @@ export class ScreenController {
   failed(): void {
     if (this.serverUpdate || !this.store.current) return;
     this.store.rollback();
+    this.screenRecovery = true;
     this.show(true);
   }
   stop(): void { this.stopped = true; this.generation++; }

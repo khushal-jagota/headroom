@@ -5,9 +5,10 @@
  * the native side answers each call. A later change adds its call here.
  *
  * Artifact HTML runs at the app's own origin and can reach this object through `parent`.
- * Calls that act must answer only the separate setup origin, never the app origin.
+ * Calls that act answer only their separate setup or recovery origin, never the app origin.
  * An artifact can call parent.panels as the top app frame. Only the address read is
- * available there. Server changes answer `panels://setup` alone.
+ * available there. Server changes answer `panels://setup` alone. Screen retry answers
+ * `panels://recovery` alone.
  */
 
 export type ServerAddressResult =
@@ -15,6 +16,8 @@ export type ServerAddressResult =
   | { ok: false; problem: string };
 
 export interface PanelsBridge {
+  /** Native recovery page only: retry the rejected screen copy. */
+  retryScreens(): Promise<boolean>;
   /** Setup only: the default local address. Does not connect. */
   localServerAddress(): Promise<string>;
   /** Setup only: cancel a change and return to the current server. */

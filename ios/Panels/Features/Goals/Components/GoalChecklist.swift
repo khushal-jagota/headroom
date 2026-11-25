@@ -38,7 +38,7 @@ struct GoalChecklist: View {
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.up").font(.system(size: 12)).rotationEffect(.degrees(opened ? 0 : 180)).foregroundStyle(PanelsTheme.Goal.faint).animation(reduceMotion ? nil : PanelsTheme.Goal.appEase(PanelsTheme.Goal.chevronDuration), value: opened)
                 }.padding(supplementary ? 16 : 24).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityValue(opened ? "Expanded" : "Collapsed")
+            }.buttonStyle(.plain).systemCopyText(allDone ? block["doneTitle"].string ?? "All items done" : block["title"].string ?? "Checklist").accessibilityValue(opened ? "Expanded" : "Collapsed")
             if opened {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(remaining, id: \.id) { item in row(item, filed: false).transition(.opacity) }
@@ -86,7 +86,7 @@ struct GoalChecklist: View {
                             .foregroundStyle(done ? PanelsTheme.Goal.faint : PanelsTheme.strong)
                             .animation(reduceMotion ? nil : PanelsTheme.Goal.appEase(0.15), value: done)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }.buttonStyle(.plain).disabled(filed)
+                    }.buttonStyle(.plain).systemCopyText(item["label"].text).disabled(filed)
                     GoalDateControl(value: item["deadline"].string, label: "Item deadline", tone: GoalPresentation.deadlineTone(item["deadline"].string, completed: done, today: session.statusDate), revision: session.revision) { date, revision in
                         await session.updateBlock(block.id, revision: revision) { old in
                             old.setting("items", .array(old["items"].array.map { $0.id == item.id ? $0.setting("deadline", date.map(GoalJSON.string) ?? .null) : $0 }))
@@ -95,8 +95,8 @@ struct GoalChecklist: View {
                 }
                 if current {
                     VStack(alignment: .leading, spacing: 12) {
-                        if let detail = item["detail"].string, !detail.isEmpty { Text(detail).font(.system(size: 13)).foregroundStyle(PanelsTheme.Goal.faint) }
-                        if item["state"].text == "blocked", !done { Text("Blocked").font(.system(size: 12)).foregroundStyle(PanelsTheme.Goal.attention) }
+                        if let detail = item["detail"].string, !detail.isEmpty { Text(detail).textSelection(.enabled).font(.system(size: 13)).foregroundStyle(PanelsTheme.Goal.faint) }
+                        if item["state"].text == "blocked", !done { Text("Blocked").textSelection(.enabled).font(.system(size: 12)).foregroundStyle(PanelsTheme.Goal.attention) }
                         if let action = item["action"].string, !action.isEmpty {
                             Button { tick(item, done: true) } label: { Label(action, systemImage: "arrow.right") }.font(.system(size: 13)).disabled(preview || session.busy)
                         }

@@ -16,7 +16,7 @@ try {
     if (process.argv.length !== 3) throw new Error('Expected one publication receipt request file');
     const request = await publication_json_file(process.argv[2]!);
     const required =
-      'machine_compatibility_linux_zip,machine_compatibility_linux_artifact_id,machine_compatibility_darwin_zip,machine_compatibility_darwin_artifact_id,artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'.split(
+      'qualified_mac_artifact_zip,qualified_mac_artifact_id,machine_compatibility_linux_zip,machine_compatibility_linux_artifact_id,machine_compatibility_darwin_zip,machine_compatibility_darwin_artifact_id,artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'.split(
         ',',
       );
     const linux_executor_fields = [
@@ -45,9 +45,29 @@ try {
     require_publication_run(provenance);
     if (process.env.GITHUB_WORKFLOW_SHA !== provenance.source_sha)
       throw new Error('Publication workflow source differs from the selected SHA');
+    const qualified = JSON.parse(publication_text(process.env.QUALIFIED, 'qualified PR'));
+    const pull_ref = 'refs/pull/' + publication_id(String(qualified.pr), 'PR number') + '/merge';
+    const build_run = {
+      repository: provenance.repository,
+      source_sha: publication_text(qualified.source_sha, 'qualified source SHA'),
+      event: 'pull_request',
+      ref: pull_ref,
+      workflow_path: provenance.workflow_path,
+      workflow_ref: provenance.repository + '/' + provenance.workflow_path + '@' + pull_ref,
+      run_id: publication_id(qualified.run, 'qualified run ID'),
+      run_attempt: publication_id(qualified.attempt, 'qualified run attempt'),
+    };
     const output_directory = publication_text(request.output_directory, 'output_directory');
     await write_publication_receipt(
       {
+        qualified_mac_artifact_zip: publication_text(
+          request.qualified_mac_artifact_zip,
+          'qualified Mac ZIP',
+        ),
+        qualified_mac_artifact_id: publication_id(
+          request.qualified_mac_artifact_id,
+          'qualified Mac artifact ID',
+        ),
         source_root: publication_text(request.source_root, 'source_root'),
         machine_compatibility_linux_zip: publication_text(
           request.machine_compatibility_linux_zip,
@@ -98,6 +118,11 @@ try {
           : {}),
       },
       provenance,
+      {
+        build_run,
+        head: publication_text(qualified.head, 'qualified PR head'),
+        branch: publication_text(qualified.branch, 'qualified PR branch'),
+      },
       execution,
       publication_text(process.env.GITHUB_TOKEN, 'GITHUB_TOKEN'),
     );

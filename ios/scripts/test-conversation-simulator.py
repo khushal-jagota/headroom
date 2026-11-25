@@ -133,6 +133,8 @@ class Stub:
         self.live: dict[str, Any] | None = None
         self.offline = False
         self.refused = False
+        self.uploads: dict[str, dict[str, Any]] = {}
+        self.video_sends: dict[str, Any] = {}
         self.running_until = 0
 
     def tick(self) -> None:
@@ -142,6 +144,8 @@ class Stub:
             age = now - sent["at"]
             if age >= sent["delay"] and not sent["delivered"]:
                 self.items.append(row(sent["id"], sent["text"], True, sent["id"]))
+                if sent.get("content"):
+                    self.items[-1]["body"]["value"]["content"] = sent["content"]
                 sent["delivered"] = True
             if sent["delivered"]:
                 reply = (
@@ -657,6 +661,16 @@ def main() -> int:
                 stub.offline = path.endswith("/offline")
                 self.respond({})
                 return
+            if path == "/proof/videos":
+                self.respond({"uploads": list(stub.uploads.values()), "sends": list(stub.video_sends.values()), "own_rows": sum(1 for item in stub.items if item.get("sender_message_id") in stub.video_sends)})
+                return
+            if path == "/files/review-video.mp4":
+                self.respond_bytes((stub.output / "uploaded-video.mp4").read_bytes(), "video/mp4")
+                return
+            if path.startswith("/api/conversation/video-uploads/"):
+                identity = path.rsplit("/", 1)[-1]
+                self.respond(stub.uploads.get(identity, {}), 200 if identity in stub.uploads else 404)
+                return
             if stub.offline:
                 self.respond(
                     {"error": {"message": "Connection unavailable. Your words are saved."}}, 503
@@ -745,8 +759,24 @@ def main() -> int:
                 else:
                     self.respond({"error": {"message": "Unexpected stub route: " + path}}, 404)
 
+        def do_PUT(self) -> None:
+            identity = urlparse(self.path).path.split("/")[-2]
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if stub.offline:
+                self.respond({"error": {"message": "Connection unavailable"}}, 503)
+                return
+            (stub.output / "uploaded-video.mp4").write_bytes(body)
+            upload = stub.uploads[identity]
+            upload.update(state="ready", received_bytes=len(body), media_type="video/mp4")
+            self.respond(upload)
+
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/conversation/video-uploads/"):
+                identity = path.rsplit("/", 1)[-1]
+                if identity in stub.uploads: stub.uploads[identity]["state"] = "cancelled"
+                self.respond({})
+                return
             if "/held-prompts/" not in path:
                 self.respond({}, 404)
                 return
@@ -773,6 +803,15 @@ def main() -> int:
                 self.respond({})
                 return
             data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            if path == "/api/conversation/video-uploads":
+                if stub.offline:
+                    self.respond({"error": {"message": "Connection unavailable"}}, 503)
+                    return
+                identity = "video-" + str(len(stub.uploads) + 1)
+                upload = {"upload_id": identity, **data, "received_bytes": 0, "state": "reserved", "media_type": None, "expires_at": time.time() + 86400, "error": None}
+                stub.uploads[identity] = upload
+                self.respond(upload)
+                return
             if "/held-prompts/" in path and path.endswith("/promote"):
                 identity = path.split("/")[-2]
                 with stub.lock:
@@ -784,6 +823,9 @@ def main() -> int:
                 return
             if not path.endswith("/conversation/send"):
                 self.respond({}, 404)
+                return
+            if stub.offline:
+                self.respond({"error": {"message": "Connection unavailable"}}, 503)
                 return
             time.sleep(3)  # expose the optimistic Sending state
             with stub.lock:
@@ -808,6 +850,12 @@ def main() -> int:
                         }
                     )
                     return
+                video = any(p["piece"] == "attachment_upload" for p in data["content"])
+                if video:
+                    if sender in stub.video_sends:
+                        self.respond({"conversation_id": "stub", "fate": "started"})
+                        return
+                    stub.video_sends[sender] = data
                 queued = data.get("mode") == "queue"
                 stub.pending.append(
                     {
@@ -816,6 +864,7 @@ def main() -> int:
                         "at": time.monotonic(),
                         "delay": (120 if "Remove" in text else 5) if queued else 0.4,
                         "delivered": False,
+                        "content": [{"piece": "text", "text": text}, {"piece": "file", "file_name": "Video.mp4", "path": "/files/review-video.mp4", "media_type": "video/mp4"}] if video else None,
                     }
                 )
                 self.respond({"conversation_id": "stub", "fate": "queued" if queued else "started"})

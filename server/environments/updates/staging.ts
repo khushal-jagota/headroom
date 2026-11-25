@@ -4,6 +4,7 @@ import { lstat, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promi
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
+import { fsync_path } from '../../core/fsync.ts';
 import { is_os_error } from '../../core/system_errors.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, ReleaseStaging } from './contracts.ts';
@@ -37,6 +38,15 @@ async function remove_directory(path: string): Promise<void> {
     throw new Error('Cannot call rmtree on a symbolic link');
   await rm(path, { recursive: true });
 }
+async function flush_release(directory: string, signal: AbortSignal): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    signal.throwIfAborted();
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) await flush_release(path, signal);
+    else if (entry.isFile()) await fsync_path(path);
+  }
+  await fsync_path(directory);
+}
 async function staged_manifest(
   path: string,
   app_sha: string,
@@ -46,7 +56,6 @@ async function staged_manifest(
     return await validate_app_manifest(join(path, 'manifest.json'), {
       expected_sha: app_sha,
       require_runtime: true,
-      verify_artifact_digest: false,
       ...(expected_target === undefined ? {} : { expected_target }),
     });
   } catch (error) {
@@ -139,7 +148,9 @@ export function create_release_staging(
           throw new AppValidationError('The downloaded app differs from its publication receipt.');
         await admit_candidate(unpacked, manifest);
         signal.throwIfAborted();
+        await flush_release(unpacked, signal);
         await rename(unpacked, staged);
+        await fsync_path(current_root);
         return staged;
       } catch (error) {
         failure = error;

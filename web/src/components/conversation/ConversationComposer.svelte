@@ -16,7 +16,7 @@
    * is still inside that first word the eligible catalog entries are offered under it.
    * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
@@ -24,7 +24,7 @@
   import { AttachmentTransfers, pendingUploadsAsPieces, releaseLocalPreview, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
   import { rememberSentAttachments } from "../../lib/conversation/localSentMedia";
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
-  import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
+  import { LocalComposerSends, resumeLocalSendsAfterUpdate, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
   import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
   import { attachmentSurface } from "./composer/attachmentSurface";
@@ -133,6 +133,7 @@
     disabled = false,
     sendAvailable = true,
     showRunPicker = true,
+    queue,
     onSend,
     onStop,
     onAnswer,
@@ -211,6 +212,8 @@
     sendAvailable?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
     showRunPicker?: boolean;
+    /** The messages waiting for the agent, drawn as a tray on the box's top edge. */
+    queue?: Snippet;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -298,6 +301,7 @@
   function videoChanged(): void {
     if (destroyed) return;
     const previousEntries = localSends;
+    resumeLocalSendsAfterUpdate(sendQueue.entries);
     pendingVideos = [...pendingVideos];
     localSends = [...sendQueue.entries];
     rememberCurrentUploadDraft();
@@ -314,6 +318,7 @@
     attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
     sendQueue.entries = recallLocalSends(localStorageKey);
     for (const entry of sendQueue.entries) reserveLocalSend(entry);
+    transfers.restore([...pendingVideos, ...sendQueue.entries.flatMap(entry => entry.attempt.draftBeforeSend.pendingVideos ?? [])]);
     videoChanged();
     for (const entry of [...sendQueue.entries]) {
       if (entry.phase !== "dispatching") continue;
@@ -329,7 +334,8 @@
       }
     }
     if (destroyed || restoringKey !== localStorageKey || restoringQueue !== sendQueue) return;
-    for (const video of pendingVideos) if (video.uploadId && video.phase === "validating") void transfers.validate(video);
+    for (const video of [...pendingVideos, ...sendQueue.entries.flatMap(entry => entry.attempt.draftBeforeSend.pendingVideos ?? [])])
+      if (video.uploadId && video.phase === "validating") void transfers.validate(video);
     videoChanged();
   }
 
@@ -1276,6 +1282,8 @@
   });
 
   onMount(() => {
+    const recoveredWrite = (): void => { void sendQueue.reconcileRestored(reconcileLocalSend); };
+    window.addEventListener("panels:update-write-recovered", recoveredWrite);
     void restoreLocalState();
     voiceSupported = voiceCaptureSupported();
     voice = createVoiceCapture({
@@ -1284,6 +1292,7 @@
     });
     return () => {
       destroyed = true;
+      window.removeEventListener("panels:update-write-recovered", recoveredWrite);
       transfers.dispose();
       sendQueue.dispose();
       onPendingSends?.([]);
@@ -1312,6 +1321,7 @@
   data-conversation-composer
 >
   <div class="chat-box-stack">
+    {@render queue?.()}
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div

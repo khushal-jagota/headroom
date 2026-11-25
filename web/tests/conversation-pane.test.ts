@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import PaneWithQueryClient from "./fixtures/PaneWithQueryClient.svelte";
 import type { HeldPromptRow } from "../src/lib/conversation/heldPrompts";
 import type { ConversationViewItem, CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
-import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
+import { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 
 const base = { conversationId: "c-1", draftKey: "conversation-pane", onSend: async () => true };
 const ask = { askId: "a-1", title: "Upload build 41", detail: null, options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }] };
@@ -63,6 +63,19 @@ describe("a waiting ask in the opened conversation", () => {
 });
 
 describe("the header", () => {
+  it("shows archive preparation until the reader recovers", () => {
+    const reader = new ConversationViewReader("c-1", "focus", true);
+    const pane = () => render(PaneWithQueryClient, {
+      props: { ...base, conversationState: "opened", readOnly: true, reader }
+    }).body;
+    reader.preparingHistory = true;
+    expect(pane()).toContain("Preparing conversation history");
+    expect(pane()).not.toContain("The conversation did not load");
+    reader.preparingHistory = false;
+    expect(pane()).not.toContain("Preparing conversation history");
+    reader.close();
+  });
+
   it("carries the title alone, never who does the work", () => {
     const body = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", title: "Vylo pricing", subtitle: "Coding worker" } }).body;
     expect(body).toMatch(/data-conversation-title[^>]*>Vylo pricing</);
@@ -111,16 +124,21 @@ describe("the header", () => {
 });
 
 describe("queued messages in the pane", () => {
-  it("use the held box before the composer", () => {
+  it("wait in the tray on the composer's top edge, one line each, not in the thread", () => {
     const { body } = render(PaneWithQueryClient, {
       props: { ...base, conversationState: "opened", running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
     const content = body.indexOf("data-conversation-content");
     const stack = body.indexOf("data-conversation-held-stack");
     expect(content).toBeGreaterThan(-1);
-    expect(stack).toBeGreaterThan(content);
+    expect(stack).toBeGreaterThan(body.indexOf("data-conversation-composer"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-held-row"));
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
+    const tray = body.slice(stack, body.indexOf("data-conversation-box"));
+    expect(tray).toContain("After that, log each 429");
+    expect(tray).not.toContain("c2-bubble");
+    expect(tray).not.toContain("Queued ·");
+    expect(tray).not.toContain("data-conversation-held-more");
     // One anchoring rule for every state: a short thread reads from the top.
     expect(body).not.toContain("data-anchor-end");
   });

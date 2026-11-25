@@ -1,6 +1,7 @@
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { pathToFileURL } from 'node:url';
 import * as workspace_git from './filesystem/shared.ts';
+import * as child_git from '../environments/ticket_scratch/collect.ts';
 import { inspect_work_move } from './filesystem/work_move.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
@@ -368,16 +369,74 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     const mirror_root = join(root, 'cache', 'git-mirrors');
     const mirrored = { ...options, mirror_root };
     await publish('first');
-    const one = await prepare_workspace(folder(), ticket, repository, mirrored);
+    // Gap: successful small fetches never expose the one-minute cold-fetch deadline.
+    // Inspect the deadline at the real child boundary, then retain the real Git reuse proof.
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const original_git = child_git.git;
+    let cold_fetches = 0;
+    const calls = vi.spyOn(child_git, 'git').mockImplementation(async (...args) => {
+      if (args[1].includes('fetch') && args[0].startsWith(mirror_root)) {
+        expect(timeout.mock.calls.at(-1)?.[0]).toBe(30 * 60 * 1000);
+        cold_fetches++;
+      }
+      return original_git(...args);
+    });
+    let one: string;
+    try {
+      one = await prepare_workspace(folder(), ticket, repository, mirrored);
+      expect(cold_fetches).toBe(1);
+    } finally {
+      calls.mockRestore();
+      timeout.mockRestore();
+    }
     expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toHaveLength(1);
     await publish('second');
     const other = 't_89abcdef';
-    const two = await prepare_workspace(folder(other), other, repository, mirrored);
+    const retained_mirror = join(
+      mirror_root,
+      readdirSync(mirror_root).find((name) => name.endsWith('.git'))!,
+    );
+    const reused = vi.spyOn(child_git, 'git');
+    let two: string;
+    try {
+      two = await prepare_workspace(folder(other), other, repository, mirrored);
+      const clone = reused.mock.calls.find((call) => call[1].includes('clone'));
+      expect(clone?.[1]).toEqual(
+        expect.arrayContaining(['--reference', retained_mirror, '--dissociate']),
+      );
+      expect(
+        reused.mock.calls.some((call) => call[0] === retained_mirror && call[1].includes('fetch')),
+      ).toBe(true);
+    } finally {
+      reused.mockRestore();
+    }
     expect(readFileSync(join(one, 'tracked.txt'), 'utf8')).toBe('first');
     expect(readFileSync(join(two, 'tracked.txt'), 'utf8')).toBe('second');
     expect(existsSync(join(two, '.git', 'objects', 'info', 'alternates'))).toBe(false);
     expect(await command(two, ['remote', 'get-url', 'origin'])).toBe(remote);
     await command(two, ['fsck', '--no-dangling']);
+    // Gap: mirror failure must not prevent a clone from the still-accessible origin.
+    // Force a real Git error only for mirror fetches, using a missing remote name.
+    let failed_fetches = 0;
+    const failed = vi.spyOn(child_git, 'git').mockImplementation(async (...args) => {
+      if (args[1].includes('fetch') && args[0].startsWith(mirror_root)) {
+        const result = await original_git(args[0], ['fetch', 'missing-remote'], args[2]);
+        expect(result.returncode).not.toBe(0);
+        failed_fetches++;
+        return result;
+      }
+      return original_git(...args);
+    });
+    try {
+      const third = 't_abcdefgh';
+      const fallback = await prepare_workspace(folder(third), third, repository, mirrored);
+      expect(failed_fetches).toBe(2); // Warm refresh, then replacement cold mirror.
+      expect(readFileSync(join(fallback, 'tracked.txt'), 'utf8')).toBe('second');
+      expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toEqual([]);
+      expect(readdirSync(mirror_root).some((name) => name.endsWith('.tmp'))).toBe(false);
+    } finally {
+      failed.mockRestore();
+    }
   },
 );
 
@@ -732,8 +791,10 @@ test.skipIf(process.platform !== 'darwin')(
   },
 );
 
-// Gap: cleanup tests do not prove moved work can recover a published branch or return to a stale checkout.
-test('a move refuses unpublished work and recovers its branch on a new and a previous machine', async () => {
+// Gap: cleanup coverage does not prove exact move recovery when a Ticket branch is absent
+// on origin or publication uses another ref. Reuse the real-Git fixture and both destinations.
+test('a move recovers untouched and published work but refuses unpublished work', async () => {
+  const case_started = performance.now();
   const remote = join(root, 'origin.git'),
     project = join(root, 'project');
   mkdirSync(remote);
@@ -751,6 +812,20 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   const repository = { repository_url: remote, default_branch: 'main' };
   const source = folder();
   const checkout = await prepare_workspace(source, ticket, repository, options);
+  const untouched = await inspect_work_move(source, true, options);
+  const current_branch = await command(checkout, ['symbolic-ref', '--short', 'HEAD']);
+  expect(untouched.published_branch).toBe(current_branch);
+  expect(await command(remote, ['for-each-ref', `refs/heads/${current_branch}`])).toBe('');
+  // Origin advances after verification. A fresh destination must retain the exact base.
+  writeFileSync(join(project, 'later.txt'), 'new default-branch work');
+  await command(project, ['add', '.']);
+  await command(project, ['commit', '-m', 'advance origin after source proof']);
+  await command(project, ['push', 'origin', 'main']);
+  const target = join(root, 'other-machine', ticket);
+  const moved = await prepare_workspace(target, ticket, { ...repository, ...untouched }, options);
+  expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(untouched.published_revision);
+  expect(await command(moved, ['symbolic-ref', '--short', 'HEAD'])).toBe(current_branch);
+  expect(existsSync(join(moved, 'later.txt'))).toBe(false);
   await command(checkout, ['config', 'user.email', 'proof@example.test']);
   await command(checkout, ['config', 'user.name', 'Move proof']);
   writeFileSync(join(checkout, 'work.txt'), 'work');
@@ -758,16 +833,7 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   await command(checkout, ['add', '.']);
   await command(checkout, ['commit', '-m', 'work']);
   await expect(inspect_work_move(source, true, options)).rejects.toThrow('unpushed work');
-  await command(checkout, ['push', 'origin', 'HEAD']);
-  // Risk: the cleanup proof accepts publication under any ref, but a move must recover
-  // the exact current branch. Reuse the real Git fixture to prove both boundaries.
-  const current_branch = await command(checkout, ['symbolic-ref', '--short', 'HEAD']);
   await command(checkout, ['push', 'origin', 'HEAD:refs/heads/published-elsewhere']);
-  await command(checkout, ['push', 'origin', '--delete', current_branch]);
-  await expect(inspect_work_move(source, true, options)).rejects.toThrow(
-    'Push the current Ticket branch before the move.',
-  );
-  await command(checkout, ['push', 'origin', 'HEAD']);
   const git_calls = vi.spyOn(workspace_git, 'git');
   const began = performance.now();
   const proof = await inspect_work_move(source, true, options);
@@ -777,8 +843,7 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   );
   git_calls.mockRestore();
   expect(remote_reads).toBe(1);
-  const target = join(root, 'other-machine', ticket);
-  const moved = await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
+  await prepare_workspace(target, ticket, { ...repository, ...proof }, options);
   expect(await command(moved, ['rev-parse', 'HEAD'])).toBe(proof.published_revision);
   expect(readFileSync(join(moved, 'work.txt'), 'utf8')).toBe('work');
   writeFileSync(join(moved, 'work.txt'), 'normal in-progress work');
@@ -798,9 +863,36 @@ test('a move refuses unpublished work and recovers its branch on a new and a pre
   ).rejects.toThrow('uncommitted');
   expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('unpublished local work');
   await command(checkout, ['restore', 'work.txt']);
+  // A previous destination can contain other work that origin already holds.
+  // Recovery must not confuse that published divergence with unpushed work.
+  writeFileSync(join(checkout, 'elsewhere.txt'), 'published divergence');
+  await command(checkout, ['add', '.']);
+  await command(checkout, ['commit', '-m', 'published divergence at previous destination']);
+  await command(checkout, ['push', 'origin', 'HEAD:refs/heads/other-published']);
   await prepare_workspace(source, ticket, { ...repository, ...returning }, options);
   expect(await command(checkout, ['rev-parse', 'HEAD'])).toBe(returning.published_revision);
   expect(readFileSync(join(checkout, 'work.txt'), 'utf8')).toBe('return');
+  // The captured HEAD must still be published if it changes after the safety proof.
+  const original_git = workspace_git.git;
+  let advance_head = true;
+  const raced_git = vi.spyOn(workspace_git, 'git').mockImplementation(async (...args) => {
+    if (advance_head && args[0] === checkout && args[1].join(' ') === 'rev-parse HEAD') {
+      advance_head = false;
+      writeFileSync(join(checkout, 'race.txt'), 'new unpublished commit');
+      await command(checkout, ['add', '.']);
+      await command(checkout, ['commit', '-m', 'commit after safety proof']);
+    }
+    return original_git(...args);
+  });
+  try {
+    await expect(inspect_work_move(source, true, options)).rejects.toThrow(
+      'Push the current Ticket branch before the move.',
+    );
+    expect(advance_head).toBe(false);
+  } finally {
+    raced_git.mockRestore();
+  }
+  console.info(`Exact move recovery fixture: ${(performance.now() - case_started).toFixed(1)} ms`);
 });
 
 // Risk: cat-file in a cold single-branch partial clone can fetch each advertised ref.

@@ -37,7 +37,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Panels
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: Record a revision or speak a message when you tap the microphone.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Record audio with a video, record a revision, or speak a message when you tap the microphone.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into an editable message.
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO

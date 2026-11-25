@@ -64,7 +64,7 @@ extension APIClient {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
-        let (download, response) = try await session.download(for: request)
+        let (download, response) = try await self.download(for: request)
         defer { try? FileManager.default.removeItem(at: download) }
         if etag != nil, (response as? HTTPURLResponse)?.statusCode == 304 { return nil }
         // The server no longer has this artifact: its copy leaves, and the caller shows why.
@@ -131,7 +131,7 @@ extension APIClient {
         request.timeoutInterval = 30
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         // The headers arrive before the body, so a file too large to keep is never read.
-        guard let (bytes, response) = try? await session.bytes(for: request), let http = response as? HTTPURLResponse else { return nil }
+        guard let (bytes, response, _) = try? await self.bytes(for: request), let http = response as? HTTPURLResponse else { return nil }
         /// Too large to keep: the copy no longer holds an older version of it.
         func refuse() async -> Bool {
             bytes.task.cancel()

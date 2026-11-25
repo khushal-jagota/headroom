@@ -16,14 +16,14 @@ extension APIClient: ConversationServing {
             request.httpBody = Data(#"{"mode":"steer"}"#.utf8)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(ConversationHeldChange.self, from: data)
     }
     func interruptConversation(_ id: String) async throws {
         var request = try self.request(try url("/api/conversation/conversations/\(id)/interrupt"))
         request.httpMethod = "POST"
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
     }
     func conversationConfiguration(_ owner: ConversationOwner, id: String?) async throws -> ConversationConfiguration {
@@ -84,7 +84,7 @@ extension APIClient: ConversationServing {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(message)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         do { try Self.validate(response, data: data) }
         catch let error as APIError where error.status == 422 && message.content.contains(where: { $0.piece == "image" }) {
             // FastAPI admission errors use `detail`; other requests keep ordinary error handling.
@@ -120,11 +120,12 @@ extension APIClient {
             let task = Task {
                 do {
                     let request = try conversationTailRequest(id, lens: lens, transcript: transcript, ranges: ranges, after: after)
-                    let (bytes, response) = try await session.bytes(for: request)
+                    let (bytes, response, contact) = try await self.bytes(for: request)
                     try Self.validate(response)
                     var parser = ConversationTailParser()
                     for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
+                        await serverConnection?.answered(contact)
                         if let frame = try parser.consume(line) { continuation.yield(frame) }
                     }
                     continuation.finish()
@@ -153,7 +154,7 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         struct Response: Decodable { let fate: String }
         return try Self.decoder().decode(Response.self, from: data).fate

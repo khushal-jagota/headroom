@@ -80,9 +80,18 @@ struct ExecutorHealth: Codable, Sendable {
         return "Last contact: \(Date(timeIntervalSince1970: lastContactAtMs / 1000).formatted(date: .abbreviated, time: .standard)) · \(TimeZone.current.identifier)."
     }
 }
+struct MachineCatalog: Decodable, Sendable {
+    struct Machine: Decodable, Sendable {
+        let machineId: String
+        let name: String
+    }
+    let machines: [Machine]
+}
+
 enum TicketMachine {
-    static func name(_ locale: String?) -> String? {
-        switch locale { case "macos": "Remote machine"; case "vps": "Home"; default: nil }
+    static func name(_ locale: String?, machineId: String? = nil, machines: [MachineCatalog.Machine] = []) -> String {
+        if let machineId, let machine = machines.first(where: { $0.machineId == machineId }) { return machine.name }
+        switch locale { case "macos": return "Remote machine"; case "vps": return "Home"; default: return "Machine" }
     }
     static func activityUnknown(_ locale: String?, health: ExecutorHealth?) -> Bool {
         switch locale {
@@ -95,12 +104,17 @@ enum TicketMachine {
         guard case .ticket = owner else { return false }
         return activityUnknown(locale, health: health)
     }
-    static func unknownActivityText(_ locale: String?) -> String {
-        locale == "macos" ? "Current activity on the remote machine is unknown." : "Current activity is unknown."
+    static func unknownActivityText(_ locale: String?, machineId: String? = nil, machines: [MachineCatalog.Machine] = []) -> String {
+        if let machineId, let machine = machines.first(where: { $0.machineId == machineId }) {
+            return "Current activity on \(machine.name) is unknown."
+        }
+        return locale == "macos" ? "Current activity on the remote machine is unknown." : "Current activity is unknown."
     }
-    static func accessibilityLabel(_ title: String, locale: String?, health: ExecutorHealth?) -> String {
-        let machine = name(locale).map { ", runs on " + $0 } ?? ""
-        return title + machine + (activityUnknown(locale, health: health) ? (locale == "macos" ? ", current activity on the remote machine is unknown" : ", current activity is unknown") : "")
+    static func accessibilityLabel(_ title: String, locale: String?, machineId: String? = nil, machines: [MachineCatalog.Machine] = [], health: ExecutorHealth?) -> String {
+        let machine = ", runs on " + name(locale, machineId: machineId, machines: machines)
+        let unknown = unknownActivityText(locale, machineId: machineId, machines: machines)
+        let activity = String(unknown.dropLast()).replacingOccurrences(of: "Current activity", with: "current activity")
+        return title + machine + (activityUnknown(locale, health: health) ? ", " + activity : "")
     }
     static func signal(_ signal: ConversationSignal?, locale: String?, health: ExecutorHealth?, completed: Bool = false) -> ConversationSignal? {
         signal.map { ConversationSignal(working: $0.working && !completed && !activityUnknown(locale, health: health), messageForOwner: $0.messageForOwner) }

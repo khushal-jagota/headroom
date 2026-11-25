@@ -21,6 +21,45 @@ import XCTest
         XCTAssertEqual(try reopened.outgoing.work(server: "a", id: "send")?.message?.senderMessageId, "send")
         XCTAssertNil(try reopened.outgoing.work(server: "b", id: "send"))
     }
+    func testLaunchVideoSweepPreservesAllFilesUntilDraftAndOutgoingOwnershipIsReadable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let videos = directory.appendingPathComponent("videos")
+        try FileManager.default.createDirectory(at: videos, withIntermediateDirectories: true)
+        let store = LocalStore(url: directory.appendingPathComponent("phone.store"))
+        func piece(_ name: String) -> ConversationSend.Piece {
+            .init(piece: "attachment_upload", localVideo: SavedVideo(id: name, fileName: name,
+                filePath: "videos/" + name, byteCount: 1))
+        }
+        for name in ["draft.mov", "outbox.mov", "orphan.mov"] {
+            try Data([1]).write(to: videos.appendingPathComponent(name))
+        }
+        try store.put(server: "a", kind: "attachments", id: "note", data: JSONEncoder().encode([piece("draft.mov")]))
+        let work = PendingWork(id: "video", created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: nil, content: [piece("outbox.mov")], senderMessageId: "video", sentAtUnixMilliseconds: 1))
+        try store.outgoing.enqueue(work, server: "b")
+        let allFiles: Set<String> = ["draft.mov", "outbox.mov", "orphan.mov"]
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("broken".utf8))
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), allFiles,
+                       "An unreadable draft may own any file, so cleanup must preserve all files")
+
+        let outgoing = try XCTUnwrap(store.record(server: "b", kind: "outbox", id: "video"))
+        let originalPayload = outgoing.payload
+        outgoing.payload = Data("broken".utf8)
+        // Saving the repaired draft also commits the deliberately corrupted outbox payload.
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("[]".utf8))
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), allFiles,
+                       "An unreadable outgoing row must also defer the entire sweep")
+
+        outgoing.payload = originalPayload
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("[]".utf8))
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), ["draft.mov", "outbox.mov"])
+
+    }
+
     func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -332,6 +371,96 @@ import XCTest
         XCTAssertEqual(OfflineProtocol.state.deliveredMessages, ["first", "second"], "The server keeps one of each")
         XCTAssertEqual(outbox.entries(server).map(\.state), [.sent, .sent])
     }
+    /// File-backed uploads are not covered by the embedded-photo cases: a lost PUT
+    /// needs a new reservation, while a lost send reply must retain its ready token.
+    func testVideoRestartsInterruptedUploadAndResendsFrozenReferenceOnceAfterRelaunch() async throws {
+        let relativePath = UUID().uuidString + "-clip.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("video fixture bytes".utf8).write(to: file)
+        let video = SavedVideo(id: "clip", fileName: "clip.mov", filePath: relativePath, byteCount: 19)
+        let original = PendingWork(id: "with-video", created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: "conversation", content: [.init(piece: "local_video", localVideo: video)],
+                senderMessageId: "with-video", sentAtUnixMilliseconds: 1))
+        try store.outgoing.enqueue(original, server: server)
+        var outbox = Outbox(store: store)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        OfflineProtocol.state.offline = false
+        OfflineProtocol.state.interruptUpload = true
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
+        XCTAssertEqual(OfflineProtocol.state.uploadReservations, 1)
+        XCTAssertTrue(OfflineProtocol.state.messageBodies.isEmpty)
+
+        OfflineProtocol.state.loseResponseIDs = [original.id]
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.uploadReservations, 2)
+        XCTAssertEqual(OfflineProtocol.state.uploadTransfers, ["upload-1", "upload-2"])
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
+        let firstBody = try XCTUnwrap(OfflineProtocol.state.messageBodies.first?.1)
+        let content = try XCTUnwrap(try json(firstBody)["content"] as? [[String: Any]])
+        XCTAssertEqual(content.first?["piece"] as? String, "attachment_upload")
+        XCTAssertEqual(content.first?["upload_id"] as? String, "upload-2")
+        XCTAssertNil(content.first?["local_video"])
+        XCTAssertNil(content.first?["data"])
+
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, [original.id])
+        XCTAssertEqual(OfflineProtocol.state.uploadTransfers, ["upload-1", "upload-2"], "A lost send reply never uploads again")
+        XCTAssertEqual(try json(firstBody), try json(XCTUnwrap(OfflineProtocol.state.messageBodies.last?.1)))
+    }
+
+    /// A request lost before admission must not strand its local file behind an
+    /// expired ready token. Accepted tokens remain pinned and are never replaced.
+    func testExpiredUnadmittedVideoReferencesRefreshWithoutChangingMessageOrDecisionIdentity() async throws {
+        let relativePath = UUID().uuidString + "-expiry.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("expiry video".utf8).write(to: file)
+        let video = SavedVideo(id: "expiry-clip", fileName: "expiry.mov", filePath: relativePath, byteCount: 12)
+        let piece = ConversationSend.Piece(piece: "local_video", localVideo: video)
+        let message = PendingWork(id: "expiry-message", created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: "conversation", content: [piece],
+                senderMessageId: "expiry-message", sentAtUnixMilliseconds: 1))
+        try store.outgoing.enqueue(message, server: server)
+        var outbox = Outbox(store: store)
+        OfflineProtocol.state.loseMessageBeforeCommit = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: message.id)?.state, .waiting)
+        OfflineProtocol.state.expireReadyUploads()
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: message.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, [message.id, message.id])
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, [message.id])
+        XCTAssertEqual(OfflineProtocol.state.uploadReservations, 2)
+
+        var original = try decision("expiry-decision", guidance: "Keep this note")
+        original.decisionAttachments = [piece]
+        original.decisionConversationID = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket).conversationId
+        OfflineProtocol.state.loseDecisionBeforeCommit = true
+        try outbox.enqueue(original, api: api)
+        await outbox.drain(api: api)
+        let first = try XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody)
+        OfflineProtocol.state.expireReadyUploads()
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.0), [original.id, original.id])
+        XCTAssertNotEqual(OfflineProtocol.state.decisionBodies.last?.1, first)
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(OfflineProtocol.state.uploadReservations, 4)
+    }
+
     func testFirstMessageResendsWithoutDestinationAndLaterMessagesJoinTheConversationItCreated() async throws {
         var outbox = Outbox(store: store)
         try store.outgoing.enqueue(message("start", conversation: nil), server: server)
@@ -527,6 +656,54 @@ import XCTest
                        "The applied receipt clears the note's pictures with its words")
         XCTAssertEqual(store.draft(server: server, id: "photo-guidance"), "")
     }
+    /// A local video decision must save before upload and freeze only its final
+    /// wire references. Receipt recovery must not clear a newer note attachment.
+    func testVideoDecisionFreezesAfterUploadAndKeepsOneOperationAcrossLostReplies() async throws {
+        let relativePath = UUID().uuidString + "-decision.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("decision video".utf8).write(to: file)
+        let video = SavedVideo(id: "decision-clip", fileName: "decision.mov", filePath: relativePath, byteCount: 14)
+        let piece = ConversationSend.Piece(piece: "local_video", localVideo: video)
+        var original = try decision("video-decision", guidance: "Exact video note")
+        original.draftID = "video-guidance"
+        original.decisionConversationID = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket).conversationId
+        original.decisionAttachments = [piece]
+        store.saveDraft("Exact video note", server: server, id: "video-guidance")
+        try store.put(server: server, kind: "attachments", id: "video-guidance", data: JSONEncoder().encode([piece]))
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: "video-guidance").text?.updated
+        var outbox = Outbox(store: store)
+        OfflineProtocol.state.offline = true
+        try outbox.enqueue(original, api: api)
+        XCTAssertNotNil(outbox.work(server, id: original.id)?.decisionIntent)
+        XCTAssertNil(outbox.work(server, id: original.id)?.protectedDecisionBody)
+        await outbox.drain(api: api)
+        OfflineProtocol.state.offline = false
+        OfflineProtocol.state.loseDecisionBeforeCommit = true
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        let frozen = try XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody)
+        let attachment = try XCTUnwrap((try json(frozen)["attachments"] as? [[String: Any]])?.first)
+        XCTAssertEqual(attachment["piece"] as? String, "attachment_upload")
+        XCTAssertNil(attachment["local_video"])
+        OfflineProtocol.state.loseDecisionAfterCommit = true
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
+        var newer = piece; newer.fileName = "Newer edit.mov"
+        let newerBytes = try JSONEncoder().encode([newer])
+        try store.put(server: server, kind: "attachments", id: "video-guidance", data: newerBytes)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.0), [original.id, original.id])
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.1), [frozen, frozen])
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(OfflineProtocol.state.uploadReservations, 1)
+        XCTAssertEqual(try store.record(server: server, kind: "attachments", id: "video-guidance")?.payload, newerBytes)
+    }
+
     func testChangedProposalRefusesBothDecisionKindsOnTheirItemAndKeepsGuidance() async throws {
         let outbox = Outbox(store: store)
         try outbox.enqueue(try decision("approve"), api: api)
@@ -727,6 +904,11 @@ private final class OfflineState: @unchecked Sendable {
         var loseDecisionAfterCommit = false
         /// Holds a transcription request open until the test signals it.
         var voiceGate: DispatchSemaphore?
+        var uploadStatuses: [String: [String: Any]] = [:]
+        var uploadReservations = 0
+        var uploadTransfers: [String] = []
+        var interruptUpload = false
+        var loseMessageBeforeCommit = false
     }
     private func value<T>(_ key: KeyPath<Values, T>) -> T { lock.withLock { values[keyPath: key] } }
     private func store<T>(_ key: WritableKeyPath<Values, T>, _ new: T) { lock.withLock { values[keyPath: key] = new } }
@@ -745,6 +927,10 @@ private final class OfflineState: @unchecked Sendable {
     var loseDecisionBeforeCommit: Bool { get { value(\.loseDecisionBeforeCommit) } set { store(\.loseDecisionBeforeCommit, newValue) } }
     var loseDecisionAfterCommit: Bool { get { value(\.loseDecisionAfterCommit) } set { store(\.loseDecisionAfterCommit, newValue) } }
     var voiceGate: DispatchSemaphore? { get { value(\.voiceGate) } set { store(\.voiceGate, newValue) } }
+    var interruptUpload: Bool { get { value(\.interruptUpload) } set { store(\.interruptUpload, newValue) } }
+    var loseMessageBeforeCommit: Bool { get { value(\.loseMessageBeforeCommit) } set { store(\.loseMessageBeforeCommit, newValue) } }
+    var uploadReservations: Int { value(\.uploadReservations) }
+    var uploadTransfers: [String] { value(\.uploadTransfers) }
     var ticket: Data { value(\.ticket) }
     var writes: [String] { value(\.writes) }
     var messageBodies: [(String, Data)] { value(\.messageBodies) }
@@ -756,6 +942,20 @@ private final class OfflineState: @unchecked Sendable {
     var decisionBodies: [(String, Data)] { value(\.recordedDecisions) }
     var decisionOutcomes: Int { value(\.decisionOutcomes) }
     func reset(ticket: Data) { lock.withLock { values = Values(); values.ticket = ticket } }
+    func expireReadyUploads() {
+        lock.withLock {
+            for id in Array(values.uploadStatuses.keys) where values.uploadStatuses[id]?["state"] as? String == "ready" {
+                values.uploadStatuses[id]?["expires_at"] = Date().timeIntervalSince1970 - 1
+            }
+        }
+    }
+    private func admitUploads(_ body: [String: Any], key: String) {
+        for piece in body[key] as? [[String: Any]] ?? [] {
+            if let uploadID = piece["upload_id"] as? String {
+                values.uploadStatuses[uploadID]?["state"] = "admitted"
+            }
+        }
+    }
     func bumpRevision() {
         lock.withLock {
             var value = try! JSONSerialization.jsonObject(with: values.ticket) as! [String: Any]
@@ -790,6 +990,30 @@ private final class OfflineState: @unchecked Sendable {
             let path = request.url!.path
             values.requests.append("\(request.httpMethod ?? "GET") \(path)")
             if values.offline { throw URLError(.notConnectedToInternet) }
+            if path.contains("/video-uploads") {
+                if request.httpMethod == "POST" {
+                    let body = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+                    values.uploadReservations += 1
+                    let id = "upload-\(values.uploadReservations)"
+                    let status: [String: Any] = ["upload_id": id, "destination": body["destination"]!,
+                        "filename": body["filename"]!, "byte_count": body["byte_count"]!, "received_bytes": 0,
+                        "state": "reserved", "media_type": NSNull(), "expires_at": Date().timeIntervalSince1970 + 86400,
+                        "error": NSNull()]
+                    values.uploadStatuses[id] = status
+                    return try JSONSerialization.data(withJSONObject: status)
+                }
+                let id = path.hasSuffix("/bytes") ? String(path.split(separator: "/").dropLast().last!) : request.url!.lastPathComponent
+                var status = values.uploadStatuses[id]!
+                if request.httpMethod == "PUT" {
+                    values.uploadTransfers.append(id)
+                    status["state"] = "transferring"; values.uploadStatuses[id] = status
+                    if values.interruptUpload { values.interruptUpload = false; throw URLError(.networkConnectionLost) }
+                    status["state"] = "ready"; status["media_type"] = "video/quicktime"
+                    status["received_bytes"] = status["byte_count"]
+                } else if request.httpMethod == "DELETE" { status["state"] = "cancelled" }
+                values.uploadStatuses[id] = status
+                return try JSONSerialization.data(withJSONObject: status)
+            }
             if path.contains("/decision-operations/") {
                 let operationID = request.url!.lastPathComponent
                 if request.httpMethod != "POST" {
@@ -812,6 +1036,7 @@ private final class OfflineState: @unchecked Sendable {
                 ]]
                 let response = try JSONSerialization.data(withJSONObject: value)
                 values.decisionReceipts[operationID] = response; values.decisionOutcomes += 1
+                if !refused { admitUploads(body, key: "attachments") }
                 if values.loseDecisionAfterCommit { values.loseDecisionAfterCommit = false; throw URLError(.networkConnectionLost) }
                 return response
             }
@@ -851,6 +1076,8 @@ private final class OfflineState: @unchecked Sendable {
             if values.refuseMessageIDs.contains(id) {
                 return try JSONSerialization.data(withJSONObject: ["fate": "refused", "refusal_reason": "backend_did_not_start"])
             }
+            if values.loseMessageBeforeCommit { values.loseMessageBeforeCommit = false; throw URLError(.networkConnectionLost) }
+            admitUploads(body, key: "content")
             // The server drops a repeat by its sender message ID.
             if !values.deliveredMessages.contains(id) { values.deliveredMessages.append(id) }
             let conversation = body["conversation_id"] as? String ?? values.createdConversation ?? "conversation"

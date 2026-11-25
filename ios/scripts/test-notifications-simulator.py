@@ -254,8 +254,9 @@ def main():
                 elif path == "/api/chief/conversation":
                     # Deliberately newer than the reply destination.
                     value = dict(conversation_id="c_replacement")
-                elif path == "/api/deployment-status":
-                    value = dict(state="idle")
+                elif path == "/api/updates":
+                    value = dict(state="up_to_date", app_sha="running", allowed_actions=[], machines=[], available_machines=[],
+                                 client_versions=[], interruption=dict(stops_agents=False, agents=[], machine_ids=[]))
                 elif path == "/api/executor/health":
                     value = dict(
                         mode="local",

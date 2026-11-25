@@ -1,7 +1,7 @@
 import { mintOutgoingMessage, reserveOutgoingMessageImages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
 import { describe, expect, it, vi } from "vitest";
 import { beginComposerSend, restoreRefusedComposerSend, type ComposerDraft } from "../src/components/conversation/composer/draftTransaction";
-import { LocalComposerSends, releaseRemovedLocalSends, pendingSendContent, recallLocalSends, rememberLocalSends, type PendingComposerSend } from "../src/lib/conversation/videoUploads/localSends";
+import { LocalComposerSends, resumeLocalSendsAfterUpdate, releaseRemovedLocalSends, pendingSendContent, recallLocalSends, rememberLocalSends, type PendingComposerSend } from "../src/lib/conversation/videoUploads/localSends";
 import { AttachmentTransfers, VideoTransfers, pendingUploadsAsPieces, restoredPendingUploads, openAttachmentDraft, attachmentTransfersFor, liveAttachmentDrafts, clearAttachmentDraft } from "../src/lib/conversation/videoUploads/uploads";
 import type { PendingVideo, UploadDestination, VideoUploadAdapter, VideoUploadStatus } from "../src/lib/conversation/videoUploads/contracts";
 
@@ -220,4 +220,126 @@ it("does not race a live validating PUT with a status GET, and deduplicates resu
   resumed.resolve(status("live-file"));
   await Promise.all([first, second]);
   expect(restored.phase).toBe("ready");
+});
+
+// Existing reload cases serialize token metadata only. This case proves that the actual
+// local File and an explicitly refused reservation return to the upload owner together.
+it("restores File bytes after screen replacement and resumes only proven refused reservations", async () => {
+  const { prepareAttachmentUpdateHandoff, restoreAttachmentUpdateHandoff } = await import("../src/lib/conversation/videoUploads/updateHandoff");
+  const { recallDraftVideo, rememberDraftVideo } = await import("../src/lib/conversation/videoUploads/localSends");
+  const rows = new Map<string, unknown>();
+  const memory = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => memory.set(key, value), removeItem: (key: string) => memory.delete(key) });
+  vi.stubGlobal("window", {sessionStorage});
+  vi.stubGlobal("indexedDB", {open: () => {
+    const request: any = {};
+    queueMicrotask(() => {
+      request.result = {close() {}, transaction() {
+        const transaction: any = {objectStore: () => ({
+          put(value: any) {rows.set(value.key, structuredClone(value)); return {result: value.key};},
+          getAll() {return {result: [...rows.values()]};},
+          delete(key: string) {rows.delete(key); return {result: undefined};}
+        })};
+        queueMicrotask(() => transaction.oncomplete());
+        return transaction;
+      }};
+      request.onsuccess();
+    });
+    return request;
+  }});
+  const adapter: VideoUploadAdapter = {
+    reserve: vi.fn(async () => status("restored-reservation")),
+    transfer: vi.fn(async (_id, bytes) => {expect(await bytes.text()).toBe("preserved-file-bytes"); return status("restored-reservation");}),
+    status: vi.fn(async () => status()), cancel: vi.fn(async () => undefined)
+  };
+  const original = new AttachmentTransfers(adapter, () => undefined);
+  const attachment = original.create(new File(["preserved-file-bytes"], "update.txt"), 8123, destination);
+  const reserved = original.create(new File(["preserved-file-bytes"], "reserved.txt"), 8124, destination);
+  reserved.uploadId = "reserved-before-update";
+  rememberDraftVideo("update-test", [attachment, reserved]);
+  await prepareAttachmentUpdateHandoff();
+  original.dispose();
+  await restoreAttachmentUpdateHandoff([]);
+  const attachments = recallDraftVideo("update-test");
+  expect(await attachments[0]!.file!.text()).toBe("preserved-file-bytes");
+  const owner = new AttachmentTransfers(adapter, () => undefined);
+  owner.restore(attachments);
+  expect(adapter.reserve).not.toHaveBeenCalled();
+  await restoreAttachmentUpdateHandoff([{id:"refused", input:"/api/conversation/video-uploads", method:"POST", body:JSON.stringify({destination, filename:"update.txt", byte_count:20})}]);
+  await vi.waitFor(() => expect(attachments[0]!.phase).toBe("ready"));
+  expect(adapter.reserve).toHaveBeenCalledOnce();
+  expect(adapter.transfer).toHaveBeenCalledOnce();
+  expect(attachments[1]!.phase).toBe("interrupted");
+  await restoreAttachmentUpdateHandoff([{id:"refused-put", input:"/api/conversation/video-uploads/reserved-before-update/bytes", method:"PUT", body:null}]);
+  await vi.waitFor(() => expect(attachments[1]!.phase).toBe("ready"));
+  expect(adapter.reserve).toHaveBeenCalledOnce();
+  expect(adapter.transfer).toHaveBeenLastCalledWith("reserved-before-update", expect.any(File), expect.any(AbortSignal), expect.any(Function));
+  owner.dispose();
+});
+
+// Existing reload coverage deliberately interrupts sends. An update checkpoint must resume
+// only never-dispatched intent, and upload refusal proof must not bless an uncertain file.
+it("resumes update-checkpointed unsent messages in FIFO after proven upload recovery", async () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
+  const safe = entry(video(), "safe");
+  const later = entry(undefined, "later");
+  const uncertain = entry({...video(), id: 2}, "uncertain");
+  const dispatching = {...entry(undefined, "already-dispatched"), phase: "dispatching" as const};
+  const failed = {...entry(undefined, "failed"), phase: "failed" as const};
+  const old = new LocalComposerSends(async () => true, () => rememberLocalSends("update", old.entries));
+  old.entries = [safe, later, uncertain, dispatching, failed];
+  old.prepareUpdateHandoff();
+  expect(safe.resumeAfterUpdate).toBe(true);
+  expect(dispatching.resumeAfterUpdate).toBeUndefined();
+  expect(failed.resumeAfterUpdate).toBeUndefined();
+  old.cancelUpdateHandoff();
+  expect(safe.resumeAfterUpdate).toBeUndefined();
+  old.prepareUpdateHandoff();
+  old.dispose();
+  const recalled = recallLocalSends("update");
+  resumeLocalSendsAfterUpdate(recalled, upload => upload.id === 1);
+  expect(recalled.map(item => item.phase)).toEqual(["waiting", "waiting", "interrupted", "dispatching", "interrupted"]);
+  const attachment = recalled[0]!.attempt.draftBeforeSend.pendingVideos![0]!;
+  attachment.uploadId = "ready-token";
+  attachment.phase = "ready";
+  const dispatched: string[] = [];
+  const queue = new LocalComposerSends(async item => { dispatched.push(item.context.messageId); return true; }, () => {});
+  queue.entries = recalled;
+  await queue.pump();
+  expect(dispatched).toEqual(["safe", "later"]);
+  expect(queue.entries[0]?.context.messageId).toBe("uncertain");
+  expect(safe.resumeAfterUpdate).toBe(true);
+  expect(recalled[0]?.resumeAfterUpdate).toBeUndefined();
+  queue.dispose();
+});
+
+// A journal replay can reach the server after the composer's first receipt read.
+it("clears only a restored dispatch after its late replay receipt and advances later unsent intent", async () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
+  const earlier = {...entry(undefined, "restored"), phase: "dispatching" as const};
+  const later = {...entry(undefined, "later"), resumeAfterUpdate: true};
+  rememberLocalSends("late-receipt", [earlier, later]);
+  const recalled = recallLocalSends("late-receipt");
+  const dispatch = vi.fn(async (_entry: PendingComposerSend) => true);
+  let queue!: LocalComposerSends;
+  queue = new LocalComposerSends(dispatch, () => { resumeLocalSendsAfterUpdate(queue.entries); void queue.pump(); });
+  queue.entries = recalled;
+  const receipt = vi.fn(async () => false);
+  await queue.reconcileRestored(receipt);
+  recalled[0]!.phase = "interrupted";
+  recalled[0]!.needsReconciliation = false;
+  resumeLocalSendsAfterUpdate(recalled);
+  await queue.pump();
+  expect(dispatch).not.toHaveBeenCalled();
+  receipt.mockResolvedValue(true);
+  await queue.reconcileRestored(receipt);
+  await queue.pump();
+  expect(dispatch).toHaveBeenCalledOnce();
+  expect(dispatch.mock.calls[0]?.[0].context.messageId).toBe("later");
+  expect(queue.entries).toEqual([]);
+  queue.dispose();
 });

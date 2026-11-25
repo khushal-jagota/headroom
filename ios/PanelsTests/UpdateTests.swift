@@ -49,6 +49,27 @@ import XCTest
         XCTAssertEqual(failed.cardInterruption?.sentence, "This update stops your agents", "Try again stops the agents again")
         XCTAssertEqual(failed.cardInterruption?.agents, ["Earlier worker"])
     }
+    func testCompletedInstallAndLatestCheckRemainSeparate() throws {
+        let attempt = ["attempt_id": "saved", "state": "done", "to_sha": "running-sha"]
+        let values: [String: Any] = ["state": "check_unavailable", "attempt": attempt, "machines": []]
+        let unchecked = try status(["state": "not_checked", "attempt": NSNull(), "machines": []])
+        XCTAssertEqual(unchecked.title, "Not checked for updates")
+        XCTAssertFalse(unchecked.needsAttention)
+        let recent = try status(["state": "not_checked", "attempt": attempt, "machines": []])
+        XCTAssertEqual(recent.title, "Update installed")
+        XCTAssertNil(recent.cardDetail)
+        let installed = try status(values)
+        XCTAssertEqual(installed.title, "Update installed")
+        XCTAssertEqual(installed.cardDetail, "Couldn’t confirm the latest version.")
+        let historical = try status(values.merging(["app_sha": "another-sha"]) { _, new in new })
+        XCTAssertEqual(historical.title, "Couldn’t check for updates")
+        XCTAssertNil(historical.cardDetail)
+        let unknown = try status(["state": "check_unavailable", "app_sha": "", "attempt": ["attempt_id": "saved", "state": "done", "to_sha": ""]])
+        XCTAssertEqual(unknown.title, "Couldn’t check for updates")
+        let failedMachine = try status(["state": "check_unavailable", "attempt": attempt])
+        XCTAssertEqual(failedMachine.title, "Machine update needs attention")
+        XCTAssertEqual(failedMachine.cardDetail, installed.cardDetail)
+    }
     func testCandidateCompatibilityIsOptionalAndWarnsForDeclaredClientsOnly() throws {
         XCTAssertEqual(try status().warnings, [])
         let limits: [String: Any] = ["ios": ["minimum_build": 2], "desktop_shell": ["minimum_bridge_version": 3], "machine": ["minimum_protocol_version": 2, "maximum_protocol_version": 4], "outbox_format": 2]

@@ -185,11 +185,11 @@ test('environment providers and poll hooks share the server, and both producer g
     });
     expect(declaration.status).toBe(200);
     await declaration.text();
-    // The card's update read must include a device record from a prior request.
+    // This installation has no release provider. It still reports the registered device.
     const updates = await fetch(server.address + '/api/updates');
     expect(updates.status).toBe(200);
     expect(await updates.json()).toMatchObject({
-      state: 'up_to_date',
+      state: 'not_checked',
       activity: 'idle',
       client_versions: [client_identity],
     });
@@ -203,6 +203,19 @@ test('environment providers and poll hooks share the server, and both producer g
     const captured = await deployment.json();
     expect(captured.body.state).toBe('idle');
     expect(JSON.parse(captured.revision)).toEqual(captured.body);
+    // The installed build 11 Settings falls back to the direct resource.
+    const old_settings = await fetch(server.address + '/api/deployment-status', {
+      headers: { 'X-Panels-iOS-Build': '11' },
+    });
+    expect(old_settings.status).toBe(200);
+    expect(await old_settings.json()).toEqual(captured.body);
+    const obsolete_settings = await fetch(server.address + '/api/deployment-status', {
+      headers: { 'X-Panels-iOS-Build': '10' },
+    });
+    expect(obsolete_settings.status).toBe(426);
+    expect(await obsolete_settings.json()).toMatchObject({
+      error: { code: 'ios_update_required' },
+    });
     verification = fetch(server.address + '/preview-grace-proof/held').then(async (response) => ({
       status: response.status,
       body: await response.json(),

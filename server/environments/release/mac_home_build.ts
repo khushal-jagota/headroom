@@ -12,7 +12,6 @@ import { create_app_archive, remove_owned_tree } from './archive.ts';
 import { digest_app_artifact, validate_app_manifest, validate_app_tree } from './identity.ts';
 import { assert_release_execution } from './process.ts';
 import { complete_mac_home_runtime } from './mac_home_native.ts';
-import { write_installer_file_manifest } from './installer_bundle.ts';
 import { APP_FORMAT, APP_ARCHIVE_NAME } from './configuration.ts';
 import { MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
 import { resolved_path, expand_path } from '../paths.ts';
@@ -106,7 +105,6 @@ export async function build_mac_home(
       )
     )
       throw new Error('Mac home requires native Darwin SQLite and Koffi addons');
-    await write_installer_file_manifest(app, options.requested_sha, execution, MAC_HOME);
     for (const name of MAC_HOME_REQUIRED_FILES)
       if (!(await lstat(join(app, name))).isFile())
         throw new Error(`Mac home runtime file is missing: ${name}`);

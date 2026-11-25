@@ -1,0 +1,85 @@
+name: Qualify an installed release
+
+on:
+  workflow_call:
+    inputs:
+      replay_from: {required: false, type: string}
+      replay_to: {required: false, type: string}
+      system: {required: true, type: string}
+      home_artifact_id: {required: false, type: string}
+      home_build_artifact_id: {required: false, type: string}
+      machine_artifact_id: {required: false, type: string}
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upgrade:
+    name: Installed release upgrade (${{ inputs.system }})
+    runs-on: ${{ inputs.system == 'linux' && 'ubuntu-24.04' || 'macos-15' }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Prepare a clean account, previous release and immutable candidate packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPLAY_FROM: ${{ inputs.replay_from }}
+          REPLAY_TO: ${{ inputs.replay_to }}
+          HOME_ARTIFACT_ID: ${{ inputs.home_artifact_id }}
+          HOME_BUILD_ARTIFACT_ID: ${{ inputs.home_build_artifact_id }}
+          MACHINE_ARTIFACT_ID: ${{ inputs.machine_artifact_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export FIRST_INSTALL_ROOT="$RUNNER_TEMP/qualification"
+          echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y libicu-dev pkg-config build-essential
+            sudo loginctl enable-linger "$(id -un)"
+            sudo systemctl start "user@$(id -u).service"
+            echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+          else
+            test "$(uname -m)" = arm64
+            brew install icu4c pkgconf
+          fi
+          scripts/dev npm --prefix server ci
+          node server/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+          python3 server/environments/release/testing/qualification_feed_test.py
+          python3 server/environments/release/testing/prepare_qualification.py
+      - name: Run the previous install, original join, owner update, and file-backed agent turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFY_PREVIOUS_RELEASE: '1'
+          QUALIFY_MACHINE_SERVICE: ${{ inputs.replay_to == '' && '1' || '0' }}
+          MAC_LAUNCHER_QUALIFICATION: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'developer-id' || 'ad-hoc' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          feed="$FIRST_INSTALL_ROOT/feed"
+          env -i PATH="$PATH" python3 server/environments/release/testing/qualification_feed.py "$feed" > "$feed/port" &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
+          node server/installation/testing/first_install_proof.ts
+      - name: Retain the predecessor, exact digests and observed update
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.replay_to && 'manual-replay' || 'installed-upgrade' }}-${{ inputs.system }}
+          path: ${{ runner.temp }}/qualification/evidence/
+          if-no-files-found: error

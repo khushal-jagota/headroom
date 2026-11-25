@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { extract } from 'tar';
 import { with_zip_member } from '../updates/zip.ts';
 import { sha256_file } from '../backup/evidence.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { is_record } from '../../core/records.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
@@ -38,7 +39,7 @@ const platform: MachinePlatform = process.platform;
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const request = JSON.parse(await readFile(process.argv[2]!, 'utf8'));
 assert.ok(is_record(request));
-for (const field of ['candidate_zip', 'output_directory', 'cache_directory'])
+for (const field of ['candidate_zip', 'output_directory'])
   assert.ok(typeof request[field] === 'string' && isAbsolute(request[field]));
 const root = request.output_directory as string;
 assert.ok(
@@ -58,7 +59,6 @@ const started = performance.now();
 const baseline = await load_machine_baselines(
   platform,
   root,
-  request.cache_directory as string,
   run.repository,
   process.env.GITHUB_TOKEN!,
   lifetime,
@@ -292,22 +292,18 @@ try {
       createEnvironmentRuntime(context, {
         ...create_test_environment_operations(context),
         create_mac: (composition) => {
-          const result = create_mac_update_composition(
-            {
-              ...composition,
-              platform,
-              linux_registered: () => platform === 'linux',
-              current_app_sha: run.source_sha,
-              ready_release: () => null,
-              provider: {
-                available: async () => publication,
-                download_artifact: async (_id, path) => {
-                  await cp(request.candidate_zip as string, path);
-                },
+          const result = create_mac_update_composition({
+            ...composition,
+            platform,
+            current_app_sha: run.source_sha,
+            ready_release: () => null,
+            provider: {
+              available: async () => publication,
+              download_artifact: async (_id, path) => {
+                await cp(request.candidate_zip as string, path);
               },
             },
-            null,
-          );
+          });
           service = result.service;
           return result;
         },
@@ -373,6 +369,14 @@ try {
   await server.stop_turn(turn.conversation_id);
   await stop_machine();
   console.info('Machine compatibility: previous runtime stopped');
+  const enrolled = service!
+    .machine_states(publication)
+    .find((machine) => machine.machine_id === ORIGINAL_MAC_MACHINE_ID);
+  assert.equal(
+    enrolled?.platform,
+    platform,
+    'The registry must supply the enrolled machine and its native platform',
+  );
   await service!.prepare(publication);
   console.info('Machine compatibility: candidate archive prepared through the real update service');
   const attempts = new FileUpdateAttemptStore(attempt_path(join(root, 'server/data')), () => {});

@@ -63,7 +63,7 @@ final class ReviewMessagesTests: XCTestCase {
             XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.keyboards.firstMatch.exists)
             app.buttons["Stop recording"].tap()
-            let feedback = app.staticTexts["No speech heard. Try again."]
+            let feedback = app.readableText("No speech heard. Try again.")
             XCTAssertTrue(feedback.waitForExistence(timeout: 6))
             XCTAssertTrue(box.frame.contains(feedback.frame))
             XCTAssertTrue(box.frame.contains(app.buttons["Try again"].frame))
@@ -128,7 +128,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(app.buttons["sidebar-chief"].waitForExistence(timeout: 20))
         let sidebar = XCTAttachment(screenshot: app.screenshot()); sidebar.name = "live-sidebar"; sidebar.lifetime = .keepAlways; add(sidebar)
         app.buttons["sidebar-review"].tap()
-        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["review.summary.headline"].exists)
+        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.readableText("review.summary.headline").exists)
         let review = XCTAttachment(screenshot: app.screenshot()); review.name = "live-review-read-only"; review.lifetime = .keepAlways; add(review)
         app.openDestination("sidebar-chief", timeout: 15)
         let line = app.buttons["conversation-line"]

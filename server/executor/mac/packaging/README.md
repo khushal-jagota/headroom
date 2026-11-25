@@ -24,14 +24,13 @@ not executable provenance, native addon loading, signing or a genuine Darwin run
 The release workflow calls `publication_main.ts`. It unpacks the sealed archive at a separate path and uses the bundled Node for CLI and native checks.
 It also checks the signature of the unpacked launcher. The publication evidence records the signed launcher tree hash.
 The Manager chose the signed launcher as a fixed external input, like Node. Repeat builds use that same checked launcher
-and independent locked dependency installations. The content build identity includes every launcher byte.
+and independent locked dependency installations. The repeat assembly verifies the machine identity. Only the first assembly produces a release archive. The content build identity includes every launcher byte.
 The native probe loads SQLite and the Mac host and copies verified bytes through the Darwin file worker.
 Only a successful proof produces `mac-runtime-publication.json`, bound to the source, workflow run and attempt, and archive bytes.
 The update and join artifact contains only the archive and receipt.
 
-The pull-request workflow `typescript-mac-executor.yml` has two cases on clean hosted runners.
-One exercises the packaged runtime with a private TypeScript home and scripted provider CLIs.
-The other runs the server's own join command against a private home with a local release.
+The release rehearsal runs the server's join command on a clean hosted Mac with the candidate machine archive.
+It checks the actual launchd job and launcher recovery. A manual run also exercises the packaged runtime against a private TypeScript home with scripted Claude and Codex CLIs.
 Folder consent and permission retention under the Developer ID remain checks on a real second machine.
 
 The file-transfer part uses a test double of the home file routes because home file custody requires Linux procfs. It checks the packaged Mac transport and exact bytes and digests. Real Linux home file intake remains a live check after the Mac switch.

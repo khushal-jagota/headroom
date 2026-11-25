@@ -22,7 +22,7 @@ final class ArtifactDockTests: XCTestCase {
         let approve = app.buttons["review.approve"]
         let skip = app.buttons["review.skip"]
         let note = app.textFields["review.revision"].firstMatch
-        let message = app.staticTexts["First unread message"]
+        let message = app.readableText("First unread message")
 
         let back = app.buttons["review.return"]
         XCTAssertTrue(back.waitForExistence(timeout: 12)); back.tap()
@@ -32,9 +32,9 @@ final class ArtifactDockTests: XCTestCase {
         // card's own draft, and shows its table, code and chart.
         let dockLink = app.links["dock evidence"]
         XCTAssertTrue(dockLink.waitForExistence(timeout: 8)); dockLink.tap()
-        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Simulator walk"].exists, "The artifact draws its table")
-        XCTAssertTrue(app.staticTexts["Merged PRs per week"].exists, "The artifact draws its chart")
+        XCTAssertTrue(app.readableText("Dock artifact proof").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Simulator walk").exists, "The artifact draws its table")
+        XCTAssertTrue(app.readableText("Merged PRs per week").exists, "The artifact draws its chart")
         XCTAssertTrue(approve.waitForExistence(timeout: 5)); XCTAssertTrue(skip.exists)
         XCTAssertFalse(app.textFields["conversation-input"].exists, "Only the card's dock is live")
         note.tap(); note.typeText("Note typed under the artifact")
@@ -47,7 +47,7 @@ final class ArtifactDockTests: XCTestCase {
         dockLink.tap()
         let nested = app.links["Nested dock artifact"]
         XCTAssertTrue(nested.waitForExistence(timeout: 10)); nested.tap()
-        XCTAssertTrue(app.staticTexts["Nested dock proof"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Nested dock proof").waitForExistence(timeout: 10))
         XCTAssertTrue(approve.waitForExistence(timeout: 5), "The top viewer mounts the dock")
         capture("nested-artifact-dock")
         skip.tap()
@@ -64,7 +64,7 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertTrue(markRead.exists)
         capture("message-artifact-dock")
         markRead.tap()
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10))
         XCTAssertFalse(viewer.exists)
         skip.tap()
         XCTAssertTrue(back.waitForExistence(timeout: 10)); back.tap()
@@ -83,11 +83,11 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
         let evidence = app.links["Conversation evidence"].firstMatch
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Merged PRs per week"].firstMatch.exists, "A conversation row draws its chart")
+        XCTAssertTrue(app.readableText("Merged PRs per week").firstMatch.exists, "A conversation row draws its chart")
         capture("conversation-block-markdown")
         evidence.tap()
         XCTAssertTrue(viewer.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Dock artifact proof").waitForExistence(timeout: 8))
         XCTAssertTrue(app.textFields["conversation-input"].firstMatch.waitForExistence(timeout: 5), "The conversation's composer docks below")
         XCTAssertFalse(approve.exists)
         capture("conversation-artifact-composer-dock")
@@ -99,7 +99,7 @@ final class ArtifactDockTests: XCTestCase {
 
         // The skipped proposal again: Approve under the artifact saves it and returns to Review.
         XCTAssertTrue(dockLink.waitForExistence(timeout: 10)); dockLink.tap()
-        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Dock artifact proof").waitForExistence(timeout: 10))
         XCTAssertTrue(approve.waitForExistence(timeout: 5)); approve.tap()
         XCTAssertTrue(viewer.waitForNonExistence(timeout: 10), "A decision closes the viewer")
         XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 5))
@@ -139,20 +139,20 @@ final class ArtifactDockTests: XCTestCase {
         }
         func noCover(_ screen: String) {
             for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
-                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                XCTAssertFalse(app.readableTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch.exists,
                                "\(screen) shows \"\(text)\"")
             }
         }
         let viewer = app.buttons["Artifact actions"]
         let approve = app.buttons["review.approve"]
         let skip = app.buttons["review.skip"]
-        let message = app.staticTexts["First unread message"]
+        let message = app.readableText("First unread message")
         let dockLink = app.links["dock evidence"]
         let html = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
         let line = app.buttons["conversation-line"]
         let evidence = app.links["Conversation evidence"].firstMatch
-        let placeholder = app.staticTexts["Opening artifact…"]
-        let markdown = app.staticTexts["Dock artifact proof"]
+        let placeholder = app.readableText("Opening artifact…")
+        let markdown = app.readableText("Dock artifact proof")
         let page = app.webViews.staticTexts["Inline artifact proof"]
         let screenshot = app.webViews.staticTexts["Screenshot loaded"]
         let postLanded = app.webViews.staticTexts["Page post landed"]
@@ -228,7 +228,7 @@ final class ArtifactDockTests: XCTestCase {
         try await proof("offline")
         app.backButton.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 8)); skip.tap()
-        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10)); skip.tap()
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10)); skip.tap()
         app.openReviewCards()
         XCTAssertTrue(dockLink.waitForExistence(timeout: 10)); dockLink.tap()
         XCTAssertTrue(viewer.waitForExistence(timeout: 8), "The proposal's viewer opens offline")
@@ -267,7 +267,7 @@ final class ArtifactDockTests: XCTestCase {
         try await proof("online")
         dockLink.tap()
         drawsFromCopy(markdown, "The proposal's artifact back online")
-        XCTAssertTrue(app.staticTexts["Revised dock evidence"].waitForExistence(timeout: 10), "The changed file replaces the copy")
+        XCTAssertTrue(app.readableText("Revised dock evidence").waitForExistence(timeout: 10), "The changed file replaces the copy")
         noCover("Revised proposal artifact"); capture("online-revised-artifact")
         app.backButton.tap()
         XCTAssertTrue(dockLink.waitForExistence(timeout: 8))
@@ -307,7 +307,7 @@ final class ArtifactDockTests: XCTestCase {
         let line = app.buttons["conversation-line"]
         XCTAssertTrue(line.waitForExistence(timeout: 10)); line.tap()
         let thread = app.scrollViews["conversation-thread"]
-        XCTAssertTrue(app.staticTexts["Rich update 60"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.readableText("Rich update 60").waitForExistence(timeout: 10))
         let options = XCTMeasureOptions(); options.iterationCount = 3
         measure(metrics: [XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
             thread.swipeDown(velocity: .fast)

@@ -1,48 +1,28 @@
 name: TypeScript Mac executor rehearsal
 
 on:
-  pull_request:
-    paths:
-      - "server/executor/**"
-      - "server/conversation/**"
-      - "server/worker_supervision/**"
-      - "server/platform_runtime/**"
-      - "server/lifecycle/**"
-      - "server/core/**"
-      - "server/environments/**"
-      - "server/machines/**"
-      - "server/runtime/**"
-      - "server/tickets/**"
-      - "server/package*.json"
-      - "server/cli/**"
-      - ".github/workflows/typescript-mac-executor.yml"
-      - ".github/workflows/publish-typescript-release.yml"
-      - "scripts/panels_install.py"
+  workflow_call:
+    inputs:
+      machine_artifact_id: {required: true, type: string}
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: mac-executor-${{ github.event.pull_request.number || github.ref }}
+  group: mac-executor-${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.run_id) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   rehearsal:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.script == 'native_join_rehearsal.ts' && 'Join a clean Apple Silicon machine with the join command' || 'Packaged Mac executor against a local TypeScript server' }}
     runs-on: macos-15
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Packaged Mac executor against a local TypeScript server
-            script: native_rehearsal.ts
-            evidence: typescript-mac-executor-rehearsal
-          # A clean runner joins with the server's own command and a local release.
-          - name: Join a clean Apple Silicon machine with the join command
-            script: native_join_rehearsal.ts
-            evidence: typescript-mac-join-rehearsal
+        script: ${{ fromJSON(inputs.machine_artifact_id && '["native_join_rehearsal.ts"]' || '["native_join_rehearsal.ts","native_rehearsal.ts"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -51,18 +31,14 @@ jobs:
         with:
           node-version: "22"
           architecture: arm64
-      - name: Prepare independent production inputs and test dependencies
+      - name: Prepare the local server and test dependencies
         shell: bash
         run: |
           set -euo pipefail
           umask 077
           native_root="$RUNNER_TEMP/mac-executor-rehearsal"
           mkdir -p "$native_root"/{source,source-repeat,home,tmp,tls,evidence,config,data,logs,backups,workspace,files,scratch,run}
-          git archive --format=tar HEAD | tar -xf - -C "$native_root/source"
-          git archive --format=tar HEAD | tar -xf - -C "$native_root/source-repeat"
           npm ci --prefix server
-          npm ci --prefix "$native_root/source/server" --omit=dev
-          npm ci --prefix "$native_root/source-repeat/server" --omit=dev
           cat > "$native_root/tls/request.cnf" <<'TLS'
           [req]
           distinguished_name = dn
@@ -79,6 +55,38 @@ jobs:
             -config "$native_root/tls/request.cnf" \
             -keyout "$native_root/tls/key.pem" -out "$native_root/tls/cert.pem"
           printf '{}\n' > "$native_root/config/config.yaml"
+      - name: Prepare independent inputs for standalone package rehearsals
+        if: ${{ !inputs.machine_artifact_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/mac-executor-rehearsal"
+          for dir in source source-repeat; do
+            git archive --format=tar HEAD | tar -xf - -C "$root/$dir"
+            npm ci --prefix "$root/$dir/server" --omit=dev
+          done
+      - name: Use the release machine package
+        if: inputs.machine_artifact_id
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ inputs.machine_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/mac-executor-rehearsal/package
+      - name: Fetch the previous published Mac runtime for the launcher transition
+        if: matrix.script == 'native_join_rehearsal.ts'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/mac-executor-rehearsal"
+          export MAC_REHEARSAL_BASELINE_ROOT="$root/baseline"
+          node --input-type=module <<'JS'
+          import { load_machine_baseline } from './server/environments/release/machine_baselines.ts';
+          await load_machine_baseline('darwin', 'previous', process.env.MAC_REHEARSAL_BASELINE_ROOT,
+            process.env.GITHUB_REPOSITORY, process.env.GH_TOKEN, AbortSignal.timeout(5 * 60_000));
+          JS
+          mkdir "$root/previous"
+          tar -xzf "$root/baseline/previous/panels-mac-runtime.tar.gz" -C "$root/previous"
       - name: Rehearse the sealed package without real provider credentials
         shell: bash
         env:
@@ -92,6 +100,7 @@ jobs:
             HOME="$native_root/home" TMPDIR="$RUNNER_TEMP/" \
             MAC_REHEARSAL_ROOT="$native_root" MAC_REHEARSAL_EVIDENCE="$native_root/evidence" \
             MAC_REHEARSAL_INPUTS="$native_root/source" MAC_REHEARSAL_REPEAT_INPUTS="$native_root/source-repeat" MAC_REHEARSAL_REVISION="$native_revision" \
+            MAC_REHEARSAL_PACKAGE_ID="${{ inputs.machine_artifact_id }}" \
             MAC_REHEARSAL_RUN_ID="$GITHUB_RUN_ID" MAC_REHEARSAL_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false PLAN_PORT=0 PLAN_SERVER_URL=http://127.0.0.1:0 \
             PLAN_CONFIG_PATH="$native_root/config/config.yaml" PLAN_DB_PATH="$native_root/data/planner.sqlite" \
@@ -108,7 +117,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ${{ matrix.evidence }}-${{ github.run_attempt }}
+          name: ${{ matrix.script == 'native_join_rehearsal.ts' && 'typescript-mac-join-rehearsal' || 'typescript-mac-executor-rehearsal' }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/mac-executor-rehearsal/evidence/
           if-no-files-found: error
           retention-days: 14

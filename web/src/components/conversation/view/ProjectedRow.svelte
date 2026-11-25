@@ -14,8 +14,10 @@
   import { turnEndingStatus, TURN_STOPPED_STATUS } from '../../../lib/conversation/transcript';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  let { activityUncertain = false, item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
+  let { activityUncertain = false,
+    destinationName, item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
       activityUncertain?: boolean;
+    destinationName?: string;
       item: ConversationViewRow;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
@@ -95,7 +97,7 @@
   {#if row.request.request_id !== (dockedCredential?.() ?? null)}<ConversationCredentialRequestCard request={row.request}/>{/if}
 {:else if row!==null}
   {#key presentationAttempt}
-  <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} {narration} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
+  <ConversationTranscript {activityUncertain} {destinationName} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} {narration} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
   {/key}
 {:else}
   <div aria-busy={!error} role="status">{error ?? ""}</div>

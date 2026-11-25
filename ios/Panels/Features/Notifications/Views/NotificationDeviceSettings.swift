@@ -14,16 +14,16 @@ struct NotificationDeviceSettings: View {
                     .disabled(notifications.requestingPermission)
                     .accessibilityIdentifier("allow-notifications")
             case .denied:
-                Text("Notifications are off for Panels.")
+                Text("Notifications are off for Panels.").textSelection(.enabled)
                 Button("Open iOS Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
             case .authorized, .provisional, .ephemeral:
-                Text(notifications.authorization == .provisional ? "Quiet notifications allowed" : "Notifications allowed")
+                Text(notifications.authorization == .provisional ? "Quiet notifications allowed" : "Notifications allowed").textSelection(.enabled)
                 Button("Check connection") { Task { await notifications.refresh(using: store.client) } }
                 Button("Open iOS Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
             @unknown default:
-                Text("Check notification access in iOS Settings.")
+                Text("Check notification access in iOS Settings.").textSelection(.enabled)
             }
-            Text(notifications.registrationMessage).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            Text(notifications.registrationMessage).textSelection(.enabled).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
         }.listRowBackground(PanelsTheme.raised)
             .task { await notifications.refresh(using: store.client) }
     }

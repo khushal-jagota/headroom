@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
+import MachineIdentityWithQueryClient from "./fixtures/MachineIdentityWithQueryClient.svelte";
+import { macUpdateLabel } from "../src/lib/machines/macUpdateStatus";
 import MacStatus from "../src/components/machines/MacStatus.svelte";
-import { macActivityKnown, macPresenceLabel, macTicketActivityLabel, type ExecutorIdentity, type MacStatus as Health } from "../src/lib/ticketMachines";
+import { machineName, unknownActivityText, macActivityKnown, macPresenceLabel, macTicketActivityLabel, type ExecutorIdentity, type MacStatus as Health } from "../src/lib/ticketMachines";
 
 const identity: ExecutorIdentity = { protocol_version: 18, application_revision: "old-mac-revision", spool_format_version: 5, executor_incarnation: "mac" };
 const refused: Health = { presence: "refused", since_ms: 1000, identity: null, last_contact_at_ms: 1000,
@@ -65,7 +67,7 @@ describe("Mac version evidence", () => {
   it("shows a Mac Ticket paused while the Mac sleeps, not as an update refusal", () => {
     const ticket = { locale: "macos" as const, ticket_status: "agent_owned", conversation_signal: { working: true } };
     const html = render(MacStatus, { props: { health: { ...away("asleep"), refusal: refused.refusal, since_ms: Date.now() }, ticket } }).body;
-    expect(html).toContain("Paused: Machine is away");
+    expect(html).toContain("Paused: Remote machine is away");
     expect(html).toMatch(/Asleep since \d{2}:\d{2}</);
     expect(html).not.toContain("Mac needs update");
   });
@@ -85,13 +87,13 @@ describe("Mac version evidence", () => {
   ] as const)("shows %s separately from VPS completion", (phase, label) => {
     const update = { request_id: "approved", target_revision: "0123456789abcdef", phase, detail: null };
     const html = render(MacStatus, { props: { health: { ...present, update } } }).body;
-    expect(html).toContain(label);
+    expect(html).toContain(label.replace(/^Mac/, "Machine"));
     expect(html).toContain("Target 0123456789ab");
   });
   it("keeps update failure and version-refusal evidence distinct", () => {
     const update = { request_id: "approved", target_revision: "next", phase: "failed" as const, detail: "The previous version stayed active." };
     const html = render(MacStatus, { props: { health: { ...refused, update } } }).body;
-    expect(html).toContain("Mac update failed");
+    expect(html).toContain("Machine update failed");
     expect(html).toContain("The previous version stayed active.");
     expect(html).toContain("Mac needs update");
     expect(html).toContain("Last refusal:");
@@ -111,4 +113,32 @@ it("keeps mapped cleanup and legacy evidence visible while the executor is prese
   expect(html).toContain("#/workspace/affected-ticket");
   expect(html).toContain("Affected Ticket");
   expect(html).toContain("An older process record needs operator review");
+});
+
+// Existing presence checks do not prove identity lookup. One pure case checks that
+// a different machine or a renamed shared response cannot supply stale locale text.
+it("resolves only the recorded machine and follows its current stored name", () => {
+  const machines = [{ machine_id: "mac", name: "Mac 1", icon: "laptop" as const, color: "jade" as const, is_home: false, available: false, running_workers: null, waiting_tickets: 0 },
+    { machine_id: "home", name: "VPS 1", icon: "server" as const, color: "jade" as const, is_home: true, available: true, running_workers: 0, waiting_tickets: 0 }];
+  const identity = (rows = machines, machineId: string | undefined = "mac") => render(MachineIdentityWithQueryClient, {
+    props: { machines: rows, locale: "macos", machineId }
+  }).body;
+  const html = identity();
+  expect(html).toContain('aria-label="Runs on Mac 1"');
+  expect(html).toContain('title="Runs on Mac 1"');
+  expect(html).toContain('>Mac 1</span>');
+  expect(identity(machines, "missing")).toContain('aria-label="Runs on Remote machine"');
+  expect(machineName("macos", "mac", machines)).toBe("Mac 1");
+  expect(machineName("vps", "home", machines)).toBe("VPS 1");
+  expect(machineName("vps", "mac", machines)).toBe("Mac 1");
+  expect(machineName("macos", "missing", machines)).toBe("Remote machine");
+  expect(machineName("vps", undefined, machines)).toBe("Home");
+  expect(machineName("macos", undefined, machines)).toBe("Remote machine");
+  expect(machineName(undefined, "missing", machines)).toBe("Machine");
+  const renamed = machines.map(machine => machine.machine_id === "mac" ? {...machine, name: "Studio"} : machine);
+  expect(identity(renamed)).toContain('aria-label="Runs on Studio"');
+  expect(unknownActivityText(machineName("macos", "mac", renamed))).toBe("Current activity on Studio is unknown.");
+  expect(unknownActivityText()).toBe("Current activity is unknown.");
+  expect(macUpdateLabel({request_id: "update", target_revision: "next", phase: "waiting", detail: null}, "Studio")).toBe("Studio waits to update");
+  expect(unknownActivityText("Machine")).toBe("Current activity on Machine is unknown.");
 });

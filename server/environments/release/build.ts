@@ -36,7 +36,6 @@ import { extract_git_export, remove_owned_tree } from './archive.ts';
 import { require_generated_schema_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { exists, is_symlink } from '../backup/evidence.ts';
-import { write_installer_file_manifest } from './installer_bundle.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 const BUILD_PATH = dirname(process.execPath) + ':/usr/local/bin:/usr/bin:/bin';
@@ -253,8 +252,6 @@ export async function build_exported_app(
     }
     assert_release_execution(execution);
     await write_app_entrypoints(payload, requested, dependencies, execution, options.target);
-    if (options.install_dependencies)
-      await write_installer_file_manifest(payload, requested, execution, options.target);
     manifest = {
       app_sha: requested,
       source_digest,

@@ -20,13 +20,15 @@
   import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
   import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
-  let { activityUncertain = false, reader, models, ownSenderLabel, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+  let { activityUncertain = false,
+    destinationName, reader, models, ownSenderLabel, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
       withdrawnDisplayIds?: ReadonlySet<string>;
       onStopDrawingMessage?: (id:string)=>Promise<void>|void;
       onSendAgain?: (id:string)=>Promise<void>|void;
       activityUncertain?: boolean;
+    destinationName?: string;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
@@ -255,7 +257,7 @@
       {#if item.kind==='turn'}
         <div use:demand={item}>
           {#if headDrawn(item)}
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} {destinationName} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
           {/if}
         </div>
       {:else if item.kind==='work_group'}
@@ -266,7 +268,7 @@
           {/if}
         </div>
       {:else}
-        <ProjectedRow {activityUncertain} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
+        <ProjectedRow {activityUncertain} {destinationName} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
       {/if}
     </ViewItem>
     {/if}

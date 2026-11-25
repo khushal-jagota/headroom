@@ -127,10 +127,11 @@ struct ConversationBody: Equatable, Codable, Sendable {
     var delivery: RequestDelivery? = nil
     struct Answer: Equatable, Codable, Sendable { let questionId: String; let answers: [String] }
     struct RequestDelivery: Equatable, Codable, Sendable { let status: String; let refusalReason: String? }
-    var answerSentence: String? {
+    var answerSentence: String? { answerSentence(machineName: nil) }
+    func answerSentence(machineName: String?) -> String? {
         switch answerFate {
-        case "saved": "The home saved your answer. Delivery to the worker machine is pending."
-        case "applied": "The worker machine applied your answer."
+        case "saved": "The home saved your answer. Delivery to \(machineName ?? "the worker machine") is pending."
+        case "applied": "\(machineName ?? "The worker machine") applied your answer."
         case "unconfirmed": "The home saved your answer. The original request is gone, so the app cannot confirm delivery."
         default: nil
         }
@@ -243,6 +244,9 @@ struct ConversationSend: Codable, Sendable {
         var data: String? = nil
         var mediaType: String? = nil
         var fileName: String? = nil
+        var localVideo: SavedVideo? = nil
+        var uploadId: String? = nil
+        var preparationError: String? = nil
     }
 }
 extension ConversationSend {
@@ -316,6 +320,7 @@ protocol ConversationServing: Sendable {
 
 // Existing conversation detail and owner start-values contracts.
 struct ConversationConfiguration: Decodable, Sendable {
+    let machineId: String?
     let backendKey: String
     /// The backend can join a running turn. Older servers omit it; then Steer stays offered.
     let supportsSteer: Bool
@@ -341,9 +346,10 @@ struct ConversationConfiguration: Decodable, Sendable {
             }
         }
     }
-    enum CodingKeys: String, CodingKey { case backendKey, supportsSteer, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
+    enum CodingKeys: String, CodingKey { case machineId, backendKey, supportsSteer, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        machineId = try values.decodeIfPresent(String.self, forKey: .machineId)
         latestSequence = try values.decodeIfPresent(Int.self, forKey: .latestSequence)
         ownerReadThroughSequence = try values.decodeIfPresent(Int.self, forKey: .ownerReadThroughSequence)
         backendKey = try values.decode(String.self, forKey: .backendKey)

@@ -30,11 +30,11 @@ struct SheetForm<Content: View>: View {
             Form {
                 content
                 if let error = action.error {
-                    Section { Text(error).foregroundStyle(PanelsTheme.error).accessibilityIdentifier("sheet-error") }
+                    Section { Text(error).textSelection(.enabled).foregroundStyle(PanelsTheme.error).accessibilityIdentifier("sheet-error") }
                 }
             }
             .disabled(action.busy)
-            .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            .panelsNavigationTitle(title).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(action.busy) }
                 ToolbarItem(placement: .confirmationAction) {
@@ -66,6 +66,6 @@ struct CheckRow: View {
                 else if selected { Image(systemName: "checkmark").foregroundStyle(PanelsTheme.accent) }
             }.contentShape(Rectangle())
         }.foregroundStyle(.primary)
-            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityAddTraits(selected ? .isSelected : []).systemCopyText(label)
     }
 }

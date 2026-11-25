@@ -22,7 +22,7 @@ extension APIClient {
     func downloadConversationFile(_ conversationID: String, storedFileID: String, fileName: String?) async throws -> ConversationMediaFile {
         var request = try self.request(try conversationFileURL(conversationID, storedFileID: storedFileID))
         request.timeoutInterval = 60
-        let (download, response) = try await session.download(for: request)
+        let (download, response) = try await self.download(for: request)
         do {
             // Error bodies contain server validation notes, never a media payload.
             let errorData = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } == true ? Data() : (try Data(contentsOf: download))

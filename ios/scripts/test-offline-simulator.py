@@ -24,6 +24,7 @@ ARTIFACT_LINKS_PROOF = os.environ.get("PANELS_ARTIFACT_LINKS_PROOF") == "1"
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
 REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 UPDATES_SMOKE = os.environ.get("PANELS_UPDATES_SMOKE") == "1"
+MACHINE_NAMES_SMOKE = os.environ.get("PANELS_MACHINE_NAMES_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -44,6 +45,7 @@ REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
 # The docks under an opened artifact, and the one Markdown display, for the one-off walk:
 # a proposal and a message that link artifacts, and a long conversation with block Markdown.
 ARTIFACT_DOCK_SMOKE = os.environ.get("PANELS_ARTIFACT_DOCK_SMOKE") == "1"
+FADE_REVIEW = os.environ.get("PANELS_FADE_REVIEW") == "1"
 REVIEW_MESSAGES = (
     os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
     or ARTIFACT_DOCK_SMOKE
@@ -81,6 +83,8 @@ def main() -> int:
             for d in group
         )
     base_ticket = json.loads((ROOT / "ios/PanelsTests/Fixtures/ticket-full.json").read_text())
+    if MACHINE_NAMES_SMOKE:
+        base_ticket.update(locale="macos", machine_id="mac-names-proof")
     tickets = {}
     for index in range(1, 4):
         ticket = copy.deepcopy(base_ticket)
@@ -384,7 +388,7 @@ def main() -> int:
         "page_posts": [],
         "slow": (
             not REVIEW_COMPLETION and not GOALS_SMOKE
-            and not REACHABILITY_SMOKE and not DESIGN_REVIEW
+            and not REACHABILITY_SMOKE and not DESIGN_REVIEW and not MACHINE_NAMES_SMOKE
         ),
         "writes": [],
         "messages": [],
@@ -465,7 +469,7 @@ def main() -> int:
                 machine=dict(minimum_protocol_version=3, maximum_protocol_version=5), outbox_format=2
             )) if offer else None,
             attempt=attempt, app_sha="running-release", detail=attempt["detail"],
-            deadline_at=attempt["deadline_at"], mac_details=None,
+            deadline_at=attempt["deadline_at"],
             machines=machines, available_machines=available if offer else [],
             # Progress must use the retained press snapshot, not a later candidate.
             interruption=snapshot if offer else dict(stops_agents=False, agents=[], machine_ids=[]),
@@ -529,6 +533,13 @@ def main() -> int:
         manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
         tickets["offline-1"]["pending_proposal"]["body"] = (
             "The proof is in the [dock evidence](/files/tickets/offline-1/dock-proof.md)."
+        )
+    if FADE_REVIEW:
+        # One-off appearance evidence, reused for the before and after captures.
+        tickets["offline-1"]["pending_proposal"]["body"] += "\n\n" + "\n\n".join(
+            f"Fade boundary paragraph {index}. Read the proposal, add a note, then review and merge. "
+            "This repeated text must disappear smoothly above the pinned note bar."
+            for index in range(1, 19)
         )
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
@@ -614,6 +625,8 @@ def main() -> int:
         # Explicit selection leaves all other DESIGN_REVIEW journeys unchanged.
         if not state.get("workspace_fixture"):
             state["workspace_baseline"] = (copy.deepcopy(tickets), copy.deepcopy(goals))
+        state.pop("holder_pages_case", None)
+        state.pop("holder_pages_goals", None)
         state.update(
             workspace_fixture=True,
             workspace_moved=False,
@@ -669,6 +682,32 @@ def main() -> int:
             title="Publish Science",
             deadline=None,
         )
+
+    def workspace_goals() -> list[dict[str, Any]]:
+        if "holder_pages_case" in state:
+            return [goals[key] for key in state["holder_pages_goals"]]
+        return [goals["release"], goals["words"]]
+
+    def select_holder_pages_case(case: str) -> None:
+        # One-off page order proof reuses the Workspace host, routes and goal writers.
+        select_workspace_fixture()
+        state["holder_pages_case"] = case
+        goals["release"]["active"] = True
+        binary = goal_record("holder-binary", "Confirm the plan", "binary")
+        binary.update(deadline=None, holder_kind="chief", holder_id=None)
+        extra = goal_record("holder-extra", "Check the follow-up", "binary")
+        extra.update(deadline=None, holder_kind="manager", holder_id="wren")
+        goals.update({binary["id"]: binary, extra["id"]: extra})
+        selected = ["holder-binary", "release"]
+        if case == "none" or case == "empty":
+            selected = []
+        elif case == "multiple":
+            selected.append("holder-extra")
+        elif case == "inactive":
+            selected.append("holder-extra")
+            for key in selected:
+                goals[key]["active"] = False
+        state["holder_pages_goals"] = selected
 
     def workspace_records() -> dict[tuple[str, str], dict[str, Any]]:
         records = {
@@ -738,7 +777,7 @@ def main() -> int:
                 "recap_preview": ticket["recap"],
                 "recap_updated_at": None,
                 "recap_stage_changed": False,
-                "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
+                "machine_id": ticket.get("machine_id", "75a49e78-97de-4e28-8dc5-79646761c46f"),
                 "recap_reference": None,
                 "worker_type": ticket["worker_type"],
                 "stage_label": stage.get("label", "Current"),
@@ -766,7 +805,7 @@ def main() -> int:
                 "proposal_created_at": proposal["created_at"] if proposal else None,
                 "stage_ownership": "worker",
                 "terminal": stage.get("is_terminal", False),
-                "locale": "vps",
+                "locale": ticket.get("locale", "vps"),
             },
         }
 
@@ -989,8 +1028,8 @@ def main() -> int:
                 elif section == "goals":
                     members = [
                         ("goal", goal["id"])
-                        for goal in (goals["release"], goals["words"])
-                        if goal["holder_id"] == owner_id
+                        for goal in workspace_goals()
+                        if (goal["holder_id"] or "chief") == owner_id
                     ]
                 elif section == "settled":
                     members = [
@@ -1217,8 +1256,34 @@ def main() -> int:
             value: dict[str, Any]
             path = urlparse(self.path).path
             query = parse_qs(urlparse(self.path).query)
+            if MACHINE_NAMES_SMOKE and path == "/api/machines":
+                self.respond({"machines": [{"machine_id": "mac-names-proof", "name": state.get("machine_name", "Mac 1")}]})
+                return
+            if MACHINE_NAMES_SMOKE and path == "/api/executor/health":
+                self.respond({"mode": "remote", "connection_state": "disconnected", "last_contact_at_ms": None})
+                return
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if MACHINE_NAMES_SMOKE and name == "machine-name/rename":
+                    with lock:
+                        state["machine_name"] = "Studio"
+                    self.respond({"name": "Studio"})
+                    return
+                if REVIEW_MESSAGES and name in ("review-open-chief", "review-open-summary"):
+                    # Reuse this host for the retained Review path walk. Synthetic pushes
+                    # select a different destination without popping the artifact first.
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    payload = dict(aps={"alert": {"title": "Review navigation proof", "body": name}},
+                                   server_url=url,
+                                   route="/#/agents/chief-of-staff" if name == "review-open-chief" else "/#/review")
+                    file = output / (name + ".apns")
+                    file.write_text(json.dumps(payload))
+                    result = subprocess.run(["xcrun", "simctl", "push", DEVICE, BUNDLE, str(file)], capture_output=True)
+                    self.respond({"output": (result.stdout + result.stderr).decode()},
+                                 200 if result.returncode == 0 else 500)
+                    return
                 if UPDATES_SMOKE and name.startswith("updates/"):
                     phase = name.removeprefix("updates/")
                     if phase not in ("offer", "updating", "restart", "failed", "refused", "complete"):
@@ -1235,6 +1300,15 @@ def main() -> int:
                 if UPDATES_SMOKE and name == "update-state":
                     self.respond(dict(phase=state["update_phase"], reads=state["update_reads"],
                                       retry_count=state["update_retry_count"], writes=state["writes"]))
+                    return
+                if DESIGN_REVIEW and name.startswith("holder-pages/"):
+                    case = name.removeprefix("holder-pages/")
+                    if case not in ("goals", "none", "empty", "multiple", "inactive"):
+                        self.respond({"error": "Unknown holder page case"}, 400)
+                        return
+                    with lock:
+                        select_holder_pages_case(case)
+                    self.respond({"case": case})
                     return
                 if DESIGN_REVIEW and name == "workspace-fixture":
                     with lock:
@@ -1481,7 +1555,7 @@ def main() -> int:
                             break
                 elif name == "stop":
                     stop_clip()
-                elif REVIEW_QUEUE and name.startswith("screenshot/"):
+                elif (REVIEW_QUEUE or FADE_REVIEW) and name.startswith("screenshot/"):
                     # The one-off Review walk names each screen; simctl captures the device.
                     if not native_control_allowed():
                         self.respond({"error": "An owned device and active turn are required"}, 409)
@@ -1498,9 +1572,9 @@ def main() -> int:
             ) and (path.endswith("/events") or path.count("/") == 4):
                 self.drop_connection()
                 return
-            # The store's refresh reads the deployment status. Held here, the refresh after a
+            # The store's refresh reads the update status. Held here, the refresh after a
             # reviewer change stalls as on a slow connection, until the proof releases it.
-            while path == "/api/deployment-status" and state.get("stall_refresh"):
+            while path == "/api/updates" and state.get("stall_refresh"):
                 time.sleep(0.1)
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
@@ -1615,7 +1689,11 @@ def main() -> int:
                 content = (
                     ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
                      + "\n[Nested dock artifact](nested-dock.md)\n"
-                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")).encode()
+                     + ("\nRevised dock evidence\n" if state["artifact_revision"] else "")
+                     + ("\n\n" + "\n\n".join(
+                         f"Artifact boundary paragraph {index}. The preview scrolls beneath its shared note dock."
+                         for index in range(1, 19)
+                     ) if FADE_REVIEW else "")).encode()
                     if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)
@@ -1627,7 +1705,7 @@ def main() -> int:
             if (GOALS_SMOKE or state.get("workspace_fixture")) and path == "/api/goals":
                 self.respond(
                     dict(
-                        goals=[goals["release"], goals["words"]]
+                        goals=workspace_goals()
                         if state.get("workspace_fixture")
                         else list(goals.values()),
                         status_date="2026-11-04",
@@ -1781,12 +1859,37 @@ def main() -> int:
                     "status_date": "2026-11-14",
                     "next_refresh_at": time.time() + 3600,
                 }
+            elif state.get("holder_pages_case") and path.endswith("/page"):
+                # Include a retired Tickets block to prove it cannot duplicate the fixed list.
+                blocks = [] if state["holder_pages_case"] == "empty" else [
+                    dict(type="text", id="holder-notes", text=("Chief notes: " if "/chief/" in path else "Manager notes: ") + state["holder_pages_case"]),
+                    dict(type="tickets", id="retired-tickets"),
+                ]
+                value = {"page": {"kind": "headroom.page", "version": 1, "blocks": blocks}, "page_revision": 1}
+            elif state.get("holder_pages_case") and path == "/api/tickets" and "id" not in query:
+                rows = []
+                if query.get("is_backlogged") == ["false"] and "stage" not in query:
+                    manager = query.get("manager_id", [None])[0]
+                    identity = "weekly" if manager is None else "build"
+                    ticket = tickets[identity]
+                    rows = [dict(id=identity, title=ticket["title"], worker_type="coding",
+                                 stage="needs_what_changes", ticket_status="agent_owned", is_backlogged=False,
+                                 blocked=False, recap_preview="", activity_at=1, project_id="wren",
+                                 project="Wren", manager_id=manager, awaiting_reply=False,
+                                 awaiting_answer=False, awaiting_approval=False, awaiting_agent_approval=False,
+                                 assigned=False, agent_state="idle", locale="vps",
+                                 conversation_signal=dict(working=False, message_for_owner=False))]
+                value = {"tickets": rows, "page": dict(page, match_count=len(rows), return_count=len(rows))}
             elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith("/page"):
                 value = {"page": {"blocks": []}, "page_revision": 1}
             elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith(
                 "/page/readings"
             ):
-                value = {"values": [], "sources": []}
+                value = dict(
+                    goal_id="chief" if "/chief/" in path else path.split("/")[3],
+                    revision=1, status="neutral", status_date="2026-11-04",
+                    next_refresh_at=time.time() + 3600, values=[], sources=[], charts={},
+                )
             elif path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
@@ -1893,8 +1996,9 @@ def main() -> int:
                 with lock:
                     state["update_reads"] += 1
                     value = update_status()
-            elif path == "/api/deployment-status":
-                value = {"state": "idle"}
+            elif path == "/api/updates":
+                value = dict(state="up_to_date", app_sha="running", allowed_actions=[], machines=[], available_machines=[],
+                             client_versions=[], interruption=dict(stops_agents=False, agents=[], machine_ids=[]))
             elif path.endswith("/manifest"):
                 value = manifest
             elif "/decision-operations/" in path:
@@ -1933,6 +2037,7 @@ def main() -> int:
             ):
                 value = {
                     "backend_key": "codex",
+                    **({"machine_id": "mac-names-proof"} if MACHINE_NAMES_SMOKE else {}),
                     "model": "sol",
                     "held_prompts": [],
                     "owner_read_through_sequence": 0

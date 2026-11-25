@@ -11,7 +11,12 @@ const TABLES = ['state', 'rows', 'turns', 'groups', 'lookups'] as const;
 const OUT_OF_DATE =
   'SELECT c.conversation_id FROM conversations c ' +
   'LEFT JOIN conversation_view_state v ON v.conversation_id=c.conversation_id ' +
-  'WHERE c.latest_sequence>0 AND (v.conversation_id IS NULL OR v.projection_version!=?)';
+  'WHERE c.latest_sequence>0 AND (v.conversation_id IS NULL OR v.projection_version!=? OR v.through_sequence!=c.latest_sequence)';
+const ACTIVE = ` AND c.conversation_id IN (
+  SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'
+  UNION SELECT a.conversation_id FROM managers m JOIN agents a ON a.agent_key='manager_' || m.id WHERE m.settled=0
+  UNION SELECT conversation_id FROM tickets WHERE stage<'done' OR stage>'done'
+)`;
 const RETRY_ROUNDS = 5;
 const FIRST_RETRY_WAIT_MILLISECONDS = 30_000;
 const LONGEST_RETRY_WAIT_MILLISECONDS = 300_000;
@@ -71,11 +76,14 @@ function clear_private_tables(tx: TransactionSql): void {
     tx.run(`DELETE FROM temp.conversation_rebuild_${table}`);
   }
 }
-export function out_of_date_conversation_ids(database: Database): readonly string[] {
+export function out_of_date_conversation_ids(
+  database: Database,
+  active_only = false,
+): readonly string[] {
   return database.read((sql) =>
     sql
       .all<{ conversation_id: string }>(
-        OUT_OF_DATE + ' ORDER BY c.latest_sequence,c.conversation_id',
+        OUT_OF_DATE + (active_only ? ACTIVE : '') + ' ORDER BY c.latest_sequence,c.conversation_id',
         [VIEW_PROJECTION_VERSION],
       )
       .map((row) => row.conversation_id),
@@ -86,7 +94,7 @@ export async function rebuild_one_conversation_view(
   database: Database,
   conversation_id: string,
   isClosed: () => boolean = () => false,
-): Promise<void> {
+): Promise<boolean> {
   const upper = database.write(
     (tx) => {
       create_private_tables(tx);
@@ -127,9 +135,7 @@ export async function rebuild_one_conversation_view(
     );
     await yieldLoop();
   }
-  if (isClosed()) {
-    return;
-  }
+  if (isClosed()) return false;
   database.write(
     (tx) => {
       if (
@@ -152,12 +158,33 @@ export async function rebuild_one_conversation_view(
     },
     { changeSignal: 'silent' },
   );
+  return true;
 }
 
 /** Starts after ownership; stale views remain unavailable until their atomic installation. */
 export class ConversationViewRebuilder {
   #closed = false;
   #task: Promise<void> | undefined;
+  #pending = new Set<string>();
+  #opened = new Set<string>();
+  prepare_active(database: Database): Promise<void> {
+    this.#task = this.#prepare_active(database);
+    return this.#task;
+  }
+  async #prepare_active(database: Database): Promise<void> {
+    for (const id of out_of_date_conversation_ids(database, true)) {
+      if (this.#closed) return;
+      await rebuild_one_conversation_view(database, id, () => this.#closed);
+    }
+    if (!this.#closed && out_of_date_conversation_ids(database, true).length)
+      throw new Error('Active conversation views did not cover the current events');
+  }
+  prioritize(id: string): void {
+    if (this.#pending.has(id)) {
+      this.#opened.add(id);
+      this.#wake?.();
+    }
+  }
   #wake: (() => void) | undefined;
   start(database: Database, admission_closed: () => boolean = () => false): void {
     this.#task = this.#run(database, admission_closed).catch((error) =>
@@ -198,13 +225,22 @@ export class ConversationViewRebuilder {
         wait = Math.min(wait * 2, LONGEST_RETRY_WAIT_MILLISECONDS);
       }
       const failed: string[] = [];
-      for (const conversation_id of pending) {
-        if (this.#closed || admission_closed()) {
-          return;
-        }
+      this.#pending = new Set(pending);
+      while (this.#pending.size > 0) {
+        while (!this.#closed && admission_closed()) await this.#wait(1000);
+        if (this.#closed) return;
+        const conversation_id =
+          this.#opened.values().next().value ?? this.#pending.values().next().value!;
+        this.#opened.delete(conversation_id);
+        this.#pending.delete(conversation_id);
         const started = performance.now();
         try {
-          await rebuild_one_conversation_view(database, conversation_id, () => this.#closed);
+          const completed = await rebuild_one_conversation_view(
+            database,
+            conversation_id,
+            () => this.#closed || admission_closed(),
+          );
+          if (!completed) this.#pending.add(conversation_id);
         } catch (error) {
           failed.push(conversation_id);
           console.error(
@@ -212,7 +248,7 @@ export class ConversationViewRebuilder {
             error,
           );
         }
-        if (!this.#closed) {
+        if (!this.#closed && this.#opened.size === 0) {
           await this.#wait(performance.now() - started);
         }
       }

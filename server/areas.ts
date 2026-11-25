@@ -141,6 +141,7 @@ export function createAreasRuntime(
     previews,
     commitSteps,
     getRuntime: conversation.getRuntime,
+    prepareActiveViews: conversation.prepare_active_views,
     startRecordReplay(admission?: { readonly closed: boolean }): void {
       conversation.start_rebuild(admission);
     },

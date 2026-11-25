@@ -1,4 +1,5 @@
 /** Rows saved while Hermes was a built-in driver, read and refused by a build without it. */
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { startServer } from '../core/start.ts';
@@ -201,7 +202,12 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
     // The saved conversation opens, with its view and event tail, and cannot steer.
     expect(await call('GET', '/conversation/conversations/stored-hermes')).toMatchObject({
       status: 200,
-      body: { backend_key: 'hermes', supports_steer: false, is_running: false },
+      body: {
+        machine_id: HOME_MACHINE_ID,
+        backend_key: 'hermes',
+        supports_steer: false,
+        is_running: false,
+      },
     });
     const view = await call('GET', '/conversation/conversations/stored-hermes/view?lens=focus');
     expect(view.status).toBe(200);

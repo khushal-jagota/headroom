@@ -1,38 +1,22 @@
 {
-  "oldest": {
-    "linux": {
-      "source_sha": "e71baa53c98350a7b5519b0106e1c3e57a09382d",
-      "run_id": "44332149248",
-      "artifact_id": "14440291876",
-      "zip_sha256": "6aa74dfdbb7149b6031ac6259883f2cecfbb36b2e7e5817a10c43a458ff010e4",
-      "archive_sha256": "6b1ef9bda87e9b8d0d38685233b387e7f3628c608fbca851966db730dbb144ca",
-      "archive_size": 571145210
-    },
-    "darwin": {
-      "source_sha": "e71baa53c98350a7b5519b0106e1c3e57a09382d",
-      "run_id": "44332149248",
-      "artifact_id": "14440850827",
-      "zip_sha256": "4b09249dd32c39944959c1f4c97ec5c2ee3887f9130832625768967a4befe8cf",
-      "archive_sha256": "b535f1f8e6802a3876e81c0ff5e1470f7f779d2f10b1286684868305910ab86c",
-      "archive_size": 222964142
-    }
+  "decision": {
+    "owner": "Khushal",
+    "date": "2026-11-25",
+    "below_floor": "Machines below this floor no longer update directly."
   },
-  "previous": {
+  "oldest": {
+    "release_tag": "server-54aede8564ee693d178cae55d3acb04ca9d770f4-45315260518-1",
     "linux": {
-      "source_sha": "0cde68a66080834c8df719fba8af0650585e5e59",
-      "run_id": "44936271164",
-      "artifact_id": "14719479187",
-      "zip_sha256": "0be8aaeba8fff9e4180f6d7b5fe68c77560a7dca4f7c1e9401ff2dbd4f65def3",
-      "archive_sha256": "1edcc94649eaf3294ceb75bff03e2f3850aa970a557ca35dee52cc4210e8d4ef",
-      "archive_size": 578507231
+      "source_sha": "54aede8564ee693d178cae55d3acb04ca9d770f4",
+      "zip_sha256": "cb7ea2cc0066f8e3f79ba117000964b73aacc5e5d8e60e173a8c4e183ff19438",
+      "archive_sha256": "146461f000c8ace079c8226ce1d9e28f42f12aa7b1f16ca2f6d7869c58db1bda",
+      "archive_size": 945735823
     },
     "darwin": {
-      "source_sha": "0cde68a66080834c8df719fba8af0650585e5e59",
-      "run_id": "44936271164",
-      "artifact_id": "14720025420",
-      "zip_sha256": "d8209eefd15c6892c036f58465b0a4335c7857350439e75c283f0a6a165580ad",
-      "archive_sha256": "e73d299aa88a8d9322d9c77d536116ec24c92bc80395f733d460e29812a12f01",
-      "archive_size": 222969537
+      "source_sha": "54aede8564ee693d178cae55d3acb04ca9d770f4",
+      "zip_sha256": "f7bda08b417b18914b5b31bd55ef5cb0ed7f9655f2cd3dcc8ca4d2e5d6afebc8",
+      "archive_sha256": "f311967566c532e69050ca462e667ad0c256f4d96b40b4ccf6a7ca02a5a15976",
+      "archive_size": 223121569
     }
   }
 }

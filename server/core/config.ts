@@ -1,6 +1,6 @@
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, lstatSync } from 'node:fs';
 import { isAbsolute, dirname, join, delimiter, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -147,13 +147,23 @@ export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
 export function update_repository_configuration(
   environment: Readonly<NodeJS.ProcessEnv>,
   server_root?: string,
-): { readonly repository: string; readonly token_file: string } | null {
+): { readonly repository: string; readonly token_file: string | null } | null {
   const repository = environment.PLAN_UPDATE_REPOSITORY;
-  const configured_token =
-    environment.PLAN_UPDATE_TOKEN_FILE ?? (server_root ? 'secrets/update-token' : undefined);
-  const token_file =
-    configured_token && server_root ? resolve(server_root, configured_token) : configured_token;
-  return repository && token_file ? { repository, token_file } : null;
+  if (!repository) return null;
+  const default_file = server_root ? resolve(server_root, 'secrets/update-token') : null;
+  const setting = environment.PLAN_UPDATE_TOKEN_FILE ?? default_file;
+  const token_file = setting && server_root ? resolve(server_root, setting) : setting || null;
+  if (token_file && token_file === default_file) {
+    try {
+      lstatSync(token_file);
+    } catch (error) {
+      // Installed services also name this path when the owner installed without a token.
+      // Other access errors belong to the release request and must not prevent startup.
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        return { repository, token_file: null };
+    }
+  }
+  return { repository, token_file };
 }
 
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */

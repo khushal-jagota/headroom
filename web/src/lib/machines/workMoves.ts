@@ -71,6 +71,6 @@ export function workMoveNextAction(item: WorkMoveItem): string {
 
 export function workMoveDuration(startedAt: number, finishedAt: number | null, now: number): string {
   const seconds = Math.max(0, ((finishedAt ?? now) - startedAt) / 1000);
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${finishedAt === null ? Math.floor(seconds) : seconds.toFixed(1)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
 }

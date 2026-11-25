@@ -194,6 +194,12 @@ export class InMemoryConversationSystem implements ConversationSystem {
     this.backend_registry = backend_registry;
   }
 
+  has_pending_update_sends(): boolean {
+    return (
+      this.workspace_admission.active ||
+      [...this._conversations.values()].some((state) => state.held_prompts.length > 0)
+    );
+  }
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     if (this.workspace_admission.closed) return 'unknown';
     if (
@@ -228,7 +234,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
   }
   async start_conversation(request: ConversationStartRequest): Promise<void> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new Error('Workspace admission is closed for an owner update.');
+      throw this.workspace_admission.refusal();
     const resolved = resolve_conversation_start_request(request);
     if (this._conversations.has(resolved.conversation_id))
       throw new ConversationAlreadyStarted(resolved.conversation_id);
@@ -256,7 +262,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
     if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
-      throw new Error('Workspace admission is closed for an owner update.');
+      throw this.workspace_admission.refusal();
     require_message_content(content);
     const {
       sender_label,
