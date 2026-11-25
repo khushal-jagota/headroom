@@ -1,6 +1,7 @@
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { pathToFileURL } from 'node:url';
 import * as workspace_git from './filesystem/shared.ts';
+import * as child_git from '../environments/ticket_scratch/collect.ts';
 import { inspect_work_move } from './filesystem/work_move.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
@@ -368,16 +369,74 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     const mirror_root = join(root, 'cache', 'git-mirrors');
     const mirrored = { ...options, mirror_root };
     await publish('first');
-    const one = await prepare_workspace(folder(), ticket, repository, mirrored);
+    // Gap: successful small fetches never expose the one-minute cold-fetch deadline.
+    // Inspect the deadline at the real child boundary, then retain the real Git reuse proof.
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const original_git = child_git.git;
+    let cold_fetches = 0;
+    const calls = vi.spyOn(child_git, 'git').mockImplementation(async (...args) => {
+      if (args[1].includes('fetch') && args[0].startsWith(mirror_root)) {
+        expect(timeout.mock.calls.at(-1)?.[0]).toBe(30 * 60 * 1000);
+        cold_fetches++;
+      }
+      return original_git(...args);
+    });
+    let one: string;
+    try {
+      one = await prepare_workspace(folder(), ticket, repository, mirrored);
+      expect(cold_fetches).toBe(1);
+    } finally {
+      calls.mockRestore();
+      timeout.mockRestore();
+    }
     expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toHaveLength(1);
     await publish('second');
     const other = 't_89abcdef';
-    const two = await prepare_workspace(folder(other), other, repository, mirrored);
+    const retained_mirror = join(
+      mirror_root,
+      readdirSync(mirror_root).find((name) => name.endsWith('.git'))!,
+    );
+    const reused = vi.spyOn(child_git, 'git');
+    let two: string;
+    try {
+      two = await prepare_workspace(folder(other), other, repository, mirrored);
+      const clone = reused.mock.calls.find((call) => call[1].includes('clone'));
+      expect(clone?.[1]).toEqual(
+        expect.arrayContaining(['--reference', retained_mirror, '--dissociate']),
+      );
+      expect(
+        reused.mock.calls.some((call) => call[0] === retained_mirror && call[1].includes('fetch')),
+      ).toBe(true);
+    } finally {
+      reused.mockRestore();
+    }
     expect(readFileSync(join(one, 'tracked.txt'), 'utf8')).toBe('first');
     expect(readFileSync(join(two, 'tracked.txt'), 'utf8')).toBe('second');
     expect(existsSync(join(two, '.git', 'objects', 'info', 'alternates'))).toBe(false);
     expect(await command(two, ['remote', 'get-url', 'origin'])).toBe(remote);
     await command(two, ['fsck', '--no-dangling']);
+    // Gap: mirror failure must not prevent a clone from the still-accessible origin.
+    // Force a real Git error only for mirror fetches, using a missing remote name.
+    let failed_fetches = 0;
+    const failed = vi.spyOn(child_git, 'git').mockImplementation(async (...args) => {
+      if (args[1].includes('fetch') && args[0].startsWith(mirror_root)) {
+        const result = await original_git(args[0], ['fetch', 'missing-remote'], args[2]);
+        expect(result.returncode).not.toBe(0);
+        failed_fetches++;
+        return result;
+      }
+      return original_git(...args);
+    });
+    try {
+      const third = 't_abcdefgh';
+      const fallback = await prepare_workspace(folder(third), third, repository, mirrored);
+      expect(failed_fetches).toBe(2); // Warm refresh, then replacement cold mirror.
+      expect(readFileSync(join(fallback, 'tracked.txt'), 'utf8')).toBe('second');
+      expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toEqual([]);
+      expect(readdirSync(mirror_root).some((name) => name.endsWith('.tmp'))).toBe(false);
+    } finally {
+      failed.mockRestore();
+    }
   },
 );
 
