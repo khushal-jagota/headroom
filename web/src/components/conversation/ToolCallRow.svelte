@@ -186,16 +186,15 @@
 </div>
 
 <style>
-  /* One status line, 32 tall: the kind's glyph hanging in the mark gutter, the verb, the
+  /* One status line, 32 tall: the kind's glyph inside the column, the verb, the
      chevron right after it, the exact subject, and how it went at the row's end. The row's
-     hover fill reaches past the text to the column's edge. */
+     hover fill stays inside the column. */
   .acp-step {
     display: grid;
     grid-template-columns: 16px minmax(0, max-content) 16px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
     gap: var(--cv-s2);
-    width: calc(100% + var(--cv-mark-hang));
-    margin-inline-start: calc(-1 * var(--cv-mark-hang));
+    width: 100%;
     min-width: 0;
     height: 32px;
     padding: 0 var(--cv-s2);

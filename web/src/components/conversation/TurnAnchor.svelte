@@ -12,8 +12,8 @@
    * head is the one place to open them.
    *
    * While the turn runs it counts, honestly, from the moment the prompt landed, in the slot
-   * where "Worked for" stands once it ends, so settling changes the words and nothing moves.
-   * The mark hangs in the gutter, so it can leave without shifting them. It turns for as long
+   * where "Worked for" stands once it ends. The mark leads the words inside the column.
+   * It turns for as long
    * as the line shows, a pending ask included: the server saying the turn runs is the only word
    * it follows. It is drawn as the conversation's one system line (SystemLine).
    */
@@ -90,12 +90,10 @@
           </button>
         </SystemLine>
     {:else}
-      <!-- One line for the live and the plain settled head, so the mark leaves it in place
-           (150 ms) and "Working for" and "Worked for" stand on the same words. Unknown
-           activity has no mark, because nothing is known to be running. -->
+      <!-- One line for the live and the plain settled head. Unknown activity has no mark,
+           because nothing is known to be running. -->
       <SystemLine
         mark={settled || activityUncertain ? null : "spinner"}
-        hangMark
         role={settled ? undefined : "status"}
         data-conversation-alive={settled ? undefined : ""}
         data-conversation-turn-settled-head={settled ? "" : undefined}

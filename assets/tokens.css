@@ -698,11 +698,9 @@
   --cv-s7: 48px;
 
   /* THE TRANSCRIPT GRID. One grid for every element in the thread.
-   *  Horizontal: all text starts at the column's left edge (x = 0): prose, system lines, the
-   *    hover row, tool rows. A leading mark (a spinner, a dot, a tool's glyph, a list marker)
-   *    hangs in the mark gutter, a 16px slot at x = -24 to -8, so it never pushes the text in.
-   *    The thread's scroll box reaches one gutter left of the text so a hung mark is not
-   *    clipped. User bubbles and their captions keep the right edge.
+   *  Horizontal: every line stays inside the column. A leading mark (a spinner, a dot,
+   *    a tool's glyph, a list marker) starts its line, followed by the words.
+   *    User bubbles and their captions keep the right edge.
    *  Vertical: every gap is a margin on the item below it, in steps of 4 8 12 16 24 32 only.
    *    turn     32  the end of one turn to the next message, between waiting messages, and
    *                 under every message (room for its hover row, below)
@@ -726,7 +724,6 @@
   --cv-hover-row-offset: 4px;
   --cv-hover-row-height: 24px;
   --cv-mark-slot: 16px;
-  --cv-mark-hang: 24px;
   --cv-transcript-pad-top: 28px;
   --cv-transcript-pad-bottom: 32px;
   /* The system line: Inter 13/20, its ink, its actions, and the one failure red. */
