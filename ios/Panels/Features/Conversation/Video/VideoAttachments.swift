@@ -7,7 +7,8 @@ enum VideoAttachments {
     /// Complete the copy while the picker still owns its source URL.
     static func importFile(_ url: URL, fileName: String,
                            progress: @escaping @Sendable (Double) -> Void) async throws -> SavedVideo {
-        try await prepareFile(url, fileName: fileName,
+        await LocalStore.shared.waitForVideoStartupSweep()
+        return try await prepareFile(url, fileName: fileName,
                               directory: LocalStore.directory.appendingPathComponent("videos", isDirectory: true),
                               progress: progress, export: exportVideo)
     }
@@ -33,7 +34,7 @@ enum VideoAttachments {
             }
             guard byteCount > maximumBytes else {
                 progress(1)
-                return SavedVideo(id: id, fileName: fileName, filePath: original.path, byteCount: byteCount)
+                return SavedVideo(id: id, fileName: fileName, filePath: directory.lastPathComponent + "/" + original.lastPathComponent, byteCount: byteCount)
             }
             let compressed = directory.appendingPathComponent(id + "-compressed.mp4")
             do {
@@ -46,10 +47,10 @@ enum VideoAttachments {
                 try manager.removeItem(at: original)
                 progress(1)
                 let name = (fileName as NSString).deletingPathExtension + ".mp4"
-                return SavedVideo(id: id, fileName: name, filePath: compressed.path, byteCount: compressedBytes)
+                return SavedVideo(id: id, fileName: name, filePath: directory.lastPathComponent + "/" + compressed.lastPathComponent, byteCount: compressedBytes)
             } catch {
                 try? manager.removeItem(at: compressed)
-                return SavedVideo(id: id, fileName: fileName, filePath: original.path,
+                return SavedVideo(id: id, fileName: fileName, filePath: directory.lastPathComponent + "/" + original.lastPathComponent,
                                   byteCount: byteCount, preparationError: error.localizedDescription)
             }
         }.value

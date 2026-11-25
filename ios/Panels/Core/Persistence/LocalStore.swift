@@ -25,6 +25,7 @@ import SwiftData
     private var cacheWriter: ResponseCacheWriter?
     private var outgoingStorage: OutgoingStore?
     private var startupError: Error?
+    @ObservationIgnored private var videoStartupSweep: Task<Void, Never>?
     private let beforeSave: (() throws -> Void)?
     private let onPayloadDecode: (() -> Void)?
     // Cached GET responses are handed to their screen by the caller. Only durable
@@ -47,7 +48,33 @@ import SwiftData
             container = try ModelContainer(for: Schema([LocalRecord.self, OutgoingMetadata.self]), configurations: [ModelConfiguration(url: location)])
             container?.mainContext.autosaveEnabled = false
             if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
+            if url == nil {
+                let payloads = try outgoing.videoOwnershipPayloads()
+                let directory = Self.directory
+                videoStartupSweep = Task.detached(priority: .utility) {
+                    try? Self.sweepVideoFiles(in: directory, payloads: payloads)
+                }
+            }
         } catch { container = nil; startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
+    }
+    /// Imports wait for this launch-only sweep, so an in-flight new copy cannot be swept.
+    func waitForVideoStartupSweep() async { await videoStartupSweep?.value }
+
+    func sweepUnownedVideoFiles(in directory: URL) async throws {
+        let payloads = try outgoing.videoOwnershipPayloads()
+        try await Task.detached(priority: .utility) {
+            try Self.sweepVideoFiles(in: directory, payloads: payloads)
+        }.value
+    }
+    nonisolated private static func sweepVideoFiles(in directory: URL, payloads: [(String, Data)]) throws {
+        let videos = directory.appendingPathComponent("videos", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: videos.path) else { return }
+        let owned = OutgoingStore.ownedVideoFiles(payloads)
+        for file in try FileManager.default.contentsOfDirectory(at: videos, includingPropertiesForKeys: nil) {
+            if !owned.contains("videos/" + file.lastPathComponent) {
+                try FileManager.default.removeItem(at: file)
+            }
+        }
     }
     nonisolated static var directory: URL {
         if let path = ProcessInfo.processInfo.environment["PANELS_STORE_DIRECTORY"] { return URL(fileURLWithPath: path) }

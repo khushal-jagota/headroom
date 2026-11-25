@@ -156,7 +156,7 @@ struct ConversationComposer: View {
                         .font(.system(size: min(iconSize, 28), weight: .medium)).foregroundStyle(PanelsTheme.ink)
                         .frame(width: typeSize.isAccessibilitySize ? 40 : 30, height: typeSize.isAccessibilitySize ? 40 : 30).background(PanelsTheme.strong, in: Circle())
                         .frame(width: 44, height: 44)
-                }.disabled(speech.starting || speech.transcribing || model.sending || model.preparingPhoto || model.failedVideo != nil)
+                }.disabled(speech.starting || speech.transcribing || model.sending || model.preparingPhoto || model.failedAttachment != nil)
                     .accessibilityLabel(speech.recording ? "Stop recording" : stopsTurn ? "Stop turn" : card || !model.attachments.isEmpty ? "Send message" : "Record voice input")
             }.padding(.horizontal, card ? 1 : 2).padding(.bottom, card ? 1 : 0)
     }
@@ -287,7 +287,7 @@ struct ConversationAttachmentTile: View {
                         Text(name).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
                         Text(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file))
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
-                        if let error = piece.localVideo?.preparationError {
+                        if let error = piece.preparationError ?? piece.localVideo?.preparationError {
                             Text(error).font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("conversation-video-error")
@@ -443,10 +443,7 @@ private struct AttachmentPickers: ViewModifier {
                         if type?.conforms(to: .movie) == true || ["mp4", "mov", "webm", "m4v"].contains(url.pathExtension.lowercased()) {
                             await model.attachVideo(fileName: url.lastPathComponent, load: { url })
                         } else {
-                            do {
-                                let data = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
-                                await model.attach(data, type: type, fileName: url.lastPathComponent)
-                            } catch { model.error = error.localizedDescription }
+                            await model.attachFile(url, type: type)
                         }
                     }
                 } catch { model.error = error.localizedDescription }

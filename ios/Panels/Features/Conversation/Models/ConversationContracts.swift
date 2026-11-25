@@ -161,6 +161,7 @@ struct ConversationSend: Codable, Sendable {
         var fileName: String? = nil
         var localVideo: SavedVideo? = nil
         var uploadId: String? = nil
+        var preparationError: String? = nil
     }
 }
 extension ConversationSend {

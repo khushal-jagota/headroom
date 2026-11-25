@@ -258,22 +258,26 @@ import SwiftData
         return try context.fetch(query).isEmpty
     }
 
-    /// A saved draft or outgoing action on any home can own this local copy.
-    func videoIsUnowned(_ filePath: String) throws -> Bool {
+    /// Snapshot only on the store actor; decode ownership away from the main actor.
+    func videoOwnershipPayloads() throws -> [(String, Data)] {
         let kinds = ["attachments", "outbox"]
-        let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { kinds.contains($0.kind) }))
-        for row in rows {
-            if row.kind == "attachments" {
-                let pieces = try JSONDecoder().decode([ConversationSend.Piece].self, from: row.payload)
-                if pieces.contains(where: { $0.localVideo?.filePath == filePath }) { return false }
+        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { kinds.contains($0.kind) }))
+            .map { ($0.kind, $0.payload) }
+    }
+    nonisolated static func ownedVideoFiles(_ records: [(String, Data)]) -> Set<String> {
+        var files = Set<String>()
+        for (kind, payload) in records {
+            if kind == "attachments" {
+                guard let pieces = try? JSONDecoder().decode([ConversationSend.Piece].self, from: payload) else { continue }
+                files.formUnion(pieces.compactMap { $0.localVideo?.filePath })
             } else {
-                let work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
-                if Self.videoFiles(work).contains(filePath) { return false }
+                guard let work = try? JSONDecoder().decode(PendingWork.self, from: payload) else { continue }
+                files.formUnion(Self.videoFiles(work))
             }
         }
-        return true
+        return files
     }
-    private static func videoFiles(_ work: PendingWork) -> Set<String> {
+    nonisolated private static func videoFiles(_ work: PendingWork) -> Set<String> {
         let pieces = (work.message?.content ?? []) + (work.decisionIntent?.attachments ?? []) + (work.decisionAttachments ?? [])
         return Set(pieces.compactMap { $0.localVideo?.filePath })
     }
@@ -508,12 +512,8 @@ import SwiftData
         let due = try context.fetch(query)
         guard !due.isEmpty else { return [] }
         return try transaction(server) {
-            var files = Set(due.compactMap(\.audioFile))
+            let files = Set(due.compactMap(\.audioFile))
             for row in due {
-                if let payload = try raw(server, "outbox", row.identity),
-                   let work = try? JSONDecoder().decode(PendingWork.self, from: payload.payload) {
-                    files.formUnion(Self.videoFiles(work))
-                }
                 if let payload = try raw(server, "outbox", row.identity) { context.delete(payload) }
                 context.delete(row)
             }

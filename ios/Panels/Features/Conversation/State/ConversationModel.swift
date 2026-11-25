@@ -321,7 +321,7 @@ import UniformTypeIdentifiers
         var progress: Double = 0
     }
     private(set) var preparingVideos: [UUID: VideoPreparation] = [:]
-    var failedVideo: String? { attachments.compactMap { $0.localVideo?.preparationError }.first }
+    var failedAttachment: String? { attachments.compactMap { $0.preparationError ?? $0.localVideo?.preparationError }.first }
     private(set) var preparingPhotos: [UUID: String] = [:]
     private var draftPreparationID: UUID?
     var preparingDraftPhotos: Bool { draftPreparationID != nil }
@@ -338,12 +338,6 @@ import UniformTypeIdentifiers
             guard !restoring, let api = persistenceAPI else { return }
             do {
                 try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments))
-                let retained = Set(attachments.compactMap { $0.localVideo?.filePath })
-                for path in Set(oldValue.compactMap { $0.localVideo?.filePath }).subtracting(retained) where !path.isEmpty {
-                    if try LocalStore.shared.outgoing.videoIsUnowned(path) {
-                        try? FileManager.default.removeItem(atPath: path)
-                    }
-                }
             }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
         }
@@ -366,6 +360,8 @@ import UniformTypeIdentifiers
     @discardableResult func attachVideo(fileName: String, load: () async throws -> URL,
                                        release: (URL) -> Void = { _ in }) async -> Bool {
         let generation = composerConfigurationGeneration
+        let originServer = persistenceAPI.map { LocalStore.server($0.baseURL) }
+        let originDraft = draftKey
         let identity = UUID()
         preparingVideos[identity] = VideoPreparation(id: identity, fileName: fileName)
         defer { preparingVideos.removeValue(forKey: identity) }
@@ -378,20 +374,60 @@ import UniformTypeIdentifiers
                     self.preparingVideos[identity]?.progress = progress
                 }
             }
-            guard generation == composerConfigurationGeneration else {
-                try? FileManager.default.removeItem(at: video.fileURL)
-                return false
-            }
-            attachments.append(.init(piece: "attachment_upload",
-                                     mediaType: UTType(filenameExtension: (video.fileName as NSString).pathExtension)?.preferredMIMEType ?? "video/mp4",
-                                     fileName: video.fileName, localVideo: video))
+            try retainAttachment(.init(piece: "attachment_upload",
+                                       mediaType: UTType(filenameExtension: (video.fileName as NSString).pathExtension)?.preferredMIMEType ?? "video/mp4",
+                                       fileName: video.fileName, localVideo: video),
+                                 originServer: originServer, originDraft: originDraft)
             return video.preparationError == nil
         } catch {
-            if generation == composerConfigurationGeneration {
-                let failed = SavedVideo(id: identity.uuidString, fileName: fileName, filePath: "", byteCount: 0,
-                                        preparationError: error.localizedDescription)
-                attachments.append(.init(piece: "attachment_upload", fileName: fileName, localVideo: failed))
+            let failed = ConversationSend.Piece(piece: "file", fileName: fileName, preparationError: error.localizedDescription)
+            do { try retainAttachment(failed, originServer: originServer, originDraft: originDraft) }
+            catch { self.error = "Attachment could not be saved: \(error.localizedDescription)" }
+            return false
+        }
+    }
+    /// A picker belongs to the draft that opened it, even if navigation changes during intake.
+    private func retainAttachment(_ piece: ConversationSend.Piece, originServer: String?, originDraft: String) throws {
+        if originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
+            attachments.append(piece)
+        } else if let originServer {
+            let saved = try LocalStore.shared.record(server: originServer, kind: "attachments", id: originDraft)
+            var pieces = try saved.map { try JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) } ?? []
+            pieces.append(piece)
+            try LocalStore.shared.put(server: originServer, kind: "attachments", id: originDraft, data: JSONEncoder().encode(pieces))
+        } else {
+            // An unconfigured composer has no other durable destination to restore.
+            attachments.append(piece)
+        }
+    }
+    /// Inspect metadata before a non-video Files pick can allocate its contents.
+    @discardableResult func attachFile(_ url: URL, type: UTType?,
+        read: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }) async -> Bool {
+        let originServer = persistenceAPI.map { LocalStore.server($0.baseURL) }
+        let originDraft = draftKey
+        do {
+            let data = try await Task.detached(priority: .userInitiated) {
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                guard let size, size <= 20_000_000 else {
+                    throw APIError(status: 413, message: "Choose a file smaller than 20 MB.")
+                }
+                return try read(url)
+            }.value
+            if originServer == persistenceAPI.map({ LocalStore.server($0.baseURL) }), originDraft == draftKey {
+                return await attach(data, type: type, fileName: url.lastPathComponent)
             }
+            let image = type?.conforms(to: .image) == true
+            let piece = ConversationSend.Piece(piece: image ? "image" : "file", data: data.base64EncodedString(),
+                mediaType: type?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent)
+            let pieces = try await ConversationImagePreparation.prepare([piece], imageWorkStarted: imageWorkStarted)
+            for piece in pieces { try retainAttachment(piece, originServer: originServer, originDraft: originDraft) }
+            return true
+        } catch {
+            do {
+                try retainAttachment(.init(piece: "file", fileName: url.lastPathComponent,
+                                           preparationError: error.localizedDescription),
+                                     originServer: originServer, originDraft: originDraft)
+            } catch { self.error = "Attachment could not be saved: \(error.localizedDescription)" }
             return false
         }
     }
@@ -432,7 +468,7 @@ import UniformTypeIdentifiers
         }
     }
     func preparedContent() async throws -> [ConversationSend.Piece] {
-        if let failedVideo { throw NSError(domain: "VideoAttachment", code: 1, userInfo: [NSLocalizedDescriptionKey: failedVideo]) }
+        if let failedAttachment { throw NSError(domain: "AttachmentPreparation", code: 1, userInfo: [NSLocalizedDescriptionKey: failedAttachment]) }
         guard !preparingPhoto else { throw CancellationError() }
         let revision = composerRevision
         let generation = composerConfigurationGeneration

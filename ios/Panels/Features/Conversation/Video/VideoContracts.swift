@@ -4,10 +4,12 @@ import Foundation
 struct SavedVideo: Codable, Equatable, Sendable {
     let id: String
     let fileName: String
+    /// Relative to LocalStore.directory, whose container prefix can change on update.
     let filePath: String
     let byteCount: Int64
     var preparationError: String? = nil
-    var fileURL: URL { URL(fileURLWithPath: filePath) }
+    var fileURL: URL { fileURL(in: LocalStore.directory) }
+    func fileURL(in directory: URL) -> URL { directory.appendingPathComponent(filePath) }
 }
 
 struct VideoUploadDestination: Codable, Equatable, Sendable {

@@ -21,6 +21,31 @@ import XCTest
         XCTAssertEqual(try reopened.outgoing.work(server: "a", id: "send")?.message?.senderMessageId, "send")
         XCTAssertNil(try reopened.outgoing.work(server: "b", id: "send"))
     }
+    func testLaunchVideoSweepKeepsDraftAndOutgoingFilesAndSkipsMalformedRecords() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let videos = directory.appendingPathComponent("videos")
+        try FileManager.default.createDirectory(at: videos, withIntermediateDirectories: true)
+        let store = LocalStore(url: directory.appendingPathComponent("phone.store"))
+        func piece(_ name: String) -> ConversationSend.Piece {
+            .init(piece: "attachment_upload", localVideo: SavedVideo(id: name, fileName: name,
+                filePath: "videos/" + name, byteCount: 1))
+        }
+        for name in ["draft.mov", "outbox.mov", "orphan.mov"] {
+            try Data([1]).write(to: videos.appendingPathComponent(name))
+        }
+        try store.put(server: "a", kind: "attachments", id: "note", data: JSONEncoder().encode([piece("draft.mov")]))
+        let work = PendingWork(id: "video", created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: nil, content: [piece("outbox.mov")], senderMessageId: "video", sentAtUnixMilliseconds: 1))
+        try store.outgoing.enqueue(work, server: "b")
+        try store.put(server: "a", kind: "attachments", id: "malformed", data: Data("broken".utf8))
+        let records = try store.outgoing.videoOwnershipPayloads()
+        XCTAssertEqual(OutgoingStore.ownedVideoFiles(records + [("outbox", Data("broken".utf8))]),
+                       ["videos/draft.mov", "videos/outbox.mov"])
+        try await store.sweepUnownedVideoFiles(in: directory)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: videos.path)), ["draft.mov", "outbox.mov"])
+    }
+
     func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -335,9 +360,12 @@ import XCTest
     /// File-backed uploads are not covered by the embedded-photo cases: a lost PUT
     /// needs a new reservation, while a lost send reply must retain its ready token.
     func testVideoRestartsInterruptedUploadAndResendsFrozenReferenceOnceAfterRelaunch() async throws {
-        let file = directory.appendingPathComponent("clip.mov")
+        let relativePath = UUID().uuidString + "-clip.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
         try Data("video fixture bytes".utf8).write(to: file)
-        let video = SavedVideo(id: "clip", fileName: "clip.mov", filePath: file.path, byteCount: 19)
+        let video = SavedVideo(id: "clip", fileName: "clip.mov", filePath: relativePath, byteCount: 19)
         let original = PendingWork(id: "with-video", created: .now, kind: .message, owner: .ticket("ticket"),
             message: ConversationSend(conversationId: "conversation", content: [.init(piece: "local_video", localVideo: video)],
                 senderMessageId: "with-video", sentAtUnixMilliseconds: 1))
@@ -379,9 +407,12 @@ import XCTest
     /// A request lost before admission must not strand its local file behind an
     /// expired ready token. Accepted tokens remain pinned and are never replaced.
     func testExpiredUnadmittedVideoReferencesRefreshWithoutChangingMessageOrDecisionIdentity() async throws {
-        let file = directory.appendingPathComponent("expiry.mov")
+        let relativePath = UUID().uuidString + "-expiry.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
         try Data("expiry video".utf8).write(to: file)
-        let video = SavedVideo(id: "expiry-clip", fileName: "expiry.mov", filePath: file.path, byteCount: 12)
+        let video = SavedVideo(id: "expiry-clip", fileName: "expiry.mov", filePath: relativePath, byteCount: 12)
         let piece = ConversationSend.Piece(piece: "local_video", localVideo: video)
         let message = PendingWork(id: "expiry-message", created: .now, kind: .message, owner: .ticket("ticket"),
             message: ConversationSend(conversationId: "conversation", content: [piece],
@@ -614,9 +645,12 @@ import XCTest
     /// A local video decision must save before upload and freeze only its final
     /// wire references. Receipt recovery must not clear a newer note attachment.
     func testVideoDecisionFreezesAfterUploadAndKeepsOneOperationAcrossLostReplies() async throws {
-        let file = directory.appendingPathComponent("decision.mov")
+        let relativePath = UUID().uuidString + "-decision.mov"
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        let file = LocalStore.directory.appendingPathComponent(relativePath)
+        defer { try? FileManager.default.removeItem(at: file) }
         try Data("decision video".utf8).write(to: file)
-        let video = SavedVideo(id: "decision-clip", fileName: "decision.mov", filePath: file.path, byteCount: 14)
+        let video = SavedVideo(id: "decision-clip", fileName: "decision.mov", filePath: relativePath, byteCount: 14)
         let piece = ConversationSend.Piece(piece: "local_video", localVideo: video)
         var original = try decision("video-decision", guidance: "Exact video note")
         original.draftID = "video-guidance"

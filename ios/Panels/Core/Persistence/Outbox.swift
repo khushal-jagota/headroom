@@ -166,11 +166,11 @@ import Observation
         backoff[server, default: [:]][id] = Backoff(deadline: now().addingTimeInterval(delay), delay: delay)
     }
     private func expire(_ server: String, now: Date = .now) throws {
+        // Videos are reclaimed only by the launch sweep: a live note model may
+        // still hold a file after its persisted draft or outgoing row is cleared.
         let files = try store.outgoing.expire(server: server, now: now)
         for file in files {
-            if file.hasPrefix("/") {
-                if try store.outgoing.videoIsUnowned(file) { try? FileManager.default.removeItem(at: URL(fileURLWithPath: file)) }
-            } else if try store.outgoing.audioIsUnowned(file) {
+            if try store.outgoing.audioIsUnowned(file) {
                 try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file))
             }
         }
