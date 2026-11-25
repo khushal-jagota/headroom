@@ -27,6 +27,7 @@ it('keeps original sanitized child paths and block indices across group renderin
     setAttribute() {}
   }
   vi.stubGlobal('HTMLImageElement', class {});
+  vi.stubGlobal('HTMLAnchorElement', class {});
   vi.stubGlobal('document', {
     createElement: () => new ElementStub(),
     createTextNode: (data: string) => ({ data })
