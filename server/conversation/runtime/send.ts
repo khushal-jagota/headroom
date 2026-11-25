@@ -1,4 +1,9 @@
-import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
+import {
+  admit_recipient_delivery,
+  finish_recipient_delivery,
+} from '../../message_delivery/data/recipient_deliveries.ts';
+import { release_admission_leases } from '../../runtime/admission_locks.ts';
+import { save_held_prompt } from '../record/held_prompts.ts';
 /** Sends, held prompts, and the drain that delivers them. */
 import { ConversationState, own_settlement, set_phase } from './state.ts';
 import { HeldPromptsChangedFrame, MessageToOwnerEventPayload } from '../events.ts';
@@ -65,7 +70,6 @@ export async function send(
       if (refusal !== null) throw refusal;
       const state = host.conversation_state(conversation_id);
       if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
-      await host.ensure_local_custody(state);
       if (state.restart_retired)
         throw new PlannerError('retry_later', 'This Worker conversation was restarted');
       if (workspace_is_retiring(host, state))
@@ -107,14 +111,15 @@ async function send_owned(
     sender_label: options.sender_label,
     sender: options.sender ?? null,
     recipient: options.recipient ?? null,
-    sender_message_id: options.sender_message_id ?? null,
+    sender_message_id: options.sender_message_id ?? `message_${randomUUID()}`,
     sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
     snapshot_sent_at_unix_milliseconds: 0,
     model_change: options.model_change ?? null,
     reasoning_effort_change: options.reasoning_effort_change ?? null,
     reasoning_effort_is_set: options.reasoning_effort_is_set ?? false,
     owner_read_through_sequence: boundary,
-    acknowledge_owner_on_failure: options.owner_read_through_sequence == null,
+    acknowledge_owner_on_failure:
+      options.acknowledge_owner_on_failure ?? options.owner_read_through_sequence == null,
     recovery_references: options.recovery_references ?? [],
     recording_receipt: options.recording_receipt ?? null,
     queue_reason: PromptQueueReason.requested,
@@ -129,8 +134,15 @@ async function send_owned(
     });
     return duplicate;
   }
-  host.start_admission.handoff(message.sender_message_id);
   try {
+    const recipient_attempt = admit_recipient_delivery(
+      host.options.store.start_admission_database,
+      state.record.conversation_id,
+      message,
+    );
+    release_admission_leases();
+    host.start_admission.handoff(message.sender_message_id);
+    await host.ensure_local_custody(state);
     const fate =
       mode === PromptDeliveryMode.steer
         ? await controls.steer(host, state, message)
@@ -200,6 +212,7 @@ async function send_owned(
       !state.child_is_quarantined
     )
       host.schedule_drain(state);
+    finish_recipient_delivery(host.options.store.start_admission_database, recipient_attempt, fate);
     return fate;
   } catch (error) {
     await host.persist(state, () =>
@@ -322,12 +335,11 @@ export function hold_prompt(
     snapshot_sent_at_unix_milliseconds:
       message.sent_at_unix_milliseconds ?? Math.floor(host.unix_time_now() * 1000),
   };
-  note_pending_owner_sends(
+  save_held_prompt(
     host.options.store.start_admission_database,
     state.record.conversation_id,
-    [held],
-    PromptDeliveryMode.queue,
-    false,
+    held,
+    position,
   );
   host.start_admission.queue(message.sender_message_id);
   state.held_prompts.splice(position, 0, held);

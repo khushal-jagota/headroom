@@ -146,54 +146,56 @@ async function remote_fixture(early_result = false) {
     throw new Error('unexpected steer');
   };
   let may_have_sent = false;
-  const proxy = new MacRemoteChild(
-    reference,
-    {
-      async put(command) {
-        if (command.operation === 'write_prompt') {
-          prompts.push(command);
-          placed.resolve(command);
-          if (early_result) await put_released.promise;
-        }
-        return true;
-      },
-      wait_prompt_result(command, options) {
-        return runs.wait_prompt_result(command, options);
-      },
-      mac_is_present: () => true,
-      deliver_steer(command) {
-        return steer(command);
-      },
-      async stop(command) {
-        return {
-          command_id: command.command_id,
-          child: reference,
-          disposition: 'succeeded',
-          result: {},
-        };
-      },
-      async save_answer() {
-        throw new Error('unexpected answer');
-      },
-      async cancel_initial_delivery() {
-        return may_have_sent;
-      },
-      retire_child() {},
+  let present = true;
+  const commands: import('./vps_remote_child.ts').RemoteChildCommands = {
+    async put(command) {
+      if (command.operation === 'write_prompt') {
+        prompts.push(command);
+        placed.resolve(command);
+        if (early_result) await put_released.promise;
+      }
+      return true;
     },
-    () => ({
-      required_skill_names: ['panels', 'panels-worker'],
-      sources: ['panels', 'panels-worker'].map((skill_name) => ({
-        skill_name,
-        source_text: `---\nname: ${skill_name}\ndescription: Test skill\n---\nTest.`,
-      })),
-    }),
-  );
+    wait_prompt_result(command, options) {
+      return runs.wait_prompt_result(command, options);
+    },
+    mac_is_present: () => present,
+    deliver_steer(command) {
+      return steer(command);
+    },
+    async stop(command) {
+      return {
+        command_id: command.command_id,
+        child: reference,
+        disposition: 'succeeded',
+        result: {},
+      };
+    },
+    async save_answer() {
+      throw new Error('unexpected answer');
+    },
+    async cancel_initial_delivery() {
+      return may_have_sent;
+    },
+    retire_child() {},
+  };
+  const skill_snapshot = () => ({
+    required_skill_names: ['panels', 'panels-worker'],
+    sources: ['panels', 'panels-worker'].map((skill_name) => ({
+      skill_name,
+      source_text: `---\nname: ${skill_name}\ndescription: Test skill\n---\nTest.`,
+    })),
+  });
+  let retained_pending: WireValue<'ChildCommand'> | null = null;
+  const proxy = new MacRemoteChild(reference, commands, skill_snapshot);
   const factory = Object.assign(() => proxy, {
-    recover: () => proxy,
+    recover: () =>
+      new MacRemoteChild(reference, commands, skill_snapshot, { pending_prompt: retained_pending }),
     retained_runs: () => [
       new RetainedBackendRun({
         reference,
-        turn: { conversation_id: 'core', turn_number: 0 },
+        turn: retained_pending?.turn ?? { conversation_id: 'core', turn_number: 0 },
+        pending_prompt: retained_pending,
         delivery_uncertain: false,
         retirement_confirmed: false,
         incarnation_current: true,
@@ -228,7 +230,7 @@ async function remote_fixture(early_result = false) {
     // Native results commit before publication. An early observer can reread the row.
     f.database.write((tx) =>
       tx.run(
-        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id,outcome_json) VALUES(?,?,?,?,?,?,?,'finished',1,?,?)",
+        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id,outcome_json) VALUES(?,?,?,?,?,?,?,'finished',1,?,?) ON CONFLICT(command_id) DO UPDATE SET state='finished',outcome_json=excluded.outcome_json",
         [
           target.command_id,
           target.child.executor_incarnation,
@@ -264,6 +266,15 @@ async function remote_fixture(early_result = false) {
   };
   return {
     ...f,
+    restore: () => {
+      retained_pending = command;
+      return setup({
+        restart_of: f.database,
+        core: {
+          backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
+        },
+      });
+    },
     reference,
     proxy,
     command,
@@ -273,6 +284,9 @@ async function remote_fixture(early_result = false) {
     close,
     mailbox,
     prompts,
+    offline: () => {
+      present = false;
+    },
     on_steer: (answer: typeof steer) => {
       steer = answer;
     },
@@ -857,5 +871,91 @@ test('attachment answers refuse old or unknown executor identity before any nati
     const options = { deadline: performance.now() / 1000 + 2 };
     await Promise.all([runs.stop(options), presence.stop(options), mailbox.stop(options)]);
     await Promise.all([runs.settled(), presence.settled(), mailbox.settled()]);
+  }
+});
+
+// Gap: native wait tests do not reconstruct a pending submission after Home recovery.
+// Reuse their core/mailbox fixture. No second native input or additional process host.
+test('a late result after recovery settles its original submission without another native prompt', async () => {
+  const { resume_recipient_deliveries } = await import('../message_delivery/recovery.ts');
+  const f = await remote_fixture();
+  const envelope = {
+    command_id: f.command.command_id,
+    command_sequence: 1,
+    created_at_vps_ms: 1,
+    child_command: f.command,
+  };
+  f.database.write((tx) => {
+    tx.run(
+      "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id) VALUES(?,?,?,?,?,?,?,'waiting',1,?)",
+      [
+        f.command.command_id,
+        f.reference.executor_incarnation,
+        'write_prompt',
+        'core',
+        f.reference.child_id,
+        f.command.turn!.turn_number,
+        JSON.stringify(envelope),
+        ORIGINAL_MAC_MACHINE_ID,
+      ],
+    );
+    tx.run(
+      'INSERT INTO recipient_delivery_commands SELECT ?,submission_id,attempt_id FROM recipient_deliveries WHERE submission_id=?',
+      [f.command.command_id, 'core:sender'],
+    );
+  });
+  void f.sending.catch(() => {});
+  f.offline();
+  const restarted = f.restore();
+  try {
+    resume_recipient_deliveries(restarted.core);
+    expect(restarted.store.sender_message_outcome('core', 'sender')).toBeNull();
+    // Retire only the old observer. The exact native command remains owned by recovery.
+    await f.proxy.detach();
+    await f.sending.catch(() => {});
+    const { Deferred } = await import('../core/deferred.ts');
+    const { text_message_content } = await import('../conversation/message_content.ts');
+    const admitted = new Deferred<void>();
+    const correction = restarted.core.send('core', text_message_content('offline correction'), {
+      sender_label: 'Owner',
+      sender_message_id: 'offline-correction',
+      mode: 'steer',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'offline-correction',
+        admitted: () => admitted.resolve(),
+      },
+    });
+    await admitted.promise;
+    await f
+      .finish({
+        command_id: f.command.command_id,
+        child: f.reference,
+        disposition: 'succeeded',
+        result: {
+          kind: 'prompt_accepted',
+          composed_content_delivered: true,
+          agent_acceptance_proven: true,
+        },
+      })
+      .catch(() => {});
+    await vi.waitFor(() =>
+      expect(restarted.store.sender_message_outcome('core', 'sender')?.payload.kind).toBe('prompt'),
+    );
+    expect((await correction).constructor.name).toBe('PromptDeliveryQueued');
+    expect((await restarted.core.held_prompts('core')).map((row) => row.sender_message_id)).toEqual(
+      ['offline-correction'],
+    );
+    expect(f.prompts).toHaveLength(1);
+    expect(
+      f.database.read((sql) =>
+        sql.get<{ state: string }>('SELECT state FROM recipient_deliveries WHERE submission_id=?', [
+          'core:sender',
+        ]),
+      )?.state,
+    ).toBe('delivered');
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 2 });
+    await f.close();
   }
 });

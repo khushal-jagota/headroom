@@ -293,6 +293,8 @@ export type PromptDeliveryFate =
   | PromptDeliverySuppressed;
 export type HeldPromptPromotionFate = PromptDeliveryFate;
 export interface NativeMessageOperation {
+  in_admission?: (transaction: TransactionSql, conversation_id: string) => void;
+  admitted?: () => void;
   sender_id: string;
   submission_id: string;
   in_commit?:
@@ -308,6 +310,8 @@ export interface NativeMessageAdmission {
   readonly fate: PromptDeliveryFate;
 }
 export interface SendOptions {
+  /** Preserve the original reply policy during durable recipient recovery. */
+  acknowledge_owner_on_failure?: boolean;
   sender_label: string;
   owner_read_through_sequence?: number | null;
   mode?: PromptDeliveryMode;

@@ -2,10 +2,11 @@ import type { Principal } from '../core/contracts.ts';
 import type { PromptDeliveryFate, PromptDeliveryMode } from '../conversation/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
 export class MessageRecordedToOwner {}
+export class MessageAcceptedForDelivery {}
 export interface MessageDeliveryResult {
   recipient: Principal;
   conversation_id: string | null;
-  fate: PromptDeliveryFate | MessageRecordedToOwner;
+  fate: PromptDeliveryFate | MessageRecordedToOwner | MessageAcceptedForDelivery;
 }
 /** An upload admission writes only through its owning area's write door. */
 export interface MessageAdmission {
@@ -35,4 +36,11 @@ export interface AcceptedAgentMessage {
 export interface RetainedMessageFile {
   readonly manifest: WireValue<'FileManifest'>;
   readonly bytes: Buffer;
+}
+
+export class RecipientDeliveryStale extends Error {}
+
+export interface RecipientAttempt {
+  readonly submission_id: string;
+  readonly attempt_id: string;
 }

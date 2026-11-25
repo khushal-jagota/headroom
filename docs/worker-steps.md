@@ -50,7 +50,7 @@ Automatic admission carries the same stable machine ID as the Ticket. A rename n
 
 Decision notes travel with the next eligible stage opener in one prompt. They preserve the actor, action, proposal, and complete note. Pictures and files sent with a note follow its words in the same prompt. A note does not change the stage or authorize further work. Feedback waits when the next step cannot start, and a done Ticket receives no new step. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
 
-One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. The step uses Queue mode, so it waits if a turn starts before delivery.
+One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. The step uses Queue mode, so it waits if a turn starts before delivery. Recipient custody saves the opener and its decision notes before native preparation starts. It releases the admission lock at that boundary. Acceptance alone does not complete the claim or prove a turn started. The recipient restores waiting input after a restart and preserves uncertain attempts without automatic replay.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |
@@ -85,4 +85,4 @@ Database work runs on worker threads, so a database wait does not stop the serve
 - `server/tickets/data/`: the claim writers.
 - `server/runtime/conversation_start.ts`: starting the conversation and sending.
 
-_Last verified: 2026-11-17._
+_Last verified: 2026-11-26._

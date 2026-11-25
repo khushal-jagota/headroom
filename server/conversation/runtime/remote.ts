@@ -1,3 +1,6 @@
+import { recipient_messages_for_command } from '../../message_delivery/data/recipient_deliveries.ts';
+import { prompt_row, refused_row, uncertain_row } from './messages.ts';
+import { PromptDeliveryRefusalReason } from '../contracts.ts';
 /** Retained executor runs keep their exact child identity across VPS restarts. */
 import { same_reference } from '../../executor/child_reference.ts';
 import type {
@@ -316,7 +319,7 @@ export function initialize_retained_runs(
   }
   return adopted;
 }
-/** A crash lost the caller's metadata. Observe native truth without reconstructing a prompt row. */
+/** Observe the retained native command and restore any correlated recipient receipt. */
 function resume_pending_admission(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -325,6 +328,10 @@ function resume_pending_admission(
 ): void {
   const prompt = run.pending_prompt;
   if (prompt?.arguments.kind !== 'write_prompt') return;
+  const recipient_messages = recipient_messages_for_command(
+    host.options.store.start_admission_database,
+    prompt.command_id,
+  );
   const reservation: ReservedTurn = {
     token: run.turn,
     resolved: new Deferred<void>(),
@@ -333,7 +340,7 @@ function resume_pending_admission(
     memory_notice_only: false,
     prompt_accepted: false,
     prompt_write_attempted: true,
-    messages: [],
+    messages: recipient_messages,
     mode: prompt.arguments.mode,
     shutdown_owned: false,
     shutdown_fate: null,
@@ -409,6 +416,27 @@ function resume_pending_admission(
               run.turn,
             ),
           );
+        for (const message of recipient_messages) {
+          const previous = host.options.store.sender_message_outcome(
+            state.record.conversation_id,
+            message.sender_message_id!,
+          );
+          if (previous?.payload.kind === 'prompt') continue;
+          const rows = await host.persist(state, () =>
+            host.options.store.append_events(state.record.conversation_id, [
+              accepted !== null
+                ? prompt_row(message, reservation.mode)
+                : refused
+                  ? refused_row(
+                      message,
+                      reservation.mode,
+                      PromptDeliveryRefusalReason.write_to_backend_failed,
+                    )
+                  : uncertain_row(message, reservation.mode, 'delivery uncertain'),
+            ]),
+          );
+          host.note_written(state, rows);
+        }
         state.has_delivered_prompt ||= accepted !== null;
         state.delivery_uncertain = accepted === null && !refused;
         state.child_is_quarantined = state.delivery_uncertain;

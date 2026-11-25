@@ -6,7 +6,7 @@ import { PlannerError } from '../core/contracts.ts';
 import { dictionaryBody } from '../list_reads/http.ts';
 import { delivery_fate_json } from '../conversation/http.ts';
 import type { PromptDeliveryMode } from '../conversation/contracts.ts';
-import { MessageRecordedToOwner } from './contracts.ts';
+import { MessageAcceptedForDelivery, MessageRecordedToOwner } from './contracts.ts';
 import type { MessageDeliveryResult } from './contracts.ts';
 import { send_message } from './service.ts';
 import { request_recap } from './recap_request.ts';
@@ -44,7 +44,9 @@ export function result_json(result: MessageDeliveryResult): Record<string, unkno
     conversation_id: result.conversation_id,
     ...(result.fate instanceof MessageRecordedToOwner
       ? { fate: 'recorded' }
-      : delivery_fate_json(result.fate)),
+      : result.fate instanceof MessageAcceptedForDelivery
+        ? { fate: 'accepted' }
+        : delivery_fate_json(result.fate)),
   };
 }
 export function message_text(raw: unknown): string {

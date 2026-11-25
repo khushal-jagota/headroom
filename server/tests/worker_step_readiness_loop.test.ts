@@ -1,3 +1,5 @@
+import { setup as core_setup } from './conversation_core_fixture.ts';
+import { send_message } from '../message_delivery/service.ts';
 /** Gaps: autonomous orchestration and delivery fates are absent from Ticket route proofs.
  * Reuses Ticket SQLite fixtures and the existing in-memory contract. No provider adapter.
  */
@@ -65,6 +67,14 @@ function setup() {
     workspace_root: dirname(fixture_path(db)),
   });
   const system = new InMemoryConversationSystem();
+  const send = system.send.bind(system);
+  vi.spyOn(system, 'send').mockImplementation(async (id, content, options) => {
+    if (options.recording_receipt?.in_admission) {
+      db.write((tx) => options.recording_receipt!.in_admission!(tx, id));
+      options.recording_receipt.admitted?.();
+    }
+    return send(id, content, options);
+  });
   const options = {
     connect_database: () => db,
     conversation_system: system,
@@ -154,7 +164,7 @@ test('restart releases the current errored claim generation after kill', async (
   expect(restarted.conversation_id).not.toBe(claimed.conversation_id);
 });
 
-test('the next opener waits for restart and only one starts a fresh conversation', async () => {
+test('restart defers the next opener and only one starts a fresh conversation', async () => {
   const { db, system, options } = setup();
   const ticket = edit(db, create(db), { ceiling: 'needs_implementation' });
   await start_ready_worker_step(ticket.id, options);
@@ -182,7 +192,18 @@ test('the next opener waits for restart and only one starts a fresh conversation
       return result;
     });
     await new Promise((resolve) => setImmediate(resolve));
-    expect(next_settled).toBe(false);
+    expect(next_settled).toBe(true);
+    await expect(
+      send_message(
+        system,
+        db,
+        new TestClock(new Date(now * 1000).toISOString()),
+        { principal: OWNER, conversationId: null },
+        { kind: 'ticket', id: ticket.id },
+        'stale correction',
+        'steer',
+      ),
+    ).rejects.toMatchObject({ code: 'retry_later' });
     expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
     release_kill();
     const [restarted, next] = await Promise.all([restarting, next_step]);
@@ -244,6 +265,10 @@ test.each([
   const { db, system, options } = setup();
   const ticket = create(db);
   vi.spyOn(system, 'send').mockImplementation(async (_id, _content, sent) => {
+    if (sent.recording_receipt?.in_admission) {
+      db.write((tx) => sent.recording_receipt!.in_admission!(tx, _id));
+      sent.recording_receipt.admitted?.();
+    }
     const claimed = read(db, ticket.id);
     expect(sent.sender_message_id).toBe(
       `worker_step_message_${ticket.id}:${claimed.worker_step_claim_revision}`,
@@ -937,4 +962,70 @@ test('an accepted decision retains streamed files through refusal, TTL, and a fr
     );
   }
   for (const ref of refs) expect(uploads.status(ref.upload_id).state).toBe('linked');
+});
+
+// Gap: the reference system proves claim rules but cannot hold a native receipt.
+// Reuse the real-record/scripted-process fixture to race kickoff with a correction.
+test('a kickoff racing a steer shares admission order without releasing its claim at acceptance', async () => {
+  const f = core_setup({ behavior: { barrier: 'kickoff' } });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: dirname(f.database_path),
+  });
+  const ticket = create(f.database);
+  const options = {
+    connect_database: () => f.database,
+    conversation_system: f.core,
+    worker_type_registry: configured_worker_type_registry(),
+    now: () => now,
+  };
+  let finished = false;
+  const kickoff = start_ready_worker_step(ticket.id, options).then((result) => {
+    finished = true;
+    return result;
+  });
+  const child = await f.child;
+  await child.wait_for_barrier('kickoff');
+  const accepted = new Deferred<void>();
+  const correction = send_message(
+    f.core,
+    f.database,
+    new TestClock(new Date(now * 1000).toISOString()),
+    { principal: OWNER, conversationId: null },
+    { kind: 'ticket', id: ticket.id },
+    'correction',
+    'steer',
+    {
+      sender_message_id: 'correction',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'correction',
+        admitted: () => accepted.resolve(),
+      },
+    },
+  );
+  try {
+    await accepted.promise;
+    expect(finished).toBe(false);
+    expect(read(f.database, ticket.id).worker_step_claim).toBe('out');
+    expect(
+      f.database
+        .read((sql) =>
+          sql.all<{ payload: string }>(
+            'SELECT payload FROM recipient_deliveries ORDER BY delivery_order',
+          ),
+        )
+        .map((row) => JSON.parse(row.payload).sender_message_id),
+    ).toEqual([expect.stringMatching(/^worker_step_message_/), 'correction']);
+    expect((await start_ready_worker_step(ticket.id, options)).started).toBe(false);
+    await child.release('kickoff');
+    expect((await kickoff).started).toBe(true);
+    await correction;
+    expect((await child.inspect()).calls.filter((call) => call.command === 'steer')).toMatchObject([
+      { arguments: { sender_content: [{ piece: 'text', text: 'correction' }] } },
+    ]);
+  } finally {
+    await child.release('kickoff');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
 });

@@ -925,7 +925,7 @@ test('an accepted queued send drains even when worker readiness polling is disab
   }
 });
 
-test('a stuck queued send times out, the installer starts, and the next home reports it undelivered', async () => {
+test('a stuck queued send times out, the installer starts, and the next home delivers it', async () => {
   const launch = vi.fn(async () => {});
   const owned = await owned_server({ launch }, { worker_readiness: false });
   const message = 'stuck-accepted-message';
@@ -949,7 +949,7 @@ test('a stuck queued send times out, the installer starts, and the next home rep
     await owned.server.close({ deadline: performance.now() / 1000 + 5 });
 
     // Boot another home from the database left by the stop. Pending owner receipts
-    // settle in ordinary conversation startup on either side of an upgrade or rollback.
+    // resume from durable recipient custody during ordinary conversation startup.
     const restarted = await owned_server(undefined, {
       worker_readiness: false,
       before_start(root) {
@@ -965,7 +965,7 @@ test('a stuck queued send times out, the installer starts, and the next home rep
       );
       expect(lookup.status).toBe(200);
       expect(await lookup.json()).toMatchObject({
-        delivery: { conversation_id: first.conversation_id, fate: 'refused' },
+        delivery: { conversation_id: first.conversation_id, fate: 'started' },
       });
       expect(await restarted.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);
     } finally {

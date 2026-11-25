@@ -315,16 +315,14 @@ test('a repeated first message reaches each owner once and the repeat is answere
     const recovered = await call('GET', lookup);
     expect(recovered).toMatchObject({
       status: 200,
-      body: { delivery: { conversation_id: target, fate: 'refused' } },
+      body: { delivery: { conversation_id: target, fate: 'started' } },
     });
     expect(await call('POST', manager_owner.base + '/send', queued_body)).toEqual({
       status: 200,
       body: recovered.body.delivery,
     });
-    expect(prompts(queued_id)).toEqual([
-      { conversation_id: target, kind: 'prompt_delivery_refused' },
-    ]);
-    const refused_payload = database.read((sql) =>
+    expect(prompts(queued_id)).toEqual([{ conversation_id: target, kind: 'prompt' }]);
+    const recovered_payload = database.read((sql) =>
       sql.get<{ text: string; detail: string }>(
         `SELECT json_extract(payload, '$.text') AS text,
               json_extract(payload, '$.refusal_detail') AS detail
@@ -332,9 +330,9 @@ test('a repeated first message reaches each owner once and the repeat is answere
         [queued_id],
       ),
     );
-    expect(refused_payload).toEqual({
+    expect(recovered_payload).toEqual({
       text: 'keep these words',
-      detail: 'Panels restarted before this queued message reached the agent.',
+      detail: null,
     });
     // The first request failed before selecting content. A lost response and later
     // reset cannot turn it into a first send with a configuration that now validates.

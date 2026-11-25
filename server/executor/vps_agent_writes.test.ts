@@ -1,3 +1,4 @@
+import { setup as core_setup } from '../tests/conversation_core_fixture.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -422,5 +423,61 @@ test('CLI numeric JSON reaches the Home route unchanged through the relay', asyn
     await app.close();
     made.database.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: prior relay tests await the route result. This proves an agent can continue
+// after home custody while a real scripted backend withholds its native receipt.
+test('recipient custody releases the sender before a native receipt and survives later inbox writes', async () => {
+  const w = world({ kind: 'manager', id: 'm_accept' });
+  w.database.write((tx) =>
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']),
+  );
+  const { ConversationStartRequest } = await import('../conversation/contracts.ts');
+  const f = core_setup({ restart_of: w.database, behavior: { barrier: 'native-receipt' } });
+  await f.start();
+  await f.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: w.child.conversation_id,
+      model: 'model',
+      workspace_folder: '/workspace',
+    }),
+  );
+  w.database.write((tx) =>
+    tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', ['chief_of_staff', 'core']),
+  );
+  w.writes.conversations = f.core;
+  const first = w.envelope(1, 'message.send', {
+    body: { target: { kind: 'chief', id: 'chief' }, message: 'correction', mode: 'steer' },
+  });
+  try {
+    const accepted = await w.send(first);
+    expect(accepted.result).toMatchObject({ fate: 'accepted', submission_id: first.submission_id });
+    const child = await f.child;
+    await child.wait_for_barrier('native-receipt');
+    const reply = await w.send(
+      w.envelope(2, 'message.send', {
+        body: { target: { kind: 'owner', id: 'owner' }, message: 'owner reply' },
+      }),
+    );
+    expect(reply.result).toMatchObject({ fate: 'recorded' });
+    expect(f.store.read_events_after(w.child.conversation_id, 0).map((row) => row.kind)).toEqual([
+      'message_to_owner',
+    ]);
+    expect(await w.send(first)).toEqual(accepted);
+    await child.release('native-receipt');
+    await vi.waitFor(() =>
+      expect(
+        w.database.read((sql) =>
+          sql.get<{ state: string }>(
+            'SELECT state FROM recipient_deliveries WHERE submission_id=?',
+            ['core:' + first.submission_id],
+          ),
+        )?.state,
+      ).toBe('delivered'),
+    );
+    expect((await child.inspect()).delivered_text).toEqual(['Role\n\ncorrection']);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
 });

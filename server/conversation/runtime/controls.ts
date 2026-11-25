@@ -1,3 +1,7 @@
+import {
+  mark_recipient_attempt,
+  with_recipient_attempts,
+} from '../../message_delivery/data/recipient_deliveries.ts';
 import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
 /** Turn and queue controls retain provider receipts before a successor takes ownership. */
 import {
@@ -383,11 +387,19 @@ async function attempt_steer(
       ),
     );
     host.start_admission.bind_source(token, child);
-    outcome = await host.native_operation(() =>
-      child.steer(token, message.content, {
-        sender_content: message.content,
-        sender_label: message.sender_label,
-      }),
+    const recipient_attempts = mark_recipient_attempt(
+      host.options.store.start_admission_database,
+      state.record.conversation_id,
+      [message],
+      token.turn_number,
+    );
+    outcome = await with_recipient_attempts(recipient_attempts, () =>
+      host.native_operation(() =>
+        child.steer(token, message.content, {
+          sender_content: message.content,
+          sender_label: message.sender_label,
+        }),
+      ),
     );
     // A refused steer goes back to the queue unrecorded, so its backend text is logged here.
     if (outcome instanceof BackendSteerRefused && outcome.refusal_detail !== null)

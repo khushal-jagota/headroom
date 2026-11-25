@@ -1,3 +1,9 @@
+import { RecipientDeliveryStale } from '../../message_delivery/contracts.ts';
+import {
+  recipient_attempts_for,
+  mark_recipient_attempt,
+  with_recipient_attempts,
+} from '../../message_delivery/data/recipient_deliveries.ts';
 import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
@@ -380,17 +386,25 @@ export async function deliver_prompt(
     host.start_admission.bind_source(reservation.token, target);
     reservation.messages = survivors;
     reservation.prompt_write_attempted = true;
-    const accepted = await host.native_operation(() =>
-      target.write_prompt(reservation.token, wire_content, {
-        sender_label: survivors[0].sender_label,
-        sender_content,
-        sender_message_count: survivors.length,
-        mode: reservation.mode,
-        model_change: first.model_change,
-        reasoning_effort_change: first.reasoning_effort_change,
-        reasoning_effort_is_set: first.reasoning_effort_is_set,
-        automatic_compaction: reservation.automatic_compaction,
-      }),
+    const recipient_attempts = mark_recipient_attempt(
+      host.options.store.start_admission_database,
+      state.record.conversation_id,
+      survivors,
+      reservation.token.turn_number,
+    );
+    const accepted = await with_recipient_attempts(recipient_attempts, () =>
+      host.native_operation(() =>
+        target.write_prompt(reservation.token, wire_content, {
+          sender_label: survivors[0].sender_label,
+          sender_content,
+          sender_message_count: survivors.length,
+          mode: reservation.mode,
+          model_change: first.model_change,
+          reasoning_effort_change: first.reasoning_effort_change,
+          reasoning_effort_is_set: first.reasoning_effort_is_set,
+          automatic_compaction: reservation.automatic_compaction,
+        }),
+      ),
     );
     state.child_selection = { child: target, selection };
     reservation.prompt_accepted = true;
@@ -523,6 +537,12 @@ function backend_refusal(
   return result({ refusal_reason, refusal_detail: recorded_failure_detail(text), record_refusal });
 }
 function refusal_or_throw(state: ConversationState, error: unknown): DeliveryAttempt {
+  if (error instanceof RecipientDeliveryStale)
+    return result({
+      refusal_reason: R.no_such_conversation,
+      refusal_detail: error.message,
+      record_refusal: true,
+    });
   // A direct send's caller decides whether to record this refusal. The log keeps its text.
   if (error instanceof PromptWriteRefused)
     return backend_refusal(state, R.write_to_backend_failed, error, false);
@@ -799,7 +819,14 @@ async function deliver_and_record(
         batch.map((message) => message.sender_message_id),
       ),
     );
-    delivery = await deliver_prompt(host, state, reservation, batch);
+    delivery = await with_recipient_attempts(
+      recipient_attempts_for(
+        host.options.store.start_admission_database,
+        state.record.conversation_id,
+        batch,
+      ),
+      () => deliver_prompt(host, state, reservation, batch),
+    );
   } catch (error) {
     if (reservation.shutdown_owned)
       return reservation.shutdown_fate ?? new PromptDeliveryUncertain();

@@ -1,3 +1,4 @@
+import { link_recipient_command } from '../../message_delivery/data/recipient_deliveries.ts';
 /**
  * Scoped mailbox SQL assumes an authorized caller and a caller-owned SQL capability.
  * Poll/result callers require transport ingress, protocol and current-identity admission.
@@ -156,6 +157,7 @@ function insert(
     Buffer.from(body).toString('utf8'),
     counter(sequence),
   ]);
+  link_recipient_command(tx, command.command_id, operation(command));
   return decode_json(body, 'MailboxCommand');
 }
 export function insert_child_command(
