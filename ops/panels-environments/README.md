@@ -204,10 +204,10 @@ data/
   skills/                     skill files and disk-only supporting files
   secrets/
     apns-key.p8                private push key
-    update-token               private update token
+    update-token               optional release token
 ```
 
-Keep `secrets/` at mode 0700 and its files at mode 0600. The native installer creates the directory privately. Put the push key and update token there before activation. Set the APNs key ID, team ID, bundle IDs, and update repository in the service environment. Without their metadata, those features stay disabled. Relative `PLAN_APNS_KEY_PATH` and `PLAN_UPDATE_TOKEN_FILE` overrides resolve from the server state folder. Absolute overrides still support existing installations. Before a full-state move, place those secrets inside `secrets/` and remove external overrides.
+Keep `secrets/` at mode 0700 and its files at mode 0600. The native installer creates the directory privately. Set the update repository in the service environment. Public releases need no token. To use authenticated reads, place an authorized token in `secrets/update-token` before the service starts. For push notifications, add the push key and set the APNs key ID, team ID and bundle IDs. Relative `PLAN_APNS_KEY_PATH` and `PLAN_UPDATE_TOKEN_FILE` overrides resolve from the server state folder. Absolute overrides still support existing installations. Before a full-state move, place those secrets inside `secrets/` and remove external overrides.
 
 Write `config.yaml` again on the destination. For a settings file beside the database, use:
 
