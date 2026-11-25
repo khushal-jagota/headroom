@@ -15,7 +15,7 @@ import {
   ticketPrincipal, WAIT_MS, withDatabase, type JsonObject, type ServerHandle,
 } from './support/fixtures.ts';
 import { createTicketConversation, getJson, openConversationLayer, post } from './support/conversation.ts';
-import { createVideoFixture } from './support/video.ts';
+import { createVideoFixture, videoFixtureSize } from './support/video.ts';
 
 type Attached = { name: string; bytes: Buffer; mediaType: string; uploadId?: string };
 type UploadResponse = { ok: boolean; status: number; url: string; declaration?: JsonObject };
@@ -115,10 +115,14 @@ function artifact(server: ServerHandle, ticketId: string, label: string): string
   return `[${label}](/files/tickets/${ticketId}/artifacts/${label}.md)`;
 }
 
-/** The submit carries only immutable upload identities, never file bytes in JSON. */
+/** The submit carries upload identities, never file bytes in JSON. A video also carries the size the browser read from it. */
 function expectUploadPieces(pieces: JsonObject[], attached: Attached[]): void {
   const files = pieces.filter((piece) => piece.piece !== 'text');
-  expect(files).toEqual(attached.map((file) => ({ piece: 'attachment_upload', upload_id: file.uploadId })));
+  expect(files).toEqual(attached.map((file) => ({
+    piece: 'attachment_upload',
+    upload_id: file.uploadId,
+    ...(file.mediaType.startsWith('video/') ? videoFixtureSize : {}),
+  })));
 }
 
 /** The real core must keep each file once and serve the exact accepted bytes. */
