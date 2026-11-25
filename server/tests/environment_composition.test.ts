@@ -213,7 +213,9 @@ test('environment providers and poll hooks share the server, and both producer g
       headers: { 'X-Panels-iOS-Build': '10' },
     });
     expect(obsolete_settings.status).toBe(426);
-    expect(await obsolete_settings.json()).toMatchObject({ error: { code: 'ios_update_required' } });
+    expect(await obsolete_settings.json()).toMatchObject({
+      error: { code: 'ios_update_required' },
+    });
     verification = fetch(server.address + '/preview-grace-proof/held').then(async (response) => ({
       status: response.status,
       body: await response.json(),
