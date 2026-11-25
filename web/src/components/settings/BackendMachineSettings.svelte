@@ -29,8 +29,11 @@
 
   /* Backends: one row per backend Panels updates, then any other it can sign in. A row says
      what is installed and what is current, and offers an update or a sign-in. */
-  let { machineId, machineName, machineChoice }: { machineId: string; machineName: string; machineChoice: Snippet } = $props();
+  let { machineId, isHome, machineChoice }: { machineId: string; isHome: boolean; machineChoice: Snippet } = $props();
   const drivers = createQuery(() => queries.drivers());
+  const machines = createQuery(() => queries.machines());
+  /** The guided sign-in names the machine whose terminal the owner must use. */
+  const machineName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "this machine");
   let snapshots = $state<BackendSnapshot[]>([]);
   /** Backends Panels updates, in the server's order, then any other it can sign in. */
   const backends = $derived.by(() => {
@@ -117,11 +120,10 @@
     return () => { for (const session of signInSessions.values()) session.leave(); };
   });
 
-  /** The Update button shows whenever Panels can run the update on the selected machine, as
-   *  before the redesign: an update that is already current can still repair a broken
-   *  installation. The machine reads its own installation, so this holds for any machine. */
+  /** The Update button shows whenever Panels can run the update, as before the redesign:
+   *  an update that is already current can still repair a broken installation. */
   function offersUpdate(snapshot: BackendSnapshot | undefined): boolean {
-    return Boolean(snapshot?.installed && snapshot.update_advisory?.update_command);
+    return isHome && Boolean(snapshot?.installed && snapshot.update_advisory?.update_command);
   }
 
   function offersSignIn(snapshot: BackendSnapshot | undefined, signInState: SignInPageState): boolean {
@@ -143,7 +145,7 @@
   {#snippet actions()}
     {@render machineChoice()}
     <Button variant="secondary" disabled={refreshing || anyUpdating} onclick={() => void refresh()}>
-      {refreshing ? "Checking…" : "Check for updates"}
+      {refreshing ? "Checking…" : isHome ? "Check for updates" : "Refresh"}
     </Button>
   {/snippet}
   {#if refreshError}<p class="backend-refresh-error" role="alert">Could not refresh backend versions. {refreshError}</p>{/if}

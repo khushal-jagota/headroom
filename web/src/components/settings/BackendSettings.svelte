@@ -14,7 +14,7 @@
 {/snippet}
 {#if machine}
   {#key machine.machine_id}
-    <BackendMachineSettings machineId={machine.machine_id} machineName={machine.name} {machineChoice} />
+    <BackendMachineSettings machineId={machine.machine_id} isHome={machine.is_home} {machineChoice} />
   {/key}
 {:else}
   <SettingsPage title="Backends">
