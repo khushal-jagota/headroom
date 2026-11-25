@@ -382,7 +382,8 @@ try {
           ' < "$FIRST_INSTALL_CREDENTIAL"',
       ],
       {
-        ...no_node_environment,
+        // A separate Linux machine joins with its own compatible host Node.
+        ...environment,
         ...(historical_api ? { GH_TOKEN: process.env.GH_TOKEN } : {}),
         FIRST_INSTALL_CREDENTIAL: private_input,
       },
