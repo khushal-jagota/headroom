@@ -110,6 +110,13 @@ struct APIClient: Sendable {
         return result
     }
 
+    func upload(for request: URLRequest, fromFile file: URL) async throws -> (Data, URLResponse) {
+        let attempt = await serverConnection?.attempt(server: baseURL)
+        let result = try await session.upload(for: request, fromFile: file)
+        await serverConnection?.answered(attempt, response: result.1)
+        return result
+    }
+
     func bytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse, ServerConnection.Attempt?) {
         let attempt = await serverConnection?.attempt(server: baseURL)
         let (bytes, response) = try await session.bytes(for: request)

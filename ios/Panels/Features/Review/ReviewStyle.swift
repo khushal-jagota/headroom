@@ -142,7 +142,7 @@ struct DecisionNoteActions: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let attachments, !attachments.attachments.isEmpty || attachments.preparingPhoto {
                     ConversationAttachmentTray(pieces: attachments.attachments, preparingPhotoNames: attachments.preparingPhotos.values.sorted(),
-                        preparing: attachments.preparingDraftPhotos, remove: noteEnabled && busyAction == nil ? { index in
+                        preparing: attachments.preparingDraftPhotos, preparingVideos: Array(attachments.preparingVideos.values), remove: noteEnabled && busyAction == nil ? { index in
                             guard attachments.attachments.indices.contains(index) else { return }
                             attachments.attachments.remove(at: index)
                         } : nil)

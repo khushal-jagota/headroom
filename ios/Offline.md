@@ -154,6 +154,23 @@ The server can hold a message, for example one that names a model, until the tur
 ends. The conversation shows held messages above the composer with the server's
 reason, Steer in and removal.
 
+## Video attachments
+
+Videos save as files beside the phone store before they enter the outbox. Their
+saved references are relative to that store, so a changed app-container path does
+not break a queued video. A launch sweep removes copies that no saved draft or
+outbox item names. Removing an attachment leaves its file until that sweep, so
+another open composer can still use it. If two views of the same note draft stay
+open, an edit from a stale view can rarely overwrite a video added to that draft
+in the background. The next launch sweep can then reclaim the unreferenced file.
+
+Clips over 250 MiB receive a system 1080p export on the phone before upload.
+An export that fails or remains too large stays on the attachment with its draft.
+
+A cancelled or timed-out upload restarts from zero. An upload still marked
+`transferring` after a lost response is sent again. The final message and decision
+keep their identities across these retries.
+
 ## Reads
 
 Mark read, from a Review card or an open conversation, moves the read point on
