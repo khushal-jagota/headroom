@@ -45,6 +45,7 @@ struct TicketView: View {
                 .padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
+        .modifier(DecisionScrollViewport(enabled: detail?.pendingProposal != nil))
         .navigationTitle("").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { ticketMenu } }
         .scrollContentBackground(.hidden).textCase(nil)

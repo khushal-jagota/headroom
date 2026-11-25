@@ -57,6 +57,8 @@ struct ReviewArtifactDock: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .modifier(DecisionForegroundFade())
+            .modifier(DecisionScrollViewport(enabled: visible && item != nil))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if visible, let session, let savedWork, let item { dock(item, session: session, savedWork: savedWork) }
             }

@@ -38,6 +38,7 @@ struct ReviewMessageCard: View {
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .modifier(DecisionForegroundFade())
                     .background(PanelsTheme.Web.surface2, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
                 } else if decision.error == nil, decision.windowBound == nil { ScreenLoadingView(title: "messages") }
                 if let error = decision.error {
