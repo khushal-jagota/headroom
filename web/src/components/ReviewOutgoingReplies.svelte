@@ -19,7 +19,7 @@
     composer: ReviewReplyComposer;
     onEdit: () => void;
     busy?: boolean;
-    /** The empty Review page keeps a send out of view while it goes, after it arrives and
+    /** A Review reply keeps a send out of view while it goes, after it arrives and
      *  after it is refused or may not have arrived. Its send button shows each, and the message
      *  returns to the field. A send that waits or is queued still shows. */
     quiet?: boolean;
