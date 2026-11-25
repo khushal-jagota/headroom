@@ -330,3 +330,30 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
   await expect(card.locator('[data-credential-record]')).toHaveText(/ · Saved$/, { timeout: WAIT_MS });
   await captureSuccess(page, 'credential-request-connected-saved.png');
 });
+
+test('test_web_link_in_agent_message_opens_in_a_new_tab_and_panels_keeps_its_place', async ({
+  signalServer,
+  newContext,
+}) => {
+  // A same-tab link leaves Panels, and Back then returns to the first screen. Only a real
+  // browser shows which tab a click opens and whether the Panels tab stays where it was.
+  const server = signalServer;
+  const conversationId = 'e2e-ticket-web-link';
+  const ticketId = await createTicketConversation(server, { conversationId, title: 'Ticket with a web link' });
+  await post(server, `/api/test/signals/${conversationId}/message`, {
+    kind: 'ticket',
+    id: ticketId,
+    label: 'Proof Worker',
+    text: 'The test copy runs at [this address](https://outside.example.org/copy).',
+  });
+  const context = await newContext();
+  await context.route('https://outside.example.org/**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<title>Outside</title>' }),
+  );
+  const page = await openTicketConversation(server, ticketId, context, '.markdown-block a');
+  const panelsUrl = page.url();
+  const [outside] = await Promise.all([context.waitForEvent('page'), page.locator('.markdown-block a').click()]);
+  await outside.waitForLoadState();
+  expect(outside.url()).toBe('https://outside.example.org/copy');
+  expect(page.url()).toBe(panelsUrl);
+});
