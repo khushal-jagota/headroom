@@ -399,12 +399,14 @@ export class ConversationViewReader {
     }
     private async open(): Promise<void> {
         // A preparing archive keeps the original connect pending until history can be read.
-        let preparing: boolean;
-        do {
-            preparing = await this.openStream();
-        } while (preparing && !this.disposed && this.requests.size === 0);
+        let canRetryReadySnapshot = true;
+        while (!this.disposed && this.requests.size === 0) {
+            const result = await this.openStream(canRetryReadySnapshot);
+            if (result === undefined) return;
+            if (result === 'snapshot-ready') canRetryReadySnapshot = false;
+        }
     }
-    private openStream(): Promise<boolean> {
+    private openStream(canRetryReadySnapshot: boolean): Promise<'preparing' | 'snapshot-ready' | void> {
         this.releaseSource();
         this.source = null;
         if (this.retry !== null) {
@@ -418,14 +420,14 @@ export class ConversationViewReader {
             query.after = String(this.coverage);
             query.ranges = JSON.stringify(this.pages.filter(p => p.items.length).map(p => ({ scope: p.scope, first: p.items[0]!.order, last: p.items.at(-1)!.order })));
         }
-        return new Promise<boolean>((resolve, reject) => {
+        return new Promise<'preparing' | 'snapshot-ready' | void>((resolve, reject) => {
             let settled = false;
             const source = new EventSource(this.url('/tail', query));
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
             const ready = () => { this.preparingHistory = false; this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
                 settled = true;
-                resolve(false);
+                resolve();
             } };
             const fail = (error: unknown) => { if (!active())
                 return; source.close(); this.source = null; this.preparingHistory = false; this.loading = false; this.tailTrouble = true; this.updateTrouble();
@@ -482,7 +484,7 @@ export class ConversationViewReader {
                         this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 0);
                         if (!settled) {
                             settled = true;
-                            resolve(false);
+                            resolve();
                         }
                         return;
                     }
@@ -564,10 +566,16 @@ export class ConversationViewReader {
                             this.tailTrouble = false;
                             this.updateTrouble();
                             this.changed();
-                            this.retry = setTimeout(() => { this.retry = null; settled = true; resolve(true); }, 1500);
+                            this.retry = setTimeout(() => { this.retry = null; settled = true; resolve('preparing'); }, 1500);
                             return;
                         }
                         await response.body?.cancel();
+                        // Promotion can finish between the refused tail and this snapshot.
+                        if (response.ok && canRetryReadySnapshot && active()) {
+                            settled = true;
+                            resolve('snapshot-ready');
+                            return;
+                        }
                     } catch {
                         // A failed status read takes the ordinary disconnect path.
                     }
@@ -576,7 +584,7 @@ export class ConversationViewReader {
             };
             const abort = () => { probe.abort(); source.close(); if (!settled) {
                 settled = true;
-                resolve(false);
+                resolve();
             } };
             this.abort.signal.addEventListener('abort', abort, { once: true });
             this.releaseSource = () => { this.abort.signal.removeEventListener('abort', abort); abort(); };
