@@ -5,7 +5,7 @@ import {
   local_midnight,
   offset_date,
 } from '../../measures/logic/dates.ts';
-import { DEFAULT_DAYS, SORT_FIELDS, TIMEZONE } from '../configuration.ts';
+import { DEFAULT_DAYS, SORT_FIELDS, LEGACY_OWNER_TIME_ZONE } from '../configuration.ts';
 import type {
   AttentionEvent,
   Comparison,
@@ -36,8 +36,12 @@ const text_order = (a: string, b: string): number => {
   for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
   return x.length - y.length;
 };
-export function periods(request: SummaryRequest, now: number): [Period, Period] {
-  const today = local_date(now, TIMEZONE);
+export function periods(
+  request: SummaryRequest,
+  now: number,
+  zone = LEGACY_OWNER_TIME_ZONE,
+): [Period, Period] {
+  const today = local_date(now, zone);
   if ((request.first_date === null) !== (request.last_date === null))
     throw new TypeError('first_date and last_date must be supplied together');
   const first = request.first_date ?? offset_date(today, -(DEFAULT_DAYS - 1));
@@ -61,12 +65,12 @@ export function periods(request: SummaryRequest, now: number): [Period, Period] 
     const previous_last = offset_date(first, -1);
     const previous_first = offset_date(first, -width);
     const period = (a: string, b: string): Period => {
-      const full_end = local_midnight(offset_date(b, 1), TIMEZONE);
+      const full_end = local_midnight(offset_date(b, 1), zone);
       return {
         first_date: a,
         last_date: b,
-        timezone: TIMEZONE,
-        start_at: local_midnight(a, TIMEZONE),
+        timezone: zone,
+        start_at: local_midnight(a, zone),
         end_at: Math.min(full_end, now),
         partial: full_end > now,
       };
@@ -215,8 +219,13 @@ function comparison(current: Figures, previous: Figures): Comparison {
   }
   return { current, previous, difference };
 }
-export function build_summary(request: SummaryRequest, evidence: Evidence, now: number) {
-  const [current_period, previous_period] = periods(request, now);
+export function build_summary(
+  request: SummaryRequest,
+  evidence: Evidence,
+  now: number,
+  zone = LEGACY_OWNER_TIME_ZONE,
+) {
+  const [current_period, previous_period] = periods(request, now, zone);
   const unique = new Map<string, AttentionEvent>();
   for (const event of [...evidence.events].sort(
     (a, b) => a.occurred_at - b.occurred_at || text_order(a.identity, b.identity),

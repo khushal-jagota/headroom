@@ -32,7 +32,7 @@ Worker files a proposal for the current stage
 
 A proposal waits briefly for a busy database before it changes the record. If that wait expires, the sender receives a retryable refusal. Headroom never repeats a proposal commit after an uncertain result.
 
-Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Each approval moves one stage.
+Only the Ticket's own Worker files proposals. The owner, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Each approval moves one stage.
 
 Approvals name the next ceiling and holder. The Worker performs authorized follow-through in Consequences and submits a verified report. If the ceiling is Done, the report settles automatically and the Ticket reaches Done. Otherwise the ceiling holder reviews the report, and acceptance moves the Ticket to Done.
 
@@ -51,10 +51,10 @@ Each settled stage remembers who approved it: a named person or agent, or auto-a
 These are three separate facts.
 
 - The **assignment** says where the work sits in the Workspace, and so which Manager stands above it.
-- The **holder** says who is on the hook to look when a proposal parks: Khushal, Chief for a Chief-assigned Ticket, or the assigned Manager. A parked proposal for Khushal appears in [Review](review.md). One for Chief or a Manager arrives in that agent's conversation as a real prompt. See [Managers and Chief](managers.md).
+- The **holder** says who is on the hook to look when a proposal parks: the owner, Chief for a Chief-assigned Ticket, or the assigned Manager. A parked proposal for the owner appears in [Review](review.md). One for Chief or a Manager arrives in that agent's conversation as a real prompt. See [Managers and Chief](managers.md).
 - **Who may approve** is wider than the holder. Anyone who stands above the Ticket may approve or send back. See [Who may act](authority.md).
 
-Moving a Ticket to another Manager can make the old holder illegal. Then the holder returns to Khushal unless the move names a new one.
+Moving a Ticket to another Manager can make the old holder illegal. Then the holder returns to the owner unless the move names a new one.
 
 ## How status is read
 
@@ -74,7 +74,7 @@ If cleanup cannot establish that the old Worker ended, restart refuses before th
 
 Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. A Manager's counts by need put deferred children in their own backlog count. Their direct records retain the proposal and conversation facts.
 
-Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
+Tickets come from the owner, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
 
 Delete removes the Ticket's record and leaves its files. It is available from the command line and the API, not the browser, to anyone who stands above the Ticket. It refuses while the Worker is still busy, unless the caller forces it or is the Ticket's own Manager. Then the Worker is stopped first, so it never outlives its Ticket.
 
@@ -84,7 +84,7 @@ The machine destination defaults to the home at creation. The owner can move a T
 
 The browser accepts a move before it completes. Panels stores its progress, so the owner can leave and return. The move shows each phase, elapsed time, and any refusal or startup failure with a next step. A server interruption ends the progress with an explicit failure rather than replaying a partial move. The command line keeps its final-result response.
 
-The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
+The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The owner registers extra destinations in Settings → Machines. See [Extra machines](executor.md).
 
 ## Where it shows up
 

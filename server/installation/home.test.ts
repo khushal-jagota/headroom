@@ -127,6 +127,7 @@ test('fresh database initialization closes its child before activation and faile
       f.deps.execution,
       process.execPath,
       machine,
+      'Asia/Tokyo',
     );
     const identity = JSON.parse(readFileSync(join(machine, 'identity.json'), 'utf8'));
     const credential_file = join(machine, 'machine-credential.json');
@@ -139,6 +140,12 @@ test('fresh database initialization closes its child before activation and faile
     const reader = createReadAccess(path);
     try {
       reader.read((sql) => {
+        assert.equal(
+          sql.get<{ owner_time_zone: string }>(
+            'SELECT owner_time_zone FROM attention_history_metadata',
+          )?.owner_time_zone,
+          'Asia/Tokyo',
+        );
         // A fresh home starts with no projects.
         assert.deepEqual(sql.all('SELECT name FROM projects'), []);
         assert(

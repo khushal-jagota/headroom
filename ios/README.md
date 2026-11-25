@@ -1,20 +1,21 @@
 # Panels for iOS
 
-Native SwiftUI foundation, iOS 18 minimum. The app defaults to
-`https://panels-vps.tail687c57.ts.net`; Settings (the gear in the Sidebar) changes and persists the
-HTTPS server address. The Mac must be able to reach the server over Tailscale.
-No backend changes or third-party packages are needed.
+Panels for iPhone requires iOS 18 or later. Connect your device to Tailscale.
+On first launch, enter your home's HTTPS address from Tailscale Serve.
+The app keeps that address for later launches.
+To change the address, open Settings from the Sidebar.
+If your earlier app used a built-in address, enter that same address to reconnect.
 
 The app icon uses the Chief of Staff portrait from
 `web/src/assets/chief-of-staff-profile.webp`, centered on its black background.
 Its opaque 1024×1024 PNG lives in `Panels/Assets.xcassets/AppIcon.appiconset`;
 `project.yml` selects `AppIcon` for the Panels target.
 
-Review is the root at launch and opens on its summary. There is no tab bar. The destinations are Review,
+Review opens on its summary once the app has a home address. There is no tab bar. The destinations are Review,
 Chief, each Manager and Settings. Only the current destination is on screen and
 mounted, in its own navigation stack. The shell keeps each destination's page path,
-so a return shows the page Khushal left, for example after a notification moved him
-elsewhere. Drafts survive every switch because they are saved per owner and reload
+so you can return to the page you left, for example after a notification opens another
+page. Drafts survive every switch because they are saved per owner and reload
 when a page mounts. Scroll position and a view's in-memory state do not.
 
 A slide-over Sidebar replaces the tab bar; see [Sidebar](#sidebar). Every page uses
@@ -176,17 +177,19 @@ edit controls.
 Use Xcode 16 or newer with an installed iOS 18+ simulator runtime. The committed
 Xcode project builds without XcodeGen. If adding source files, install XcodeGen
 (`brew install xcodegen`) and run `ios/scripts/generate-project.sh`.
+Run `xcrun simctl list devices available` to find your assigned simulator's name and UDID.
 Run these commands from the repository root:
 
 ```sh
-PANELS_DEVICE=5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6
+PANELS_DEVICE=YOUR_SIMULATOR_UDID
 PANELS_PROOF=/path/to/proof-directory
+PANELS_DERIVED_DATA=$(mktemp -d "${TMPDIR%/}/PanelsDerivedData.XXXXXX")
 xcrun simctl bootstatus "$PANELS_DEVICE" -b
 xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -configuration Debug -sdk iphonesimulator \
   -destination "platform=iOS Simulator,id=$PANELS_DEVICE" \
-  -derivedDataPath "$PANELS_PROOF/DerivedData" clean build
-xcrun simctl install "$PANELS_DEVICE" "$PANELS_PROOF/DerivedData/Build/Products/Debug-iphonesimulator/Panels.app"
+  -derivedDataPath "$PANELS_DERIVED_DATA" clean build
+xcrun simctl install "$PANELS_DEVICE" "$PANELS_DERIVED_DATA/Build/Products/Debug-iphonesimulator/Panels.app"
 xcrun simctl launch "$PANELS_DEVICE" com.khushaljagota.panels
 xcrun simctl io "$PANELS_DEVICE" screenshot "$PANELS_PROOF/review.png"
 xcrun simctl io "$PANELS_DEVICE" recordVideo "$PANELS_PROOF/walkthrough.mp4"
@@ -197,24 +200,19 @@ xcrun simctl terminate "$PANELS_DEVICE" com.khushaljagota.panels
 Do not open Simulator.app or take over the user's screen. If the assigned simulator
 is shut down, run `xcrun simctl boot "$PANELS_DEVICE"` before `bootstatus`.
 
-Exactly three shared lanes were created, all iPhone 17, iOS 27.0 (the installed
-runtime; the deployment target remains iOS 18):
+For a shared Mac, reuse your assigned simulator. To reset it, terminate your app.
+Shut down only your assigned device, erase it with `xcrun simctl erase "$PANELS_DEVICE"`,
+and boot it headless again. Use the exact UDID for every operation.
 
-| Lane | Device identifier |
-| --- | --- |
-| PanelsLaneA | `5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6` |
-| PanelsLaneB | `47890EEA-D1D8-4E5A-AF74-DB66866D7840` |
-| PanelsLaneC | `5D323346-68F9-4A0D-A90B-74507469C98A` |
+For the conversation and offline proof scripts, set the matching
+`PANELS_CONVERSATION_DEVICE` or `PANELS_OFFLINE_DEVICE` to your simulator's UDID.
+Set `PANELS_CONVERSATION_LANE` or `PANELS_OFFLINE_LANE` to its assigned lane name.
+The notification proof uses `PANELS_PUSH_LANE` to select an already booted simulator by name.
+Use the same lane name across scripts so they share its lock.
 
-Later workers reuse their assigned lane. Erase between runs: terminate your app,
-shut down **only your assigned device**, run `xcrun simctl erase "$PANELS_DEVICE"`,
-then boot it headless again. Never create or delete devices per run, never use the
-ambiguous `booted` selector, and never touch another worker's lane. The foundation
-uses Lane A and leaves all three lanes available for the parallel screen workers.
+## Official TestFlight signing
 
-## TestFlight signing
-
-Panels uses Blue Door Labs team `FB99BBDJBA` and bundle ID
+The release publisher uses Blue Door Labs team `FB99BBDJBA` and bundle ID
 `com.khushaljagota.panels`. Version 0.1 started at build 1. Release builds for
 physical iOS use automatic signing and the Push Notifications capability, with
 `aps-environment=production`. Push registration remains disabled. The app declares all four interface

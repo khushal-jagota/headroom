@@ -120,7 +120,7 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertTrue(TicketMachine.signal(signal, locale: "macos", health: ready)?.working == true)
         XCTAssertFalse(TicketMachine.signal(signal, locale: "macos", health: ready, completed: true)?.working == true)
         XCTAssertTrue(TicketMachine.signal(signal, locale: "vps", health: nil)?.working == true)
-        XCTAssertEqual(TicketMachine.name("macos"), "Mac")
+        XCTAssertEqual(TicketMachine.name("macos"), "Remote machine")
     }
     func testBrokenTicketIsDiagnosticWithoutHidingTheRestOfTheList() throws {
         let json = #"{"id":"broken","title":"Needs repair","worker_type":"removed","stage":"old","ticket_status":"errored","integrity_error":{"reason":"Worker type is missing"},"recap":"Saved recap","conversation_id":"c_saved","is_backlogged":false}"#
@@ -194,6 +194,24 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertFalse(editor.isSaving)
         XCTAssertEqual(handle.value?.subjects.first?.types.first?.enabled, false)
         XCTAssertEqual(handle.value?.subjects.first?.types.last?.enabled, false, "The complete returned catalogue is authoritative")
+    }
+
+    func testServerAddressRequiresAnExplicitSavedOrigin() throws {
+        let suite = "PanelsTests.ServerAddress." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertNil(SettingsServerAddress.saved(in: defaults))
+
+        defaults.set("http://other.example", forKey: "panels.baseURL")
+        XCTAssertNil(SettingsServerAddress.saved(in: defaults))
+
+        let previous = try XCTUnwrap(URL(string: "https://my-home.example:9443/"))
+        defaults.set(previous.absoluteString, forKey: "panels.baseURL")
+        XCTAssertEqual(SettingsServerAddress.saved(in: defaults), previous)
+
+        let next = try XCTUnwrap(URL(string: "https://new-home.example"))
+        SettingsServerAddress.save(next, in: defaults)
+        XCTAssertEqual(SettingsServerAddress.saved(in: defaults), next)
     }
 
     func testServerAddressRejectsCredentialAndPathInjection() {

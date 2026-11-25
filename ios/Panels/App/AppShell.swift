@@ -80,7 +80,7 @@ struct AppShell: View {
         .onChange(of: ReviewSavedWork.Key(server: LocalStore.server(store.baseURL), revision: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))), initial: true) { _, key in
             savedReviewWork.refresh(key.server)
         }
-        // The shell keeps Review's queue current wherever Khushal is, so the card on
+        // The shell keeps Review's queue current wherever the owner is, so the card on
         // screen is always in the latest window and a return finds it as it is.
         .onChange(of: reviewInputs, initial: true) { _, _ in
             reviewSession.update(store: store, savedWork: savedReviewWork,

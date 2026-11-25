@@ -46,7 +46,6 @@ struct ServerReadFailure: LocalizedError, Sendable {
 
 /// Shared reads and Ticket machine catalogue transport.
 struct APIClient: Sendable {
-    static let defaultBaseURL = URL(string: "https://panels-vps.tail687c57.ts.net")!
     let baseURL: URL
     var session: URLSession = .shared
 

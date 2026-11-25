@@ -85,7 +85,7 @@ export function refuseManagerReparenting(caller: Principal, ticketId: string): v
   if (caller.kind !== 'owner' && caller.kind !== 'chief')
     throw new PlannerError(
       'agent_forbidden',
-      'only Khushal or the Chief can move a Ticket out of its own chain',
+      'only the owner or the Chief can move a Ticket out of its own chain',
       { field: 'manager_id', ticket_id: ticketId },
     );
 }

@@ -5,7 +5,7 @@
     "CREATE TABLE alembic_version (\n\tversion_num VARCHAR(32) NOT NULL, \n\tCONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)\n)",
     "CREATE TABLE attention_approval_events (id INTEGER PRIMARY KEY AUTOINCREMENT,ticket_id TEXT NOT NULL,field TEXT NOT NULL,actor_kind TEXT NOT NULL,actor_id TEXT NOT NULL,method TEXT NOT NULL,occurred_at INTEGER NOT NULL,destination_json TEXT NOT NULL)",
     "CREATE TABLE attention_gate_intervals (id INTEGER PRIMARY KEY AUTOINCREMENT,ticket_id TEXT NOT NULL,destination_json TEXT NOT NULL,opened_at INTEGER,observed_since INTEGER NOT NULL,closed_at INTEGER,CHECK(closed_at IS NULL OR closed_at>=observed_since))",
-    "CREATE TABLE attention_history_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton=1),started_at INTEGER NOT NULL)",
+    "CREATE TABLE attention_history_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton=1),started_at INTEGER NOT NULL, owner_time_zone TEXT)",
     "CREATE TABLE automatic_start_bindings (identity TEXT PRIMARY KEY,work_class TEXT NOT NULL,destination TEXT NOT NULL,conversation_id TEXT NOT NULL,turn_number INTEGER NOT NULL,executor_incarnation TEXT,child_id TEXT)",
     "CREATE TABLE \"backend_model_enablement\" (\n          backend_key TEXT NOT NULL,\n          model_id    TEXT NOT NULL,\n          enabled     INTEGER NOT NULL CHECK (enabled IN (0,1)),\n          PRIMARY KEY (backend_key, model_id)\n        )",
     "CREATE TABLE \"backend_usage_snapshots\" (\n          backend_key TEXT PRIMARY KEY,\n          observed_at INTEGER NOT NULL\n        )",
@@ -376,5 +376,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0014_work_move_operations"
+  "alembicRevision": "ts_0015_owner_time_zone"
 }

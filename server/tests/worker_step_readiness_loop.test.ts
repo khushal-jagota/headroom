@@ -223,7 +223,7 @@ test('restart refuses a Mac ticket while the Mac is away without changing it', a
     }),
   ).rejects.toMatchObject({
     code: 'validation',
-    message: 'Waiting for the Mac: restart this Ticket once it is back',
+    message: 'Waiting for Mac: restart this Ticket once it is back',
     detail: { ticket_id: ticket.id },
   });
   expect(kill).not.toHaveBeenCalled();

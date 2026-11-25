@@ -82,7 +82,7 @@ struct ExecutorHealth: Codable, Sendable {
 }
 enum TicketMachine {
     static func name(_ locale: String?) -> String? {
-        switch locale { case "macos": "Mac"; case "vps": "VPS"; default: nil }
+        switch locale { case "macos": "Remote machine"; case "vps": "Home"; default: nil }
     }
     static func activityUnknown(_ locale: String?, health: ExecutorHealth?) -> Bool {
         switch locale {
@@ -96,11 +96,11 @@ enum TicketMachine {
         return activityUnknown(locale, health: health)
     }
     static func unknownActivityText(_ locale: String?) -> String {
-        locale == "macos" ? "Current activity on Mac is unknown." : "Current activity is unknown."
+        locale == "macos" ? "Current activity on the remote machine is unknown." : "Current activity is unknown."
     }
     static func accessibilityLabel(_ title: String, locale: String?, health: ExecutorHealth?) -> String {
         let machine = name(locale).map { ", runs on " + $0 } ?? ""
-        return title + machine + (activityUnknown(locale, health: health) ? (locale == "macos" ? ", current activity on Mac is unknown" : ", current activity is unknown") : "")
+        return title + machine + (activityUnknown(locale, health: health) ? (locale == "macos" ? ", current activity on the remote machine is unknown" : ", current activity is unknown") : "")
     }
     static func signal(_ signal: ConversationSignal?, locale: String?, health: ExecutorHealth?, completed: Bool = false) -> ConversationSignal? {
         signal.map { ConversationSignal(working: $0.working && !completed && !activityUnknown(locale, health: health), messageForOwner: $0.messageForOwner) }

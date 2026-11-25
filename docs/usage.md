@@ -1,6 +1,6 @@
 # Usage
 
-Usage is where Khushal sees what the agents on this host can still spend, and what they have already spent, without opening each provider's own dashboard. It also sets up the backends those agents run on. Headroom does not bill anyone. Codex, Claude and Antigravity use the logins on the host, and their plan limits and invoices stay with those providers.
+Usage is where the owner sees what the agents on this host can still spend, and what they have already spent, without opening each provider's own dashboard. It also sets up the backends those agents run on. Headroom does not bill anyone. Codex, Claude and Antigravity use the logins on the host, and their plan limits and invoices stay with those providers.
 
 ## What it is made of
 

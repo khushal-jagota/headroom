@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
@@ -66,8 +67,7 @@ await writeFile(
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
 for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
-// Retain the runner's tools but exclude every PATH entry named node. This proves the
-// downloaded Python bootstrap and native server jobs do not need a host Node.
+// Keep the runner's tools except node and gh. The bootstrap needs neither host tool.
 const no_node_bin = join(base, 'host-without-node');
 await mkdir(no_node_bin);
 const linked = new Set<string>();
@@ -80,7 +80,7 @@ for (const directory of (environment.PATH ?? '').split(':').filter(Boolean)) {
     throw error;
   }
   for (const name of names) {
-    if (name === 'node' || linked.has(name)) continue;
+    if (name === 'node' || name === 'gh' || linked.has(name)) continue;
     await symlink(join(directory, name), join(no_node_bin, name));
     linked.add(name);
   }
@@ -210,6 +210,8 @@ try {
       service,
       '--port',
       String(port),
+      '--time-zone',
+      'Asia/Tokyo',
       '--archive',
       archive,
       '--receipt',
@@ -220,6 +222,19 @@ try {
     ],
     no_node_environment,
   );
+  await absent(join(root, 'data/secrets/update-token'));
+  const record = new DatabaseSync(join(root, 'data/planner.db'), { readOnly: true });
+  try {
+    assert.equal(
+      record.prepare('SELECT owner_time_zone FROM attention_history_metadata').get()
+        ?.owner_time_zone,
+      'Asia/Tokyo',
+    );
+  } finally {
+    record.close();
+  }
+  report.install_defaults =
+    'The selected reporting time zone was saved and no update token was written.';
   // The native package can boot while its shared styles are absent. Check the
   // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
   const styles_started = performance.now();
@@ -274,6 +289,7 @@ try {
   const command = output.split('\n').find((line) => line.startsWith('panels_join_script='));
   const credential = output.split('\n').find((line) => /^[A-Za-z0-9_-]{43}$/.test(line));
   assert.ok(command && credential, 'The actual join command must supply a private credential');
+  assert.match(command, /curl .*https:\/\/raw\.githubusercontent\.com\//);
   const private_input = join(base, 'join-credential');
   await writeFile(private_input, credential + '\n', { flag: 'wx', mode: 0o600 });
   join_attempted = true;

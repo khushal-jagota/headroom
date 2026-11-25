@@ -3,11 +3,7 @@ import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { built_in_driver_of } from '../drivers/built_in_manifests.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import {
-  HOME_MACHINE_ID,
-  ORIGINAL_MAC_MACHINE_ID,
-  legacy_machine_id,
-} from '../execution_identity.ts';
+import { HOME_MACHINE_ID, legacy_machine_id } from '../execution_identity.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { conversation_machine_id } from '../machines/conversation_machine.ts';
@@ -285,8 +281,6 @@ function machine_name(sql: ReadSql, machine: string): string {
     machine_id,
   ]);
   if (!row) throw new PlannerError('validation', 'Unknown machine destination', { machine_id });
-  if (machine_id === HOME_MACHINE_ID && row.name === 'VPS') return 'the VPS';
-  if (machine_id === ORIGINAL_MAC_MACHINE_ID && row.name === 'Mac') return 'the Mac';
   return row.name;
 }
 export function require_usable_model(

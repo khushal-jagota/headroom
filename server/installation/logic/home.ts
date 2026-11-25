@@ -1,4 +1,5 @@
 import { is_record } from '../../core/records.ts';
+import { timezone } from '../../measures/logic/dates.ts';
 import type { HomeInstallHost, HomeInstallRequest, HomeInstallSubmission } from '../contracts.ts';
 
 /** One required request text field: present, non-empty, and without NUL. */
@@ -48,16 +49,23 @@ export function home_install_request(value: unknown): HomeInstallSubmission {
     throw new Error('isolated_providers must be a boolean');
   if (value.skip_command_link !== undefined && typeof value.skip_command_link !== 'boolean')
     throw new Error('skip_command_link must be a boolean');
+  const owner_time_zone = timezone(
+    value.owner_time_zone === undefined
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : request_text(value, 'owner_time_zone'),
+  );
   const request = {
     ...release_install_fields(value),
+    owner_time_zone,
     skip_command_link: value.skip_command_link ?? false,
     isolated_providers: value.isolated_providers,
-    update_token: request_text(value, 'update_token'),
   };
-  // The message never repeats the credential.
-  if (!/^[\x21-\x7e]+$/.test(request.update_token))
+  if (value.update_token === undefined) return request;
+  // Earlier bootstraps supplied a credential. The message never repeats it.
+  const update_token = request_text(value, 'update_token');
+  if (!/^[\x21-\x7e]+$/.test(update_token))
     throw new Error('The update token must be printable text without spaces');
-  return request;
+  return { ...request, update_token };
 }
 export function validate_home_host(
   request: Pick<HomeInstallRequest, 'service'>,

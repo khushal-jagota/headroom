@@ -1,15 +1,15 @@
 # Apple Silicon machine code
 
 An Apple Silicon machine joins with the same command as a Linux machine.
-The owner gets the command and a private credential from Settings → Machines, or from `panels machine join-command`.
-The machine needs macOS 15 or newer, a login to its graphical session, the GitHub CLI with a login, and Python 3.11 or newer.
-The Python that comes with macOS is 3.9. Install a newer one with Homebrew: `brew install python gh`.
+The owner gets the command and a private credential from Settings → Machines. A terminal with owner authority can use `panels machine join-command`.
+The machine needs macOS 15 or newer, a graphical login, Tailscale, `curl`, and Python 3.11.8 or newer.
+Install a supported Python with Homebrew if needed: `brew install python`.
 The machine needs no Node, no Xcode tools and no signing identity.
 
 ## What the join does
 
-The command downloads `scripts/panels_install.py` at the server's released revision.
-The script checks the machine, then selects the newest unexpired release from `main` that matches that revision.
+The command downloads the official public `scripts/panels_install.py` at the server's released revision.
+The script checks the machine, then selects the permanent release from `main` that matches that revision.
 It downloads the `panels-mac-runtime` artifact and checks its SHA-256 against the publication receipt.
 It starts the join step `server/environments/mac_executor/join_main.ts` on the Node inside that release.
 The credential passes on private standard input. It never appears in a process argument.

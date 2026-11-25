@@ -64,7 +64,7 @@ struct SettingsView: View {
         Group {
             if let workers {
                 Section {
-                    LabeledContent("Mac executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")
+                    LabeledContent("Legacy executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")
                     Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
                         .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                 }.listRowBackground(PanelsTheme.raised)
@@ -206,27 +206,42 @@ struct ServerAddressSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var address: String
     @State private var error: String?
+    let isFirstLaunch: Bool
     let save: (URL) -> Void
-    init(initialAddress: String, save: @escaping (URL) -> Void) {
-        _address = State(initialValue: initialAddress); self.save = save
+
+    init(initialAddress: String, isFirstLaunch: Bool = false, save: @escaping (URL) -> Void) {
+        _address = State(initialValue: initialAddress)
+        self.isFirstLaunch = isFirstLaunch
+        self.save = save
     }
     var body: some View {
         NavigationStack {
             Form {
-                Section("HTTPS Address") {
-                    TextField("https://panels.example.com", text: $address)
+                Section {
+                    TextField("https://machine.tailnet.ts.net", text: $address)
                         .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityLabel("HTTPS address")
                     if let error { Text(error).foregroundStyle(PanelsTheme.error) }
+                } header: {
+                    Text("HTTPS Address")
+                } footer: {
+                    if isFirstLaunch {
+                        Text("Enter your Panels home's Tailscale Serve address. Connect this device to the same tailnet.")
+                    }
                 }.listRowBackground(PanelsTheme.raised)
-            }.panelsNavigationTitle("Server").navigationBarTitleDisplayMode(.inline).panelsScreen()
+            }.panelsNavigationTitle(isFirstLaunch ? "Connect to Panels" : "Server").navigationBarTitleDisplayMode(.inline).panelsScreen()
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { Haptics.light(); dismiss() } }
+                    if !isFirstLaunch {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { Haptics.light(); dismiss() } }
+                    }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
+                        Button(isFirstLaunch ? "Continue" : "Save") {
                             guard let url = SettingsServerAddress.validated(address) else {
                                 error = "Enter an HTTPS server address without a path."; return
                             }
-                            save(url); Haptics.success(); dismiss()
+                            save(url)
+                            Haptics.success()
+                            if !isFirstLaunch { dismiss() }
                         }
                     }
                 }

@@ -194,7 +194,7 @@
       <div class="machine-sheet" role="dialog" aria-modal="true" aria-label="Add a machine" tabindex="-1" bind:this={sheet} onkeydown={sheetKeydown}>
         <form class="machine-sheet-form" onsubmit={(event) => { event.preventDefault(); void createJoinCommand(); }}>
           <h3>Add a machine</h3>
-          <label class="machine-field">Name<input class="machine-input" bind:this={nameField} bind:value={newName} required maxlength="80" disabled={creating} placeholder="Mac 2" autocomplete="off" /></label>
+          <label class="machine-field">Name<input class="machine-input" bind:this={nameField} bind:value={newName} required maxlength="80" disabled={creating} placeholder="Second machine" autocomplete="off" /></label>
           {#if addError}<ErrorLine error={addError} />{/if}
           <div class="machine-actions machine-actions--end">
             <Button variant="ghost" disabled={creating} onclick={finishAdding}>Cancel</Button>
@@ -208,7 +208,7 @@
         <h3>Join {newName.trim()} to Panels</h3>
         <p>Check that this is your home’s address before you share anything: <strong>{grant.home_url}</strong></p>
         <div class="machine-step">
-          <p>1. On {newName.trim()}, signed in to the GitHub CLI, run:</p>
+          <p>1. Sign in to Tailscale on {newName.trim()}, then run this command to download the official machine code:</p>
           <pre class="machine-codebox">{grant.command}<Button onclick={() => copy("command", grant!.command)} aria-label="Copy command">{copied === "command" ? "Copied" : "Copy"}</Button></pre>
         </div>
         <div class="machine-step">

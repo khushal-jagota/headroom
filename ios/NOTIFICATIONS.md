@@ -1,5 +1,9 @@
 # Native notifications
 
+Official iPhone builds can connect to any configured Panels home.
+Native push for other homes is future work. These signing and delivery steps apply
+to the official publisher's test and live deployments.
+
 ## What Panels does today
 
 The backend has durable attention edges and a Web Push delivery queue. There is
@@ -18,7 +22,7 @@ subscriptions and registered native devices.
 subscriptions. An APNs token is not a Web Push subscription: it has neither a
 browser endpoint nor the browser encryption keys.
 
-| Event | Lock-screen example | Needed from Khushal |
+| Event | Lock-screen example | Needed from the owner |
 | --- | --- | --- |
 | awaiting_reply | Chief of Staff / The revised proposal is ready for review. | Read or reply |
 | awaiting_answer | iOS app · Needs an answer / A worker is waiting. Open Panels to answer the question. | Answer |
@@ -172,6 +176,10 @@ the Review route. Identifiers must be single alphanumeric/underscore/hyphen
 components. Unsupported/deleted targets must remain read errors, not become
 implicit actions or a different target.
 
+The checked-in `NotificationPayloads/*.apns` files use example addresses.
+Use `ios/scripts/test-notifications-simulator.py` for a loopback proof that writes
+payloads for the selected test origin.
+
 ## Apple account and release work remains
 
 The server reads these environment variables; none has a committed credential value:
@@ -195,11 +203,11 @@ Owner authentication and the payload origin use the existing
 the HTTPS Panels server selected in the app, without user credentials, a path,
 query or fragment. The endpoint must sit behind the verified owner access boundary.
 
-### Live server credentials
+### Official publisher's live server credentials
 
-The live service loads `/home/vps/.config/panels/panels-live.env`. The launcher
+The live service loads `$HOME/.config/panels/panels-live.env`. The launcher
 passes the four APNs settings explicitly. Keep the private key in
-`/home/vps/.config/panels/secrets/apns.p8`, outside the app and repository. App
+`$HOME/.config/panels/secrets/apns.p8`, outside the app and repository. App
 updates must not replace it. Only the service account needs read access.
 
 1. Open Apple Developer → Certificates, Identifiers & Profiles → Identifiers.
@@ -222,28 +230,27 @@ See [Apple's key creation instructions](https://developer.apple.com/help/account
 On the VPS, prepare the destination before the private transfer:
 
 ```sh
-install -d -m 700 /home/vps/.config/panels/secrets
+install -d -m 700 $HOME/.config/panels/secrets
 ```
 
 After the transfer, restrict the key and edit the existing environment file privately:
 
 ```sh
-chmod 600 /home/vps/.config/panels/secrets/apns.p8
-chmod 600 /home/vps/.config/panels/panels-live.env
+chmod 600 $HOME/.config/panels/secrets/apns.p8
+chmod 600 $HOME/.config/panels/panels-live.env
 ```
 
 Preserve the existing settings. Add these entries with the real key ID from Apple's key details:
 
 ```ini
-PLAN_APNS_KEY_PATH=/home/vps/.config/panels/secrets/apns.p8
+PLAN_APNS_KEY_PATH=/absolute/path/to/panels/secrets/apns.p8
 PLAN_APNS_KEY_ID=REPLACE_WITH_APNS_KEY_ID
 PLAN_APNS_TEAM_ID=FB99BBDJBA
 PLAN_APNS_BUNDLE_IDS=com.khushaljagota.panels
 ```
 
-Keep the configured canonical origin `https://panels-vps.tail687c57.ts.net` and
-owner ingress settings. Do not copy the key into an environment variable.
-Chief coordinates deployment and the live restart with Khushal. A Worker must not
+Keep the deployment's configured canonical HTTPS origin and owner ingress settings. Do not copy the key into an environment variable.
+Chief coordinates deployment and the live restart with the owner. A Worker must not
 restart or reload the live server. A changed file alone does not change its environment.
 
 ### Signed build on the Mac
@@ -296,12 +303,12 @@ No `.p8` key belongs in the archive, project, or build inputs.
 7. Put the app in the background and lock the phone.
 8. Trigger one new, permitted attention edge through its normal Panels action.
 9. Check the matching APNs delivery record without printing tokens or provider credentials.
-10. Ask Khushal to confirm that the alert arrived and its tap opened the correct destination.
+10. Ask the owner to confirm that the alert arrived and its tap opened the correct destination.
 
 Use a subject whose selected attention flag is false before the action. An old,
 unchanged flag does not create a new alert. Keep unrelated preferences unchanged.
 Provider acceptance, Simulator injection, and a queue row do not prove phone receipt.
-Record the app version, environment, event, delivery result, and Khushal's confirmation
+Record the app version, environment, event, delivery result, and the owner's confirmation
 in the ticket. If deployment, credentials, or the signed build are unavailable,
 keep physical proof pending and request the required owner or Chief action.
 

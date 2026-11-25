@@ -130,8 +130,7 @@
     selectedPastConversationId = requestedConversationId && requestedConversationId !== canonicalTicket.value.conversation_id ? requestedConversationId : null;
     if (requestedConversationId) conversationState = "opened";
   });
-  // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
-  // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
+  // Use the assigned Manager’s saved title in the ceiling picker.
   let ticketManager = $derived(
     section?.detail.manager_id
       ? {

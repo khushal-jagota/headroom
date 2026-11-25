@@ -1,6 +1,5 @@
 /** Client-only collection setup. The collector retains database access in collection.ts. */
 import { isAbsolute } from 'node:path';
-import { TIMEZONE } from './configuration.ts';
 export const ATTENTION_SOURCE_ACCOUNT = 'panels-attention-history';
 export const COLLECTION_LOCAL_TIME = '00:05';
 export const DAILY_METRICS = [
@@ -45,6 +44,8 @@ export async function setup_collection(
       offset = next;
     }
   };
+  const { period } = await send('GET', '/api/attention/summary', { params: { limit: 1 } });
+  const timezone: string = period.timezone;
   const matches = (await listing('/api/measure-sources', 'sources', { project_id }))
     .map((entry) => entry.source)
     .filter(
@@ -84,7 +85,7 @@ export async function setup_collection(
           project_id,
           source_id: source.id,
           name,
-          timezone: TIMEZONE,
+          timezone,
           dimensions: [
             ['destination_kind', 'Destination kind'],
             ['destination_id', 'Destination'],
@@ -105,7 +106,7 @@ export async function setup_collection(
           project_id,
           source_id: source.id,
           name,
-          timezone: TIMEZONE,
+          timezone,
           unit,
           origin: 'taken',
           kind: 'period_count',

@@ -2,17 +2,17 @@
 
 One sentence decides almost every guarded write in Headroom: you may act on anything strictly below you.
 
-Khushal, Chief, Managers, and Workers all call the same routes. There is no separate interface for agents. Who the caller is, and where the target sits, decides whether the call is admitted.
+The owner, Chief, Managers, and Workers all call the same routes. There is no separate interface for agents. Who the caller is, and where the target sits, decides whether the call is admitted.
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner**, **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
 Each agent conversation receives a private launch credential. The CLI sends it automatically. The server checks its hash and resolves the caller from the conversation’s current Ticket, Chief or Manager association. Role names, ids and `X-Plan-*` headers grant no authority. A missing, invalid or revoked agent credential never makes an agent the owner.
 
 Agents use `panels api` when no dedicated command covers a route. This keeps the credential inside the same automatic transport as ordinary commands. Deployment recovery prompts give agents that command rather than an unauthenticated HTTP instruction. Recap requests name `panels recap`, which writes the caller's own recap.
 
-On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header. This owner path is separate from agent credentials.
+For access from another device, the owner signs in to Tailscale. The installed home trusts its configured Tailscale login. Tailscale Serve adds the login header. This owner path is separate from agent credentials.
 
 A browser write must come from the server's own address. The desktop app is the one other origin the server accepts, `panels://app`, named once in `server/core/http/middleware.ts`. The server sends CORS headers to that origin only, for reads, writes, preflights and live streams. The origin adds no identity: the app still reaches a hosted server through Tailscale Serve. The app as built forwards its requests from its native side, which sends no Origin, so it does not rely on this rule.
 
@@ -27,7 +27,7 @@ This catches accidents, not deliberate impersonation by a process running as the
 ## Position
 
 ```text
-Khushal ─┬─ everything
+Owner ───┬─ everything
 Chief ───┘
 
 Manager ─ its held goals and current child Tickets
@@ -37,19 +37,19 @@ Ticket ─── nothing
 
 A Manager stands above a Ticket because the Ticket is assigned to it. Move the Ticket and the old Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban. (A Worker type could declare something its Tickets stand above. No current type does.)
 
-The same rule covers owner-level configuration: skills, Worker types, and projects sit at the top, so only Khushal and Chief stand above them.
+The same rule covers owner-level configuration: skills, Worker types, and projects sit at the top, so only the owner and Chief stand above them.
 
 ## Your own record
 
 Acting as yourself is a different question from standing above something. A Worker files proposals, writes its recap, and asks for help on its own Ticket. A Manager writes its own goal, recap, and artifacts. Chief or the holding Manager edits a goal and its page through the same chain. The chain does not decide these.
 
-Proposing is the Ticket speaking about its own work, so nobody, including Khushal, proposes on a Ticket's behalf.
+Proposing is the Ticket speaking about its own work, so nobody, including the owner, proposes on a Ticket's behalf.
 
 ## The exceptions
 
-- **Re-parenting.** Only Khushal and Chief may move a Ticket to another Manager. At the moment of the call, the Ticket really is below the Manager trying to hand it away, so the plain rule would allow it. The exception exists so authority cannot be given away by whoever currently holds it.
+- **Re-parenting.** Only the owner and Chief may move a Ticket to another Manager. At the moment of the call, the Ticket really is below the Manager trying to hand it away, so the plain rule would allow it. The exception exists so authority cannot be given away by whoever currently holds it.
 - **Creation.** Making a Ticket acts on nothing that exists yet, so the rule cannot refuse it. The pieces it arrives with are checked one at a time instead. You can place it under a Manager in your own chain. Only someone above the new Ticket may set its ceiling and holder.
-- **Doors about who you are.** A small set of routes is not about any target. They ask only what kind of caller this is. Some admit only Khushal: his own reads and sends in a conversation, answering an agent's permission question, saving a credential, installing an update, and settling a Manager. Others admit Khushal or Chief, such as Chief's recap and the defaults for new Managers. These are deliberate and few.
+- **Doors about who you are.** A small set of routes is not about any target. They ask only what kind of caller this is. Some admit only the owner for actions such as sending a message, answering a permission question, saving a credential, installing an update, and settling a Manager. Others admit the owner or Chief, such as Chief's recap and the defaults for new Managers. These are deliberate and few.
 
 Who must look at a parked proposal, the holder, is a narrower fact owned by the [Ticket lifecycle](tickets.md). Holding a review grants nothing the rule does not already give.
 

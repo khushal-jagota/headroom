@@ -592,7 +592,7 @@ export function file_current_proposal(
 function explicit_approval(sql: ReadSql, p: Principal): TicketFieldApproval {
   let name =
     p.kind === 'owner'
-      ? 'Khushal'
+      ? 'Owner'
       : p.kind === 'chief'
         ? 'Chief'
         : sql.get<{

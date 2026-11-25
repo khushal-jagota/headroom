@@ -56,8 +56,8 @@ Formerly **Panels**. The app and command-line tool still use the `panels` name.
 
 ## Run locally
 
-For a sealed release, use the [one-command home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64.
-Use the [join command](ops/linux-executor/installation.md) to add an extra Linux machine to that home.
+Use the official public [home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64. The download requires no GitHub login.
+Use the [join command](ops/linux-executor/installation.md) to add another Mac or Linux machine. Panels requires Tailscale when you connect from another device or add a machine.
 
 For a source checkout, follow the commands below.
 

@@ -37,7 +37,7 @@ Screen trust stays with the selected server and its connection, as for the owner
 
 ## The server address
 
-First launch uses a step-by-step assistant that asks where the server lives: on this Mac or on another machine. The app never connects to a local server without that choice. The local path offers the default loopback address. The remote path asks for a Tailscale HTTPS address. Both paths ask whether Panels is installed, then offer a connection or the complete installation and first-setup guide, which ships offline from `ops/mac-home/installation.md`. The existing installer runs separately on the chosen machine. The app does not install or run a server.
+First launch uses a step-by-step assistant that asks where the server lives: on this Mac or on another machine. The app never connects to a local server without that choice. The local path offers the default loopback address. The remote path asks for a Tailscale HTTPS address. Both paths ask whether Panels is installed, then offer a connection or the complete installation and first-setup guide, which ships offline from `ops/mac-home/installation.md`. Copy the official install command from the assistant and run it on the chosen machine. Remote access requires Tailscale. The app does not install or run a server.
 
 The app checks the address before it stores it. HTTP works only on loopback. Remote addresses require HTTPS. An address cannot contain credentials, a path, a query, or a fragment. "Change Server…" opens the same flow, with Cancel to return to the current server.
 
@@ -63,7 +63,7 @@ The native side uses electron-updater to download the newest stable desktop rele
 
 The main process owns the restart dialog when new screens require a newer shell. New screens wait until the installed bridge meets their requirement. The dialog offers a restart only after a verified update meets that requirement. It adds no bridge action for artifact pages.
 
-The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
+Panels supports the publisher’s official desktop builds. The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
 
 ## Notifications
 

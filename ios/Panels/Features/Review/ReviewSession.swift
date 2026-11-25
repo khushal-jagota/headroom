@@ -52,7 +52,7 @@ struct ReviewQueue: Equatable, Sendable {
     private(set) var summary = true
     /// The card on screen, kept by identity: a later window does not replace it.
     private(set) var pinned: ReviewItem?
-    /// The card running its exit after Khushal handled it here.
+    /// The card running its exit after the owner handled it here.
     private(set) var leaving: ReviewItem?
     private(set) var notice: ReviewNotice?
     /// Cards skipped this run. Skip is local, like the web.
@@ -207,7 +207,7 @@ struct ReviewQueue: Equatable, Sendable {
     }
 
     /// The app went to the background during `session`. A card whose exit runs is
-    /// handled, not the card Khushal was on: its exit finishes on the return. Recorded,
+    /// handled, not the card the owner was on: its exit finishes on the return. Recorded,
     /// a fresh window would show the summary over the exit and remove the card's sheet
     /// before the sheet reports closing, so the card stays leaving and the queue stops.
     mutating func leaveApp(session: Int) {

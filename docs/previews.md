@@ -1,6 +1,6 @@
 # Previews
 
-A preview is one link Khushal can open to an application that a Worker runs on its assigned machine. It exists so he can try a running dev server from his own browser without anything new being exposed to the internet. A document or saved HTML artifact uses the Ticket's file preview instead.
+A preview lets the owner open a running application from a Ticket. The application runs on the assigned machine and the link stays on the existing tailnet. A document or saved HTML artifact uses the Ticket's file preview instead.
 
 ## What it is made of
 
@@ -42,7 +42,7 @@ Preview traffic passes through the server and machine code. Headroom caps concur
 
 ## Decisions that shape it
 
-- Same origin, trusted content. Previews are a convenience for Khushal's own Workers, not a sandbox.
+- Previews run in the same origin as Headroom. Use them only for trusted content.
 - One fixed worktree per Ticket and a fresh generation per run, so an old link never reaches a new process.
 - No rewriting. The app adapts to the base path, which keeps the proxy simple and honest.
 - Bounded inside Headroom so a busy preview cannot starve the workspace.

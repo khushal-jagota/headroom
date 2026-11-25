@@ -291,7 +291,7 @@ import UniformTypeIdentifiers
 
     }
 
-    /// Risk: a refused decision's card comes back without the note and pictures Khushal
+    /// Risk: a refused decision's card comes back without the note and pictures the owner
     /// wrote, as when its proposal no longer waits and the card is rebuilt from the refusal.
     func testRefusedDecisionBringsBackItsNoteAndAttachments() async throws {
         let (decision, api, item) = try await setupDecision()

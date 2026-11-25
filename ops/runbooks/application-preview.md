@@ -1,6 +1,6 @@
 # Share a running application through a preview
 
-For a Worker that needs Khushal to open its application on the assigned machine. The design,
+For a Worker that needs the owner to open its application on the assigned machine. The design,
 the trust boundary, and the limits are in [docs/previews.md](../../docs/previews.md).
 Only put code you trust behind a preview: it runs in Headroom's own browser origin.
 
