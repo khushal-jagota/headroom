@@ -11,7 +11,13 @@ import { applicationRootFromEnvironment, mac_runtime_settings } from '../../core
 import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
-import { ExecutorPaths, executor_paths, validate_executor_launch } from './configuration.ts';
+import {
+  ExecutorPaths,
+  executor_paths,
+  validate_executor_launch,
+  MACHINE_SERVICE_TRIAL_ENV,
+  MACHINE_WORKER_APP_ENV,
+} from './configuration.ts';
 import { launch_server_folders } from './server_folders.ts';
 import { FilesService } from './files.ts';
 import { run_mac_service } from './host/entry.ts';
@@ -36,24 +42,33 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
     if (!(error instanceof ExecutorValidationError) && !(error instanceof SyntaxError)) throw error;
     throw new CliFailure(human_error(invocation.command, error.message));
   }
+  const args = [
+    'executor',
+    'run',
+    '--executor-id',
+    executor_id,
+    '--application-revision',
+    revision,
+    '--panels-server-url',
+    panels_server_url,
+  ];
   const runtime = mac_runtime_settings(invocation.environment);
   if (runtime.child) {
-    if (process.platform === 'darwin') {
-      const {
-        admit_launcher,
-        enter_signed_runtime,
-        wait_for_launcher_recovery,
-        MacLauncherRecoveryBlocked,
-      } = await import('./runtime/launcher_trial.ts');
+    if (runtime.ready_path !== null && invocation.environment[MACHINE_SERVICE_TRIAL_ENV] !== '1') {
+      const { bridge_machine_service } = await import('./runtime/machine_service_trial.ts');
+      await bridge_machine_service(
+        paths.root,
+        applicationRootFromEnvironment(invocation.environment),
+        args,
+      );
+    }
+    if (process.platform === 'darwin' && !invocation.environment[MACHINE_WORKER_APP_ENV]) {
+      const { enter_signed_runtime, wait_for_launcher_recovery, MacLauncherRecoveryBlocked } =
+        await import('./runtime/launcher_trial.ts');
       try {
-        await enter_signed_runtime(paths.root, invocation.environment, async () => {
-          if (runtime.ready_path !== null)
-            await admit_launcher(
-              paths.root,
-              applicationRootFromEnvironment(invocation.environment),
-            );
-          else await wait_for_launcher_recovery(paths.root);
-        });
+        await enter_signed_runtime(paths.root, invocation.environment, () =>
+          wait_for_launcher_recovery(paths.root),
+        );
       } catch (error) {
         if (!(error instanceof MacLauncherRecoveryBlocked)) throw error;
         // This supervised runtime cannot safely start Workers. A successful stop keeps
@@ -108,28 +123,16 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
   try {
     let exit_code: number;
     try {
-      exit_code = await supervise(
-        [
-          'executor',
-          'run',
-          '--executor-id',
-          executor_id,
-          '--application-revision',
-          revision,
-          '--panels-server-url',
-          panels_server_url,
-        ],
-        {
-          paths,
-          baseline_root: fileURLToPath(new URL('../../../', import.meta.url)),
-          baseline_node: process.execPath,
-          environment: invocation.environment,
-          child_processes,
-          one_shot_children,
-          files,
-          signal: controller.signal,
-        },
-      );
+      exit_code = await supervise(args, {
+        paths,
+        baseline_root: fileURLToPath(new URL('../../../', import.meta.url)),
+        baseline_node: process.execPath,
+        environment: invocation.environment,
+        child_processes,
+        one_shot_children,
+        files,
+        signal: controller.signal,
+      });
     } catch (error) {
       if (interrupted === undefined || error !== controller.signal.reason) throw error;
       exit_code = interrupted;

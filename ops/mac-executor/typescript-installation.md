@@ -76,7 +76,7 @@ Require committed exit, zero work counts, and exit of the recorded runtime befor
 If startup fails, retain the state and logs. Use the recovery procedure below when SQLite reports version zero.
 
 An installation from the earlier manual procedure keeps its own launcher, which the owner's Apple Development identity signed.
-Runtime updates do not change the launcher, so that installation keeps working.
+The next complete machine update installs the release launcher. This one-time signing change can require new macOS consent.
 
 To enable the app route on an existing installation, the owner prepares a signed candidate from
 `server/executor/mac/packaging/launcher_main.ts`. The build holds no account path.
