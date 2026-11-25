@@ -350,6 +350,8 @@ export interface ConversationSystem {
   readonly start_admission?: AutomaticStartAdmission;
   automatic_start_request?(identity: string, conversation_id: string): Promise<StartRequest>;
   readonly workspace_admission: WorkspaceAdmission;
+  /** Accepted sends that still depend on this process for delivery. */
+  has_pending_update_sends(): boolean;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
   /** Work that an owner update interrupts. Information only. */
   update_interrupted_work(machine_ids?: readonly string[]): readonly string[];

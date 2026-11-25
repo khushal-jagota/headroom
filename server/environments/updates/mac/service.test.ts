@@ -15,6 +15,7 @@ test('current accepts matching leased content across revisions and rejects unlea
   const children = new ChildProcesses();
   const service = new MacUpdateService({
     root,
+    machines: () => [],
     attempts: new FileUpdateAttemptStore(join(root, 'attempt.json'), () => {}),
     provider: null,
     current_app_sha: 'a'.repeat(40),
@@ -330,6 +331,7 @@ test('Linux validates retained archive bytes after restart and finishes acknowle
   await reconstructed.settled();
   f.identity.build_id = first.build_id;
   f.identity.application_revision = first.application_revision;
+  expect(reconstructed.machine_states()[0]?.state).toBe('updating');
   const target = restored.check().target;
   expect(target?.request_id).toBe(first.request_id);
   restored.report(
@@ -342,6 +344,7 @@ test('Linux validates retained archive bytes after restart and finishes acknowle
     { presence: 'present', identity: f.identity },
   );
   expect(restored.check().target).toBeNull();
+  expect(reconstructed.machine_states()[0]?.state).toBe('current');
   expect(f.context.provider.download_artifact).not.toHaveBeenCalled();
   await reconstructed.settled();
 });

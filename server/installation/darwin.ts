@@ -107,10 +107,11 @@ export async function create_darwin_home_service(
   request: HomeInstallRequest,
   host: HomeInstallHost,
   machine = true,
+  define_jobs = darwin_home_jobs,
 ): Promise<HomeServicePlan> {
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(request.service))
     throw new Error('Use a valid launchd label');
-  const jobs = darwin_home_jobs(
+  const jobs = define_jobs(
     request,
     await home_service_environment(request, host),
     machine ? await machine_service_environment(request, host) : null,

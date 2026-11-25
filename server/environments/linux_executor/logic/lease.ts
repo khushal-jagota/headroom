@@ -2,12 +2,17 @@
 import { is_record } from '../../../core/records.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 
-export function accepted_lease(status: unknown, revision: string, started_ms: number): boolean {
+export function accepted_lease(
+  status: unknown,
+  revision: string,
+  started_ms: number,
+  protocol_version = PROTOCOL_VERSION,
+): boolean {
   return (
     is_record(status) &&
     is_record(status.identity) &&
     status.identity.application_revision === revision &&
-    status.identity.protocol_version === PROTOCOL_VERSION &&
+    status.identity.protocol_version === protocol_version &&
     status.last_lease_failure == null &&
     status.going_to_sleep === false &&
     status.admission_stopped === false &&

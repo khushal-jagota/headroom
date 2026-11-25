@@ -1,4 +1,6 @@
-/** The launchd installer job outlives the application and uses only its prepared copy. */
+import { supervised_installer } from '../installation_command.ts';
+import { InstallationRecord } from '../installer/record.ts';
+/** The launchd installer job runs from the retained release. */
 import { fstatSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { is_record } from '../../../core/records.ts';
@@ -9,11 +11,17 @@ import {
   open_directory_descriptor,
   open_relative,
 } from '../../../executor/mac/platform.ts';
-import { installer_attempt_id } from '../../release/installer_bundle.ts';
+import { selected_release } from '../installer/selection.ts';
+import { installer_attempt_id } from '../installer/configuration.ts';
 import type { ReleaseExecution } from '../../release/contracts.ts';
 import { read_owned_home_file } from './identity.ts';
 import { create_darwin_home_io, DarwinHomeService } from './service.ts';
-import { read_home_job, write_home_job } from './jobs.ts';
+import {
+  read_home_job,
+  write_home_job,
+  persistent_home_link,
+  ensure_home_login_link,
+} from './jobs.ts';
 import { DARWIN_HOME_COMMAND_SECONDS, DARWIN_HOME_OBSERVATION_SECONDS } from './configuration.ts';
 import { authenticate_loaded_job } from './logic/launchd.ts';
 import type { DarwinHomeIO } from './contracts.ts';
@@ -28,7 +36,7 @@ export async function current_darwin_home(
   if (!config) throw new Error('Mac updates require an installed home identity');
   const root = dirname(dirname(realpathSync(config))),
     selected_io = io ?? create_darwin_home_io(execution, environment);
-  if (realpathSync(application_root) !== join(root, 'app'))
+  if (realpathSync(application_root) !== selected_release(root))
     throw new Error('Mac update application differs from its home');
   const value: unknown = JSON.parse(
     read_owned_home_file(join(root, 'data/mac-home-installation.json'), selected_io.uid).toString(
@@ -50,17 +58,17 @@ export async function launch_darwin_installer(
     { identity, io } = service;
   await service.validate_running_home(process.ppid);
   const directory = join(identity.root, 'data/update-agent');
-  const copy = join(identity.root, 'data', 'update-installer-' + attempt_id);
+  const runtime = selected_release(identity.root);
   const expected = [
-    join(copy, 'runtime/node/bin/node'),
-    join(copy, 'runtime/server/environments/updates/installer/main.ts'),
-    join(copy, 'request.json'),
+    join(runtime, 'node/bin/node'),
+    join(runtime, 'server/environments/updates/installer/main.ts'),
+    join(identity.root, 'data', 'update-installer-' + attempt_id, 'request.json'),
   ];
   if (
     command.length !== expected.length ||
     command.some((value, index) => value !== expected[index])
   )
-    throw new Error('Installer command differs from its independent prepared copy');
+    throw new Error('Installer command differs from its retained release');
   const parent = open_directory_descriptor(join(identity.root, 'data'));
   try {
     try {
@@ -127,9 +135,10 @@ export async function launch_darwin_installer(
     path,
     {
       Label: identity.label + '.update-' + attempt_id,
-      ProgramArguments: [...command],
+      ProgramArguments: supervised_installer(command),
       WorkingDirectory: join(identity.root, 'data'),
       RunAtLoad: true,
+      KeepAlive: { Crashed: true },
       LimitLoadToSessionType: 'Aqua',
       AbandonProcessGroup: false,
       EnvironmentVariables: { HOME: io.account_home, PATH: '/opt/homebrew/bin:/usr/bin:/bin' },
@@ -138,6 +147,17 @@ export async function launch_darwin_installer(
     },
     io,
     previous,
+  );
+  if (await persistent_home_link(io.account_home, identity.label, identity.home_plist)) {
+    await ensure_home_login_link(
+      io.account_home,
+      identity.label + '.installer',
+      path,
+      io.execution,
+    );
+  }
+  new InstallationRecord({ data_directory: join(identity.root, 'data'), attempt_id }).record(
+    'coordinator_registered',
   );
   await io.command(
     ['/bin/launchctl', 'bootstrap', identity.domain, path],

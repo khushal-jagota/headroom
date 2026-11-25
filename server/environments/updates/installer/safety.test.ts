@@ -158,14 +158,14 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
   }
 });
 
-it('releases the barrier before healthy records on success and rollback', async () => {
-  // Final-row parity cannot prove the release point. The installer releases after the
-  // health result, before its healthy record and terminal state on both paths.
+it('stores the install decision before opening writes', async () => {
+  // Observe the on-disk barrier at the instant the installer records its decision.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
   const original = InstallationRecord.prototype.record;
   try {
-    for (const rollback of [false, true]) {
-      const current = join(root, rollback ? 'rollback' : 'success');
+    for (const outcome of ['success', 'rollback', 'rollback_failed']) {
+      const rollback = outcome !== 'success';
+      const current = join(root, outcome);
       const data = join(current, 'records');
       const from = 'a'.repeat(40),
         to = 'b'.repeat(40);
@@ -194,7 +194,8 @@ it('releases the barrier before healthy records on success and rollback', async 
         detail,
       ) {
         if (step === 'healthy' || step === 'rollback_healthy') healthy_recorded = true;
-        assert.equal(existsSync(barrier.path), !healthy_recorded, 'Python health-release order');
+        if (state === 'done' || state === 'failed')
+          assert(existsSync(barrier.path), 'new writes before commit');
         original.call(this, step, state, detail);
         if (state === 'done' || state === 'failed') writes.push(state);
       });
@@ -223,9 +224,10 @@ it('releases the barrier before healthy records on success and rollback', async 
             async restore() {
               assert.fail('this scenario does not restore a snapshot');
             },
-            async healthy(sha) {
+            async healthy(sha, trial) {
+              assert.equal(trial, 'terminal');
               assert(existsSync(barrier.path), 'barrier released before health finished');
-              return !rollback || sha === from;
+              return !rollback || (sha === from && outcome !== 'rollback_failed');
             },
           },
           { stderr() {} },
@@ -233,8 +235,8 @@ it('releases the barrier before healthy records on success and rollback', async 
         );
         assert.equal(code, rollback ? 1 : 0);
         assert.deepEqual(writes, [rollback ? 'failed' : 'done']);
-        assert(healthy_recorded);
-        assert(!existsSync(barrier.path));
+        assert.equal(healthy_recorded, outcome !== 'rollback_failed');
+        assert.equal(existsSync(barrier.path), outcome === 'rollback_failed');
       } finally {
         record.mockRestore();
       }

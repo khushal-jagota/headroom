@@ -3,6 +3,7 @@ import { install_server_link } from './server_link/http.ts';
 import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
 import type { PreparedPreviewRoutes } from './previews/routes.ts';
+import { read_home_trial } from './environments/updates/home_trial.ts';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { fileURLToPath } from 'node:url';
@@ -79,6 +80,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
             : configuredRoot,
       )
     : fileURLToPath(new URL('../', import.meta.url));
+  const trial = read_home_trial(services.updateBarrier, config.app_sha);
   await registerCoreRoutes(
     app,
     config,
@@ -87,9 +89,11 @@ export async function createApp(config: Config, services: AppServices): Promise<
     root,
     services.database,
     services.waitingScreensRoot,
+    trial,
   );
   app.register(
     create_executor_routes({
+      trial,
       config,
       database: services.database,
       registry: services.executor ?? null,

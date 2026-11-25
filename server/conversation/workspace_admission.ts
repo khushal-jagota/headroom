@@ -1,5 +1,7 @@
 /** One admission owner separates new starts from already accepted saves. */
 import type { WorkspaceAdmission as HttpWorkspaceAdmission } from '../core/http/middleware.ts';
+import { PlannerError } from '../core/contracts.ts';
+
 export class WorkspaceAdmission implements HttpWorkspaceAdmission {
   private _closed = false;
   private _starts_closed = false;
@@ -13,6 +15,12 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
   }
   get starts_closed(): boolean {
     return this._starts_closed;
+  }
+  refusal(): PlannerError {
+    return new PlannerError(
+      'update_in_progress',
+      'Workspace admission is closed for an owner update.',
+    );
   }
   close_starts(): boolean {
     if (this._closed || this._starts_closed) return false;

@@ -2,7 +2,9 @@
 
 An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
 
-All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex, Claude and Antigravity homes. Headroom does not copy them into role accounts.
+A Panels home can run on Linux x86_64 or Apple Silicon. Each platform supports the complete home, including joined machines, attachments, conversations, and updates. The VPS layout below describes one installation.
+
+The environments on this VPS run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex, Claude and Antigravity homes. Headroom does not copy them into role accounts.
 
 ```text
 ~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git

@@ -9,7 +9,11 @@ import {
   JOIN_LEASE_POLL_SECONDS,
   JOIN_HEALTH_TIMEOUT_SECONDS,
 } from '../environments/linux_executor/configuration.ts';
-import { assert_release_execution, run_release_command } from '../environments/release/process.ts';
+import {
+  assert_release_execution,
+  ReleaseCommandTimedOut,
+  run_release_command,
+} from '../environments/release/process.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import type { HomeInstallHost, HomeInstallRequest } from './contracts.ts';
 import { machine_service_environment } from './environment.ts';
@@ -58,22 +62,31 @@ export async function wait_for_first_machine(
   );
   while (performance.now() / 1000 < deadline) {
     assert_release_execution(execution);
-    const result = await run_release_command(
-      [
-        join(request.root, 'machine/runtime/node/bin/node'),
-        join(request.root, 'machine/runtime/server/executor/mac/entrypoint.ts'),
-        'executor',
-        'health',
-      ],
-      { environment, timeout_seconds: JOIN_HEALTH_TIMEOUT_SECONDS, allow_nonzero: true },
-      execution,
-    );
-    if (
-      result.code === 0 &&
-      accepted_lease(JSON.parse(result.stdout), request.revision, started_ms)
-    )
-      return;
-    await delay(JOIN_LEASE_POLL_SECONDS * 1000, undefined, { signal: execution.signal });
+    try {
+      const result = await run_release_command(
+        [
+          join(request.root, 'machine/runtime/node/bin/node'),
+          join(request.root, 'machine/runtime/server/executor/mac/entrypoint.ts'),
+          'executor',
+          'health',
+        ],
+        { environment, timeout_seconds: JOIN_HEALTH_TIMEOUT_SECONDS, allow_nonzero: true },
+        { ...execution, deadline },
+      );
+      if (
+        result.code === 0 &&
+        accepted_lease(JSON.parse(result.stdout), request.revision, started_ms)
+      )
+        return;
+    } catch (error) {
+      if (!(error instanceof ReleaseCommandTimedOut)) throw error;
+      assert_release_execution(execution);
+    }
+    const remaining_ms = deadline * 1000 - performance.now();
+    if (remaining_ms > 0)
+      await delay(Math.min(JOIN_LEASE_POLL_SECONDS * 1000, remaining_ms), undefined, {
+        signal: execution.signal,
+      });
   }
   throw new Error('The first machine did not report an accepted connection to this server');
 }

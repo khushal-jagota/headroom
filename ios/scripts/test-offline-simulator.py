@@ -465,7 +465,7 @@ def main() -> int:
                 machine=dict(minimum_protocol_version=3, maximum_protocol_version=5), outbox_format=2
             )) if offer else None,
             attempt=attempt, app_sha="running-release", detail=attempt["detail"],
-            deadline_at=attempt["deadline_at"], mac_details=None,
+            deadline_at=attempt["deadline_at"],
             machines=machines, available_machines=available if offer else [],
             # Progress must use the retained press snapshot, not a later candidate.
             interruption=snapshot if offer else dict(stops_agents=False, agents=[], machine_ids=[]),
@@ -1498,9 +1498,9 @@ def main() -> int:
             ) and (path.endswith("/events") or path.count("/") == 4):
                 self.drop_connection()
                 return
-            # The store's refresh reads the deployment status. Held here, the refresh after a
+            # The store's refresh reads the update status. Held here, the refresh after a
             # reviewer change stalls as on a slow connection, until the proof releases it.
-            while path == "/api/deployment-status" and state.get("stall_refresh"):
+            while path == "/api/updates" and state.get("stall_refresh"):
                 time.sleep(0.1)
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
@@ -1893,8 +1893,9 @@ def main() -> int:
                 with lock:
                     state["update_reads"] += 1
                     value = update_status()
-            elif path == "/api/deployment-status":
-                value = {"state": "idle"}
+            elif path == "/api/updates":
+                value = dict(state="up_to_date", app_sha="running", allowed_actions=[], machines=[], available_machines=[],
+                             client_versions=[], interruption=dict(stops_agents=False, agents=[], machine_ids=[]))
             elif path.endswith("/manifest"):
                 value = manifest
             elif "/decision-operations/" in path:

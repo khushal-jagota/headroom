@@ -1,8 +1,9 @@
 import { counter } from './logic/counters.ts';
 /** Linux procfs capabilities: async byte work, retained parents and bounded publication. */
-import { constants, lstatSync, renameSync } from 'node:fs';
+import { constants, lstatSync, read, renameSync } from 'node:fs';
 import { link, lstat, mkdir, open, rename, rmdir, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
@@ -13,6 +14,7 @@ import type { FileVersion } from './mac/file_metadata.ts';
 import type {
   DirectoryHandle,
   HeldFileLocation,
+  InputFileReader,
   FileOperationOptions,
   WireValue,
 } from './contracts.ts';
@@ -244,6 +246,18 @@ export async function regular_descriptor(source: string | HeldFileLocation): Pro
     throw error;
   }
 }
+const read_descriptor = promisify(read);
+/** The Mac home can serve command inputs using the same no-follow open as the Mac machine. */
+export async function command_input_reader(path: string): Promise<InputFileReader> {
+  if (process.platform !== 'darwin') return regular_descriptor(path);
+  const { open_regular_descriptor, close_native_descriptor } = await import('./mac/platform.ts');
+  const fd = open_regular_descriptor(path);
+  return {
+    read: (buffer, offset, length, position) =>
+      read_descriptor(fd, buffer, offset, length, position),
+    close: async () => close_native_descriptor(fd),
+  };
+}
 export function create_file_at(target: HeldFileLocation): Promise<FileHandle> {
   return open(
     at(target.parent, target.leaf),
@@ -253,7 +267,7 @@ export function create_file_at(target: HeldFileLocation): Promise<FileHandle> {
 }
 /** Positional reads leave the descriptor ready for another operation starting at zero. */
 export async function descriptor_hash(
-  incoming: FileHandle,
+  incoming: InputFileReader,
   options: FileOperationOptions = {},
 ): Promise<readonly [string, number]> {
   const hash = createHash('sha256');

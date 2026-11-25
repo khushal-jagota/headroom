@@ -3,7 +3,6 @@ import SwiftUI
 struct UpdateCard: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var offer: CapturedUpdateOffer?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -20,11 +19,11 @@ struct UpdateCard: View {
                     }
                     machineRows(status.cardMachines, status: status, actionable: connected)
                     if status.state == "available" { warnings(status.warnings) }
-                    if let detail = status.detail, !detail.isEmpty {
+                    if let detail = status.cardDetail, !detail.isEmpty {
                         Text(detail).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     }
                     if connected && status.allowedActions.contains("update") && status.available != nil {
-                        Button("Update") { offer = CapturedUpdateOffer(status: status, server: store.baseURL) }
+                        Button("Update") { perform(.install, status: status) }
                             .accessibilityIdentifier("updates.install")
                             .disabled(store.updateActions.busy(status, now: context.date))
                     }
@@ -52,14 +51,6 @@ struct UpdateCard: View {
             // The rebuilt app's in-list action buttons, as ScreenRetryButton. Each stays its own target in the row.
             .buttonStyle(.bordered)
         }
-        .sheet(item: $offer) { captured in
-            UpdateOfferSheet(captured: captured,
-                             interruption: { impact(captured.status.interruption) },
-                             machines: { machineRows(captured.status.availableMachines, status: captured.status, actionable: false) },
-                             warnings: { warnings(captured.status.warnings) },
-                             close: { offer = nil })
-        }
-        .onChange(of: store.baseURL) { _, _ in offer = nil }
     }
 
     private func impact(_ value: PanelsUpdateStatus.Interruption) -> some View {
@@ -115,54 +106,4 @@ struct UpdatesView: View {
         }
         .panelsNavigationTitle("Updates").panelsScreen()
     }
-}
-
-/// The confirmation, in the shared sheet: it waits on the install and shows a refusal inside.
-private struct UpdateOfferSheet<Interruption: View, Machines: View, Warnings: View>: View {
-    @Environment(AppStore.self) private var store
-    @State private var action = SheetAction()
-    let captured: CapturedUpdateOffer
-    @ViewBuilder let interruption: () -> Interruption
-    @ViewBuilder let machines: () -> Machines
-    @ViewBuilder let warnings: () -> Warnings
-    let close: () -> Void
-
-    private var connected: Bool { store.connection == "Following changes" && store.updateFailure == nil }
-
-    var body: some View {
-        SheetForm(title: "Update Panels", confirmTitle: "Update",
-                  canConfirm: connected && !store.updateActions.busy(captured.status), action: action,
-                  confirm: confirm) {
-            Section { interruption() }
-            Section { machines() }
-            Section { warnings() }
-        }
-    }
-
-    private func confirm() {
-        let api = store.client
-        let resource = store.updateResource
-        let actions = store.updateActions
-        Task {
-            let done = await action.run {
-                guard captured.server == store.baseURL, api.baseURL == store.baseURL, connected else {
-                    throw UpdateOfferRefusal(message: "Panels can't be reached. Try again when it is back.")
-                }
-                await actions.perform(.install, status: captured.status, api: api) { await resource.refresh() }
-                if let error = actions.error { throw UpdateOfferRefusal(message: error) }
-            }
-            if done { close() }
-        }
-    }
-}
-
-private struct UpdateOfferRefusal: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
-private struct CapturedUpdateOffer: Identifiable {
-    let id = UUID()
-    let status: PanelsUpdateStatus
-    let server: URL
 }

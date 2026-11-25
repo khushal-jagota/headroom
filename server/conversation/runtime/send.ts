@@ -55,7 +55,7 @@ export async function send(
 ): Promise<PromptDeliveryFate> {
   return host.workspace_admission.operation(
     async (admitted) => {
-      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+      if (!admitted) throw host.workspace_admission.refusal();
       if (options.record_refusal && options.sender_message_id == null)
         throw new Error('record_refusal requires a sender_message_id');
       host.require_runtime_ownership();
@@ -541,7 +541,7 @@ export async function record_events_transaction<T>(
   ) => import('../record/contracts.ts').EventMutation<T>,
 ): Promise<T> {
   return host.workspace_admission.operation(async (admitted) => {
-    if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+    if (!admitted) throw host.workspace_admission.refusal();
     const state = host.conversation_state(conversation_id);
     if (!state) throw new Error('conversation is absent');
     return own_settlement(

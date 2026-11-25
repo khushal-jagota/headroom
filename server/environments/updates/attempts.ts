@@ -1,7 +1,6 @@
 /** The cross-version update attempt file, outside SQLite and database backups. */
 import {
   closeSync,
-  constants,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -14,6 +13,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { fsync_directory_sync } from '../../core/fsync.ts';
 import { flock } from '../../core/locks/flock.ts';
 import { getSystemErrorName } from 'node:util';
 import type { UpdateAttempt, UpdateAttemptState } from './contracts.ts';
@@ -63,7 +63,7 @@ export function exclusive_existing_lock<T>(path: string, action: () => T): T {
 export function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
-function read_record_json(path: string): unknown {
+export function read_record_json(path: string): unknown {
   // Reject invalid UTF-8 and leave a BOM for JSON to reject.
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
     readFileSync(path),
@@ -84,8 +84,11 @@ export function atomic_write_json(path: string, payload: Record<string, unknown>
 }
 /** Atomically replace the record in its existing parent directory. */
 export function replace_existing_json(path: string, payload: Record<string, unknown>): void {
+  replace_existing_text(path, JSON.stringify(payload) + '\n');
+}
+export function replace_existing_text(path: string, text: string): void {
   const parent = dirname(path);
-  const encoded = Buffer.from(JSON.stringify(payload) + '\n');
+  const encoded = Buffer.from(text);
   const temporary = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   try {
@@ -104,12 +107,7 @@ export function replace_existing_json(path: string, payload: Record<string, unkn
     }
     throw error;
   }
-  const directory = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY);
-  try {
-    fsyncSync(directory);
-  } finally {
-    closeSync(directory);
-  }
+  fsync_directory_sync(parent);
 }
 export class FileUpdateAttemptStore {
   readonly path: string;
@@ -193,7 +191,8 @@ export class FileUpdateAttemptStore {
         payload = decoded;
         release = parse_release(decoded.release);
       } catch (error) {
-        console.warn('The deployment request record is not a valid update request', error);
+        if (!missing(error))
+          console.warn('The deployment request record is not a valid update request', error);
         return null;
       }
       if (

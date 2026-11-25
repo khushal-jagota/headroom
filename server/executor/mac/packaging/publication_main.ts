@@ -13,7 +13,7 @@ import { with_publication_entry } from '../../../environments/release/publicatio
 import { run_release_command } from '../../../environments/release/process.ts';
 import { publication_id } from '../../../environments/release/publication_identity.ts';
 import type { MacRuntimePublication } from '../../../environments/release/mac_publication_contracts.ts';
-import { build_mac_package } from './build.ts';
+import { assemble_mac_runtime, build_mac_package } from './build.ts';
 import { MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import { PUBLICATION_MAC_VALIDATION_SECONDS } from '../../../environments/release/publication_configuration.ts';
 
@@ -72,7 +72,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
     const repeat_output = text('output') + '-repeat';
     // The owner treats the checked signed launcher as a fixed input, like the Node distribution.
     // Its exact bytes remain part of both machine identities.
-    const repeated = await build_mac_package({
+    const repeated = await assemble_mac_runtime({
       ...package_options,
       production_node_modules: repeat_node_modules,
       output: repeat_output,
