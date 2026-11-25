@@ -2,7 +2,7 @@ import { supervised_installer } from '../../environments/updates/installation_co
 /** Native-only fixture payloads use real sealed archives and the retained installer. */
 import assert from 'node:assert/strict';
 import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -410,14 +410,11 @@ export async function native_retained_updates(options: {
       }, 90);
       record.update_observation = 'restoration assertions';
       assert.equal(state.state, name === 'success' ? 'done' : 'failed');
-      assert(
-        await lstat(join(root, 'data/update-barrier.json')).then(
-          () => false,
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return true;
-            throw error;
-          },
-        ),
+      // The installer persists the outcome before releasing the write barrier.
+      await wait(async () =>
+        lstatSync(join(root, 'data/update-barrier.json'), { throwIfNoEntry: false })
+          ? undefined
+          : true,
       );
       if (name === 'success') assert(state.steps.healthy);
       else
