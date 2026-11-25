@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack, type Snippet } from "svelte";
+  import type { Snippet } from "svelte";
   import { deckItemIn, deckItemOut, type Deck } from "../lib/review/deckMotion";
 
   /** The one thing on the review screen: an item, or the final screen. When `view` changes
@@ -14,18 +14,18 @@
 
   // Every change of view is a new appearance. A view that comes back while its last copy is
   // still leaving must be a new element: the framework would reuse the old one, mid-exit.
-  let appearance = $state(0);
+  // The key is worked out where it is read, so a change of view draws the new item once. A
+  // counter written from an effect would draw it twice, and the first copy would leave at once.
+  let appearance = 0;
   let lastView: string | null = null;
-  $effect.pre(() => {
-    const current = view;
-    untrack(() => {
-      if (lastView !== null && current !== lastView) appearance += 1;
-      lastView = current;
-    });
+  const key = $derived.by(() => {
+    if (lastView !== null && view !== lastView) appearance += 1;
+    lastView = view;
+    return `${view}:${appearance}`;
   });
 </script>
 
-{#key `${view}:${appearance}`}
+{#key key}
   <div class="deck-item" class:deck-item--final={final} data-deck-item bind:this={element}
     in:deckItemIn={{ deck }} out:deckItemOut={{ deck }}>
     {@render children()}
