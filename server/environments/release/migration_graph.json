@@ -135,6 +135,9 @@
     "ts_0015_owner_time_zone": [
       "ts_0014_work_move_operations"
     ],
+    "ts_0016_agent_message_acceptances": [
+      "ts_0015_owner_time_zone"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

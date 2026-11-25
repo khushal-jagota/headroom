@@ -279,6 +279,16 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     return system_shutdown.native_operation(this, operation);
   }
   note_written(state: ConversationState, rows: readonly StoredConversationEvent[]): void {
+    rows = rows.filter((row) => row.sequence > state.record.latest_sequence);
+    if (rows.length === 0) return;
+    // A local owner event can commit while an older native save awaits its completion.
+    // Publish that committed gap first, and ignore the older completion when it resumes.
+    if (rows[0].sequence > state.record.latest_sequence + 1) {
+      const through = rows[rows.length - 1].sequence;
+      rows = this.options.store
+        .read_events_after(state.record.conversation_id, state.record.latest_sequence)
+        .filter((row) => row.sequence <= through);
+    }
     if (rows.length === 0) return;
     let values = { ...state.record, latest_sequence: rows[rows.length - 1].sequence };
     for (const row of rows) {

@@ -379,6 +379,7 @@ export interface ConversationRecordStore {
   transact_events<T>(
     conversation_id: string,
     work: (tx: TransactionSql) => EventMutation<T>,
+    options?: AppendOptions,
   ): EventTransactionResult<T>;
   append_in_transaction(
     tx: TransactionSql,
