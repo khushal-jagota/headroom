@@ -14,12 +14,17 @@ const execute = promisify(execFile);
 export async function published_mac_home_fault(base: string, service: string, predecessor: string) {
   // This shipped coordinator requires a live candidate supervisor to roll back.
   // Later releases exercise the same failed-start case as Linux.
-  if (process.platform !== 'darwin' || predecessor !== '54aede8564ee693d178cae55d3acb04ca9d770f4')
-    return null;
+  if (process.platform !== 'darwin') return null;
+  const affected = new Map([
+    ['54aede8564ee693d178cae55d3acb04ca9d770f4', 456256714],
+    ['c356fde9be4978806c45ab6f057b39b365c2249f', 457715828],
+  ]);
+  const release = affected.get(predecessor);
+  if (release === undefined) return null;
   const inputs = JSON.parse(
     await readFile(join(base, 'evidence/qualification-inputs.json'), 'utf8'),
   );
-  if (inputs.predecessor.release_id !== 456256714) return null;
+  if (inputs.predecessor.release_id !== release) return null;
   assert.equal(inputs.predecessor.sha, predecessor);
   assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
   assert.ok((await realpath(base)).startsWith((await realpath(process.env.RUNNER_TEMP!)) + sep));
