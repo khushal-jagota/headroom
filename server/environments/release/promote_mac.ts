@@ -21,7 +21,10 @@ import { create as tar } from 'tar';
 import { exchange_names } from '../../core/locks/flock.ts';
 import { MAC_RUNTIME_ARCHIVE_NAME } from '../../executor/mac/configuration.ts';
 import { MAC_RUNTIME_LAUNCHER_APP } from '../../executor/mac/platform.ts';
-import { mac_designated_requirement } from '../../executor/mac/runtime/launcher_trial.ts';
+import {
+  mac_designated_requirement,
+  stage_signed_launcher,
+} from '../../executor/mac/runtime/launcher_trial.ts';
 import { WORKER_LAUNCHER_MODE } from '../../platform_runtime/darwin/launchd/configuration.ts';
 import { hash_archive, write_hardlinks_as_files } from './archive.ts';
 import { ARCHIVE_GZIP_LEVEL } from './configuration.ts';
@@ -175,8 +178,10 @@ async function promote(input: string, output: string, identity: string, previous
     assert.equal(launcherHash, await digest_machine_build(app));
     // Exchange the two complete bundles in a disposable installation and start a worker through it.
     const installed = join(work, 'installed.app');
+    const staged = join(work, 'staged.app');
     await run('/usr/bin/ditto', [previousApp, installed]);
-    exchange_names(installed, finalApp);
+    assert.equal(await stage_signed_launcher(finalApp, staged, installed), false);
+    exchange_names(installed, staged);
     assert.equal(await digest_machine_build(installed), launcherHash);
     const probe = await run(
       join(installed, 'Contents/MacOS/Panels'),

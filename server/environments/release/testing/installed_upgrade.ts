@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
@@ -23,6 +23,10 @@ import type { MachineUpdateState } from '../../updates/view_contracts.ts';
 import { smoke_file_turn, verify_smoke_history } from '../../../tools/smoke/steps.ts';
 import { DEFAULT_BACKEND_PEER_REPLY } from '../../../tools/smoke/codex_peer.ts';
 import { credential_path } from '../../../executor/credential_file.ts';
+import { MACHINE_SERVICE_TRIAL_FILE } from '../../../executor/mac/configuration.ts';
+import { mac_installation_paths } from '../../../executor/mac/platform.ts';
+import { LINUX_EXECUTOR_SERVICE_NAME } from '../../linux_executor/configuration.ts';
+import { launchd_field } from '../../updates/darwin/logic/launchd.ts';
 
 interface Options {
   base: string;
@@ -41,6 +45,46 @@ async function wait_for(read: () => Promise<boolean>, description: string, poll_
     await delay(poll_ms);
   }
   throw new Error('Timed out ' + description);
+}
+
+async function machine_service_snapshot(label: string) {
+  const execute = promisify(execFile);
+  if (process.platform === 'linux') {
+    const { stdout } = await execute('/usr/bin/systemctl', [
+      '--user',
+      'show',
+      label,
+      '-p',
+      'MainPID',
+      '-p',
+      'FragmentPath',
+      '-p',
+      'ExecStart',
+    ]);
+    const fields = new Map(
+      stdout
+        .trim()
+        .split('\n')
+        .map((line) => {
+          const index = line.indexOf('=');
+          return [line.slice(0, index), line.slice(index + 1)];
+        }),
+    );
+    return {
+      pid: Number(fields.get('MainPID')),
+      definition: await readFile(fields.get('FragmentPath')!, 'utf8'),
+      command: fields.get('ExecStart')!,
+    };
+  }
+  const { stdout } = await execute('/bin/launchctl', [
+    'print',
+    'gui/' + process.getuid!() + '/' + label,
+  ]);
+  return {
+    pid: Number(launchd_field(stdout, 'pid')),
+    definition: await readFile(launchd_field(stdout, 'path')!, 'utf8'),
+    command: stdout,
+  };
 }
 
 export async function qualify_installed_upgrade(o: Options): Promise<void> {
@@ -86,6 +130,15 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
   const readJournal = async () =>
     JSON.parse(await readFile(join(o.base, 'installed/data/update-attempt.json'), 'utf8'));
   const browser = await chromium.launch();
+  const qualify_service = process.env.QUALIFY_MACHINE_SERVICE === '1';
+  const joined_label =
+    process.platform === 'linux'
+      ? LINUX_EXECUTOR_SERVICE_NAME
+      : mac_installation_paths(process.env.HOME!).job;
+  const joined_updates = join(o.joined_state, 'updates');
+  const ready = join(joined_updates, 'ready');
+  const retained_ready = ready + '.qualification';
+  let readiness_blocked = false;
   let phase = 'installing and rolling back';
   try {
     const page = await browser.newPage();
@@ -270,6 +323,18 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       workspace,
     );
     phase = 'retrying the update';
+    const predecessor_service = qualify_service
+      ? await machine_service_snapshot(joined_label)
+      : null;
+    if (predecessor_service) {
+      assert.ok(predecessor_service.pid > 0);
+      // Only this machine loses the ability to persist its trial readiness.
+      // Its old version can lease and run ordinary work without a trial marker.
+      await mkdir(ready, { recursive: true });
+      await rename(ready, retained_ready);
+      readiness_blocked = true;
+      await writeFile(ready, 'Withhold joined machine trial confirmation.\n', { flag: 'wx' });
+    }
     const retryStarted = performance.now();
     const retried = page.waitForResponse(
       (response) =>
@@ -283,6 +348,15 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     phase = 'checking the release feed, home and enrolled machines';
     const enrolled = [HOME_MACHINE_ID, o.machine_id];
     let trialTiming;
+    let machine_service_evidence:
+      | {
+          predecessor_pid: number;
+          rejected_candidate_pid: number;
+          restored_pid: number;
+          restored_turn: string;
+        }
+      | undefined;
+    let candidate_trial: Awaited<ReturnType<typeof machine_service_snapshot>> | undefined;
     let first_views: Awaited<ReturnType<typeof check_committed_views>> | undefined;
     await wait_for(async () => {
       const journal = await readJournal();
@@ -304,6 +378,59 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       if (status?.attempt?.attempt_id !== journal.attempt_id) return false;
       if (status?.attempt?.state === 'failed')
         throw new Error(recorded_failure_detail(status.attempt.detail) ?? 'Installer retry failed');
+      if (predecessor_service && !machine_service_evidence) {
+        const joined = status?.machines.find(
+          (m: MachineUpdateState) => m.machine_id === o.machine_id,
+        );
+        if (joined?.state !== 'failed' || !joined.present || !joined.can_retry) {
+          const running = await machine_service_snapshot(joined_label).catch(() => null);
+          if (
+            running &&
+            running.pid > 0 &&
+            running.command.includes('updates/releases/' + candidate)
+          )
+            candidate_trial = running;
+          return false;
+        }
+        await wait_for(
+          async () =>
+            readFile(join(joined_updates, MACHINE_SERVICE_TRIAL_FILE)).then(
+              () => false,
+              (error) => {
+                if (error.code === 'ENOENT') return true;
+                throw error;
+              },
+            ),
+          'waiting for the failed machine service trial to settle',
+        );
+        const restored = await machine_service_snapshot(joined_label);
+        assert.ok(candidate_trial, 'The replacement machine service never started');
+        assert.equal(restored.definition, predecessor_service.definition);
+        assert.ok(restored.pid > 0 && restored.pid !== candidate_trial.pid);
+        await o.verify_rollback?.();
+        const restored_turn = await turn(true);
+        assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
+        await rm(ready);
+        await rename(retained_ready, ready);
+        readiness_blocked = false;
+        const retried = await fetch(
+          url +
+            '/api/updates/attempts/' +
+            encodeURIComponent(joined.attempt_id) +
+            '/machines/' +
+            encodeURIComponent(o.machine_id) +
+            '/retry',
+          { method: 'POST' },
+        );
+        assert.ok(retried.ok, await retried.text());
+        machine_service_evidence = {
+          predecessor_pid: predecessor_service.pid,
+          rejected_candidate_pid: candidate_trial.pid,
+          restored_pid: restored.pid,
+          restored_turn: restored_turn.conversation_id,
+        };
+        return false;
+      }
       return (
         status?.app_sha === candidate &&
         status.attempt?.state === 'done' &&
@@ -321,7 +448,34 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
       );
     }, 'waiting for the checked release and both enrolled machines to run the committed candidate');
     assert.deepEqual(await readFile(credential_path(o.joined_state)), credential);
+    if (machine_service_evidence) {
+      const home_label =
+        o.service + (process.platform === 'linux' ? '.machine.service' : '.machine');
+      for (const label of [joined_label, home_label]) {
+        const service = await machine_service_snapshot(label);
+        assert.ok(service.pid > 0);
+        assert.ok(service.command.includes('updates/releases/' + candidate));
+      }
+      await writeFile(
+        join(o.base, 'evidence/machine-service.json'),
+        JSON.stringify(machine_service_evidence, null, 2),
+      );
+    }
+    const requesters = join(o.base, 'evidence/mac-worker-requesters.jsonl');
+    const check_requester = !!machine_service_evidence && process.platform === 'darwin';
+    if (check_requester) await rm(requesters, { force: true });
     const after = await turn();
+    if (check_requester) {
+      const launcher = mac_installation_paths(process.env.HOME!).app_executable;
+      const observed = (await readFile(requesters, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.ok(
+        observed.some((requester) => requester.executable === launcher),
+        'The installed signed Mac app did not start the qualified Worker',
+      );
+    }
     assert.notEqual(before.conversation_id, after.conversation_id);
     await verify_smoke_history(url, preserved);
     phase = 'reopening the update screen';
@@ -476,6 +630,10 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     ]);
     throw error;
   } finally {
+    if (readiness_blocked) {
+      await rm(ready, { force: true });
+      await rename(retained_ready, ready);
+    }
     await browser.close();
   }
 }

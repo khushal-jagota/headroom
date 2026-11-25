@@ -66,6 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           QUALIFY_PREVIOUS_RELEASE: '1'
+          QUALIFY_MACHINE_SERVICE: ${{ inputs.replay_to == '' && '1' || '0' }}
           MAC_LAUNCHER_QUALIFICATION: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'developer-id' || 'ad-hoc' }}
         run: |
           set -euo pipefail

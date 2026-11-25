@@ -15,7 +15,6 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { shell_quote } from '../../../conversation/worker_unit/logic.ts';
 import { mac_installation_paths } from '../platform.ts';
-import { native_launcher_trial } from './native_launcher_trial.ts';
 import { build_mac_launcher } from '../packaging/launcher_main.ts';
 
 const root = resolve(process.env.MAC_REHEARSAL_ROOT!);
@@ -209,7 +208,6 @@ try {
   steps.quiesce = 'passed';
   await run(['launchctl', 'bootout', `${domain}/${paths.job}`]);
   joined = false;
-  steps.launcher_trial = await native_launcher_trial(root, paths, run);
   steps.passed = true;
 } catch (error) {
   await writeFile(join(evidence, 'failure.txt'), String((error as Error).stack ?? error));
