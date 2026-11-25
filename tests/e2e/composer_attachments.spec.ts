@@ -490,11 +490,11 @@ test('the empty Review page shows how a send ended on its button and keeps its i
   await page.unroute(sendRoute);
   await expect(send).not.toHaveClass(/unsure/);
   await expect(input).toHaveValue('Chief, are you there?');
-  // A question arrives while the page is showing "nothing needs you": the Chief box goes, so a note cannot pass for an answer.
+  // A question arrives while the page is showing "nothing needs you": the Chief box stays.
   await input.fill('');
   const ticket = await createTicketConversation(signalServer, { conversationId: 'review-waiting-agent', title: 'Waiting agent' });
   await post(signalServer, '/api/test/signals/review-waiting-agent/finish');
   await connectedMessage(signalServer, 'review-waiting-agent', ticketPrincipal(ticket), 'A question for you.');
   await expect(page.locator('[data-review-final-status]')).toHaveText('1 thing awaits review.');
-  await expect(input).toHaveCount(0);
+  await expect(input).toBeVisible();
 });

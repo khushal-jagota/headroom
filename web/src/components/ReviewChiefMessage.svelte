@@ -7,7 +7,7 @@
   import { ReviewSendOutcome } from '../lib/review/sendOutcome.svelte';
   import { chiefDraftKey, chiefAttachmentDraftId, chiefAttemptKey, chiefAttemptMetadataKey, readChiefPointer } from '../lib/review/chiefMessage';
 
-  let { onBusy, waiting = false }: { onBusy?: (busy: boolean) => void; waiting?: boolean } = $props();
+  let { onBusy }: { onBusy?: (busy: boolean) => void } = $props();
   const composer = reviewReplyComposer({
     draftKey: chiefDraftKey,
     attachmentDraftId: chiefAttachmentDraftId,
@@ -20,8 +20,6 @@
   let reply = $state<ReviewReplyInput>();
   // The send button shows how a send ended; see ReviewSendOutcome.
   const outcome = new ReviewSendOutcome(composer);
-  // With something waiting in the queue, a note typed here would look like an answer to it.
-  const hidden = $derived(waiting && !composer.hasDraft && !composer.hasUnsettled && !outcome.sending && outcome.result === undefined);
   $effect(() => {
     const active = composer.submitting || composer.intakeBusy || voiceActive;
     untrack(() => onBusy?.(active));
@@ -34,14 +32,12 @@
 
 <div data-review-chief-composer>
   <ReviewOutgoingReplies {composer} busy={voiceActive} quiet onEdit={() => reply?.focus()} />
-  {#if !hidden}
   <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
     bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
     sendDisabled={!composer.ready} preserveHeight sending={outcome.sending} result={outcome.result} sendTitle={outcome.note}
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
     onSend={() => composer.send()} onError={problem => composer.error = problem} />
-  {/if}
   {#if composer.error}<div class="review-chief-error"><ErrorLine error={composer.error} /></div>{/if}
 </div>
 
