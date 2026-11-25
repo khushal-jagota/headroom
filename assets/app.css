@@ -2097,8 +2097,8 @@ select {
  * ticket screen alone — every other screen keeps the padded, flowing shell. */
 /* The ticket screen is what the page inside it — and so the conversation's share of that
  * page — is measured against; see .conversation-layer for why it is this element
- * and not the viewport. It is also the frame the conversation's own popovers are placed
- * in, which is what the positioning is for. */
+ * and not the viewport. It is also the frame the composer's command catalog is placed in,
+ * which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
   min-width: 0;
@@ -3649,17 +3649,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
   [data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) { animation: none; }
 }
 
-/* The options menu: the float plane. Sections are set apart by space and a quiet caption,
- * never by rules. */
-.chat-overflow { position: relative; display: flex; }
+/* The options menu: the float plane, placed from its button by web/src/lib/floatingPanel.ts.
+ * Sections are set apart by space and a quiet caption, never by rules. */
+.chat-overflow { display: flex; }
 .chat-overflow-menu {
-  position: absolute;
-  top: calc(100% + var(--cv-s2));
-  right: 0;
-  z-index: 4;
   min-width: 240px;
   max-width: min(320px, calc(100vw - 32px));
-  max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
   overflow-y: auto;
   display: grid;
   gap: var(--cv-s1);
@@ -4872,24 +4867,28 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer [data-conversation-composer-constrained] {
   overflow-y: auto;
 }
-/* Upward popovers are capped by the room over the composer, the catalog keeping its own cap
- * when there is more. */
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu,
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-add-menu,
-.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .listbox-picker-panel {
-  max-height: max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6)));
-  overflow-y: auto;
-}
+/* The command catalog sits over the composer, capped by the room there. Menus that open
+ * from a button float in the top layer instead (see the popover rule below). */
 .conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu {
   max-height: min(320px, max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6))));
+  overflow-y: auto;
 }
-/* Once a composer needs its own scroller, upward popovers would be clipped by that scroller.
- * Their controls stay reachable in its flow instead. Ordinary menus float. */
-.conversation-layer [data-conversation-composer-constrained] .chat-menu,
-.conversation-layer [data-conversation-composer-constrained] .chat-add-menu,
-.conversation-layer [data-conversation-composer-constrained] .listbox-picker-panel {
+/* Once a composer needs its own scroller, the catalog would be clipped by that scroller.
+ * It stays reachable in its flow instead. */
+.conversation-layer [data-conversation-composer-constrained] .chat-menu {
   position: static;
   max-width: 100%;
+}
+
+/* A menu or picker panel placed by web/src/lib/floatingPanel.ts is a popover in the top
+ * layer. Undo the browser's centered, padded popover defaults; Floating UI writes its left
+ * and top. Zero specificity, so each panel's own look still wins. */
+:where([popover]) {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
 }
 
 /* === The desktop window ====================================================================

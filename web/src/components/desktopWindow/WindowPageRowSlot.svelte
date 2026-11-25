@@ -8,6 +8,7 @@
    *  `data-window-row-context` on its context line, `data-window-row-actions` on the element
    *  that holds its actions. Each button, link or disclosure in there is one action. */
   import { tick } from "svelte";
+  import { floatingPanel } from "../../lib/floatingPanel";
   import { foldedActionCount } from "../../lib/desktopWindow/pageRowFold";
   import { PAGE_ROW_CONTEXT_MIN_WIDTH_PX, PAGE_ROW_GAP_PX } from "../../lib/desktopWindow/config";
   import { shownPageRow } from "../../lib/desktopWindow/windowState.svelte";
@@ -133,7 +134,7 @@
       aria-label="More actions" aria-haspopup="menu" aria-expanded={menuOpen} tabindex={folded.length > 0 ? 0 : -1} aria-hidden={folded.length > 0 ? undefined : "true"}
       onclick={() => void toggleMenu()}>•••</button>
     {#if menuOpen && folded.length > 0}
-      <div class="window-page-row-menu" role="menu" aria-label="More actions" tabindex="-1" bind:this={menu} onkeydown={menuKey}>
+      <div class="window-page-row-menu" role="menu" aria-label="More actions" tabindex="-1" bind:this={menu} onkeydown={menuKey} popover="manual" {@attach floatingPanel(moreButton, "bottom-end")}>
         {#each folded as control}
           <button type="button" role="menuitem" class="window-page-row-menu-item" disabled={disabled(control)} onclick={() => choose(control)}>{label(control)}</button>
         {/each}
@@ -158,7 +159,7 @@
   .window-page-row-more--shown { display:inline-flex; }
   /* Measured while hidden: in the box, out of sight and out of the way. */
   .window-page-row-more:not(.window-page-row-more--shown) { display:inline-flex; position:absolute; right:0; visibility:hidden; }
-  .window-page-row-menu { position:absolute; z-index:2; top:calc(100% + var(--space-1)); right:0; min-width:200px; padding:var(--space-1); border-radius:var(--radius-md); background:var(--surface-raised); box-shadow:0 0 0 1px var(--border-raised), var(--shadow-float); }
+  .window-page-row-menu { min-width:200px; padding:var(--space-1); border-radius:var(--radius-md); background:var(--surface-raised); box-shadow:0 0 0 1px var(--border-raised), var(--shadow-float); }
   .window-page-row-menu-item { display:block; width:100%; padding:6px 10px; border:0; border-radius:6px; background:transparent; color:var(--tone-primary); font:inherit; font-size:var(--type-row); text-align:left; cursor:pointer; white-space:nowrap; }
   .window-page-row-menu-item:hover:not(:disabled), .window-page-row-menu-item:focus-visible { background:var(--surface-hover); }
   .window-page-row-menu-item:disabled { color:var(--tone-faint); cursor:default; }
