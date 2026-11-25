@@ -8,7 +8,6 @@
   import { selectedRecap } from '../lib/navigation/views/recap.svelte';
   import { readConversation, readEventsAfter, advanceOwnerRead, messageContentOf } from '../lib/conversation/wire';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
-  import ReviewOutgoingReplies from './ReviewOutgoingReplies.svelte';
   import { reviewReplyComposer } from '../lib/review/replyComposer.svelte';
   import { ReviewSendOutcome } from '../lib/review/sendOutcome.svelte';
   import { unreadOwnerMessages, reviewMessageHref, draftStorageKey, attemptStorageKey, type OwnerMessage } from '../lib/review/messages';
@@ -137,7 +136,6 @@
         {#if !replyOnly}<div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>{/if}
-        <ReviewOutgoingReplies {composer} busy={voiceActive || markingRead} quiet onEdit={() => reply?.focus()} />
         <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
           bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || markingRead}
