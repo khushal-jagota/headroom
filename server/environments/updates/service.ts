@@ -258,8 +258,9 @@ export class UpdateService {
     if (!this.running || this.options.provider === null || this.prefetching !== null) return;
     const current = this.attempts.read();
     if (current !== null && !SETTLED_ATTEMPT_STATES.has(current.state)) return;
-    if (!options.force && this.now() - this.last_checked < UPDATE_AVAILABILITY_REFRESH_SECONDS)
-      return;
+    const interval =
+      this.options.provider.refresh_interval_seconds ?? UPDATE_AVAILABILITY_REFRESH_SECONDS;
+    if (!options.force && this.now() - this.last_checked < interval) return;
     this.last_checked = this.now();
     // Reserve the flight before a provider or commit callback can re-enter this door.
     void this.prefetch().catch((error: unknown) => {
