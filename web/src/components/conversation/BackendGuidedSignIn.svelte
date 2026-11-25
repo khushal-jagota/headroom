@@ -14,7 +14,7 @@
 
   let copied = $state(false);
   async function copy() {
-    await navigator.clipboard.writeText(command);
+    try { await navigator.clipboard.writeText(command); } catch { return; }
     copied = true;
     setTimeout(() => { copied = false; }, 2000);
   }
@@ -26,7 +26,7 @@
   </p>
   <pre class="guided-code" data-backend-guided-command>{command}<Button onclick={() => void copy()} aria-label="Copy command">{copied ? "Copied" : "Copy"}</Button></pre>
   <p class="guided-step">
-    2. The command prints a link. Open the link in a browser on any device, sign in, and give the code it shows back to the terminal.
+    2. Follow the steps the command prints. It may open a browser, or print a link to open on any device and a code to give back to the terminal.
   </p>
   <p class="guided-step">
     3. Come back here and check again.

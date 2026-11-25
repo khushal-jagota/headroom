@@ -91,6 +91,7 @@ describe("expired and guided sign-in", () => {
     const expired = snapshot("unknown", "This saved login expired and codex has not refreshed it yet.");
     expect(backendCanBeReSignedIn(expired)).toBe(true);
     expect(backendCanBeReSignedIn(snapshot("authenticated"))).toBe(false);
+    expect(backendCanBeReSignedIn(snapshot("unknown"))).toBe(false); // an old CLI or a failed read has no login detail
     const body = draw(expired, idle);
     expect(body).toContain("This saved login expired");
     expect(body).toContain("data-backend-sign-in-caveat");

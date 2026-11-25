@@ -29,9 +29,12 @@ export function backendCanBeSignedIn(snapshot: BackendSnapshot): boolean {
  * Whether a signed-in-looking login should offer a re-sign-in. `unknown` is a saved login
  * that Panels cannot confirm, such as an expired token that no turn has refreshed. The CLI
  * often refreshes it alone, so the button is secondary and the caveat is shown with it.
+ * An `unknown` card with no detail is another problem (an old CLI, a failed read), where a
+ * new sign-in would not help, so it needs the detail the server wrote about the login.
  */
 export function backendCanBeReSignedIn(snapshot: BackendSnapshot): boolean {
-  return backendCanBeSignedIn(snapshot) && snapshot.identity?.status === "unknown";
+  return backendCanBeSignedIn(snapshot) && snapshot.identity?.status === "unknown"
+    && Boolean(snapshot.identity.detail);
 }
 
 /**

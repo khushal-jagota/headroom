@@ -35,6 +35,10 @@ test('finds fnm, volta, bun and a prefix named in .npmrc', () => {
   expect(volta.install('.volta/bin')).toBe(volta.find());
   const bun = account();
   expect(bun.install('.bun/bin')).toBe(bun.find());
+  const relative = account();
+  writeFileSync(join(relative.home, '.npmrc'), 'prefix=tools\n');
+  relative.install('tools/bin');
+  expect(relative.find()).toBeNull();
   const custom = account();
   writeFileSync(join(custom.home, '.npmrc'), `prefix=${join(custom.home, 'tools')}\n`);
   expect(custom.install('tools/bin')).toBe(custom.find());

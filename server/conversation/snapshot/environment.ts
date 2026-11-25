@@ -57,6 +57,13 @@ function file(path: string): boolean {
     return false;
   }
 }
+function file_owner(path: string): number | null {
+  try {
+    return statSync(path).uid;
+  } catch {
+    return null; // The file went away.
+  }
+}
 function executable_file(path: string): boolean {
   try {
     if (!file(path)) return false;
@@ -83,7 +90,7 @@ export function backend_executable_path(
   const uid = process.geteuid?.();
   for (const folder of cli_search_folders(environment.HOME ?? homedir())) {
     const path = join(folder, name);
-    if (executable_file(path) && statSync(path).uid === uid) return path;
+    if (executable_file(path) && file_owner(path) === uid) return path;
   }
   return null;
 }
