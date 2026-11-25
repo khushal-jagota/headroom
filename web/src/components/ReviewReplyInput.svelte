@@ -5,8 +5,8 @@
   import type {PendingConversationFile} from '../lib/conversation/pendingFiles';
   import type {PendingConversationImage} from '../lib/conversation/pendingImages';
   import {createVoiceCapture,voiceCaptureSupported,type VoiceCapture,type VoiceCaptureState} from '../lib/conversation/voiceCapture';
-  let {uploads=$bindable([]),uploadDestination,text=$bindable(''),files=$bindable([]),images=$bindable([]),intakeBusy=$bindable(false),voiceActive=$bindable(false),draftKey,attachmentDisabled=false,sendDisabled=false,placeholder='Reply…',label='Reply',sendLabel='Send reply',preserveHeight=false,onSend,onError}: {
-    uploads?:PendingAttachment[];uploadDestination:UploadDestination;text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;draftKey:string;attachmentDisabled?:boolean;sendDisabled?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
+  let {uploads=$bindable([]),uploadDestination,text=$bindable(''),files=$bindable([]),images=$bindable([]),intakeBusy=$bindable(false),voiceActive=$bindable(false),draftKey,attachmentDisabled=false,sendDisabled=false,placeholder='Reply…',label='Reply',sendLabel='Send reply',preserveHeight=false,sending=false,result,sendTitle,onSend,onError}: {
+    uploads?:PendingAttachment[];uploadDestination:UploadDestination;text?:string;files?:PendingConversationFile[];images?:PendingConversationImage[];intakeBusy?:boolean;voiceActive?:boolean;draftKey:string;attachmentDisabled?:boolean;sendDisabled?:boolean;placeholder?:string;label?:string;sendLabel?:string;preserveHeight?:boolean;sending?:boolean;result?:'sent'|'failed'|'unsure';sendTitle?:string;onSend:()=>Promise<void>|void;onError:(error:unknown)=>void;
   }=$props();
   let root=$state<HTMLDivElement|null>(null);
   let input=$state<HTMLTextAreaElement|null>(null);
@@ -37,7 +37,7 @@
     inputAttributes={{'data-review-reply':''}}
     onsubmit={()=>void submit()}
     record={{label:'Speak a reply',disabled:!voiceSupported,onclick:()=>void voice?.startRecording(),attributes:{'data-voice-record':''}}}
-    send={{label:sendLabel,ready:hasReply,sending:false,allowWhileIntake:true,disabled:sendDisabled || !hasReply,onclick:()=>void submit(),attributes:{'data-review-send':''}}}
+    send={{label:sendTitle??sendLabel,ready:hasReply,sending,result,allowWhileIntake:true,disabled:sendDisabled || !hasReply,onclick:()=>void submit(),attributes:{'data-review-send':'',...(sendTitle?{title:sendTitle}:{})}}}
     voice={{state:voiceState,cancel:()=>voice?.cancel(),stop:()=>voice?.stopRecording(),retry:()=>voice?.retry()}}/>
 </div>
 

@@ -15,10 +15,14 @@
   import { messageNotDelivered, type TranscriptStatus } from '../lib/conversation/transcript';
   import type { ReviewOutgoingReply, ReviewReplyComposer } from '../lib/review/replyComposer.svelte';
 
-  let { composer, onEdit, busy = false }: {
+  let { composer, onEdit, busy = false, quiet = false }: {
     composer: ReviewReplyComposer;
     onEdit: () => void;
     busy?: boolean;
+    /** The empty Review page keeps a send out of view while it goes, after it arrives and
+     *  after it is refused or may not have arrived. Its send button shows each, and the message
+     *  returns to the field. A send that waits or is queued still shows. */
+    quiet?: boolean;
   } = $props();
 
   const view = $derived(composer.queueView);
@@ -26,7 +30,10 @@
     (view?.held_prompts ?? []).filter(prompt => heldPromptIsInLens(prompt, 'focus', 'owner')), []
   ), 'owner', new Set()));
   const heldIds = $derived(new Set(held.map(message => message.messageId)));
-  const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)));
+  const attempts = $derived(composer.attempts.filter(attempt => !heldIds.has(attempt.message.messageId)
+    && !(quiet && (attempt.status === 'sent' || attempt.status === 'sending' || attempt.status === 'checking'
+      || attempt.status === 'failed' || attempt.status === 'upload-failed'
+      || attempt.status === 'connection-failed' || attempt.status === 'uncertain'))));
   const queue = $derived(held.filter(belongsInHeldQueue));
   const pendingQueue = $derived(attempts.filter(queueAttempt));
 

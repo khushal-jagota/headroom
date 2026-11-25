@@ -401,8 +401,9 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
   expect(received.filter((text) => text.includes(chiefText))).toHaveLength(1);
   expect(chiefSends).toEqual([`${server.base}/api/chief/conversation/send`]);
   await expect(chief.locator('.chat-att')).toHaveCount(0);
-  const chiefMessage = chief.locator('[data-review-outgoing]').filter({ hasText: chiefText });
-  await expect(chiefMessage.getByRole('status')).toHaveText('Sent');
+  // The empty Review page does not keep a delivered message or its "Sent" status.
+  await expect(chief.locator('[data-review-outgoing]').filter({ hasText: chiefText })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Chief' })).toHaveCount(0);
   await page.close();
   console.log(`Review reply attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing signal host`);
 });
@@ -449,4 +450,51 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
     await page.close();
   }
   console.log(`Approval attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing rail host`);
+});
+
+test('the empty Review page shows how a send ended on its button and keeps its input for the Chief only', async ({ signalServer, newContext }) => {
+  // Only a real browser and the live send route together show the whole path: the refusal
+  // from the server, the message put back in the field, the button's cross, tick and question
+  // mark, and the page leaving the Chief box out once something waits in the queue.
+  const chiefConversation = 'review-refused-chief';
+  await post(signalServer, `/api/test/signals/${chiefConversation}/start`);
+  await bindConversation(signalServer, 'agent', 'chief_of_staff', chiefConversation);
+  await post(signalServer, `/api/test/signals/${chiefConversation}/finish`);
+  const page = await openPage(await newContext(), signalServer, '#/review', '[data-review-chief-composer]');
+  page.setDefaultTimeout(WAIT_MS);
+  const input = page.locator('[data-review-chief-composer] [data-review-reply]');
+  const send = page.locator('[data-review-send]');
+  const sendRoute = '**/api/chief/conversation/send';
+  await page.route(sendRoute, (route) => route.fulfill({
+    status: 409, contentType: 'application/json', body: '{"detail":"The Chief is not available right now."}',
+  }));
+  await input.fill('Chief, please look at this.');
+  await send.click();
+  await expect(send).toHaveClass(/failed/);
+  await expect(input).toHaveValue('Chief, please look at this.');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  await expect(send).not.toHaveClass(/failed/);
+  await page.unroute(sendRoute);
+  await send.click();
+  await expect(send).toHaveClass(/sent/);
+  await expect(input).toHaveValue('');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  // The connection drops: the message may have arrived, so it returns to the field with a question mark.
+  await expect(send).not.toHaveClass(/sent/);
+  await page.route(sendRoute, (route) => route.abort());
+  await input.fill('Chief, are you there?');
+  await send.click();
+  await expect(send).toHaveClass(/unsure/);
+  await expect(input).toHaveValue('Chief, are you there?');
+  await expect(page.locator('[data-review-outgoing]')).toHaveCount(0);
+  await page.unroute(sendRoute);
+  await expect(send).not.toHaveClass(/unsure/);
+  await expect(input).toHaveValue('Chief, are you there?');
+  // A question arrives while the page is showing "nothing needs you": the Chief box goes, so a note cannot pass for an answer.
+  await input.fill('');
+  const ticket = await createTicketConversation(signalServer, { conversationId: 'review-waiting-agent', title: 'Waiting agent' });
+  await post(signalServer, '/api/test/signals/review-waiting-agent/finish');
+  await connectedMessage(signalServer, 'review-waiting-agent', ticketPrincipal(ticket), 'A question for you.');
+  await expect(page.locator('[data-review-final-status]')).toHaveText('1 thing awaits review.');
+  await expect(input).toHaveCount(0);
 });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import ReviewChiefMessage from './ReviewChiefMessage.svelte';
   import ErrorLine from './ErrorLine.svelte';
+  import { SKIPPED_RETURN_LABEL } from '../lib/review/return';
 
   let { returnLabel = 'Back to review', waitingCount, runningWorkerCount, returning = false, returnError = null, onReturn }: {
     returnLabel?: string;
@@ -11,6 +12,8 @@
     onReturn: () => void;
   } = $props();
   let messageBusy = $state(false);
+  // With nothing waiting and nothing skipped, the page is already the review.
+  const canReturn = $derived(waitingCount !== 0 || returnLabel === SKIPPED_RETURN_LABEL);
 </script>
 
 <div class="review-final" data-review-empty data-review-final-count={waitingCount ?? 'unknown'}>
@@ -30,10 +33,12 @@
         </div>
       </div>
     </div>
-    <ReviewChiefMessage onBusy={value => messageBusy = value} />
-    <div class="return-slot">
-      <button type="button" class:primary={waitingCount !== null && waitingCount > 0} data-review-return disabled={returning || messageBusy} onclick={onReturn}>{returnLabel}</button>
-    </div>
+    <ReviewChiefMessage waiting={waitingCount !== null && waitingCount > 0} onBusy={value => messageBusy = value} />
+    {#if canReturn}
+      <div class="return-slot">
+        <button type="button" class:primary={waitingCount !== null && waitingCount > 0} data-review-return disabled={returning || messageBusy} onclick={onReturn}>{returnLabel}</button>
+      </div>
+    {/if}
     {#if returnError}<ErrorLine error={returnError} />{/if}
   </div>
 </div>
