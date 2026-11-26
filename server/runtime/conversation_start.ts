@@ -49,10 +49,7 @@ import { ensure_started_conversation_record } from '../conversation/record/data/
 import { readProject } from '../projects/data/index.ts';
 import type { Ticket, TicketLocale } from '../tickets/contracts.ts';
 import * as tickets from '../tickets/data/index.ts';
-import {
-  canonical_ticket_execution_refusal,
-  conversation_execution_refusal,
-} from '../tickets/execution_admission.ts';
+import { conversation_execution_refusal } from '../tickets/execution_admission.ts';
 import type { TicketExecutionRefusal } from '../tickets/execution_admission.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
@@ -356,11 +353,6 @@ export async function start_ticket_conversation(
     now: number;
   },
 ): Promise<LinkedConversation> {
-  database.read((sql) => {
-    const current = tickets.read_ticket(sql, ticket.id);
-    const refusal = configured_ticket_execution_refusal(database, sql, current);
-    if (refusal !== null) throw refusal;
-  });
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
   let linked: Ticket;
@@ -677,13 +669,8 @@ export async function send_to_ticket_conversation(
   content: ConversationMessageContent,
   options: TicketMessageOptions,
 ): Promise<DeliveredMessage> {
+  // An absent machine refuses nothing here: the conversation holds the message until it returns.
   const ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
-  database.read((sql) => {
-    const refusal =
-      canonical_ticket_execution_refusal(sql, ticket) ??
-      configured_ticket_execution_refusal(database, sql, ticket);
-    if (refusal !== null) throw refusal;
-  });
   const current = options.conversation_id ?? ticket.conversation_id;
   if (
     current !== null &&

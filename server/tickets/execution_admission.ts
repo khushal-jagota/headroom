@@ -6,6 +6,7 @@ import { read_ticket_by_conversation_id } from './data/index.ts';
 import {
   can_execute_machine,
   CURRENT_EXECUTION_LOCALE,
+  machine_never_joins_refusal,
   machine_unavailable_reason,
 } from './locale_configuration.ts';
 
@@ -18,7 +19,8 @@ function refusal(sql: ReadSql, ticket: Ticket): PlannerError {
   });
 }
 export const canonical_ticket_execution_refusal: TicketExecutionRefusal = (sql, ticket) =>
-  can_execute_machine(ticket.machine_id, sql) ? null : refusal(sql, ticket);
+  machine_never_joins_refusal(ticket.machine_id, sql, { ticket_id: ticket.id }) ??
+  (can_execute_machine(ticket.machine_id, sql) ? null : refusal(sql, ticket));
 
 export function conversation_execution_refusal(
   sql: ReadSql,

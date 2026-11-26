@@ -67,7 +67,7 @@ export async function send(
       if (options.record_refusal && options.sender_message_id == null)
         throw new Error('record_refusal requires a sender_message_id');
       host.require_runtime_ownership();
-      const refusal = host.execution_refusal(conversation_id);
+      const refusal = host.admission_refusal(conversation_id);
       if (refusal !== null) throw refusal;
       const state = host.conversation_state(conversation_id);
       if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
@@ -147,12 +147,15 @@ async function send_owned(
     release_admission_leases();
     host.start_admission.handoff(message.sender_message_id);
     await host.ensure_local_custody(state);
+    // No turn can run while the machine is away, so any mode waits in order for its return.
     const fate =
-      mode === PromptDeliveryMode.steer
-        ? await controls.steer(host, state, message)
-        : mode === PromptDeliveryMode.send_now
-          ? await controls.send_now(host, state, message)
-          : await host.queue(state, message);
+      host.execution_refusal(state.record.conversation_id) !== null
+        ? await state.lock.run(() => host.hold_prompt(state, message))
+        : mode === PromptDeliveryMode.steer
+          ? await controls.steer(host, state, message)
+          : mode === PromptDeliveryMode.send_now
+            ? await controls.send_now(host, state, message)
+            : await host.queue(state, message);
     if (
       options.record_refusal &&
       fate instanceof PromptDeliveryRefused &&

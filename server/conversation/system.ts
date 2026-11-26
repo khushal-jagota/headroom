@@ -13,7 +13,7 @@ import { performance } from 'node:perf_hooks';
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
-import { AnswerFate, HeldPrompt, PromptDeliveryQueued } from './contracts.ts';
+import { AnswerFate, HeldPrompt, MACHINE_UNAVAILABLE, PromptDeliveryQueued } from './contracts.ts';
 import type {
   ConversationStartRequest,
   ConversationSystem,
@@ -264,8 +264,22 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         ),
     );
   }
-  /** Database and save failures refuse first, then the owner's execution admission. */
+  /** Why this conversation cannot run now: a save refusal, then the machine policy. */
   execution_refusal(conversation_id: string): PlannerError | null {
+    return this.save_refusal(conversation_id) ?? this.options.execution_refusal(conversation_id);
+  }
+  /**
+   * Why this conversation cannot take a message at all. An absent machine is not one: a
+   * message for it is accepted and held until the machine returns. A machine that can never
+   * join again is one.
+   */
+  admission_refusal(conversation_id: string): PlannerError | null {
+    const saving = this.save_refusal(conversation_id);
+    if (saving !== null) return saving;
+    const machine = this.options.execution_refusal(conversation_id);
+    return machine?.code === MACHINE_UNAVAILABLE ? machine : null;
+  }
+  private save_refusal(conversation_id: string): PlannerError | null {
     if (this.options.store.database_unusable_error !== null)
       return new PlannerError(
         'conversation_save_failed',
@@ -276,7 +290,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         'conversation_save_failed',
         'This conversation could not save, so it refuses new work until a restart.',
       );
-    return this.options.execution_refusal(conversation_id);
+    return null;
   }
   native_operation<T>(operation: () => Promise<T>): Promise<T> {
     return system_shutdown.native_operation(this, operation);

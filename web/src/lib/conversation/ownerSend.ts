@@ -48,7 +48,7 @@ export function ownerSendOutcomeAsDelivery(outcome: OwnerSendOutcome): Delivered
     case "pending": return { fate: "accepted", message_id: outcome.message_id, conversation_id };
     case "delivered": return { fate: "started", conversation_id };
     // The contract always names the reason. A missing one reads as the general sentence.
-    case "refused": return { fate: "refused", refusal_reason: outcome.refusal_reason as PromptDeliveryRefusalReason, conversation_id };
+    case "refused": return { fate: "refused", refusal_reason: outcome.refusal_reason as PromptDeliveryRefusalReason, reason: outcome.reason, conversation_id };
     case "discarded": return { fate: "suppressed", reason: outcome.reason ?? PROMPT_DISCARDED_SENTENCE, conversation_id };
     case "uncertain": return { fate: "uncertain", conversation_id };
   }

@@ -28,6 +28,7 @@ import {
   message_text,
   message_delivery_mode,
   result_json,
+  machine_waiting_fields,
 } from '../message_delivery/routes.ts';
 import { ENTRIES } from '../membership/collections.ts';
 import {
@@ -354,6 +355,7 @@ export class AgentWrites {
               conversation_id,
               fate: 'accepted',
               submission_id: envelope.submission_id,
+              ...machine_waiting_fields(tx, conversation_id),
             },
           };
           write_agent_message_acceptance(

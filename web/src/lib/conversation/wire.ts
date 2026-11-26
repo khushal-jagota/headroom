@@ -57,7 +57,14 @@ export type PromptDeliveryRefusalReason =
   | "message_cannot_be_steered"
   | "backend_rejected_steer"
   | "command_cannot_join_running_turn"
-  | "remote_steer_not_delivered";
+  | "remote_steer_not_delivered"
+  // Home refused an owner message before it took custody. Its reason holds the sentence.
+  | "refused_before_acceptance"
+  | "recipient_unavailable"
+  | "machine_unavailable"
+  | "conversation_save_failed"
+  | "home_restarted_before_acceptance"
+  | "recipient_conversation_replaced";
 
 /** What one message is made of: written words, pictures, and files.
  *
@@ -224,6 +231,8 @@ export type ConversationView = {
   latest_sequence: number;
   owner_read_through_sequence: number;
   is_running: boolean;
+  /** Why messages wait for the conversation's machine, such as "Waiting for Mac 1". */
+  machine_waiting_reason?: string | null;
   held_prompts: HeldPrompt[];
   pending_messages: PendingMessage[];
   pending_permission_ask: PendingPermissionAsk | null;
@@ -396,7 +405,7 @@ export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
-  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason; reason?: string | null }
   | { fate: "uncertain" }
   | { fate: "suppressed"; reason: string };
 

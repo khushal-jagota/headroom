@@ -664,7 +664,10 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         { ...data, message_id },
         as_json,
         data.fate === 'accepted'
-          ? `accepted for delivery · ${message_id}`
+          ? `accepted for delivery · ${message_id}` +
+              (typeof data.machine_waiting_reason === 'string'
+                ? ` · ${data.machine_waiting_reason}`
+                : '')
           : data.fate === 'recorded'
             ? `recorded · ${message_id}`
             : `message ${scalar(data.fate)}` +
