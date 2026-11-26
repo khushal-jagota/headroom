@@ -260,6 +260,9 @@ async function install_locked(
     return 1;
   }
 
+  // The serving home staged and fully checked this copy before the stop (service.ts).
+  const staged_copy =
+    typeof attempt.staged_snapshot === 'string' ? attempt.staged_snapshot : undefined;
   let previous_moved = false,
     new_app_moved = false;
   try {
@@ -275,7 +278,7 @@ async function install_locked(
     signal.throwIfAborted();
     record.record('interruptions_captured');
     if (attempt.snapshot_required === true) {
-      await effects.snapshot(from_sha, lifetime_lock_fd);
+      await effects.snapshot(from_sha, lifetime_lock_fd, staged_copy);
       signal.throwIfAborted();
       attempt.backup = record.read().backup;
       if (typeof attempt.backup !== 'string')
@@ -339,5 +342,27 @@ async function install_locked(
       rmtree(path, true);
   }
   rmtree(join(request.current_root, 'app-previous'), true);
+  if (staged_copy !== undefined && typeof attempt.backup === 'string')
+    await verify_caught_up_snapshot(effects, record, attempt.backup, signal);
   return 0;
+}
+/**
+ * The window skipped SQLite's check of the pages written after the staged check. The home
+ * serves again, so a failure cannot undo the update: it is reported, and the snapshot loses
+ * its verified mark. Restore checks every image again before use.
+ */
+async function verify_caught_up_snapshot(
+  effects: InstallerEffects,
+  record: InstallationRecord,
+  snapshot: string,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    await effects.verify_snapshot(snapshot);
+    record.record('snapshot_verified');
+  } catch (error) {
+    signal.throwIfAborted();
+    console.error(`The update snapshot failed its full check: ${problem(error)}`);
+    record.record('snapshot_check_failed');
+  }
 }

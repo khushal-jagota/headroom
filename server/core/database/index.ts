@@ -410,6 +410,18 @@ export async function onlineBackup(sourcePath: string, destinationPath: string):
   }
 }
 
+/** Move every WAL frame into the main file of a database that has no writer left. */
+export function checkpointStoppedDatabase(path: string): void {
+  path = assert_test_database_path(path);
+  const connection = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
+  try {
+    const [result] = connection.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[];
+    if (result?.busy !== 0) throw new Error(`SQLite could not checkpoint ${path}`);
+  } finally {
+    connection.close();
+  }
+}
+
 export function verifyDatabaseIntegrity(path: string): void {
   path = assert_test_database_path(path);
   const connection = new BetterSqlite3(path, {

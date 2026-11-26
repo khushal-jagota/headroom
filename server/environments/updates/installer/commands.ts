@@ -287,11 +287,17 @@ export function create_installer_effects(
         return { kind: 'unavailable', detail: error_detail(error).message };
       }
     },
-    async snapshot(deployed_revision, lifetime_lock_fd) {
+    async snapshot(deployed_revision, lifetime_lock_fd, staged_copy) {
       const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
       const app = join(request.current_root, 'app'),
         main = join(app, 'server/environments/updates/snapshot_main.ts');
-      for (const path of [request.database, request.backup_directory, app, main])
+      for (const path of [
+        request.database,
+        request.backup_directory,
+        app,
+        main,
+        ...(staged_copy === undefined ? [] : [staged_copy]),
+      ])
         assert_installer_path(path, execution.environment);
       await run_installer_command(
         [
@@ -302,9 +308,26 @@ export function create_installer_effects(
           deployed_revision,
           request.data_directory,
           request.attempt_id,
+          ...(staged_copy === undefined ? [] : [staged_copy]),
         ],
         value,
         { check: true, output: 'inherit', lifetime_lock_fd },
+      );
+    },
+    async verify_snapshot(snapshot) {
+      const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
+      // The installer's own release took the snapshot, so it also checks it.
+      const app = release_path(
+          request.current_root,
+          String(new InstallationRecord(request).read().from_sha),
+        ),
+        main = join(app, 'server/environments/updates/snapshot_verify_main.ts');
+      for (const path of [snapshot, request.backup_directory, app, main])
+        assert_installer_path(path, execution.environment);
+      await run_installer_command(
+        [request.node_executable, main, snapshot, request.backup_directory],
+        value,
+        { check: true, output: 'inherit' },
       );
     },
     async restore(snapshot, lifetime_lock_fd) {

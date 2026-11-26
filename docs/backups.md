@@ -13,7 +13,17 @@ The database and the folders are copied back to back, not at one transactional i
 
 ## How snapshots are made and kept
 
-A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) before an update whose new release changes the database schema (including a TypeScript release with pending schema steps), while the server still runs. If that backup fails, the live app is not replaced. The installed launcher forwards backup and maintenance commands to the same CLI as manual operations. The timer units stay unchanged for a TypeScript release. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
+A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) before an update whose new release changes the database schema (including a TypeScript release with pending schema steps). Every Mac trial takes one too. The installed launcher forwards backup and maintenance commands to the same CLI as manual operations. The timer units stay unchanged for a TypeScript release. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
+
+## The update snapshot
+
+The update snapshot is the restore point if the update fails before the new home proves healthy. The update splits its work around the stop, so that the home is down for the shortest time:
+
+1. While the home still serves, the update takes the online copy and runs the full integrity check on it. If that check fails, the update stops there and the home keeps running.
+2. After the stop, the installer brings the copy up to the stopped database. It compares the two files block by block, writes only the blocks that differ, and computes the checksum in the same pass. The snapshot is then byte-identical to the stopped database, in the same format as every other snapshot.
+3. After the new home passes health, the installer runs the full integrity check on the published snapshot, and then retention. If that check fails, the installer logs the failure, and the snapshot loses its verified mark.
+
+The pages that the home wrote between steps 1 and 2 get no integrity check before the schema steps run. Step 3 checks them, and restore checks every image again before it replaces the database. If the update fails in step 2, the live app is not replaced.
 
 ## Restore
 
@@ -23,7 +33,7 @@ Deployment's own recovery, including the next start after an installer was kille
 
 ## Decisions that shape it
 
-- Verified or nothing: a snapshot exists only after its checks pass.
+- Verified or nothing: a snapshot exists only after its checks pass. The update snapshot finishes its last check after the home serves again.
 - The record, not the artifacts. Uploads and Ticket files are outside the snapshot and outside app replacement.
 - Restore is offline and validates first.
 
@@ -34,4 +44,4 @@ Deployment's own recovery, including the next start after an installer was kille
 - `ops/panels-environments/panels-db-backup.*`: the Linux nightly unit.
 - [Mac source installation](../ops/mac-home/installation.md): the login-session backup schedule and isolated restore procedure.
 
-_Last verified: 2026-11-16._
+_Last verified: 2026-11-26._

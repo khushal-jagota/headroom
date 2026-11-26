@@ -17,6 +17,7 @@ import {
 } from './installer/configuration.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import { INSTALLER_LAUNCH_TIMEOUT_SECONDS } from './configuration.ts';
+import { DATABASE_SNAPSHOT_TIMEOUT_SECONDS } from './installer/configuration.ts';
 import { installer_unit, selected_installer_environment } from './installation_command.ts';
 
 export function create_installer_operations(inputs: {
@@ -31,6 +32,21 @@ export function create_installer_operations(inputs: {
   return {
     ...(inputs.darwin_home ? { requires_snapshot: true } : {}),
     ...create_migration_status(),
+    async stage_snapshot(database, backup_directory) {
+      for (const path of [inputs.application_root, database, backup_directory])
+        assert_installer_path(path, environment);
+      const result = await run_release_command(
+        [
+          join(inputs.application_root, 'node/bin/node'),
+          join(inputs.application_root, 'server/environments/updates/snapshot_stage_main.ts'),
+          database,
+          backup_directory,
+        ],
+        { timeout_seconds: DATABASE_SNAPSHOT_TIMEOUT_SECONDS, environment: { ...environment } },
+        { child_processes: inputs.child_processes, signal: inputs.signal, deadline: null },
+      );
+      return result.stdout.trim();
+    },
     prepare(options) {
       inputs.signal.throwIfAborted();
       for (const path of [

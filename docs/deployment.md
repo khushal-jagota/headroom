@@ -11,7 +11,8 @@ PR into main → candidate packages → native Linux and Apple Silicon boots
                       → failed trial → previous home restored
 merged main tree + passing suites + passing native journeys → publish qualified packages
 
-owner presses Update → drain accepted sends → stop → snapshot if required → select release
+owner presses Update → copy and check snapshot if required → drain accepted sends → stop
+                     → catch snapshot up → select release
                      → start trial → home machine answers → record success → reopen writes
                                    ↳ failed trial → restore data and release → verify previous home
 ```
@@ -61,13 +62,13 @@ The trial marker keeps ordinary writes closed. The new server receives fresh cre
 
 The independent installer owns acceptance and rollback under its lifetime lock. Reading update status cannot settle an attempt from its age or the running SHA.
 
-**The installer.** It checks capacity for a required snapshot before stopping the home, takes the snapshot while the database is quiet, selects the candidate, runs its schema steps and starts its trial. On the first conversion from a real app directory it atomically exchanges directory entries to pin the old release. Later selection replaces one symbolic link with a rename.
+**The installer.** Before it stops the home, the update checks capacity for a required snapshot. While the home still serves, it copies the database into the backup folder and runs SQLite's full integrity check on the copy. A failed check ends the update there, and the home keeps running. After the stop, the installer brings that copy up to the quiet database, selects the candidate, runs its schema steps and starts its trial. After the new home passes health, it checks the whole snapshot again. See [Backups](backups.md). On the first conversion from a real app directory it atomically exchanges directory entries to pin the old release. Later selection replaces one symbolic link with a rename.
 
 A new database starts from the release's complete schema seed. A release refuses a database at a revision its own history does not contain.
 
 A Mac home selects the separate home artifact for its operating system and architecture. Its installer checks the exact installation and stops its home and backup jobs before replacement. It starts the backup job again after home health passes. The service definitions and attempt record stay outside the selected app. Release jobs use fixed executable search paths. The first-install command selects one sealed release for the server and the machine code on its own machine. It starts separate services, connects them through the local executor link, and checks server health and an accepted machine connection. Provider logins stay with the machine code. A failed installation stops only its new services and removes only its own files. See the [Mac procedure](../ops/mac-home/installation.md).
 
-Every Mac trial takes that snapshot, including a trial with no schema change. Rollback restores it before the previous home starts. The update's deadline is written before the installer starts, and it allows for the snapshot, the steps, and a possible restore. A release with schema steps is therefore down for longer, by the snapshot time.
+Every Mac trial takes that snapshot, including a trial with no schema change. Rollback restores it before the previous home starts. The update's deadline is written before the installer starts, and it allows for the snapshot, the steps, and a possible restore. A release with schema steps is therefore down for longer, by the time to bring the snapshot up to date: one read of the database file.
 
 ## What can be undone
 

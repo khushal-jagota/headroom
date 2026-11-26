@@ -159,6 +159,7 @@ const KNOWN_FIELDS = new Set([
   'deadline_at',
   'backup',
   'snapshot_required',
+  'staged_snapshot',
   'steps',
   'mac_attempt_id',
 ]);
@@ -182,6 +183,7 @@ export function parse_attempt(payload: unknown): UpdateAttempt {
     deadline_at: (payload.deadline_at ?? null) as string | null,
     backup: (payload.backup ?? null) as string | null,
     snapshot_required: payload.snapshot_required === true,
+    staged_snapshot: typeof payload.staged_snapshot === 'string' ? payload.staged_snapshot : null,
     steps: Object.fromEntries(Object.entries(steps).map(([key, val]) => [key, text(val)])),
     mac_attempt_id: (payload.mac_attempt_id ?? null) as string | null,
     extra: Object.fromEntries(Object.entries(payload).filter(([key]) => !KNOWN_FIELDS.has(key))),

@@ -108,6 +108,8 @@ export interface UpdateAttempt {
   backup: string | null;
   /** The installer snapshots the stopped database before it changes anything. */
   snapshot_required: boolean;
+  /** The copy that the serving home took and fully checked before the stop. */
+  staged_snapshot?: string | null;
   steps: Record<string, string>;
   mac_attempt_id: string | null;
   extra: Record<string, unknown>;
@@ -158,6 +160,8 @@ export interface InstallerOperations {
   readonly requires_snapshot?: boolean;
   /** Refuse a database off the staged chain. True when the installer must run steps. */
   node_schema_steps_pending(database: string, staged_app: string): boolean | Promise<boolean>;
+  /** While the home serves: copy the database into the backup directory and check it fully. */
+  stage_snapshot(database: string, backup_directory: string): Promise<string>;
   prepare(options: {
     current_root: string;
     database: string;

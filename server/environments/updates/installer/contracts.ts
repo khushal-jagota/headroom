@@ -34,8 +34,17 @@ export interface InstallerEffects {
   finish_rollback?(): Promise<string | null>;
   service(action: 'stop' | 'start'): Promise<void>;
   capture(): Promise<CaptureOutcome>;
-  /** After the stop and before the swap: the current app snapshots the quiet database. */
-  snapshot(deployed_revision: string, lifetime_lock_fd: number): Promise<void>;
+  /**
+   * After the stop and before the swap: the current app snapshots the quiet database. A copy
+   * that the home staged and checked before the stop only catches up.
+   */
+  snapshot(
+    deployed_revision: string,
+    lifetime_lock_fd: number,
+    staged_copy?: string,
+  ): Promise<void>;
+  /** After the new home passes health: the full check that a caught-up snapshot skipped. */
+  verify_snapshot(snapshot: string): Promise<void>;
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   /** After the swap and before start: the new app brings the stopped database to its head. */
   schema_steps(lifetime_lock_fd: number, backup_taken: boolean): Promise<void>;
