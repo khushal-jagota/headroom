@@ -1,9 +1,6 @@
 /** Public Ticket reads. All queries share the caller's read snapshot. */
-import { dirname, join, parse } from 'node:path';
-import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { is_private_ticket_name } from '../files/logic/paths.ts';
 import { TICKET_NEEDS } from './contracts.ts';
 import type {
   LegacyTicketListFilters,
@@ -149,84 +146,7 @@ export function ticket_creation_json(sql: ReadSql, ticket: Ticket, now: number):
   }
   return { ...ticket_json(ticket, now), supervision_receipt: parts.join(' ') };
 }
-interface Artifact {
-  name: string;
-  opens: string | null;
-  modified_at: number;
-  children: Artifact[];
-}
-function newest(path: string): number {
-  return Math.max(
-    0,
-    ...readdirSync(path)
-      .filter((n) => !lstatSync(join(path, n)).isSymbolicLink())
-      .map((n) => {
-        const p = join(path, n),
-          s = statSync(p);
-        return s.isFile() ? s.mtimeMs / 1000 : s.isDirectory() ? newest(p) : 0;
-      }),
-  );
-}
-function fold(
-  root: string,
-  prefix = '',
-  excluded_name: (name: string) => boolean = () => false,
-): Artifact[] {
-  if (!existsSync(root) || lstatSync(root).isSymbolicLink() || !statSync(root).isDirectory())
-    return [];
-  const result: Artifact[] = [];
-  for (const name of readdirSync(root).sort()) {
-    if (excluded_name(name)) continue;
-    const path = join(root, name),
-      s = lstatSync(path),
-      opens = prefix + name;
-    if (s.isSymbolicLink()) continue;
-    if (s.isFile()) result.push({ name, opens, modified_at: s.mtimeMs / 1000, children: [] });
-    else if (s.isDirectory()) {
-      const index = join(path, 'index.html');
-      if (existsSync(index) && !lstatSync(index).isSymbolicLink() && statSync(index).isFile())
-        result.push({
-          name,
-          opens: opens + '/index.html',
-          modified_at: newest(path),
-          children: [],
-        });
-      else {
-        const children = fold(path, opens + '/');
-        if (children.length)
-          result.push({
-            name,
-            opens: null,
-            modified_at: Math.max(...children.map((c) => c.modified_at)),
-            children,
-          });
-      }
-    }
-  }
-  return result.sort(
-    (a, b) =>
-      b.modified_at - a.modified_at ||
-      (a.name.toLowerCase() < b.name.toLowerCase()
-        ? -1
-        : a.name.toLowerCase() > b.name.toLowerCase()
-          ? 1
-          : a.name < b.name
-            ? -1
-            : a.name > b.name
-              ? 1
-              : 0),
-  );
-}
-function ticket_artifacts(filename: string | undefined, id: string): Artifact[] {
-  if (!filename) return [];
-  const root = join(dirname(filename), 'files', 'tickets', id);
-  for (let p = root; ; p = dirname(p)) {
-    if (existsSync(p) && lstatSync(p).isSymbolicLink()) return [];
-    if (p === parse(p).root) break;
-  }
-  return fold(root, '', is_private_ticket_name);
-}
-export function ticket_detail(sql: ReadSql, id: string, now: number, db_path?: string): Json {
+export function ticket_detail(sql: ReadSql, id: string, now: number): Json {
   const broken = broken_ticket(sql, id);
   if (broken) return broken;
   const ticket = data.read_ticket(sql, id),
@@ -234,7 +154,6 @@ export function ticket_detail(sql: ReadSql, id: string, now: number, db_path?: s
   const result = {
     ...ticket_json(ticket, now),
     record_sha256: data.ticket_record_sha256(sql, id),
-    artifacts: ticket_artifacts(db_path, id),
     blocked: summary.blocked,
     employee_configuration_editable: data.employee_configuration_editable(ticket),
     conversation_history: sql.all<{ conversation_id: string; created_at: number }>(

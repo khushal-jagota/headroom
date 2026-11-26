@@ -195,7 +195,6 @@ export type TicketDetail = {
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
   record_sha256?: string;
-  artifacts?: ManagerArtifact[];
   manager?: Principal;
   id: string;
   title: string;
