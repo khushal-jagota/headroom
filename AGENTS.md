@@ -45,16 +45,16 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior with vitest in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
-## Operating model: plan and orchestrate
-- You are primarily a **planner and manager of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, and verification runs. Implementation substance is produced by sub-agents working tickets.
-- Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in the owning ticket. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
-- A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
-- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets when the ticket records why. Each ticket names its own focused gates.
-- Parallelisation is your call: decide from file overlap which tickets may share the main worktree and which need isolated git worktrees; never let two agents write the same files concurrently.
-- **Anything that can run in parallel should.** Serial work is a cost, and only a real dependency justifies it. A sub-agent orchestrates too — say so, and let it fan out without asking.
-- **Pick the model, then brief to it.** Opus is the default. It may do a task itself, or spawn its own agents to plan, implement and review — which of those fits is its call, not something to prescribe. Give it the task and the decisions already made, encourage it to parallelise and delegate where that makes sense, and leave the shape to it. Sonnet is for speed on a specific, well-bounded job, so brief it tightly. Fable is for large orchestrations and is rare.
+## Operating model: do the work, delegate with reason
+- **Do your own Ticket's work.** A sub-agent costs a new context, so start one only for a clear need: a large independent sweep whose file dumps you do not need, truly independent work that runs in parallel, or an independent review. Small and medium work, glue, and fixes stay inline.
+- **Parallel work is a choice, not a default.** Split work only when the parts are independent and each part is large enough to pay for its own context. Never let two agents write the same files at the same time. Decide from file overlap which parts can share the worktree.
+- **A sub-agent does not fan out by default.** It starts its own sub-agents only when its brief says that it can.
+- **Brief a sub-agent to stand alone.** Give the goal, the decisions already made, the files to read, and the scope. A sub-agent does not invent shapes, does not modify contracts, and does not touch files outside its brief.
+- **On Codex, start a sub-agent with `fork_turns="none"`.** The default, `all`, copies the whole parent conversation into the child, and that multiplies cost. Pass the full history only when the child truly needs it, and say why in one line of the brief. Claude sub-agents already start from their brief, so this asks nothing new of Claude.
+- **Large or risky work can use a staged pipeline.** Write the plan, have it reviewed, implement, review the diff, then integrate serially. Use only the steps that the risk justifies, and record why.
+- **Pick the model, then brief to it.** Opus is the default. Sonnet is for speed on a specific, well-bounded job, so brief it tightly. Fable is for large orchestrations and is rare.
 - Spot-check the load-bearing code yourself even when reviews pass: the proposal resolver, the worker-step claim and its release, planning-date math, and the migration parser.
-- A ticket is done when its named gates pass and its independent review reports no unresolved violations.
+- Work is done when its named checks pass and any review reports no unresolved violations.
 
 ## Worktree and server flow
 
