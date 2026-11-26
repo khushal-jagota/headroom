@@ -27,7 +27,6 @@ vi.mock('node:https', async (original) => ({
 vi.mock('https-proxy-agent', () => ({ HttpsProxyAgent: recording.proxyAgent }));
 
 import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
-import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { trim_surrounding_silence } from '../conversation/voice_transcription/production.ts';
 import { post_voice_http } from '../conversation/voice_transcription/http.ts';
 import { fetchRates } from '../conversation/usage/http.ts';
@@ -54,9 +53,6 @@ test('parsed test mode blocks production subprocess and HTTP doors without runne
     await expect(
       environment.latest_released_version('recorded-package', { timeout_seconds: 1 }),
     ).rejects.toThrow('Production backend I/O is unavailable in tests');
-    await expect(http_get_usage('https://recorded.invalid/usage', {}, 1)).rejects.toThrow(
-      'Production backend I/O is unavailable in tests',
-    );
     await expect(trim_surrounding_silence(new Uint8Array([1]))).rejects.toThrow(
       'Production voice I/O is unavailable in tests',
     );

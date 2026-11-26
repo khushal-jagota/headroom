@@ -594,8 +594,6 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
     const folder = mkdtempSync(join(tmpdir(), 'machine-usage-'));
     const reset = '2026-11-30T21:02:00Z';
     try {
-      const claude_login = join(folder, '.credentials.json');
-      writeFileSync(claude_login, JSON.stringify({ claudeAiOauth: { accessToken: 'claude' } }));
       const antigravity_login = join(folder, 'antigravity-oauth-token');
       writeFileSync(
         antigravity_login,
@@ -642,18 +640,15 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
         ],
         [
           claude_key,
+          // The CLI's get_usage answer as on 26 Nov: no 5-hour window, a weekly and Fable's.
           new ClaudeUsageAdapter({
-            credential_path: claude_login,
-            http_get: async () => ({
-              status_code: 200,
-              body: {
-                limits: [
-                  { group: 'weekly', utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
-                  {
-                    scope: { model: { display_name: 'Fable' } },
-                    utilization: 23,
-                    resets_at: '2026-11-28T15:00:00Z',
-                  },
+            read_usage: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: null,
+                seven_day: { utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
+                model_scoped: [
+                  { display_name: 'Fable', utilization: 23, resets_at: '2026-11-28T15:00:00Z' },
                 ],
               },
             }),
