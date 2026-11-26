@@ -175,6 +175,121 @@ test('Mac rollback boots out the authenticated failed candidate while launchd ha
   }
 });
 
+// Distinct gap: a scheduled job's own process churn during stop failed release PR #1326's update.
+test('Mac stop captures again when the stall watchdog starts during it, but not when the home changes', async () => {
+  const f = await fixture();
+  try {
+    const { root, service: label } = f.request;
+    mkdirSync(join(root, 'app/node/bin'), { recursive: true });
+    writeFileSync(join(root, 'app/node/bin/node'), '', { mode: 0o700 });
+    // A Darwin host plans the full auxiliary environment that launchd reports back.
+    const plan = await create_darwin_home_service(
+      f.request,
+      { ...f.deps, system: 'darwin' },
+      false,
+    );
+    for (const file of plan.files) {
+      mkdirSync(dirname(file.path), { recursive: true });
+      writeFileSync(file.path, file.content, { mode: file.mode });
+    }
+    const domain = `gui/${f.deps.uid}`,
+      watchdog = label + '.stall-watchdog',
+      maintenance = label + '.maintenance';
+    const uid = process.getuid!(),
+      home_process = { pid: 100, parent: 1, birth: 'home', uid },
+      watchdog_process = { pid: 200, parent: 1, birth: 'watchdog', uid };
+    const loaded = new Set([label]),
+      running = new Map([[100, home_process]]),
+      pids = new Map([[label, 100]]),
+      bootouts: string[] = [],
+      // A booted-out job that launchd still lists until its next read.
+      tearing_down = new Set<string>();
+    let snapshots = 0,
+      watchdog_reads = 0,
+      start_watchdog_on_read = 0;
+    const ok = { code: 0, stdout: '', stderr: '' };
+    const overrides = {
+      // The first inventory misses whatever the watchdog starts after it.
+      processes: () => (snapshots++ === 0 ? new Map([[100, home_process]]) : new Map(running)),
+      process: (pid: number) => running.get(pid) ?? null,
+      async command(argv: readonly string[]) {
+        if (argv[0] === '/usr/bin/plutil')
+          return { ...ok, stdout: readFileSync(argv.at(-1)!, 'utf8') };
+        const job_label = argv[2]!.slice(domain.length + 1);
+        if (argv[1] === 'print') {
+          if (job_label === watchdog && ++watchdog_reads === start_watchdog_on_read) {
+            running.set(201, { ...watchdog_process, pid: 201, birth: 'second watchdog' });
+            pids.set(watchdog, 201);
+          }
+          if (tearing_down.delete(job_label)) loaded.delete(job_label);
+          else if (!loaded.has(job_label))
+            return { code: 113, stdout: '', stderr: 'Could not find service' };
+          const plist = join(root, 'agents', job_label + '.plist'),
+            job = JSON.parse(readFileSync(plist, 'utf8')),
+            pid = pids.get(job_label);
+          return {
+            ...ok,
+            stdout: [
+              `path = ${plist}`,
+              `program = ${job.ProgramArguments[0]}`,
+              `working directory = ${job.WorkingDirectory}`,
+              'arguments = {',
+              ...job.ProgramArguments,
+              '}',
+              'environment = {',
+              ...Object.entries(job.EnvironmentVariables).map(
+                ([key, value]) => `${key} => ${value}`,
+              ),
+              '}',
+              ...(pid === undefined ? [] : [`pid = ${pid}`]),
+            ].join('\n'),
+          };
+        }
+        assert.equal(argv[1], 'bootout');
+        bootouts.push(job_label);
+        if (job_label === maintenance) tearing_down.add(job_label);
+        else loaded.delete(job_label);
+        running.delete(pids.get(job_label)!);
+        pids.delete(job_label);
+        return ok;
+      },
+    };
+    // The home process stays strict: a home PID outside the inventory refuses before any bootout.
+    const strict = create_darwin_home_io(f.deps.execution, f.deps.environment, {
+      ...overrides,
+      processes: () => new Map(),
+    });
+    await assert.rejects(
+      new DarwinHomeService(root, `${domain}/${label}`, strict).stop(),
+      /Loaded Mac job process identity is unavailable/,
+    );
+    assert.deepEqual(bootouts, []);
+    // The watchdog started after the first inventory. The stop captures again and completes.
+    loaded.add(watchdog);
+    running.set(200, watchdog_process);
+    pids.set(watchdog, 200);
+    const io = create_darwin_home_io(f.deps.execution, f.deps.environment, overrides);
+    await new DarwinHomeService(root, `${domain}/${label}`, io).stop();
+    assert.equal(snapshots, 2);
+    assert.deepEqual(bootouts, [watchdog, label]);
+    assert.equal(loaded.size, 0);
+    // A watchdog starts between its first read and its read before bootout, after maintenance
+    // was already booted out. The next pass does not boot maintenance out a second time.
+    bootouts.length = 0;
+    snapshots = 1;
+    for (const job of [label, maintenance, watchdog]) loaded.add(job);
+    running.set(100, home_process);
+    pids.set(label, 100);
+    start_watchdog_on_read = watchdog_reads + 2;
+    await new DarwinHomeService(root, `${domain}/${label}`, io).stop();
+    assert.deepEqual(bootouts, [maintenance, watchdog, label]);
+    assert.equal(snapshots, 3);
+    assert.equal(loaded.size, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test('fresh database initialization closes its child before activation and failed install cleanup retains foreign data', async () => {
   const f = await fixture();
   const candidate = fileURLToPath(new URL('../../', import.meta.url)),
