@@ -521,6 +521,7 @@ async function renew_retired_ticket_conversation(
     const generation = begin_recipient_lifecycle(tx, target);
     const submission_id = hold_recipient_delivery_for_lifecycle(
       tx,
+      fresh_conversation_id,
       retired_conversation_id,
       target,
       {
@@ -554,12 +555,15 @@ async function renew_retired_ticket_conversation(
     finish_retired_ticket_renewal(system, database, {
       ticket_id,
       retired_conversation_id,
+      fresh_conversation_id,
       generation,
       submission_id,
       content: resolved,
       options: {
         ...options,
         signal: undefined,
+        // The owner's read boundary belongs to the retired conversation.
+        owner_read_through_sequence: null,
         conversation_id: null,
         created_conversation_id: fresh_conversation_id,
         sender_message_id,
@@ -569,7 +573,7 @@ async function renew_retired_ticket_conversation(
     }),
   ).catch((error) => console.error('Retired workspace renewal failed', error));
   return {
-    conversation_id: retired_conversation_id,
+    conversation_id: fresh_conversation_id,
     fate: new PromptDeliveryQueued({ queue_position: 1 }),
   };
 }
@@ -579,6 +583,7 @@ async function finish_retired_ticket_renewal(
   renewal: {
     ticket_id: string;
     retired_conversation_id: string;
+    fresh_conversation_id: string;
     generation: number;
     submission_id: string;
     content: MessageContent;
@@ -597,16 +602,21 @@ async function finish_retired_ticket_renewal(
     )
       throw new PlannerError('validation', 'The recipient changed during workspace cleanup.');
   };
+  let detail = 'The fresh conversation did not accept the message.';
   try {
     await run_recipient_lifecycle(key, async () => {
       database.read(require_current_retirement);
       release_admission_leases();
       // Nothing is cleaned up before this check, so a refusal here releases the fence.
-      const running = await system.is_running(retired_conversation_id).then(
-        (value) => (value ? 'The retired workspace still has an active conversation' : null),
-        (error: unknown) =>
-          `The retired workspace conversation could not be checked: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      let running: string | null;
+      try {
+        running = (await system.is_running(retired_conversation_id))
+          ? 'The retired workspace still has an active conversation'
+          : null;
+      } catch (error) {
+        if (is_shutdown_business_cancellation(error)) throw error;
+        running = `The retired workspace conversation could not be checked: ${error instanceof Error ? error.message : String(error)}`;
+      }
       if (running !== null) {
         database.write((tx) => finish_recipient_lifecycle(tx, target, generation));
         throw new PlannerError('already_running', running);
@@ -614,6 +624,7 @@ async function finish_retired_ticket_renewal(
       try {
         await system.kill(retired_conversation_id);
       } catch (error) {
+        if (is_shutdown_business_cancellation(error)) throw error;
         throw new PlannerError(
           'validation',
           `The retired workspace could not be cleaned up. Restart this Ticket before sending another message: ${error instanceof Error ? error.message : String(error)}`,
@@ -621,7 +632,7 @@ async function finish_retired_ticket_renewal(
       }
     });
     // The held message takes fresh admission before the fence lifts for anyone else.
-    await conversation_link_lock(key).run(async () => {
+    const delivered = await conversation_link_lock(key).run(async () => {
       database.write((tx) => {
         require_current_retirement(tx);
         tickets.clear_ticket_conversation_link(tx, ticket_id, {
@@ -630,7 +641,7 @@ async function finish_retired_ticket_renewal(
         });
         finish_recipient_lifecycle(tx, target, generation);
       });
-      await send_to_ticket_conversation(
+      return send_to_ticket_conversation(
         system,
         database,
         ticket_id,
@@ -638,12 +649,23 @@ async function finish_retired_ticket_renewal(
         renewal.options,
       );
     });
+    // Another start linked first, and that conversation admitted the message under its own row.
+    if (delivered.conversation_id !== renewal.fresh_conversation_id) {
+      database.write((tx) =>
+        tx.run(
+          "UPDATE recipient_deliveries SET state='discarded',settled_at=? WHERE submission_id=? AND state='awaiting_lifecycle'",
+          [Date.now(), renewal.submission_id],
+        ),
+      );
+      return;
+    }
   } catch (error) {
-    await system.refuse_lifecycle_held_delivery(
-      renewal.submission_id,
-      error instanceof Error ? error.message : String(error),
-    );
+    // Shutdown leaves the held message to restart recovery, which refuses it once.
+    if (is_shutdown_business_cancellation(error)) throw error;
+    detail = error instanceof Error ? error.message : String(error);
   }
+  // Nothing happens if the fresh conversation already admitted the held message.
+  await system.refuse_lifecycle_held_delivery(renewal.submission_id, detail);
 }
 export async function send_to_ticket_conversation(
   system: ConversationSystem,

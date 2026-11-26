@@ -121,7 +121,7 @@ test('restart refuses a message held for interrupted workspace cleanup exactly o
   const recipient = { kind: 'ticket', id: 't_cleanup' } as const;
   f.database.write((tx) => {
     tx.run("INSERT INTO recipient_lifecycles VALUES('ticket','t_cleanup',1,1)");
-    hold_recipient_delivery_for_lifecycle(tx, 'core', recipient, {
+    hold_recipient_delivery_for_lifecycle(tx, 'fresh-core', 'core', recipient, {
       requested_mode: 'queue',
       held_prompt_id: '',
       content: text_message_content('held correction'),
@@ -157,7 +157,7 @@ test('restart refuses a message held for interrupted workspace cleanup exactly o
     expect(
       restarted.database.read((sql) =>
         sql.get<{ state: string }>(
-          "SELECT state FROM recipient_deliveries WHERE submission_id='core:held'",
+          "SELECT state FROM recipient_deliveries WHERE submission_id='fresh-core:held'",
         ),
       ),
     ).toEqual({ state: 'refused' });

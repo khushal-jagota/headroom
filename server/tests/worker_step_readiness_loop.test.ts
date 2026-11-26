@@ -1096,7 +1096,7 @@ test.each(['cleaned', 'failed', 'active'] as const)(
     });
     const clock = new TestClock(new Date(now * 1000).toISOString());
     const as_sender = { principal: { kind: 'chief' as const, id: 'chief' }, conversationId: null };
-    const custody: (number | undefined)[] = [];
+    const custody: { conversation_id: string; delivery_order?: number }[] = [];
     const accepted = await send_message(
       f.core,
       db,
@@ -1111,19 +1111,20 @@ test.each(['cleaned', 'failed', 'active'] as const)(
           sender_id: 'sender',
           submission_id: 'correction',
           in_admission: (tx, id) =>
-            custody.push(
-              tx.get<{ delivery_order: number }>(
+            custody.push({
+              conversation_id: id,
+              delivery_order: tx.get<{ delivery_order: number }>(
                 'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
                 [`${id}:correction`],
               )?.delivery_order,
-            ),
+            }),
         },
       },
     );
     const journal = () =>
       db.read((sql) =>
-        sql.all<{ conversation_id: string; state: string }>(
-          "SELECT conversation_id,state FROM recipient_deliveries WHERE json_extract(payload,'$.sender_message_id')='correction'",
+        sql.all<{ delivery_order: number; conversation_id: string; state: string }>(
+          "SELECT delivery_order,conversation_id,state FROM recipient_deliveries WHERE json_extract(payload,'$.sender_message_id')='correction'",
         ),
       );
     const lifecycle = () =>
@@ -1144,17 +1145,27 @@ test.each(['cleaned', 'failed', 'active'] as const)(
         );
     try {
       expect(accepted.fate).toBeInstanceOf(PromptDeliveryQueued);
-      expect(custody).toEqual([expect.any(Number)]);
+      // Receipts and owner status name the fresh conversation that will receive the message.
+      const fresh = accepted.conversation_id!;
+      expect(fresh).not.toBe(old_id);
+      expect(custody).toEqual([{ conversation_id: fresh, delivery_order: expect.any(Number) }]);
+      const held = (state: string) => [
+        { delivery_order: custody[0].delivery_order, conversation_id: fresh, state },
+      ];
       if (cleanup === 'active') {
         // A running turn is never interrupted, and nothing was cleaned, so the fence lifts.
         await vi.waitFor(() => expect(refusals()).toHaveLength(1));
         expect(killed).not.toHaveBeenCalledWith(old_id);
+        expect(journal()).toEqual(held('refused'));
         expect(lifecycle()).toBe(0);
         expect(read(db, ended.id).conversation_id).toBe(old_id);
         return;
       }
       await killing.promise;
-      expect(journal()).toEqual([{ conversation_id: old_id, state: 'awaiting_lifecycle' }]);
+      expect(journal()).toEqual(held('awaiting_lifecycle'));
+      expect(
+        await f.core.owner_send_progress(fresh, 'correction', { kind: 'ticket', id: ended.id }),
+      ).toEqual({ state: 'queued', position: 1 });
       await expect(
         send_message(f.core, db, clock, as_sender, OWNER, 'owner reply'),
       ).resolves.toMatchObject({ fate: { constructor: MessageRecordedToOwner } });
@@ -1162,16 +1173,13 @@ test.each(['cleaned', 'failed', 'active'] as const)(
       release.resolve();
       if (cleanup === 'failed') {
         await vi.waitFor(() => expect(refusals()).toHaveLength(1));
-        expect(journal()).toEqual([{ conversation_id: old_id, state: 'refused' }]);
+        expect(journal()).toEqual(held('refused'));
         expect(lifecycle()).toBe(1);
         expect(read(db, ended.id).conversation_id).toBe(old_id);
         return;
       }
-      await vi.waitFor(() => expect(read(db, ended.id).conversation_id).not.toBe(old_id));
-      const fresh = read(db, ended.id).conversation_id!;
-      await vi.waitFor(() =>
-        expect(journal()).toEqual([{ conversation_id: fresh, state: 'delivered' }]),
-      );
+      await vi.waitFor(() => expect(journal()).toEqual(held('delivered')));
+      expect(read(db, ended.id).conversation_id).toBe(fresh);
       expect(lifecycle()).toBe(0);
       const first_prompt = f.store.read_events_after(fresh, 0).find((row) => row.kind === 'prompt');
       expect(first_prompt?.payload).toMatchObject({ sender_message_id: 'correction' });

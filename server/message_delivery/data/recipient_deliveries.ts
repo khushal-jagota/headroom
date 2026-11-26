@@ -63,11 +63,12 @@ export function admit_recipient_delivery(
   const { recording_receipt: _receipt, content: _content, ...values } = message;
   const result = database.write((tx) => {
     prune_finished_recipient_deliveries(tx);
-    const previous = tx.get<RecipientAttempt>(
-      'SELECT submission_id,attempt_id FROM recipient_deliveries WHERE submission_id=?',
+    const previous = tx.get<RecipientAttempt & { state: string }>(
+      'SELECT submission_id,attempt_id,state FROM recipient_deliveries WHERE submission_id=?',
       [submission_id],
     );
-    if (previous) return previous;
+    if (previous && previous.state !== 'awaiting_lifecycle')
+      return { submission_id: previous.submission_id, attempt_id: previous.attempt_id };
     const ticket = tx.get<{ id: string }>('SELECT id FROM tickets WHERE conversation_id=?', [
       conversation_id,
     ]);
@@ -85,32 +86,28 @@ export function admit_recipient_delivery(
             ? { kind: 'manager', id: agent.agent_key.slice('manager_'.length) }
             : { kind: 'conversation', id: conversation_id });
     if (recipient.kind !== 'conversation') require_recipient_available(tx, recipient as Principal);
-    // A message held across workspace cleanup hands its custody to this admission.
-    if (message.sender_message_id !== null)
-      tx.run(
-        "DELETE FROM recipient_deliveries WHERE state='awaiting_lifecycle' AND recipient_kind=? AND recipient_id=? AND json_extract(payload,'$.sender_message_id')=?",
-        [recipient.kind, recipient.id, message.sender_message_id],
-      );
     const lifecycle_generation = recipient_lifecycle(tx, recipient as Principal).generation;
+    const target = JSON.stringify({
+      lifecycle_generation,
+      conversation_id,
+      machine_id: tx.get<{ machine_id: string }>(
+        'SELECT machine_id FROM conversations WHERE conversation_id=?',
+        [conversation_id],
+      )!.machine_id,
+    });
+    const payload = JSON.stringify({ ...values, ...message_content_json_entries(message.content) });
+    if (previous) {
+      // The message held across workspace cleanup keeps its custody row and order.
+      tx.run(
+        "UPDATE recipient_deliveries SET generation=?,payload=?,state='pending' WHERE submission_id=? AND state='awaiting_lifecycle'",
+        [target, payload, submission_id],
+      );
+      return { submission_id, attempt_id: previous.attempt_id };
+    }
     const attempt_id = randomUUID();
     tx.run(
       "INSERT INTO recipient_deliveries(submission_id,recipient_kind,recipient_id,conversation_id,generation,payload,state,attempt_id) VALUES(?,?,?,?,?,?,'pending',?)",
-      [
-        submission_id,
-        recipient.kind,
-        recipient.id,
-        conversation_id,
-        JSON.stringify({
-          lifecycle_generation,
-          conversation_id,
-          machine_id: tx.get<{ machine_id: string }>(
-            'SELECT machine_id FROM conversations WHERE conversation_id=?',
-            [conversation_id],
-          )!.machine_id,
-        }),
-        JSON.stringify({ ...values, ...message_content_json_entries(message.content) }),
-        attempt_id,
-      ],
+      [submission_id, recipient.kind, recipient.id, conversation_id, target, payload, attempt_id],
     );
     message.recording_receipt?.in_admission?.(tx, conversation_id);
     return { submission_id, attempt_id };
@@ -118,10 +115,14 @@ export function admit_recipient_delivery(
   message.recording_receipt?.admitted?.();
   return result;
 }
-/** Durable custody for a message that waits for its recipient's lifecycle operation. */
+/**
+ * Durable custody for a message that waits for workspace cleanup. The row names the fresh
+ * conversation that will receive it, and the retired one that records a refusal.
+ */
 export function hold_recipient_delivery_for_lifecycle(
   tx: TransactionSql,
   conversation_id: string,
+  retired_conversation_id: string,
   recipient: Principal,
   message: Message,
 ): string {
@@ -134,7 +135,10 @@ export function hold_recipient_delivery_for_lifecycle(
       recipient.kind,
       recipient.id,
       conversation_id,
-      JSON.stringify({ lifecycle_generation: recipient_lifecycle(tx, recipient).generation }),
+      JSON.stringify({
+        lifecycle_generation: recipient_lifecycle(tx, recipient).generation,
+        retired_conversation_id,
+      }),
       JSON.stringify({ ...values, ...message_content_json_entries(message.content) }),
       randomUUID(),
     ],

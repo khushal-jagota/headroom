@@ -271,11 +271,27 @@ export async function refuse_lifecycle_held_delivery(
   );
   if (!row) return;
   const message = decode_recipient_message(row.payload);
-  await receipt(
-    host,
-    row,
+  const refusal = refused_row(
     message,
-    refused_row(message, message.requested_mode ?? 'queue', R.no_such_conversation, detail),
+    message.requested_mode ?? 'queue',
+    R.no_such_conversation,
+    detail,
+  );
+  // The fresh conversation never started, so the retired one records the refusal.
+  const { retired_conversation_id } = JSON.parse(
+    host.options.store.start_admission_database.read(
+      (sql) =>
+        sql.get<{ generation: string }>(
+          'SELECT generation FROM recipient_deliveries WHERE submission_id=?',
+          [submission_id],
+        )!.generation,
+    ),
+  );
+  await receipt(host, { ...row, conversation_id: retired_conversation_id }, message, refusal);
+  finish_recipient_delivery(
+    host.options.store.start_admission_database,
+    row,
+    new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation }),
   );
 }
 
@@ -292,7 +308,7 @@ export function resume_recipient_deliveries(host: SqliteProcessConversationSyste
       refuse_lifecycle_held_delivery(
         host,
         row.submission_id,
-        'A server restart interrupted workspace cleanup. Restart this Ticket before sending another message.',
+        'A server restart interrupted workspace cleanup before this message reached a fresh conversation.',
       ),
     ).catch((error) => console.error('Lifecycle-held delivery recovery failed', error));
   const rows = database.read((sql) =>
