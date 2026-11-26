@@ -71,6 +71,8 @@ conversation or starts one, and a resend with the same ID lands there once. Only
 refusal shows; a refused photo message puts its draft back. Pull down to refresh
 works on the summary and on every card.
 
+The same two lines appear outside the app as the Review Live Activity, with the count of every entry that the server holds. It does not know skips, so skipped cards count as new there. See [Notifications](NOTIFICATIONS.md#review-live-activity).
+
 ## Cards
 
 Every card has its title and recap, its content, and its controls docked at the

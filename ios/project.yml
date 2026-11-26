@@ -15,7 +15,9 @@ targets:
   Panels:
     type: application
     platform: iOS
-    sources: [Panels]
+    sources: [Panels, LiveActivity]
+    dependencies:
+      - target: PanelsLiveActivity
     attributes:
       SystemCapabilities:
         com.apple.Push:
@@ -47,6 +49,25 @@ targets:
           CODE_SIGNING_ALLOWED[sdk=iphoneos*]: YES
           APNS_ENVIRONMENT: production
           APNS_REGISTRATION_ENABLED[sdk=iphoneos*]: YES
+  PanelsLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources: [PanelsLiveActivity, LiveActivity]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.khushaljagota.panels.LiveActivity
+        DEVELOPMENT_TEAM: FB99BBDJBA
+        CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: '0.1'
+        CURRENT_PROJECT_VERSION: 13
+        INFOPLIST_FILE: PanelsLiveActivity/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        TARGETED_DEVICE_FAMILY: '1'
+        SKIP_INSTALL: YES
+      configs:
+        Release:
+          CODE_SIGNING_ALLOWED[sdk=iphoneos*]: YES
   PanelsTests:
     type: bundle.unit-test
     platform: iOS

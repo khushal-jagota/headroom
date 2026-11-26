@@ -16,6 +16,8 @@ import UserNotifications
     private var registeredDevice: NativePushRegistration?
     private var registeredServer: URL?
     private var registering = false
+    private var liveActivityTokens = LiveActivityTokens()
+    private var reportedLiveActivity: LiveActivityTokens?
     private var client: APIClient?
     private let registrationEnabled: Bool
     private let environment: String
@@ -53,6 +55,7 @@ import UserNotifications
             UIApplication.shared.registerForRemoteNotifications()
 #endif
             await registerTokenIfPossible()
+            await reportLiveActivityIfPossible()
         } else if registrationEnabled, !registering, let registeredDevice, let registeredServer {
             // Remove the last successful registration when permission is revoked.
             // Use its original server, even if Settings selected another one.
@@ -75,6 +78,35 @@ import UserNotifications
             _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             if let client { await refresh(using: client) }
         } catch { registrationMessage = error.localizedDescription }
+    }
+
+    /// A launch with no scene, such as the one a push-to-start causes, has no foreground refresh.
+    /// Register the device against the selected server, as a notification reply reaches it.
+    func resumeWithoutScene() async {
+        guard registrationEnabled, client == nil, let selected = selectedServer() else { return }
+        client = APIClient(baseURL: selected)
+        authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+#if canImport(UIKit)
+        if permissionAllowsDelivery { UIApplication.shared.registerForRemoteNotifications() }
+#endif
+    }
+
+    /// The Review Live Activity's tokens changed. They reach the server once this device is registered.
+    func liveActivityTokensChanged(_ tokens: LiveActivityTokens) {
+        liveActivityTokens = tokens
+        Task { await reportLiveActivityIfPossible() }
+    }
+
+    private func reportLiveActivityIfPossible() async {
+        guard registrationEnabled, let client, let device = registeredDevice,
+              registeredServer == client.baseURL, liveActivityTokens != reportedLiveActivity else { return }
+        let tokens = liveActivityTokens
+        do {
+            try await NativePushAPI(client: client).reportLiveActivity(device, tokens)
+            reportedLiveActivity = tokens
+        } catch {
+            // The next foreground refresh tries again. The device itself stays registered.
+        }
     }
 
     func receivedDeviceToken(_ token: Data) {
@@ -171,6 +203,8 @@ import UserNotifications
             registeredDevice = device
             registeredServer = client.baseURL
             registrationMessage = "This device is registered for notifications."
+            reportedLiveActivity = nil
+            await reportLiveActivityIfPossible()
         } catch { registrationMessage = "Could not register this device: \(error.localizedDescription)" }
         registering = false
         // A token or server may change while registration is in flight. Refresh
@@ -190,6 +224,9 @@ final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
             options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
         center.setNotificationCategories([UNNotificationCategory(identifier: NotificationActions.messageCategory,
             actions: [reply], intentIdentifiers: [])])
+        // A push-to-start can launch the app with no scene. The tokens must reach the server then too.
+        ReviewLiveActivityController.shared.watch { NotificationController.shared.liveActivityTokensChanged($0) }
+        Task { await NotificationController.shared.resumeWithoutScene() }
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

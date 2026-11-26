@@ -144,6 +144,9 @@
     "ts_0018_backup_failed_preference": [
       "ts_0017_recipient_deliveries"
     ],
+    "ts_0019_live_activities": [
+      "ts_0018_backup_failed_preference"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

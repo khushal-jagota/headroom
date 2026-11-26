@@ -7,12 +7,15 @@ import { importPKCS8, SignJWT } from 'jose';
 import type {
   APNsAdapter,
   APNsConfig,
+  APNsDevice,
   APNsResult,
+  LiveActivityPush,
   NotificationIntent,
   PendingAPNsDelivery,
 } from './contracts.ts';
 import {
   APNS_DELIVERY_TTL_SECONDS,
+  LIVE_ACTIVITY_EXPIRATION_SECONDS,
   MESSAGE_REPLY_CATEGORY,
   APNS_JWT_LIFETIME_SECONDS,
   APNS_PAYLOAD_MAX_BYTES,
@@ -86,11 +89,59 @@ export class TokenAPNsAdapter implements APNsAdapter {
     const payload = notification_payload(intent, origin);
     if (payload.length > APNS_PAYLOAD_MAX_BYTES)
       return { delivered: false, error: 'Native notification payload exceeds the size limit' };
+    return this.deliver(
+      {
+        environment: device.environment,
+        token: device.device_token,
+        topic: device.bundle_id,
+        push_type: 'alert',
+        priority: '10',
+        expiration: delivery.created_at + APNS_DELIVERY_TTL_SECONDS,
+        collapse_id: createHash('sha256').update(intent.tag).digest('hex'),
+      },
+      payload,
+      options.now,
+    );
+  }
+  /** A Live Activity push goes to the app's own topic with the live activity push type. */
+  async send_live_activity(push: LiveActivityPush, options: { now: number }): Promise<APNsResult> {
+    if (!this.config.bundle_ids.includes(push.bundle_id))
+      return { delivered: false, error: 'Native delivery configuration does not match' };
+    if (push.payload.length > APNS_PAYLOAD_MAX_BYTES)
+      return { delivered: false, error: 'Live Activity payload exceeds the size limit' };
+    return this.deliver(
+      {
+        environment: push.environment,
+        token: push.token,
+        topic: `${push.bundle_id}.push-type.liveactivity`,
+        push_type: 'liveactivity',
+        priority: '10',
+        expiration: options.now + LIVE_ACTIVITY_EXPIRATION_SECONDS,
+      },
+      push.payload,
+      options.now,
+    );
+  }
+  private async deliver(
+    request_options: {
+      environment: APNsDevice['environment'];
+      token: string;
+      topic: string;
+      push_type: 'alert' | 'liveactivity';
+      priority: string;
+      expiration: number;
+      collapse_id?: string;
+    },
+    payload: Buffer,
+    now: number,
+  ): Promise<APNsResult> {
     const host =
-      device.environment === 'development' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
+      request_options.environment === 'development'
+        ? 'api.sandbox.push.apple.com'
+        : 'api.push.apple.com';
     let response: { status: number; body: string };
     try {
-      const token = await this.provider_token(options.now);
+      const token = await this.provider_token(now);
       let session = this.sessions.get(host);
       if (!session || session.destroyed || session.closed) {
         const opened = connect(`https://${host}`);
@@ -105,14 +156,16 @@ export class TokenAPNsAdapter implements APNsAdapter {
       response = await new Promise((resolve, reject) => {
         const request = current.request({
           ':method': 'POST',
-          ':path': `/3/device/${device.device_token}`,
+          ':path': `/3/device/${request_options.token}`,
           authorization: `bearer ${token}`,
           'content-type': 'application/json',
-          'apns-topic': device.bundle_id,
-          'apns-push-type': 'alert',
-          'apns-priority': '10',
-          'apns-expiration': String(delivery.created_at + APNS_DELIVERY_TTL_SECONDS),
-          'apns-collapse-id': createHash('sha256').update(intent.tag).digest('hex'),
+          'apns-topic': request_options.topic,
+          'apns-push-type': request_options.push_type,
+          'apns-priority': request_options.priority,
+          'apns-expiration': String(request_options.expiration),
+          ...(request_options.collapse_id
+            ? { 'apns-collapse-id': request_options.collapse_id }
+            : {}),
         });
         let status = 0;
         const chunks: Buffer[] = [];

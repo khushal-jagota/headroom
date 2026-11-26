@@ -3,6 +3,9 @@ import type { APNsConfig } from './contracts.ts';
 export const APNS_BATCH_SIZE = 50;
 export const NOTIFICATION_FRESHNESS_SECONDS = 300;
 export const APNS_DELIVERY_TTL_SECONDS = NOTIFICATION_FRESHNESS_SECONDS;
+/** A Live Activity push waits this long for an offline phone. A newer push wins by its timestamp. */
+export const LIVE_ACTIVITY_EXPIRATION_SECONDS = 3600;
+export const LIVE_ACTIVITY_RETRY_SECONDS = 60;
 export const APNS_MAX_ATTEMPTS = 5;
 export const APNS_RETRY_BASE_SECONDS = 30;
 export const APNS_TIMEOUT_SECONDS = 10;
