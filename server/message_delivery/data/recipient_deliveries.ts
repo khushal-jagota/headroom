@@ -116,6 +116,22 @@ export function admit_recipient_delivery(
   return result;
 }
 /**
+ * A held message refused before its fresh conversation started has no event there.
+ * Its journal row carries that outcome for status readers that follow the fresh id.
+ */
+export function lifecycle_held_outcome(
+  sql: ReadSql,
+  conversation_id: string,
+  sender_message_id: string,
+): { state: 'refused' | 'discarded'; outcome: string } | null {
+  return (
+    sql.get<{ state: 'refused' | 'discarded'; outcome: string }>(
+      "SELECT state,outcome FROM recipient_deliveries WHERE submission_id=? AND state IN ('refused','discarded') AND json_extract(generation,'$.retired_conversation_id') IS NOT NULL",
+      [`${conversation_id}:${sender_message_id}`],
+    ) ?? null
+  );
+}
+/**
  * Durable custody for a message that waits for workspace cleanup. The row names the fresh
  * conversation that will receive it, and the retired one that records a refusal.
  */

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lifecycle_held_outcome } from '../message_delivery/data/recipient_deliveries.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
@@ -596,7 +597,13 @@ export function delivery_outcome_kind(
   );
   if (uncertain && (!settled || uncertain.sequence < settled.sequence))
     return 'prompt_delivery_uncertain';
-  return settled?.kind ?? null;
+  if (settled) return settled.kind;
+  const held = lifecycle_held_outcome(sql, conversation_id, sender_message_id);
+  return held === null
+    ? null
+    : held.state === 'refused'
+      ? 'prompt_delivery_refused'
+      : 'prompt_discarded';
 }
 export function record_batch_offering(
   sql: TransactionSql,

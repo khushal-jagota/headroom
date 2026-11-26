@@ -650,7 +650,10 @@ async function finish_retired_ticket_renewal(
       );
     });
     // Another start linked first, and that conversation admitted the message under its own row.
-    if (delivered.conversation_id !== renewal.fresh_conversation_id) {
+    if (
+      delivered.conversation_id !== null &&
+      delivered.conversation_id !== renewal.fresh_conversation_id
+    ) {
       database.write((tx) =>
         tx.run(
           "UPDATE recipient_deliveries SET state='discarded',settled_at=? WHERE submission_id=? AND state='awaiting_lifecycle'",

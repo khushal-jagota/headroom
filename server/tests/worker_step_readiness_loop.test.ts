@@ -1,6 +1,7 @@
 import { setup as core_setup } from './conversation_core_fixture.ts';
 import { send_message } from '../message_delivery/service.ts';
 import { MessageRecordedToOwner } from '../message_delivery/contracts.ts';
+import { delivery_outcome_kind } from '../manager_wakes/data.ts';
 /** Gaps: autonomous orchestration and delivery fates are absent from Ticket route proofs.
  * Reuses Ticket SQLite fixtures and the existing in-memory contract. No provider adapter.
  */
@@ -1149,6 +1150,8 @@ test.each(['cleaned', 'failed', 'active'] as const)(
       const fresh = accepted.conversation_id!;
       expect(fresh).not.toBe(old_id);
       expect(custody).toEqual([{ conversation_id: fresh, delivery_order: expect.any(Number) }]);
+      // Readers that follow the fresh id, such as Manager wakes, see the refusal too.
+      const outcome = () => db.read((sql) => delivery_outcome_kind(sql, fresh, 'correction'));
       const held = (state: string) => [
         { delivery_order: custody[0].delivery_order, conversation_id: fresh, state },
       ];
@@ -1157,6 +1160,7 @@ test.each(['cleaned', 'failed', 'active'] as const)(
         await vi.waitFor(() => expect(refusals()).toHaveLength(1));
         expect(killed).not.toHaveBeenCalledWith(old_id);
         expect(journal()).toEqual(held('refused'));
+        expect(outcome()).toBe('prompt_delivery_refused');
         expect(lifecycle()).toBe(0);
         expect(read(db, ended.id).conversation_id).toBe(old_id);
         return;
@@ -1174,6 +1178,7 @@ test.each(['cleaned', 'failed', 'active'] as const)(
       if (cleanup === 'failed') {
         await vi.waitFor(() => expect(refusals()).toHaveLength(1));
         expect(journal()).toEqual(held('refused'));
+        expect(outcome()).toBe('prompt_delivery_refused');
         expect(lifecycle()).toBe(1);
         expect(read(db, ended.id).conversation_id).toBe(old_id);
         return;
