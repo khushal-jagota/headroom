@@ -61,12 +61,14 @@ function client(base: string) {
       });
       const output = await response.text();
       // This 503 comes from the predecessor's write barrier before the route is invoked.
+      // Releases before e8df15ead send the bare detail body. Later ones mark the paused write.
       if (
         deadline !== null &&
         performance.now() + 250 < deadline &&
         path === '/api/conversation/conversations' &&
         response.status === 503 &&
-        output === '{"detail":"Owner update in progress."}'
+        (output === '{"detail":"Owner update in progress."}' ||
+          response.headers.get('x-panels-write-admitted') === 'false')
       ) {
         await delay(250);
         continue;
