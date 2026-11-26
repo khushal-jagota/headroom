@@ -55,7 +55,7 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
     const server_environment = { ...process.env };
     const expected_environment: NodeJS.ProcessEnv = {
       ...process.env,
-      CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+      CLAUDE_CODE_ENTRYPOINT: 'panels',
       CLAUDE_AGENT_SDK_VERSION: '0.3.316',
     };
     delete expected_environment.CLAUDECODE;
@@ -79,7 +79,7 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
     expect(captured!.options.env).not.toHaveProperty('NoDefaultCurrentDirectoryInExePath');
     expect(process.env).not.toHaveProperty('NoDefaultCurrentDirectoryInExePath');
     expect({ ...process.env }).toEqual(server_environment);
-    expect(captured!.options.env!.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts');
+    expect(captured!.options.env!.CLAUDE_CODE_ENTRYPOINT).toBe('panels');
     expect(captured!.options.env!.CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
     expect(captured!.options.env!.SDK_INHERITED_TEST_VALUE).toBe('inherited');
     expect(captured!.options.env!.HOME).toBe(process.env.HOME);

@@ -11,6 +11,9 @@ const package_file = join(
 export const CLAUDE_AGENT_SDK_VERSION = (
   JSON.parse(readFileSync(package_file, 'utf8')) as { version: string }
 ).version;
+// Claude Code meters `sdk-ts`, `sdk-cli` and `sdk-py` as SDK traffic, which drains the
+// 5-hour limit faster than the CLI. Panels reports its own name instead.
+export const PANELS_CLAUDE_CODE_ENTRYPOINT = 'panels';
 let imported: Promise<ClaudeSdk> | null = null;
 
 export function load_claude_sdk(): Promise<ClaudeSdk> {
