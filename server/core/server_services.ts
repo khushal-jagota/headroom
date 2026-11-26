@@ -438,6 +438,7 @@ export class ServerServices {
             },
             backend_state: backendServices.backend_state,
             backend_ids: backendServices.backend_ids,
+            machine_backends: backendServices.machine_backends,
           }),
         },
         {

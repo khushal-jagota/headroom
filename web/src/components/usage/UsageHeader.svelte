@@ -21,7 +21,7 @@
 <header class="usage-header">
   <ManagerHeader>
     {#snippet title()}Usage{/snippet}
-    {#snippet eyebrow()}{#if tab !== "limits"}<span>Local CLI sources</span>{/if}{/snippet}
+    {#snippet eyebrow()}{#if tab !== "limits"}<span>CLI sources on every machine</span>{/if}{/snippet}
     {#snippet actions()}
         <details class="provider-filter">
           <summary>{selectedProviders.length === providerKeys.length ? "All providers" : `${selectedProviders.length} providers`} <span aria-hidden="true">⌄</span></summary>

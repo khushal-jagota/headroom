@@ -1,7 +1,7 @@
 import { count_rows, timed_task } from '../slow_tasks.ts';
 import { assert_test_database_path } from '../test_paths.ts';
 import BetterSqlite3 from 'better-sqlite3';
-import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
   CommitStep,
@@ -410,6 +410,41 @@ export async function onlineBackup(sourcePath: string, destinationPath: string):
     await source.backup(destinationPath, { progress: () => 0x7fffffff });
   } finally {
     source.close();
+  }
+}
+
+/**
+ * Read the main file of a database that has no writer left. A TRUNCATE checkpoint first
+ * moves every WAL frame into it. A read transaction then stays open for the whole read, so
+ * no checkpoint can change the file. A WAL that gained frames meanwhile means a writer, and
+ * the read is refused.
+ */
+export async function readStoppedDatabaseFile<T>(path: string, read: () => Promise<T>): Promise<T> {
+  path = assert_test_database_path(path);
+  const connection = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
+  try {
+    const [result] = connection.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[];
+    if (result?.busy !== 0) throw new Error(`Another connection kept ${path} from its checkpoint`);
+    const wal_is_empty = () => {
+      try {
+        return statSync(path + '-wal').size === 0;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        throw error;
+      }
+    };
+    connection.exec('BEGIN');
+    try {
+      connection.prepare('SELECT count(*) FROM sqlite_schema').pluck().get();
+      if (!wal_is_empty()) throw new Error(`${path} kept frames in its WAL after its checkpoint`);
+      const value = await read();
+      if (!wal_is_empty()) throw new Error(`Another connection wrote ${path} during the read`);
+      return value;
+    } finally {
+      connection.exec('COMMIT');
+    }
+  } finally {
+    connection.close();
   }
 }
 

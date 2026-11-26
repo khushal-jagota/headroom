@@ -475,6 +475,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           staging: { stage: async () => unavailable() },
           installer: {
             node_schema_steps_pending: unavailable,
+            stage_snapshot: async () => unavailable(),
             prepare: unavailable,
             launch: async () => unavailable(),
           },

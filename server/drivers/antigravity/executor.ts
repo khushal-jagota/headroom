@@ -45,6 +45,11 @@ export const antigravity_executor: ExecutorDriver = {
         stop_options: () => custody.stop_options(),
       },
     );
+    const login_path = join(
+      required_home(host.home),
+      AGY_APP_DATA_DIRECTORY_NAME,
+      CLI_LOGIN_FILE_NAME,
+    );
     const sign_in = new AntigravitySignIn(
       {
         home: required_home(host.home),
@@ -62,11 +67,7 @@ export const antigravity_executor: ExecutorDriver = {
     return {
       sign_in,
       allowance_usage: new AntigravityUsageAdapter({
-        login_path: join(
-          required_home(host.home),
-          AGY_APP_DATA_DIRECTORY_NAME,
-          CLI_LOGIN_FILE_NAME,
-        ),
+        login_path,
         http_post: http_post_usage,
         refresh_login: async (signal) => {
           await catalog.read(host.executable, signal);
@@ -75,6 +76,7 @@ export const antigravity_executor: ExecutorDriver = {
       }),
       status: create_antigravity_status({
         catalog: (executable) => custody.probe((signal) => catalog.read(executable, signal)),
+        login_path,
       }),
       shutdown: async () => {
         await Promise.all([

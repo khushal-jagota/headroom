@@ -22,7 +22,14 @@ export interface BackendUsageResult {
   readonly observed_at: Date | null;
   readonly windows: readonly BackendUsageWindow[];
 }
-export interface CachedBackendUsage {
+/** The account a machine's backend was signed in to when its allowance was read. */
+export interface BackendUsageAccount {
+  /** What the backend card named, usually an email. Null when it named none. */
+  readonly account_label: string | null;
+  /** The card's plan line, such as `max plan via claude.ai`, only for a confirmed sign-in. */
+  readonly account_detail: string | null;
+}
+export interface CachedBackendUsage extends BackendUsageAccount {
   readonly observed_at: Date;
   readonly windows: readonly BackendUsageWindow[];
 }
@@ -32,12 +39,4 @@ export interface BackendUsageAdapter {
 export interface UsageHttpResponse {
   readonly status_code: number;
   readonly body: unknown;
-}
-export interface UsageHttpGet {
-  (
-    url: string,
-    headers: Readonly<Record<string, string>>,
-    timeout_seconds: number,
-    options?: { signal?: AbortSignal },
-  ): Promise<UsageHttpResponse>;
 }

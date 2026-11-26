@@ -9,6 +9,12 @@ import { MAC_RUNTIME_UPDATE_EXIT_CODE } from '../configuration.ts';
 import { MacUpdateController, create_update_session } from '../updates/controller.ts';
 import { failure_detail } from '../failure_detail.ts';
 import { MacService } from './service.ts';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { BUILT_IN_DRIVERS } from '../../../drivers/built_in.ts';
+import type { UsageTranscriptSource } from '../../../conversation/usage/contracts.ts';
+import { driver_transcript_sources } from '../../../conversation/usage/driverTranscriptSources.ts';
+import { UsageService } from '../../../conversation/usage/UsageService.ts';
 import type { MacHostBindings, MacHostOptions } from './contracts.ts';
 
 export function production_bindings(
@@ -16,6 +22,7 @@ export function production_bindings(
   environment: Readonly<NodeJS.ProcessEnv>,
   drivers: readonly LoadedExecutorDriver[],
   replacing: () => void = () => {},
+  transcript_sources: readonly UsageTranscriptSource[] = [],
 ): MacHostBindings {
   return {
     adapters: (owners) =>
@@ -35,6 +42,7 @@ export function production_bindings(
         ...owners,
         on_failure,
         resolve_backend_secret: (id) => client.backend_secret(id),
+        recorded_usage: machine_recorded_usage(configuration, transcript_sources),
       }),
     updates: (context) =>
       new MacUpdateController({
@@ -57,6 +65,26 @@ export function production_bindings(
         on_failure: context.on_failure,
       }),
   };
+}
+
+/** This machine's own transcripts, scanned here. Its scan cache lives beside the machine's state. */
+function machine_recorded_usage(
+  configuration: MacHostOptions,
+  transcript_sources: readonly UsageTranscriptSource[],
+): UsageService {
+  const state_directory = join(configuration.paths.root, 'usage');
+  mkdirSync(state_directory, { recursive: true });
+  return new UsageService(
+    state_directory,
+    transcript_sources.flatMap(({ provider, source }) =>
+      source.home_directories.map((dir) => ({
+        provider,
+        dir,
+        kind: source.kind,
+        parser_module: source.parser_module,
+      })),
+    ),
+  );
 }
 
 export async function run_mac_service(
@@ -87,7 +115,13 @@ export async function run_mac_service(
   try {
     service = await MacService.open(
       configuration,
-      production_bindings(configuration, environment, await load_executor_drivers(), replacing),
+      production_bindings(
+        configuration,
+        environment,
+        await load_executor_drivers(),
+        replacing,
+        await driver_transcript_sources(BUILT_IN_DRIVERS, environment),
+      ),
       options(),
     );
     if (interrupted !== undefined) {

@@ -262,6 +262,11 @@ async function owned_server(
           },
           installer: {
             node_schema_steps_pending: () => false,
+            stage_snapshot: async (_database: string, backup_directory: string) => {
+              const staged = join(backup_directory, '.backup-staged-scripted');
+              mkdirSync(staged, { recursive: true });
+              return staged;
+            },
             prepare: () => ['scripted-installer'],
             launch: async () => {
               throw new Error('no actual installer');
@@ -354,9 +359,20 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
   });
   const launch = deferred<void>(),
     launch_entered = deferred<void>();
+  const staged_copies: string[] = [];
+  const launches = vi.fn();
   const owned = await owned_server({
     node_schema_steps_pending: () => true,
+    // The first press stages its copy. The second meets a failed integrity check.
+    stage_snapshot: async (_database, backup_directory) => {
+      if (staged_copies.length) throw new Error('SQLite integrity check failed for the copy');
+      const staged = join(backup_directory, '.backup-staged-scripted');
+      mkdirSync(staged, { recursive: true });
+      staged_copies.push(staged);
+      return staged;
+    },
     launch: () => {
+      launches();
       launch_entered.resolve();
       return launch.promise;
     },
@@ -403,7 +419,13 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     // The turn still runs. The update did not stop it or wait for it.
     expect(owned.context.core!.runtime_turn(delivery.conversation_id)).not.toBeNull();
     const launched = attempt();
-    expect(launched).toMatchObject({ state: 'installing', backup: null, snapshot_required: true });
+    expect(launched).toMatchObject({
+      state: 'installing',
+      backup: null,
+      snapshot_required: true,
+      staged_snapshot: staged_copies[0],
+      snapshot_seconds: { staged_copy: expect.any(Number) },
+    });
     // The installer snapshots after the stop, so its deadline covers the copy, the
     // steps and a rollback restore. The fixture database gets the 120 s floor per copy.
     expect(seconds_left(launched.deadline_at)).toBeGreaterThan(900 + 120 + 900 + 120 - 30);
@@ -419,6 +441,8 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     launch.reject(new Error('scripted installer did not start'));
     await vi.waitFor(async () => expect((await owned.status()).attempt.state).toBe('failed'));
     expect(attempt().steps.failure_reported).toBeTypeOf('string');
+    // The installer never claimed the attempt, so its staged copy is gone.
+    expect(existsSync(staged_copies[0]!)).toBe(false);
     const created = await owned.post('/api/projects', {
       name: 'work after failed update',
       summary: 'proof',
@@ -431,6 +455,23 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     expect(resumed_delivery.fate).toBe('accepted');
     await owned.delivered('native work after failed update');
     await owned.registry.child(resumed_delivery.conversation_id).finish();
+    // A staged copy that fails its check refuses the update while the home still serves.
+    const refused_attempt = attempt().attempt_id;
+    expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
+      200,
+    );
+    await vi.waitFor(() =>
+      expect(attempt()).toMatchObject({
+        state: 'failed',
+        attempt_id: expect.not.stringMatching(refused_attempt),
+      }),
+    );
+    expect(attempt().detail).toContain('failed its check before Panels stopped');
+    expect(launches).toHaveBeenCalledTimes(1);
+    expect(
+      (await owned.post('/api/projects', { name: 'after refused snapshot', summary: 'proof' }))
+        .status,
+    ).toBe(200);
   } finally {
     launch.reject(new Error('test cleanup'));
     await owned.close();

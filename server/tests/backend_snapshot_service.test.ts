@@ -30,7 +30,6 @@ import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 import type { DriverHost } from '../drivers/core/host.ts';
 import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
-import { http_get_usage } from '../conversation/backend_usage/http.ts';
 
 // Gap: successful HTTP comparisons cannot prove the shared shutdown seal retains
 // admitted catalog/voice work and prevents either route from starting new I/O.
@@ -214,7 +213,6 @@ test('all eight backend routes require the conversation runtime before validated
     await app.close();
   }
 });
-import { ClaudeUsageAdapter } from '../drivers/claude/runtime/allowance_usage.ts';
 /** One card source per built-in id, each answering with the scripted probe's card. */
 function sources_of(
   probe: (key: BackendInstanceId, context: StatusProbeContext) => Promise<BackendSnapshot>,
@@ -442,7 +440,7 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
   }
 });
 // Distinct gap: a mistaken production composition must fail before process or network I/O.
-test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
+test('test compositions cannot acquire production catalogs, login, updates, or usage', async () => {
   const environment = new RecordingBackendProbeEnvironment();
   for (const { manifest } of BUILT_IN_DRIVERS)
     environment.executables.set(manifest.executable.name, `/synthetic/${manifest.executable.name}`);
@@ -481,17 +479,9 @@ test('test compositions cannot acquire production catalogs, login, updates, or H
   expect(() => new SubprocessBackendProbeEnvironment(new OneShotChildren())).toThrow(
     'unavailable in tests',
   );
-  await expect(http_get_usage('https://invalid.example', {}, 1)).rejects.toThrow(
-    'unavailable in tests',
-  );
 });
 // Distinct gap: recorded response injection alone cannot prove the production redirect policy.
-test('production usage and registry transports refuse redirects without another external request', async () => {
-  const credential_path = fixture_path(fixture()) + '.credentials.json';
-  writeFileSync(
-    credential_path,
-    JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-redirect-token' } }),
-  );
+test('production registry transport refuses redirects without another external request', async () => {
   const fetch_recording = vi.fn<typeof fetch>().mockImplementation(
     async () =>
       new Response(null, {
@@ -506,35 +496,18 @@ test('production usage and registry transports refuse redirects without another 
     vi.stubEnv('PLAN_TEST_MODE', undefined);
     vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
     environment = new SubprocessBackendProbeEnvironment(new OneShotChildren());
-    const adapter = new ClaudeUsageAdapter({
-      credential_path,
-      http_get: http_get_usage,
-      now: () => new Date('2026-11-12T12:00:00Z'),
-    });
-    expect((await adapter.refresh()).outcome).toBe('failed');
     expect(
       await environment.latest_released_version('@anthropic-ai/claude-code', {
         timeout_seconds: 1,
       }),
     ).toBeNull();
-    expect(fetch_recording).toHaveBeenCalledTimes(2);
-    expect(fetch_recording).toHaveBeenNthCalledWith(
-      1,
-      'https://api.anthropic.com/api/oauth/usage',
-      expect.objectContaining({
-        redirect: 'manual',
-        headers: expect.objectContaining({ authorization: 'Bearer synthetic-redirect-token' }),
-      }),
-    );
-    expect(fetch_recording).toHaveBeenNthCalledWith(
-      2,
+    expect(fetch_recording).toHaveBeenCalledExactlyOnceWith(
       'https://registry.npmjs.org/@anthropic-ai/claude-code/latest',
       expect.objectContaining({ redirect: 'manual' }),
     );
   } finally {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-    rmSync(credential_path, { force: true });
     await environment?.shutdown();
   }
 });

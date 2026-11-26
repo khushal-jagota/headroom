@@ -181,6 +181,7 @@ export class MacLeaseLoop {
       legacy_cleanup_notice: runner.legacy_cleanup_notice,
       driver_kinds: [...this.options.driver_kinds],
       backend_controls: true,
+      recorded_usage: true,
     };
   }
   lease_once(): Promise<boolean> {

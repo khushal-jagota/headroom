@@ -80,6 +80,21 @@ export function read_antigravity_cli_login(path: string): AntigravityCliLogin | 
   return { access_token, expires_at };
 }
 
+/**
+ * The Google account the CLI login belongs to, from its `id_token_email`. Null when the login is
+ * missing, unreadable or names no email. Only the email leaves this reader, never a token.
+ */
+export function read_antigravity_account_email(path: string): string | null {
+  let document: unknown;
+  try {
+    document = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!object(document) || typeof document.id_token_email !== 'string') return null;
+  return document.id_token_email.trim() || null;
+}
+
 /** Node's platform and architecture as Go names them, as agy's own client reports them. */
 const GO_PLATFORM: Readonly<Record<string, string>> = { win32: 'windows' };
 const GO_ARCHITECTURE: Readonly<Record<string, string>> = { x64: 'amd64', ia32: '386' };

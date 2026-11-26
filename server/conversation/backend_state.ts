@@ -8,7 +8,11 @@ import { read_presence } from '../executor/vps_presence_store.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
-import type { BackendUsageResult, CachedBackendUsage } from './backend_usage/contracts.ts';
+import type {
+  BackendUsageAccount,
+  BackendUsageResult,
+  CachedBackendUsage,
+} from './backend_usage/contracts.ts';
 import { decode_usage_windows } from './backend_usage/machine.ts';
 export class BackendStateStore {
   private readonly database: Database;
@@ -81,8 +85,15 @@ export class BackendStateStore {
     if (kept) this.capability_sources.set(JSON.stringify([machine_id, backend_key]), source);
     return kept;
   }
-  /** Each machine keeps its own last observation, the home machine included. */
-  keep_successful_usage(result: BackendUsageResult, machine_id = HOME_MACHINE_ID): void {
+  /**
+   * Each machine keeps its own last observation, the home machine included, with the account it
+   * was read for. A later sign-in to another account cannot relabel an older observation.
+   */
+  keep_successful_usage(
+    result: BackendUsageResult,
+    machine_id = HOME_MACHINE_ID,
+    account: BackendUsageAccount = { account_label: null, account_detail: null },
+  ): void {
     if (result.outcome !== 'succeeded' || result.observed_at === null)
       throw new Error('only a successful observed usage result can be kept');
     this.database.write((tx) => {
@@ -91,7 +102,7 @@ export class BackendStateStore {
         [
           machine_id,
           result.backend_key,
-          JSON.stringify({ observed_at: result.observed_at, windows: result.windows }),
+          JSON.stringify({ observed_at: result.observed_at, windows: result.windows, ...account }),
         ],
       );
     });
@@ -281,7 +292,13 @@ export function backend_card_state(sql: ReadSql) {
       const windows = decode_usage_windows(value.windows);
       // An observation saved in an older shape counts as none until the next refresh.
       if (windows === null) return null;
-      return { observed_at: new Date(value.observed_at), windows };
+      return {
+        observed_at: new Date(value.observed_at),
+        windows,
+        // An observation saved before it carried its account names none.
+        account_label: typeof value.account_label === 'string' ? value.account_label : null,
+        account_detail: typeof value.account_detail === 'string' ? value.account_detail : null,
+      };
     },
     read_disabled_models: (backend_key: BackendInstanceId) => disabled_models(sql, backend_key),
   };

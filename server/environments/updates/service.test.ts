@@ -80,6 +80,7 @@ test('a newer offer retains machine failure and recomputes interruption at the p
     staging: { stage: async () => root },
     installer: {
       node_schema_steps_pending: () => false,
+      stage_snapshot: async () => join(root, '.backup-staged-unused'),
       prepare: () => [],
       launch: async () => {},
     },
