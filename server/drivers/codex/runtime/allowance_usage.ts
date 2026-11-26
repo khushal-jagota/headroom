@@ -9,6 +9,7 @@ import { is_record as object } from '../../../core/records.ts';
 import {
   parse_datetime,
   percentage,
+  usage_window,
   window_kind,
 } from '../../../conversation/backend_usage/logic/windows.ts';
 
@@ -109,12 +110,12 @@ export function parse_codex_windows(text: string): readonly BackendUsageWindow[]
   const buckets = by_id === undefined || by_id === null ? {} : by_id;
   for (const value of Object.values(buckets)) if (!valid_bucket(value)) return null;
   const account = body.rateLimits;
-  const windows = codex_bucket_windows(account, null);
+  const windows = codex_bucket_windows(account, null, null);
   for (const [id, value] of Object.entries(buckets)) {
     const bucket = value as Record<string, unknown>;
     if (account.limitId != null && (id === account.limitId || bucket.limitId === account.limitId))
       continue;
-    windows.push(...codex_bucket_windows(bucket, (bucket.limitName || id) as string));
+    windows.push(...codex_bucket_windows(bucket, id, (bucket.limitName || id) as string));
   }
   return windows;
 }
@@ -140,8 +141,10 @@ function valid_bucket(value: unknown): value is Record<string, unknown> {
   }
   return true;
 }
+/** Account windows are named by their length, a named limit's as `<limit id>:<length>`. */
 function codex_bucket_windows(
   bucket: Record<string, unknown>,
+  limit_id: string | null,
   model_scope: string | null,
 ): BackendUsageWindow[] {
   const windows: BackendUsageWindow[] = [];
@@ -152,7 +155,15 @@ function codex_bucket_windows(
     const used_percent = percentage(value.usedPercent);
     const resets_at = parse_datetime(value.resetsAt);
     if (kind !== null && used_percent !== null && resets_at !== null)
-      windows.push({ kind, used_percent, resets_at, model_scope, scope_label: null });
+      windows.push(
+        usage_window({
+          id: limit_id === null ? kind : `${limit_id}:${kind}`,
+          kind,
+          used_percent,
+          resets_at,
+          model_scope,
+        }),
+      );
   }
   return windows;
 }

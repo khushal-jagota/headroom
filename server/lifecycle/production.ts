@@ -24,7 +24,9 @@ import {
   compose_production_backends,
   require_backend_bindings,
   prepare_machine_backends,
+  driver_transcript_sources,
 } from './production_bindings.ts';
+import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import type { ProductionBackendBindings } from './production_bindings.ts';
 import type { ShutdownCompletion } from './contracts.ts';
 import { makeUsageService } from '../conversation/usage/composition.ts';
@@ -47,6 +49,7 @@ export async function start_production_server(
   )
     throw new Error('Production environment and executor bindings are required');
   let backends: ReturnType<typeof compose_production_backends> | undefined;
+  let transcript_sources: UsageTranscriptSource[] = [];
   let owner: ConversationCompositionContext['database'] | undefined;
   const composed = (context: ConversationCompositionContext) => {
     if (!backends) throw new Error('Production backend composition is absent');
@@ -65,6 +68,7 @@ export async function start_production_server(
         prepare_machine_backends(bindings.drivers),
         bindings,
       );
+      transcript_sources = await driver_transcript_sources(bindings.drivers, process.env);
     },
     createExecutor(context) {
       return new VpsExecutorRegistry(context.database, context.clock, {
@@ -89,7 +93,7 @@ export async function start_production_server(
     createUsageService: (context) =>
       makeUsageService(context.config, {
         now: () => context.clock.now(),
-        transcriptSources: composed(context).transcript_sources,
+        transcriptSources: transcript_sources,
       }),
     async createEnvironments(context) {
       const operations = await dependencies.environments.factory(context, {

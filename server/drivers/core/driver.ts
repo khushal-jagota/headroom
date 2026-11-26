@@ -44,6 +44,11 @@ export interface AgentDriver<Config> {
   launch_model_refusal?(model: string): string | null;
   /** Readable form of a stored tool-call detail, or null when it holds nothing readable. Absent: as stored. */
   readable_tool_call_detail?(detail: string): string | null;
+  /**
+   * Where this driver's transcripts live under `environment`, for recorded usage. On the driver,
+   * so the server reads transcripts without a live instance. Absent: the driver keeps none.
+   */
+  transcript_usage?(environment: DriverHost['environment']): Promise<TranscriptUsageSource>;
 }
 export interface DriverModelRules {
   /** The model family a card shows as selected_variant, or null. */
@@ -65,7 +70,6 @@ export interface DriverInstance {
   readonly child_factory: BackendChildFactory;
   readonly status: DriverStatus;
   readonly allowance_usage?: BackendUsageAdapter;
-  readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;
   /** Every local child reports a supervision record before `start()` resolves. */
   readonly supervises_local_launches?: boolean;

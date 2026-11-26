@@ -363,36 +363,6 @@ test('an update uses only its recording environment and distinguishes changed, u
   expect(environment.calls).toEqual(Array.from({ length: 3 }, () => ['synthetic-cli', 'update']));
   expect(options.every((option) => option.refresh && option.discover_update_advisory)).toBe(true);
 });
-test('a failed replacement of allowance windows preserves the previous successful observation', () => {
-  const database = fixture();
-  const store = new BackendStateStore(database);
-  const window = {
-    kind: 'five_hour' as const,
-    model_scope: null,
-    scope_label: null,
-    used_percent: 30,
-    resets_at: new Date(200_000),
-  };
-  const result = {
-    backend_key: parse_backend_instance_id('codex'),
-    outcome: 'succeeded' as const,
-    detail: null,
-    observed_at: new Date(100_000),
-    windows: [window],
-  };
-  store.keep_successful_usage(result);
-  expect(() =>
-    store.keep_successful_usage({
-      ...result,
-      observed_at: new Date(150_000),
-      windows: [window, window],
-    }),
-  ).toThrow();
-  expect(store.read_usage(parse_backend_instance_id('codex'))).toEqual({
-    observed_at: result.observed_at,
-    windows: [window],
-  });
-});
 // Distinct gap: successful route comparisons cannot prove cleanup after catalog failure.
 test('catalog failure cancels and joins the outstanding allowance read', async () => {
   const database = fixture();

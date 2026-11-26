@@ -116,20 +116,30 @@ export function compose_production_backends(
   return {
     registry,
     http,
-    /** Each live instance's own transcripts, for the recorded usage service. */
-    transcript_sources: registry
-      .list()
-      .flatMap((entry): UsageTranscriptSource[] =>
-        entry.kind === 'live' && entry.instance.transcript_usage !== undefined
-          ? [{ provider: entry.instance.instance_id, source: entry.instance.transcript_usage }]
-          : [],
-      ),
     execution_refusal,
     stall_sources: () => [
       ...bindings.stall_sources(shared),
       ...(context.executor?.stall_sources() ?? []),
     ],
   };
+}
+/**
+ * Each driver's transcripts on this server, for the recorded usage service. They come from the
+ * drivers, as T3 Code's built-in usage drivers do: the server's instances run nothing.
+ */
+export async function driver_transcript_sources(
+  drivers: readonly AnyAgentDriver[],
+  environment: NodeJS.ProcessEnv,
+): Promise<UsageTranscriptSource[]> {
+  const sources = await Promise.all(
+    [...default_instance_configs(drivers)].map(async ([instance_id, config]) => {
+      const driver = drivers.find((candidate) => candidate.driver_kind === config.driver);
+      return driver?.transcript_usage === undefined
+        ? []
+        : [{ provider: instance_id, source: await driver.transcript_usage(environment) }];
+    }),
+  );
+  return sources.flat();
 }
 /** Server instances contain pure driver rules and a machine factory, never a native runtime. */
 export function prepare_machine_backends(

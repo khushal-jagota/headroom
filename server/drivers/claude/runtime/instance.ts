@@ -17,7 +17,6 @@ import type { ClaudeAgentSdkChildLaunch } from './adapter.ts';
 import { ClaudeUsageAdapter } from './allowance_usage.ts';
 import { create_claude_catalog_source } from './catalog_source.ts';
 import { claude_auth_paths, create_claude_status, read_claude_auth_freshness } from './status.ts';
-import { claude_transcript_usage } from './transcript_usage.ts';
 
 export function claude_launch(host: DriverHost): ClaudeAgentSdkChildLaunch {
   const override = executable_override(claude_manifest.executable, host.environment, expand_path);
@@ -47,12 +46,6 @@ export async function create_claude_instance(
       one_shot_children: host.one_shot_children,
       worker_supervision: host.worker_supervision,
     }),
-    transcript_usage: claude_transcript_usage(
-      home_path(claude_manifest.home!, host.environment, homedir(), {
-        unset: '||',
-        expand_configured: false,
-      }),
-    ),
   };
   // A test instance reads no catalog or account. Its card says Claude did not answer.
   if (host.test_mode || backend_io_is_test())

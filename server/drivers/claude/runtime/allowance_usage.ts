@@ -9,7 +9,11 @@ import type {
   UsageHttpGet,
 } from '../../../conversation/backend_usage/contracts.ts';
 import { is_record as object } from '../../../core/records.ts';
-import { parse_datetime, percentage } from '../../../conversation/backend_usage/logic/windows.ts';
+import {
+  parse_datetime,
+  percentage,
+  usage_window,
+} from '../../../conversation/backend_usage/logic/windows.ts';
 const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CLAUDE_USAGE_TIMEOUT_SECONDS = 20;
 const CLAUDE_USAGE_BETA = 'oauth-2025-04-20';
@@ -125,9 +129,11 @@ function claude_limit_entry(value: unknown): BackendUsageWindow | null {
   if (typeof model_name !== 'string' || !model_name) model_name = model?.displayName;
   let kind: BackendUsageWindowKind;
   let model_scope: string | null;
+  let id: string;
   if (typeof model_name === 'string' && model_name) {
     kind = 'seven_day';
     model_scope = model_name;
+    id = `seven_day_${model_name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
   } else {
     if (value.group === 'session') kind = 'five_hour';
     else if (
@@ -137,18 +143,19 @@ function claude_limit_entry(value: unknown): BackendUsageWindow | null {
       kind = 'seven_day';
     else return null;
     model_scope = null;
+    id = kind;
   }
-  return { kind, used_percent, resets_at, model_scope, scope_label: null };
+  return usage_window({ id, kind, used_percent, resets_at, model_scope });
 }
 
 export function parse_claude_windows(body: unknown): readonly BackendUsageWindow[] | null {
   if (!object(body)) return null;
-  const scoped = Array.isArray(body.limits)
-    ? body.limits
-        .map(claude_limit_entry)
-        .filter((value): value is BackendUsageWindow => value !== null)
-    : [];
-  if (scoped.length) return scoped;
+  // Ids are unique within an observation: the first limit with an id wins.
+  const scoped = new Map<string, BackendUsageWindow>();
+  if (Array.isArray(body.limits))
+    for (const window of body.limits.map(claude_limit_entry))
+      if (window !== null && !scoped.has(window.id)) scoped.set(window.id, window);
+  if (scoped.size) return [...scoped.values()];
   const windows: BackendUsageWindow[] = [];
   for (const [key, value] of Object.entries(body)) {
     if (!object(value)) continue;
@@ -162,13 +169,15 @@ export function parse_claude_windows(body: unknown): readonly BackendUsageWindow
         /\p{L}[\p{L}\p{M}]*/gu,
         (word) => word[0].toUpperCase() + word.slice(1).toLowerCase(),
       );
-    windows.push({
-      kind: key === 'five_hour' ? 'five_hour' : 'seven_day',
-      used_percent,
-      resets_at,
-      model_scope: key === 'five_hour' || key === 'seven_day' ? null : title,
-      scope_label: null,
-    });
+    windows.push(
+      usage_window({
+        id: key,
+        kind: key === 'five_hour' ? 'five_hour' : 'seven_day',
+        used_percent,
+        resets_at,
+        model_scope: key === 'five_hour' || key === 'seven_day' ? null : title,
+      }),
+    );
   }
   return windows.length ? windows : null;
 }

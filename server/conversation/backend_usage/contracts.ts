@@ -1,13 +1,19 @@
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 export type BackendUsageOutcome = 'succeeded' | 'unavailable' | 'unauthenticated' | 'failed';
 export type BackendUsageWindowKind = 'five_hour' | 'seven_day';
+/** One allowance window as its provider reports it, in T3 Code's `ServerProviderUsageWindow` shape. */
 export interface BackendUsageWindow {
+  /** Stable and unique within one observation, from the provider's own names: `seven_day_fable`. */
+  readonly id: string;
   readonly kind: BackendUsageWindowKind;
+  /** What the Limits page shows: `7 days · Fable`. */
+  readonly label: string;
   readonly used_percent: number;
-  readonly resets_at: Date;
+  /** Null when the provider names no reset, as for an untouched Antigravity bucket. */
+  readonly resets_at: Date | null;
+  readonly window_duration_mins: number | null;
+  /** The model or model family the provider names for this window. Null: the whole account. */
   readonly model_scope: string | null;
-  /** A model-family label the backend reports that may match no catalog model. */
-  readonly scope_label: string | null;
 }
 export interface BackendUsageResult {
   readonly backend_key: BackendInstanceId;

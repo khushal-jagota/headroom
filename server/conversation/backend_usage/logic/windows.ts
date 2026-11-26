@@ -1,4 +1,4 @@
-import type { BackendUsageWindowKind } from '../contracts.ts';
+import type { BackendUsageWindow, BackendUsageWindowKind } from '../contracts.ts';
 import { parse_iso_datetime } from '../../../core/clock.ts';
 export function percentage(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
@@ -29,4 +29,19 @@ export function parse_datetime(value: unknown): Date | null {
 }
 export function window_kind(minutes: unknown): BackendUsageWindowKind | null {
   return minutes === 300 ? 'five_hour' : minutes === 10080 ? 'seven_day' : null;
+}
+/** Every adapter builds its windows here, so labels and lengths read the same for each provider. */
+export function usage_window(input: {
+  readonly id: string;
+  readonly kind: BackendUsageWindowKind;
+  readonly used_percent: number;
+  readonly resets_at: Date | null;
+  readonly model_scope: string | null;
+}): BackendUsageWindow {
+  const length = input.kind === 'five_hour' ? '5 hours' : '7 days';
+  return {
+    ...input,
+    label: input.model_scope === null ? length : `${length} · ${input.model_scope}`,
+    window_duration_mins: input.kind === 'five_hour' ? 300 : 10080,
+  };
 }
