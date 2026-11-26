@@ -242,7 +242,9 @@ export async function create_database_backup(
 export async function verify_update_snapshot(
   snapshot: string,
   backupDirectory: string,
+  timed: (part: 'late_check' | 'retention', seconds: number) => void = () => {},
 ): Promise<void> {
+  const started = performance.now();
   const path = await resolved_path(snapshot);
   if (!(await is_verified_snapshot(path)))
     throw new Error('the update snapshot no longer matches its recorded sha256');
@@ -258,11 +260,15 @@ export async function verify_update_snapshot(
     );
     await fs.rename(replacement, metadata_path);
     throw error;
+  } finally {
+    timed('late_check', (performance.now() - started) / 1000);
   }
+  const retention = performance.now();
   await apply_verified_snapshot_retention(
     backupDirectory,
     await verified_snapshot_retention_plan(backupDirectory),
   );
+  timed('retention', (performance.now() - retention) / 1000);
 }
 
 export async function apply_verified_snapshot_retention(

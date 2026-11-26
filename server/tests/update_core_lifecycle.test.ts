@@ -409,6 +409,7 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
       backup: null,
       snapshot_required: true,
       staged_snapshot: staged_copies[0],
+      snapshot_seconds: { staged_copy: expect.any(Number) },
     });
     // The installer snapshots after the stop, so its deadline covers the copy, the
     // steps and a rollback restore. The fixture database gets the 120 s floor per copy.

@@ -21,11 +21,14 @@ if (args.length !== 5 && args.length !== 6) {
     assert_test_database_path(path);
     assert_test_database_path(expand_path(path));
   }
+  const started = performance.now();
   const snapshot = await create_database_backup(
     database,
     backup_directory,
     deployed_revision,
     staged_copy,
   );
-  new InstallationRecord({ data_directory, attempt_id }).snapshot_taken(snapshot);
+  new InstallationRecord({ data_directory, attempt_id }).snapshot_taken(snapshot, {
+    [staged_copy ? 'catch_up' : 'stopped_copy']: (performance.now() - started) / 1000,
+  });
 }

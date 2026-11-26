@@ -322,10 +322,17 @@ export function create_installer_effects(
           String(new InstallationRecord(request).read().from_sha),
         ),
         main = join(app, 'server/environments/updates/snapshot_verify_main.ts');
-      for (const path of [snapshot, request.backup_directory, app, main])
+      for (const path of [snapshot, request.backup_directory, request.data_directory, app, main])
         assert_installer_path(path, execution.environment);
       await run_installer_command(
-        [request.node_executable, main, snapshot, request.backup_directory],
+        [
+          request.node_executable,
+          main,
+          snapshot,
+          request.backup_directory,
+          request.data_directory,
+          request.attempt_id,
+        ],
         value,
         { check: true, output: 'inherit' },
       );

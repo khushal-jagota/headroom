@@ -550,7 +550,8 @@ export class UpdateService {
     const conversation = this.options.runtime.conversation();
     let owns_send_admission = false;
     let barrier_closed = false;
-    let staged_snapshot: string | null = null;
+    let staged_snapshot: string | null = null,
+      staged_copy_seconds: number | null = null;
     try {
       this.options.runtime.assert_database_owned();
       try {
@@ -597,6 +598,7 @@ export class UpdateService {
       if (snapshot_required) {
         await require_snapshot_space(this.options.database, this.options.backup_directory);
         if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+        const started = performance.now();
         try {
           staged_snapshot = await this.options.installer.stage_snapshot(
             this.options.database,
@@ -612,6 +614,7 @@ export class UpdateService {
           );
           return;
         }
+        staged_copy_seconds = (performance.now() - started) / 1000;
       }
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
       if (conversation) {
@@ -649,6 +652,11 @@ export class UpdateService {
         detail: null,
         snapshot_required,
         staged_snapshot,
+        // The installer adds the other parts of the snapshot's work (installer/record.ts).
+        extra:
+          staged_copy_seconds === null
+            ? current.extra
+            : { ...current.extra, snapshot_seconds: { staged_copy: staged_copy_seconds } },
         deadline_at: this.deadline(
           install_deadline_seconds({
             backup: snapshot_required,

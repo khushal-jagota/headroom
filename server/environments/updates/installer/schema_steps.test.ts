@@ -472,6 +472,10 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
       readdirSync(request.backup_directory).filter((name) => name.startsWith('snapshot-')).length,
       2,
     );
+    // The record shows the cost of each part, for the real window of later updates.
+    const seconds = record(root).snapshot_seconds;
+    for (const part of ['stopped_copy', 'catch_up', 'late_check', 'retention'])
+      assert.equal(typeof seconds[part], 'number', part);
 
     // Pending steps without a backup refuse before the first write.
     const stepped = join(root, 'baseline.sqlite');
