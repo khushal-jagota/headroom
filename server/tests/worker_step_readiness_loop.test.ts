@@ -1030,45 +1030,107 @@ test('a kickoff racing a steer shares admission order without releasing its clai
   }
 });
 
-// Ordinary admission must not wait for native cleanup of a retired workspace.
-// The explicit restart route retains that proof and restores a fresh recipient.
-test('a retired workspace refuses ordinary admission until an explicit Worker restart', async () => {
-  const { db, system, options } = setup();
-  const ticket = create(db);
-  await start_ready_worker_step(ticket.id, options);
-  const old_id = read(db, ticket.id).conversation_id!;
-  db.write((tx) => {
-    tx.run('INSERT INTO ticket_workspace_conversations VALUES(?,?,?,?)', [
-      old_id,
-      ticket.id,
-      HOME_MACHINE_ID,
-      'retired-workspace',
-    ]);
-    tx.run('INSERT INTO ticket_workspace_retirements VALUES(?,?,?,?)', [
-      ticket.id,
-      HOME_MACHINE_ID,
-      'retired-workspace',
-      now,
-    ]);
-  });
-  const kill = vi.spyOn(system, 'kill');
-  const send = () =>
-    send_message(
-      system,
-      db,
-      new TestClock(new Date(now * 1000).toISOString()),
-      { principal: OWNER, conversationId: null },
-      { kind: 'ticket', id: ticket.id },
-      'owner correction',
+// An ended Ticket receives a fresh conversation automatically after workspace retirement.
+// Exact cleanup can wait without holding admission for other recipients, and it never
+// interrupts a turn that is still running in the retired workspace.
+test.each(['cleaned', 'failed', 'active'] as const)(
+  'a message after workspace retirement admits a fresh recipient when cleanup is %s',
+  async (cleanup) => {
+    const { db, system, options } = setup();
+    const ticket = create(db);
+    await start_ready_worker_step(ticket.id, options);
+    const old_id = read(db, ticket.id).conversation_id!;
+    db.write((tx) => {
+      tx.run("UPDATE tickets SET stage='done' WHERE id=?", [ticket.id]);
+      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [
+        now,
+        ticket.id,
+      ]);
+      tx.run('INSERT INTO ticket_workspace_conversations VALUES(?,?,?,?)', [
+        old_id,
+        ticket.id,
+        HOME_MACHINE_ID,
+        'retired-workspace',
+      ]);
+      tx.run('INSERT INTO ticket_workspace_retirements VALUES(?,?,?,?)', [
+        ticket.id,
+        HOME_MACHINE_ID,
+        'retired-workspace',
+        now,
+      ]);
+    });
+    const started = new Deferred<void>();
+    const release = new Deferred<void>();
+    const is_running = system.is_running.bind(system);
+    vi.spyOn(system, 'is_running').mockImplementation(async (id) => {
+      if (id !== old_id) return is_running(id);
+      started.resolve();
+      await release.promise;
+      return cleanup === 'active';
+    });
+    const kill = system.kill.bind(system);
+    const killed = vi.spyOn(system, 'kill').mockImplementation(async (id) => {
+      if (id === old_id && cleanup === 'failed') throw new Error('cleanup proof unavailable');
+      await kill(id);
+    });
+    const content = vi.fn(async (conversation_id: string) => {
+      const { text_message_content } = await import('../conversation/message_content.ts');
+      expect(conversation_id).not.toBe(old_id);
+      return text_message_content('owner correction');
+    });
+    const send = (id: string, message: Parameters<typeof send_message>[5]) =>
+      send_message(
+        system,
+        db,
+        new TestClock(new Date(now * 1000).toISOString()),
+        { principal: OWNER, conversationId: null },
+        { kind: 'ticket', id },
+        message,
+      );
+    const outcome = send(ticket.id, content).then(
+      (result) => ({ result, error: null }),
+      (error: unknown) => ({ result: null, error }),
     );
-  await expect(send()).rejects.toMatchObject({ code: 'validation' });
-  expect(kill).not.toHaveBeenCalled();
-  await restart_worker(system, db, OWNER, ticket.id, {
-    now: options.now,
-    start_worker_step: () => start_ready_worker_step(ticket.id, options),
-  });
-  expect(read(db, ticket.id).conversation_id).not.toBe(old_id);
-  await expect(send()).resolves.toMatchObject({
-    conversation_id: read(db, ticket.id).conversation_id,
-  });
-});
+    await started.promise;
+    try {
+      expect(content).not.toHaveBeenCalled();
+      const other = create(db);
+      await expect(send(other.id, 'another recipient')).resolves.toMatchObject({
+        recipient: { kind: 'ticket', id: other.id },
+      });
+      release.resolve();
+      const settled = await outcome;
+      const retiring = () =>
+        db.read((sql) =>
+          sql.get<{ retiring: number }>(
+            "SELECT retiring FROM recipient_lifecycles WHERE recipient_kind='ticket' AND recipient_id=?",
+            [ticket.id],
+          ),
+        );
+      if (cleanup === 'active') {
+        // A running turn is never interrupted, and nothing was cleaned, so the fence lifts.
+        expect(settled.error).toMatchObject({ code: 'already_running' });
+        expect(killed).not.toHaveBeenCalledWith(old_id);
+        expect(read(db, ticket.id).conversation_id).toBe(old_id);
+        expect(content).not.toHaveBeenCalled();
+        expect(retiring()).toEqual({ retiring: 0 });
+      } else if (cleanup === 'failed') {
+        expect(settled.error).toMatchObject({ code: 'validation' });
+        expect(read(db, ticket.id).conversation_id).toBe(old_id);
+        expect(content).not.toHaveBeenCalled();
+        expect(retiring()).toEqual({ retiring: 1 });
+      } else {
+        expect(settled.error).toBeNull();
+        const fresh = read(db, ticket.id).conversation_id!;
+        expect(fresh).not.toBe(old_id);
+        expect(settled.result).toMatchObject({ conversation_id: fresh });
+        expect(content).toHaveBeenCalledExactlyOnceWith(fresh);
+        expect(system.backend_prompt_writes(fresh)).toHaveLength(1);
+        expect(system.backend_prompt_writes(fresh)[0].text).toContain('owner correction');
+      }
+    } finally {
+      release.resolve();
+      await outcome;
+    }
+  },
+);

@@ -2,6 +2,8 @@ import { release_admission_leases } from './admission_locks.ts';
 import {
   begin_recipient_lifecycle,
   finish_recipient_lifecycle,
+  recipient_lifecycle,
+  require_recipient_available,
 } from '../message_delivery/data/lifecycles.ts';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { with_admission_lease } from './admission_locks.ts';
@@ -452,11 +454,6 @@ async function send_existing_ticket(
   content: MessageContent,
   options: TicketMessageOptions,
 ): Promise<DeliveredMessage> {
-  if (database.read((sql) => conversation_workspace_retired(sql, sending_into)))
-    throw new PlannerError(
-      'validation',
-      'Restart this Ticket to retire its old workspace conversation before sending another message.',
-    );
   const fate = await observe_conversation_operation(
     async () => system.send(sending_into, content, send_options(options, true)),
     options.signal,
@@ -493,6 +490,71 @@ async function let_go_ticket(
     tickets.remove_ticket_conversation_start(tx, id, { conversation_id, now }),
   );
 }
+async function renew_retired_ticket_conversation(
+  system: ConversationSystem,
+  database: Database,
+  ticket_id: string,
+  retired_conversation_id: string,
+  content: ConversationMessageContent,
+  options: TicketMessageOptions,
+): Promise<DeliveredMessage> {
+  const target = { kind: 'ticket' as const, id: ticket_id };
+  const key = `ticket:${ticket_id}`;
+  const generation = database.write((tx) => {
+    require_recipient_available(tx, target);
+    return begin_recipient_lifecycle(tx, target);
+  });
+  const require_current_retirement = (sql: ReadSql) => {
+    const current = recipient_lifecycle(sql, target);
+    if (
+      current.generation !== generation ||
+      !current.retiring ||
+      tickets.read_ticket(sql, ticket_id).conversation_id !== retired_conversation_id
+    )
+      throw new PlannerError('validation', 'The recipient changed during workspace cleanup.');
+  };
+  // The caller already owns the Ticket admission lease. Release it before lifecycle→link
+  // serialization, so an explicit lifecycle operation cannot wait on our nested link lease.
+  release_admission_leases();
+  await run_recipient_lifecycle(key, async () => {
+    database.read(require_current_retirement);
+    release_admission_leases();
+    // Nothing is cleaned up before this check, so a refusal here releases the fence.
+    const running = await system.is_running(retired_conversation_id).then(
+      (value) => (value ? 'The retired workspace still has an active conversation' : null),
+      (error: unknown) =>
+        `The retired workspace conversation could not be checked: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    if (running !== null) {
+      database.write((tx) => finish_recipient_lifecycle(tx, target, generation));
+      throw new PlannerError('already_running', running);
+    }
+    try {
+      await system.kill(retired_conversation_id);
+    } catch (error) {
+      throw new PlannerError(
+        'validation',
+        `The retired workspace could not be cleaned up. Restart this Ticket before sending another message: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  });
+  // Keep the fence until the original input owns fresh admission. No native wait retains
+  // lifecycle serialization, and another producer cannot overtake this message after cleanup.
+  return conversation_link_lock(key).run(async () => {
+    database.write((tx) => {
+      require_current_retirement(tx);
+      tickets.clear_ticket_conversation_link(tx, ticket_id, {
+        expected_conversation_id: retired_conversation_id,
+        now: options.now,
+      });
+      finish_recipient_lifecycle(tx, target, generation);
+    });
+    return send_to_ticket_conversation(system, database, ticket_id, content, {
+      ...options,
+      conversation_id: null,
+    });
+  });
+}
 export async function send_to_ticket_conversation(
   system: ConversationSystem,
   database: Database,
@@ -507,6 +569,20 @@ export async function send_to_ticket_conversation(
       configured_ticket_execution_refusal(database, sql, ticket);
     if (refusal !== null) throw refusal;
   });
+  const current = options.conversation_id ?? ticket.conversation_id;
+  if (
+    current !== null &&
+    current === ticket.conversation_id &&
+    database.read((sql) => conversation_workspace_retired(sql, current))
+  )
+    return renew_retired_ticket_conversation(
+      system,
+      database,
+      ticket_id,
+      current,
+      content,
+      options,
+    );
   if (options.conversation_id === null && ticket.conversation_id === null) {
     if (!options.workspace_activity_recorded)
       database.write((tx) => ensure_workspace_activity(tx, ticket_id, options.now));
