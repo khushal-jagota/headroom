@@ -45,7 +45,7 @@ export async function start_conversation(
     async (admitted) => {
       if (!admitted) throw host.workspace_admission.refusal();
       host.require_runtime_ownership();
-      const refusal = host.execution_refusal(request.conversation_id);
+      const refusal = host.admission_refusal(request.conversation_id);
       if (refusal !== null) throw refusal;
       const resolved = resolve_conversation_start_request(request);
       if (

@@ -18,13 +18,15 @@ import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { start_native_server, NATIVE_CODEX_MODEL } from '../executor/mac/testing/native_server.ts';
 import { executor_link_socket_path } from '../core/http/executor_link.ts';
 import { credential_path, write_credential } from '../executor/credential_file.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { issue_home_machine_credential } from '../machines/executor_credentials.ts';
+import { machine_lease_request } from '../machines/testing/lease.ts';
 import { OWNER } from '../core/contracts.ts';
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import {
   ConversationRoleMaterials,
   ConversationStartRequest,
-  PromptDeliveryStarted,
+  PromptDeliveryQueued,
   WorkspacePathPolicy,
 } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
@@ -205,37 +207,16 @@ async function start_agent_conversation(
   );
 }
 
-beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'accept-'));
-  const database = join(root, 'home.db');
-  for (const [key, value] of Object.entries({
-    PLAN_DB_PATH: database,
-    PLAN_PORT: '0',
-    PLAN_TEST_MODE: '1',
-    PLAN_EXECUTOR_ID: 'test-executor',
-    PLAN_DISPATCH_ENABLED: 'false',
-    PLAN_LOGS_DIR: join(root, 'logs'),
-    PLAN_BACKUP_DIR: join(root, 'backups'),
-    PLAN_DISPATCHER_LOCK_PATH: join(root, 'dispatcher.lock'),
-    PLAN_SERVER_CONTROL_SOCKET: join(root, 'control.sock'),
-  }))
-    vi.stubEnv(key, value);
-  server = await start_native_server();
-  machine_root = join(root, 'machine');
-  await write_credential(credential_path(machine_root), server.credential);
-  const home = join(root, 'provider-home');
-  await mkdir(join(home, 'skills'), { recursive: true });
-  // No inherited PLAN_ value may reach the machine or the CLI: only this private home.
-  agent_environment = { ...process.env, HOME: home, CODEX_HOME: home, CLAUDE_CONFIG_DIR: home };
-  for (const name of Object.keys(agent_environment))
-    if (name.startsWith('PLAN_')) delete agent_environment[name];
+/** The machine joins: real machine code leases and takes its commands from here on. */
+async function join_machine(): Promise<void> {
+  if (peer) return;
   const input = join(root, 'machine.json');
   await writeFile(
     input,
     JSON.stringify({
-      origin: executor_link_socket_path(database),
+      origin: executor_link_socket_path(join(root, 'home.db')),
       fixture_root: root,
-      fixture_database_path: database,
+      fixture_database_path: join(root, 'home.db'),
       root: machine_root,
       revision: 'acceptance-proof',
       catalog_model: NATIVE_CODEX_MODEL,
@@ -274,9 +255,36 @@ beforeAll(async () => {
       throw new Error(`Machine startup timeout: ${peer_error}`);
     }),
   ]);
-  await server.wait_for_presence();
+  await server!.wait_for_presence();
+}
 
-  // The Chief runs under machine code with a running first turn.
+beforeAll(async () => {
+  root = await mkdtemp(join(tmpdir(), 'accept-'));
+  const database = join(root, 'home.db');
+  for (const [key, value] of Object.entries({
+    PLAN_DB_PATH: database,
+    PLAN_PORT: '0',
+    PLAN_TEST_MODE: '1',
+    PLAN_EXECUTOR_ID: 'test-executor',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_LOGS_DIR: join(root, 'logs'),
+    PLAN_BACKUP_DIR: join(root, 'backups'),
+    PLAN_DISPATCHER_LOCK_PATH: join(root, 'dispatcher.lock'),
+    PLAN_SERVER_CONTROL_SOCKET: join(root, 'control.sock'),
+  }))
+    vi.stubEnv(key, value);
+  server = await start_native_server();
+  machine_root = join(root, 'machine');
+  await write_credential(credential_path(machine_root), server.credential);
+  const home = join(root, 'provider-home');
+  await mkdir(join(home, 'skills'), { recursive: true });
+  // No inherited PLAN_ value may reach the machine or the CLI: only this private home.
+  agent_environment = { ...process.env, HOME: home, CODEX_HOME: home, CLAUDE_CONFIG_DIR: home };
+  for (const name of Object.keys(agent_environment))
+    if (name.startsWith('PLAN_')) delete agent_environment[name];
+
+  // The Chief's conversation exists before its machine joins. Its first message is the
+  // offline case below, which leaves a running first turn under machine code.
   chief_conversation = 'chief_' + randomUUID().replaceAll('-', '');
   await start_agent_conversation(chief_conversation, [['PLAN_ACTOR', 'chief']]);
   server.context.database.write((tx) =>
@@ -285,12 +293,6 @@ beforeAll(async () => {
       ['chief_of_staff', chief_conversation],
     ),
   );
-  expect(
-    await server.core.send(chief_conversation, text_message_content('[CASE:plain]'), {
-      sender_label: 'owner',
-    }),
-  ).toBeInstanceOf(PromptDeliveryStarted);
-  await until(calls, (value) => value.prompts === 1);
 
   // The Worker's conversation is linked. Its launch starts with the Worker step below.
   const ticket = server.context.database.write((tx) =>
@@ -343,6 +345,95 @@ afterAll(async () => {
     }
   }
 }, 60_000);
+
+// Risk: a send to a machine that is not running refuses at once ("Waiting for VPS 1") instead
+// of waiting, and its outcome reads write_to_backend_failed. Gap: every other case here starts
+// with the machine joined. The Chief's first message goes through the owner's own route while
+// the Mac is absent, and the same machine invocation then joins and takes it.
+test('an owner message to an absent machine is accepted, shown waiting, and delivered when it joins', async () => {
+  const message_id = 'offline-' + randomUUID();
+  const outcome = async () =>
+    (await http(`/api/conversation/owner-sends/${message_id}?owner_kind=chief&owner_id=chief`))
+      .outcome;
+  const mac = server!.context.database.read(
+    (sql) =>
+      sql.get<{ name: string }>('SELECT name FROM machines WHERE machine_id=?', [
+        ORIGINAL_MAC_MACHINE_ID,
+      ])!.name,
+  );
+  expect(
+    await http('/api/chief/conversation/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: chief_conversation,
+        content: [{ piece: 'text', text: '[CASE:plain]' }],
+        sender_label: 'You',
+        mode: 'queue',
+        sender_message_id: message_id,
+      }),
+    }),
+  ).toEqual({ conversation_id: chief_conversation, fate: 'accepted', message_id });
+  expect(await outcome()).toMatchObject({ outcome: 'pending' });
+  const waiting = await http(`/api/conversation/conversations/${chief_conversation}`);
+  expect(waiting.machine_waiting_reason).toBe(`Waiting for ${mac}`);
+  expect(await pending_ids(chief_conversation)).toEqual([message_id]);
+
+  await join_machine();
+  await until(calls, (value) => value.prompts === 1);
+  await until(outcome, (value) => value?.outcome === 'delivered');
+  expect(events_for(chief_conversation, message_id)).toEqual([{ kind: 'prompt', mode: 'queue' }]);
+  expect(
+    (await http(`/api/conversation/conversations/${chief_conversation}`)).machine_waiting_reason,
+  ).toBeNull();
+}, 60_000);
+
+// Risk: the home machine's own code (VPS 1) restarting refuses sends, and nothing wakes its
+// held messages when it leases again. Gap: the case above proves a Mac. Here the server's own
+// machine never runs; its lease is accepted in process, so the proof ends at the dispatched
+// start command that its machine code would take.
+test('a message to the absent home machine waits and dispatches when that machine leases', async () => {
+  const conversation_id = 'home_' + randomUUID().replaceAll('-', '');
+  await server!.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id,
+      backend_key: parse_backend_instance_id('codex'),
+      model: NATIVE_CODEX_MODEL,
+      reasoning_effort: null,
+      workspace_folder: '/native-rehearsal/' + conversation_id,
+      workspace_path_policy: WorkspacePathPolicy.executor_default,
+      access: 'full',
+      machine_id: HOME_MACHINE_ID,
+    }),
+  );
+  const home = server!.context.database.read(
+    (sql) =>
+      sql.get<{ name: string }>('SELECT name FROM machines WHERE machine_id=?', [HOME_MACHINE_ID])!
+        .name,
+  );
+  expect(
+    await server!.core.send(conversation_id, text_message_content('[CASE:plain]'), {
+      sender_label: 'owner',
+      sender_message_id: 'home-first',
+    }),
+  ).toBeInstanceOf(PromptDeliveryQueued);
+  expect(
+    (await http(`/api/conversation/conversations/${conversation_id}`)).machine_waiting_reason,
+  ).toBe(`Waiting for ${home}`);
+  const starts = () =>
+    server!.context.database.read((sql) =>
+      sql.all(
+        "SELECT 1 FROM executor_commands WHERE machine_id=? AND operation='start' AND conversation_id=?",
+        [HOME_MACHINE_ID, conversation_id],
+      ),
+    );
+  expect(starts()).toEqual([]);
+
+  server!.context.database.write((tx) => issue_home_machine_credential(tx, 'linux'));
+  const endpoint = await server!.registry.ensure(HOME_MACHINE_ID);
+  await endpoint.presence.accept_lease(machine_lease_request());
+  await until(starts, (rows) => rows.length === 1);
+  expect(await server!.core.held_prompts(conversation_id)).toEqual([]);
+}, 30_000);
 
 test('a Chief correction is accepted, shown and answered around a held Worker launch', async () => {
   const started = performance.now();

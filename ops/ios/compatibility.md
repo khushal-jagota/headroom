@@ -36,3 +36,9 @@ The minimum iPhone build is **13**, the first build that reads these answers. Bu
 The desktop bridge floor stays **2**. The desktop shell shows the web app that home serves and reads no send outcome.
 
 Publish iPhone build 13 with this server release.
+
+## Absent machine release
+
+A send to a conversation whose machine is absent is accepted and waits, instead of HTTP 400. The conversation read adds the optional `machine_waiting_reason`, and a refusal before acceptance names its cause in new refusal codes with a `reason` sentence.
+
+The minimum iPhone build stays **13**. Build 13 ignores the new field, still shows the message as queued, and shows an unknown refusal code as words with Try Again. A newer build names the waiting machine.

@@ -2,6 +2,7 @@ import { owner_send_outcome } from '../message_delivery/owner_sends.ts';
 import { accepted_unplaced_messages } from '../message_delivery/data/recipient_deliveries.ts';
 /** Product conversation HTTP surface, sharing the record and process runtime. */
 import { read_machine } from '../machines/data.ts';
+import { conversation_machine_waiting_reason } from '../machines/conversation_machine.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { homedir } from 'node:os';
@@ -206,6 +207,9 @@ async function state_json(
     latest_sequence: record.latest_sequence,
     owner_read_through_sequence: record.owner_read_through_sequence,
     is_running,
+    machine_waiting_reason: runtime.record.database.read((sql) =>
+      conversation_machine_waiting_reason(sql, conversation_id, Date.now()),
+    ),
     pending_messages: runtime.record.database.read((sql) =>
       accepted_unplaced_messages(
         sql,

@@ -149,6 +149,7 @@ export class VpsExecutor {
     this.mailbox.start_admission = conversations.start_admission;
     this.presence.returned = async () => {
       this.catalog.connected();
+      this.deliver_held_messages(conversations);
       // A server start skips the recovery of a Ticket whose machine is away. When the machine
       // connects, for example the server's own machine code after the switch, it runs now.
       void this.recover_waiting_turns(conversations).catch((error: unknown) => {
@@ -156,6 +157,21 @@ export class VpsExecutor {
           console.error(`Recovery for machine ${this.machine_id} failed`, error);
       });
     };
+  }
+  /** Messages accepted while this machine was away wait in order. Its return delivers them. */
+  private deliver_held_messages(conversations: SqliteProcessConversationSystem): void {
+    const conversation_ids = this.database.read((sql) =>
+      sql
+        .all<{ conversation_id: string }>(
+          'SELECT DISTINCT conversation_id FROM conversation_held_prompts',
+        )
+        .map((row) => row.conversation_id)
+        .filter((id) => conversation_machine_id(sql, id) === this.machine_id),
+    );
+    for (const conversation_id of conversation_ids) {
+      const state = conversations.conversation_state(conversation_id);
+      if (state !== null) conversations.schedule_drain(state);
+    }
   }
   private async recover_waiting_turns(conversations: SqliteProcessConversationSystem) {
     // A Ticket's turn follows its Ticket's machine; the Chief's, a Manager's or any other

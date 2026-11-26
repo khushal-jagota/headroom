@@ -17,6 +17,11 @@ import type { OutgoingMessage } from "./outgoing";
 
 export type HeldPromptRowState = "held" | "in_flight" | "unknown";
 
+/** Context: why this conversation's queued messages wait for its machine, such as
+ *  "Waiting for Mac 1", or null while the machine is present. */
+export const MACHINE_WAITING_REASON = Symbol("conversation-machine-waiting-reason");
+export type MachineWaitingReason = () => string | null;
+
 export type HeldPromptRow = Readonly<{
   key: string;
   heldPromptId: string | null;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { conversationHeight } from "../../../lib/conversation/surfaceMotion";
-  import { queuedMessageLabel } from "../../../lib/conversation/heldPrompts";
+  import { getContext } from "svelte";
+  import { MACHINE_WAITING_REASON, queuedMessageLabel, type MachineWaitingReason } from "../../../lib/conversation/heldPrompts";
   import { promptLabelFor } from "../../../lib/conversation/transcript";
   import { displayedOutgoingContent, editableHeldWords, type TranscriptSendActions } from "../../../lib/conversation/transcriptOutgoing";
   import type { OutgoingMessage } from "../../../lib/conversation/outgoing";
@@ -11,6 +12,8 @@
     actions: TranscriptSendActions;
     ownSenderLabel: string;
   } = $props();
+  const machineWaitingReason = getContext<MachineWaitingReason | undefined>(MACHINE_WAITING_REASON);
+  const waitingReason = $derived(machineWaitingReason?.() ?? null);
 
   let actionInFlight = $state<string | null>(null);
   /** The line whose actions are out. A pointer shows them on hover; a touch, or a narrow
@@ -40,6 +43,9 @@
 <div class="chat-queue-slot" use:conversationHeight><div>
 {#if messages.length > 0}
   <ol class="chat-queue" aria-label={messages.length === 1 ? "1 queued message" : `${messages.length} queued messages`} data-conversation-held-stack>
+    {#if waitingReason}
+      <li class="chat-qwait" role="status" data-conversation-machine-waiting>{waitingReason}</li>
+    {/if}
     {#each messages as message (message.messageId)}
       {@const row = message.presentation?.kind === "held" ? message.presentation.row : null}
       {@const upload = message.presentation?.kind === "upload" ? message.presentation : null}
@@ -100,6 +106,11 @@
     border: 1px solid var(--cv-surface-edge);
     border-bottom: 0;
     border-radius: var(--cv-r-lg) var(--cv-r-lg) 0 0;
+  }
+  .chat-qwait {
+    padding: var(--cv-s1) 0;
+    color: var(--cv-narration-ink);
+    font: var(--cv-weight-label) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
   }
   .chat-qrow {
     display: flex;

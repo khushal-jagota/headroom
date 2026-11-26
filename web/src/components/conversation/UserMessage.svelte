@@ -10,7 +10,7 @@
   import { promptLabelFor, promptOutcomeStatus, messageNotDelivered, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
   import { openComposerModelPicker } from '../../lib/conversation/modelPicker';
   import { homeHasTheSend, outgoingMessageIsSending, outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
-  import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
+  import { heldPromptRowActions, heldPromptRows, MACHINE_WAITING_REASON, type MachineWaitingReason } from '../../lib/conversation/heldPrompts';
   import { conversationHeight } from '../../lib/conversation/surfaceMotion';
   import { refusalOffersResend } from '../../lib/conversation/transcript';
   import { recordedContentCanBeResent, RESEND_RECORDED_MESSAGE, type ResendRecordedMessage } from '../../lib/conversation/resendRefused';
@@ -64,6 +64,8 @@
   // message itself and at rest, not on hover: it is the next step its status line names.
   // Once it has gone out again the button goes, so one press is one more message.
   const resendRecorded = getContext<ResendRecordedMessage | undefined>(RESEND_RECORDED_MESSAGE);
+  const machineWaitingReason = getContext<MachineWaitingReason | undefined>(MACHINE_WAITING_REASON);
+  const waitingReason = $derived(machineWaitingReason?.() ?? null);
   let resent = $state(false);
   let resendFailed = $state(false);
   let edited = $state(false);
@@ -82,6 +84,8 @@
     if (held) {
       if (held.row.state === "unknown") return {tone: "warning", title: "The agent did not confirm receipt.", detail: null};
       const place = held.count > 1 ? ` · ${held.position} of ${held.count}` : "";
+      // Nothing can run while the machine is away, so its name is the visible reason.
+      if (waitingReason !== null) return {tone: "neutral", title: `Queued${place} · ${waitingReason}`, detail: null};
       const reason = held.row.queueReason === "attachment" ? "Attachments cannot join the running turn."
         : held.row.queueReason === "run_change" ? "The run settings will change when it starts."
         : held.row.queueReason === "steer_refused" ? "The running turn could not take the message."

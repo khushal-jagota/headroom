@@ -7,6 +7,9 @@ import {
   can_execute_machine,
   machine_unavailable_reason,
 } from '../tickets/locale_configuration.ts';
+import { read_machine } from './data.ts';
+import { judge_presence } from '../executor/logic/presence.ts';
+import { read_presence } from '../executor/vps_presence_store.ts';
 
 /** A Ticket's conversation follows its Ticket. Any other conversation keeps its recorded machine. */
 export function conversation_machine_id(sql: ReadSql, conversation_id: string): string | null {
@@ -77,4 +80,26 @@ export function conversation_machine_refusal(
     conversation_id,
     machine_id,
   });
+}
+
+/**
+ * Why messages to this conversation wait, such as "Waiting for Mac 1": its machine never
+ * joined, is away, or runs code this home refuses. Null while the machine is present.
+ */
+export function conversation_machine_waiting_reason(
+  sql: ReadSql,
+  conversation_id: string,
+  now_ms: number,
+): string | null {
+  const machine_id = conversation_machine_id(sql, conversation_id);
+  if (machine_id === null) return null;
+  const presence = read_presence(sql, machine_id);
+  // A version mismatch names both versions, so the owner can see what to update.
+  if (presence?.refusal) return machine_unavailable_reason(machine_id, sql);
+  if (
+    can_execute_machine(machine_id, sql) &&
+    judge_presence(presence, now_ms).presence === 'present'
+  )
+    return null;
+  return `Waiting for ${read_machine(sql, machine_id).name}`;
 }

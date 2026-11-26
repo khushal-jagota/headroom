@@ -32,7 +32,7 @@
   import { ATTACHMENT_NOT_READ_BACK, editablePiecesFromRecorded, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
   import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
   import { ownerSendOutcomeAsDelivery, ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from "../../lib/conversation/ownerSend";
-  import { heldPromptRows } from "../../lib/conversation/heldPrompts";
+  import { heldPromptRows, MACHINE_WAITING_REASON, type MachineWaitingReason } from "../../lib/conversation/heldPrompts";
   import { acceptedPendingMessages } from "../../lib/conversation/transcriptOutgoing";
   import {
     heldPromptIsInLens,
@@ -313,6 +313,7 @@
   // Resend on a message the conversation turned away: the same words and kept files, read
   // back from the conversation, as a new message. Queued behind a running turn, started
   // otherwise, as the composer would send it.
+  setContext<MachineWaitingReason>(MACHINE_WAITING_REASON, () => view?.machine_waiting_reason ?? null);
   setContext<ResendRecordedMessage>(RESEND_RECORDED_MESSAGE, {
     available: () => !readOnly,
     edit: async (recordedIn, content) => {

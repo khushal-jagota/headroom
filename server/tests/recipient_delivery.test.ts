@@ -8,7 +8,7 @@ import {
 import { send_message } from '../message_delivery/service.ts';
 import { owner_send_outcome, run_owner_send } from '../message_delivery/owner_sends.ts';
 import { delivery_fate_json } from '../conversation/http.ts';
-import { OWNER } from '../core/contracts.ts';
+import { OWNER, PlannerError } from '../core/contracts.ts';
 import { buildClock, type Clock } from '../core/clock.ts';
 import { loadConfig } from '../core/config.ts';
 import {
@@ -117,6 +117,53 @@ test('restart restores held prompts in order and delivers their real content onc
     );
     resume_recipient_deliveries(restarted.core);
     expect((await child.inspect()).delivered_text).toHaveLength(1);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: while the recipient's machine is away, sends refuse, a restart drops or reorders the
+// held line, or a held steer jumps the queue. Gap: the machine tests prove one message each.
+// Reuse the restart case's scripted process; only the machine policy is toggled.
+test('an absent machine holds every mode in order through a restart and delivers on return', async () => {
+  let away = true;
+  const core = {
+    execution_refusal: () => (away ? new PlannerError('validation', 'Waiting for VPS 1') : null),
+  };
+  const f = setup({ core });
+  await f.start();
+  for (const [text, id, mode] of [
+    ['first queued', 'one', 'queue'],
+    ['then steered', 'two', 'steer'],
+    ['then sent now', 'three', 'send_now'],
+  ] as const)
+    expect(
+      await f.core.send('core', text_message_content(text), {
+        sender_label: 'Owner',
+        sender_message_id: id,
+        mode,
+      }),
+    ).toBeInstanceOf(PromptDeliveryQueued);
+  expect(f.children).toHaveLength(0);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database, core });
+  try {
+    resume_recipient_deliveries(restarted.core);
+    await vi.waitFor(async () =>
+      expect(
+        (await restarted.core.held_prompts('core')).map((row) => row.sender_message_id),
+      ).toEqual(['one', 'two', 'three']),
+    );
+    expect(restarted.children).toHaveLength(0);
+    away = false;
+    // The machine's return wakes the conversation, as its lease does in production.
+    restarted.core.schedule_drain(restarted.core.conversation_state('core')!);
+    const child = await restarted.child;
+    await vi.waitFor(async () =>
+      expect((await child.inspect()).delivered_text.join('\n')).toMatch(
+        /first queued[\s\S]*then steered[\s\S]*then sent now/,
+      ),
+    );
   } finally {
     await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }

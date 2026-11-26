@@ -197,7 +197,12 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   message_cannot_be_steered: "this message content cannot be steered",
   backend_rejected_steer: "the agent did not accept the message during this turn",
   command_cannot_join_running_turn: "a command cannot join a turn that is already running",
-  remote_steer_not_delivered: "the machine did not take this steer in time"
+  remote_steer_not_delivered: "the machine did not take this steer in time",
+  refused_before_acceptance: "Panels refused this message",
+  recipient_unavailable: "the recipient no longer exists",
+  conversation_save_failed: "the conversation could not save",
+  home_restarted_before_acceptance: "Panels restarted before it accepted this message",
+  recipient_conversation_replaced: "the recipient's conversation was replaced"
 };
 
 /** Legacy browser drafts can still hold a full failure label and the older reason. */
