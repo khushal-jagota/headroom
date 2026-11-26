@@ -239,7 +239,13 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         used += size;
         entries.push(row);
       }
-      return { revision: listing.revision + ':' + revision, directory, offset, total, entries };
+      // The hidden links enter the revision, so a client restarts its pages when they change.
+      const listed_revision = listed.size
+        ? createHash('sha256')
+            .update(listing.revision + JSON.stringify([...listed].sort()))
+            .digest('hex')
+        : listing.revision;
+      return { revision: listed_revision + ':' + revision, directory, offset, total, entries };
     });
   });
 };

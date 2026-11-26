@@ -15,8 +15,6 @@ export interface CatalogEntry {
   child_count: number;
 }
 export interface FolderListing {
-  checked_at: number;
   rows: CatalogEntry[];
   revision: string;
-  bytes: number;
 }

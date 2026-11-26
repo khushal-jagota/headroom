@@ -6,7 +6,6 @@ import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
 import { routes } from '../files/routes.ts';
-import { LISTING_REFRESH_SECONDS } from '../files/catalog/config.ts';
 // The catalog once walked and hashed the whole owner folder on every call, so one large
 // Ticket folder held its file list for seconds. HTTP injection proves the route's cost
 // follows the listed folder, and that the per-folder revision still sees a nested edit.
@@ -32,12 +31,12 @@ test('the file catalog reads one folder, whatever the size of the owner folder',
   const prefix = `/files/tickets/${ticket.id}/`;
   database.write((sql) =>
     // Listed files and the page itself are not repeated as links. A file inside the
-    // page and a missing file are shown as links.
+    // page and a missing deep file are shown as links.
     [
       'artifacts/plan.html',
       'artifacts/site/index.html',
       'artifacts/site/asset.png',
-      'gone.md',
+      'artifacts/nested/deeper/later.md',
     ].forEach((path, index) =>
       sql.run('INSERT INTO ticket_artifact_links VALUES (?,?,?,?,?,?,?,?,?)', [
         ticket.id,
@@ -78,7 +77,7 @@ test('the file catalog reads one folder, whatever the size of the owner folder',
       'artifacts',
       'work',
       'artifacts/site/asset.png',
-      'gone.md',
+      'artifacts/nested/deeper/later.md',
     ]);
     const artifacts = await read('artifacts');
     expect(artifacts.entries.map((row) => [row.path, row.directory, row.child_count])).toEqual(
@@ -91,8 +90,13 @@ test('the file catalog reads one folder, whatever the size of the owner folder',
     const deeper = await read('artifacts/nested/deeper');
     expect(deeper.entries.map((row) => row.path)).toEqual(['artifacts/nested/deeper/note.md']);
     utimesSync(join(root, 'artifacts', 'nested', 'deeper', 'note.md'), 2000, 2000);
-    await new Promise((resolve) => setTimeout(resolve, LISTING_REFRESH_SECONDS * 1000 + 100));
     expect((await read('artifacts/nested/deeper')).revision).not.toBe(deeper.revision);
+    // The deep linked file appears: the root rows stay the same, but its link row leaves,
+    // so the root revision must change for a client that pages the root.
+    writeFileSync(join(root, 'artifacts', 'nested', 'deeper', 'later.md'), '');
+    const after = await read('');
+    expect(after.total).toBe(top.total - 1);
+    expect(after.revision).not.toBe(top.revision);
   } finally {
     await app.close();
   }

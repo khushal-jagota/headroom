@@ -6,12 +6,9 @@ import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { performance } from 'node:perf_hooks';
 import { absent } from '../logic/listing.ts';
 import { symlink, is_private_ticket_name } from '../logic/paths.ts';
 import type { CatalogEntry, FolderListing } from '../contracts.ts';
-import * as config from './config.ts';
-const cache = new Map<string, FolderListing>();
 /** An owner folder under a symlink lists nothing. */
 function unsafe_root(root: string): boolean {
   for (let path = root; ; path = dirname(path)) {
@@ -53,14 +50,6 @@ export async function list_folder(
   prefix: string,
   directory: string,
 ): Promise<FolderListing> {
-  const key = root + '\0' + directory,
-    prior = cache.get(key),
-    now = performance.now() / 1000;
-  if (prior && now - prior.checked_at < config.LISTING_REFRESH_SECONDS) {
-    cache.delete(key);
-    cache.set(key, prior);
-    return prior;
-  }
   const ticket = prefix.includes('/files/tickets/'),
     folder = join(root, directory);
   const listed =
@@ -113,26 +102,15 @@ export async function list_folder(
     };
   });
   // Modified times enter the revision, so an edit to a listed file or folder changes it.
-  const encoded = Buffer.from(JSON.stringify(entries));
-  const result: FolderListing = {
-    checked_at: now,
+  return {
     rows,
-    revision: createHash('sha256').update(encoded).digest('hex'),
-    bytes: encoded.length,
+    revision: createHash('sha256').update(JSON.stringify(entries)).digest('hex'),
   };
-  cache.delete(key);
-  if (result.bytes <= config.LISTING_CACHE_MAX_BYTES) {
-    cache.set(key, result);
-    while (
-      cache.size > config.LISTING_CACHE_FOLDERS ||
-      [...cache.values()].reduce((sum, item) => sum + item.bytes, 0) >
-        config.LISTING_CACHE_MAX_BYTES
-    )
-      cache.delete(cache.keys().next().value!);
-  }
-  return result;
 }
-/** Linked targets that some folder of the owner already lists, so the root does not show them twice. */
+/**
+ * Linked targets that some folder of the owner already lists, so the root does not show them
+ * twice. A file deep inside can change this set without changing the root folder's rows.
+ */
 export async function listed_targets(
   root: string,
   prefix: string,
