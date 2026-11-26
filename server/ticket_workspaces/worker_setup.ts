@@ -20,10 +20,6 @@ export interface WorkerSetup {
  * setup no longer proves a live Worker. A slow first clone took 2 min 19 s.
  */
 export const WORKER_SETUP_RESTART_REFUSAL_SECONDS = 15 * 60;
-const STEP_LABELS: Record<WorkerSetupStep, string> = {
-  preparing_workspace: 'preparing workspace',
-  starting_worker: 'starting Worker',
-};
 
 /** Open the setup for this start, or move it to a later step. A new start replaces an older one. */
 export function declare_worker_setup(
@@ -63,12 +59,8 @@ export function read_worker_setup(sql: ReadSql, ticket_id: string): WorkerSetup 
   );
 }
 
-export function worker_setup_step_label(step: WorkerSetupStep): string {
-  return STEP_LABELS[step];
-}
-
-/** "Still setting up since 2026-11-19 02:44:47 UTC (preparing workspace)" */
+/** "Still setting up since 2026-11-19 02:44:47 UTC" */
 export function still_setting_up(setup: WorkerSetup): string {
   const since = new Date(setup.began_at * 1000).toISOString().replace('T', ' ').slice(0, 19);
-  return `Still setting up since ${since} UTC (${worker_setup_step_label(setup.step)})`;
+  return `Still setting up since ${since} UTC`;
 }

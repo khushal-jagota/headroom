@@ -84,8 +84,7 @@ export type ConversationStateFacts = {
   waitingFor?: 'approval' | 'answer' | 'key' | null;
   running: boolean;
   backgroundWorking: boolean;
-  /** "Setting up · 1m 35s" while the Worker is prepared, or null. The dock's words: no
-   *  setup step ("preparing workspace") in either place (owner, A4). */
+  /** "Setting up" while the Worker is prepared, or null. No step and no clock. */
   settingUp: string | null;
   /** How long the running turn has taken, formatted, or null while that is not known. */
   elapsed: string | null;
@@ -136,19 +135,18 @@ export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | 
  * says Working while an ask waits too, as the server counts it working until the turn ends. A
  * machine Panels cannot read says only that, with no motion and no clock. */
 export type DockStatus =
-  | { kind: 'setting-up' | 'working'; clock: string | null }
-  | { kind: 'idle' | 'offline'; clock: null };
+  | { kind: 'working'; clock: string | null }
+  | { kind: 'setting-up' | 'idle' | 'offline'; clock: null };
 export function dockStatusFrom(facts: {
   conversation: ConversationStateFacts;
   /** A question, permission ask or key request waits in the conversation. */
   askWaiting: boolean;
   offline: boolean;
-  setupClock: string | null;
   turnClock: string | null;
 }): DockStatus {
   if (facts.offline) return { kind: 'offline', clock: null };
   const state = conversationState({ ...facts.conversation, waitingForYou: facts.askWaiting && !facts.conversation.running }).state;
-  if (state === 'setting-up') return { kind: 'setting-up', clock: facts.setupClock };
+  if (state === 'setting-up') return { kind: 'setting-up', clock: null };
   if (state === 'working') return { kind: 'working', clock: facts.turnClock };
   return { kind: 'idle', clock: null };
 }
