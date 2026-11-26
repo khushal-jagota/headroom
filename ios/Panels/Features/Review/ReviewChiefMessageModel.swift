@@ -85,8 +85,10 @@ import Observation
             // No conversation ID: the server sends it to Chief's current conversation,
             // or starts one. A resend with the same ID lands there once.
             let id = UUID().uuidString
+            // Read position 0 marks nothing read, so Chief messages not yet opened stay in Review.
             let message = ConversationSend(conversationId: nil, content: content, mode: "queue",
-                senderMessageId: id, sentAtUnixMilliseconds: Int64(created.timeIntervalSince1970 * 1000))
+                senderMessageId: id, sentAtUnixMilliseconds: Int64(created.timeIntervalSince1970 * 1000),
+                ownerReadThroughSequence: 0)
             let work = PendingWork(id: id, created: created, kind: .message, owner: .chief,
                 message: message, draftID: Self.attemptDraftID)
             // The draft clears in the same save. A refused photo puts it back.

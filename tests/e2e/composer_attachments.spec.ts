@@ -402,10 +402,15 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
   const response = await sent(page, '/api/chief/conversation/send', () => chief.locator('[data-review-send]').click());
   expect((await response.json()).fate).toBe('accepted');
   expectUploadPieces(response.request().postDataJSON().content, attachments);
+  // A send from this page must not mark the Chief's earlier messages read.
+  expect(response.request().postDataJSON().owner_read_through_sequence).toBe(0);
   await expectPromptFiles(server, chiefConversation, attachments);
   await expect.poll(async () => ((await getJson(server, `/api/test/signals/${chiefConversation}/delivered`)).texts as string[])
     .filter((text) => text.includes(chiefText)).length, { timeout: WAIT_MS }).toBe(1);
   expect(chiefSends).toEqual([`${server.base}/api/chief/conversation/send`]);
+  const chiefRecord = await getJson(server, `/api/conversation/conversations/${chiefConversation}`);
+  expect(chiefRecord.latest_sequence).toBeGreaterThan(0);
+  expect(chiefRecord.owner_read_through_sequence).toBe(0);
   await expect(chief.locator('.chat-att')).toHaveCount(0);
   // The empty Review page does not keep a delivered message or its "Sent" status.
   await expect(chief.locator('[data-review-outgoing]').filter({ hasText: chiefText })).toHaveCount(0);

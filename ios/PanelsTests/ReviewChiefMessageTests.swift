@@ -26,6 +26,7 @@ import XCTest
         XCTAssertEqual(page.attempt?.state, .waiting)
         XCTAssertNil(page.note, "A saved message shows no status")
         XCTAssertNil(page.attempt?.message?.conversationId, "The server picks Chief's current conversation")
+        XCTAssertEqual(page.attempt?.message?.ownerReadThroughSequence, 0, "A send from this page marks no Chief message read")
         XCTAssertTrue(page.composer.draft.isEmpty)
         XCTAssertTrue(page.composer.attachments.isEmpty)
         XCTAssertFalse(page.blocked, "Another message can follow at once")
