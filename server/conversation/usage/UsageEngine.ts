@@ -4,11 +4,16 @@
  * Asynchronous dependencies are injected alongside the retained scan cache policy.
  */
 import { is_record as object } from '../../core/records.ts';
-import { access, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { FifoLock } from '../runtime/state.ts';
-import type { FileTranscriptParser, LineTranscriptParser } from '../../drivers/core/usage.ts';
+import type {
+  FileTranscriptParser,
+  FileTranscriptRead,
+  LineTranscriptParser,
+  ListedTranscriptFile,
+} from '../../drivers/core/usage.ts';
 import { USAGE_CONTRACT_VERSION, UsageReadError } from './contracts.ts';
 import type {
   RecordedUsageService,
@@ -50,7 +55,7 @@ import { finiteNumber, parseTimestampMs } from './usageTranscripts.ts';
 import type { UsageRecord } from './usageTranscripts.ts';
 import { fetchRates } from './http.ts';
 
-type TranscriptParser = LineTranscriptParser<unknown> | FileTranscriptParser;
+type TranscriptParser = LineTranscriptParser<unknown> | FileTranscriptParser<unknown>;
 interface ScannedDirectory {
   readonly provider: UsageProviderKind;
   readonly dir: string;
@@ -319,41 +324,59 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
   }
 
   /** A whole-file source is read again only when its fingerprint changes. */
-  async readWholeFileRecords(
-    filePath: string,
-    size: number,
-    mtimeMs: number,
+  async readWholeFile(
+    file: ListedTranscriptFile,
     provider: UsageProviderKind,
-    parser: FileTranscriptParser,
-  ): Promise<readonly UsageRecord[]> {
-    let fingerprint: string;
-    let read: readonly UsageRecord[];
+    parser: FileTranscriptParser<unknown>,
+  ): Promise<FileTranscriptRead<unknown> | null> {
+    const cached = await this.cacheLock.run(() => this.fileCache.get(file.path));
+    if (cached?.provider === provider && cached.fingerprint === file.fingerprint) {
+      const state = parser.revive_state(cached.position.state);
+      if (state !== undefined) return { records: cached.records, state };
+    }
+    let read: FileTranscriptRead<unknown>;
     try {
-      fingerprint = parser.fingerprint(filePath, await stat(filePath));
-      const cached = await this.cacheLock.run(() => this.fileCache.get(filePath));
-      if (cached?.provider === provider && cached.fingerprint === fingerprint)
-        return cachedRecords(cached);
-      read = await parser.read_file(filePath);
+      read = await parser.read_file(file.path);
     } catch (error) {
       // As with a line read, a failure is not memoised: the next scan tries again.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-        console.warn(`usage transcript ${filePath} could not be read`, error);
-      return [];
+        console.warn(`usage transcript ${file.path} could not be read`, error);
+      return null;
     }
-    const records = dedupeWithinFile(forProvider(read, provider));
+    const records = dedupeWithinFile(forProvider(read.records, provider));
     await this.cacheLock.run(() => {
-      this.fileCache.set(filePath, {
-        size,
-        mtimeMs,
+      this.fileCache.set(file.path, {
+        // A whole-file entry is matched by its fingerprint, not its size.
+        size: 0,
+        mtimeMs: file.mtimeMs,
         provider,
         records,
         tailRecords: [],
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-        fingerprint,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: read.state },
+        fingerprint: file.fingerprint,
       });
       this.cacheDirty = true;
     });
-    return records;
+    return { records, state: read.state };
+  }
+
+  /** The parser lists its files and finishes their records together, cached or not, because a
+   * file's final records may depend on the other files. */
+  async readWholeFiles(
+    dir: string,
+    windowStartMs: number,
+    provider: UsageProviderKind,
+    parser: FileTranscriptParser<unknown>,
+  ): Promise<{ path: string; records: readonly UsageRecord[] }[]> {
+    const reads: { path: string; read: FileTranscriptRead<unknown> | null }[] = [];
+    for (const file of await parser.list_files(dir, windowStartMs))
+      reads.push({ path: file.path, read: await this.readWholeFile(file, provider, parser) });
+    const finished = parser.finish(reads.flatMap(({ read }) => (read === null ? [] : [read])));
+    let next = 0;
+    return reads.map(({ path, read }) => ({
+      path,
+      records: read === null ? [] : forProvider(finished[next++]!, provider),
+    }));
   }
 
   async collectDirs(
@@ -383,24 +406,21 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
         continue;
       }
       const parser = await this.loadParser(directory);
-      const files = await listTranscriptFiles(dir, windowStartMs, {
-        ...(fileName === undefined ? {} : { fileName }),
-        everyFile: parser.kind === 'files',
-      });
+      if (parser.kind === 'files') {
+        const files = await this.readWholeFiles(dir, windowStartMs, provider, parser);
+        scanned.push({ provider, dir, volumeId, files });
+        continue;
+      }
+      const files = await listTranscriptFiles(
+        dir,
+        windowStartMs,
+        fileName === undefined ? undefined : { fileName },
+      );
       const parsedFiles = [];
       for (const file of files)
         parsedFiles.push({
           path: file.path,
-          records:
-            parser.kind === 'files'
-              ? await this.readWholeFileRecords(
-                  file.path,
-                  file.size,
-                  file.mtimeMs,
-                  provider,
-                  parser,
-                )
-              : await this.readFileRecords(file.path, file.size, file.mtimeMs, provider, parser),
+          records: await this.readFileRecords(file.path, file.size, file.mtimeMs, provider, parser),
         });
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }

@@ -76,8 +76,8 @@ function fnv1a(buffer: Buffer): number {
 }
 
 /**
- * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`,
- * or every file when `everyFile` is set.
+ * Lists `.jsonl` transcripts, or files with another `extension`, under `root`
+ * last modified at or after `sinceMs`.
  *
  * Errors on individual entries are swallowed: session files rotate and get
  * removed while the walk is in flight, and a partial listing is far better than
@@ -90,11 +90,11 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string; readonly everyFile?: boolean },
+  options?: { readonly fileName?: string; readonly extension?: string },
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
-  const everyFile = options?.everyFile ?? false;
+  const extension = options?.extension ?? '.jsonl';
 
   const walk = async (dir: string): Promise<void> => {
     let entries: Dirent[];
@@ -117,7 +117,7 @@ export async function listTranscriptFiles(
       }
       if (fileName !== undefined) {
         if (entry.name !== fileName) continue;
-      } else if (!everyFile && !entry.name.endsWith('.jsonl')) {
+      } else if (!entry.name.endsWith(extension)) {
         continue;
       }
       try {
