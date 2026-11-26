@@ -1,3 +1,5 @@
+import { recipient_lifecycle } from '../message_delivery/data/lifecycles.ts';
+import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { ensure_workspace_activity } from '../ticket_workspaces/data.ts';
 import { manual_start_exempt } from '../conversation/start_admission/index.ts';
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
@@ -122,6 +124,10 @@ async function _admitted_start_ready_worker_step(
   try {
     return await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
       const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
+      if (
+        database.read((sql) => recipient_lifecycle(sql, { kind: 'ticket', id: ticket_id }).retiring)
+      )
+        return new WorkerStepStartResult({ started: false });
       let conversation_id = ticket.conversation_id;
       const conversation_is_running =
         conversation_id !== null &&
@@ -214,6 +220,7 @@ async function _admitted_start_ready_worker_step(
       }
       let fate: PromptDeliveryFate;
       let feedback_started = false;
+      let prepared_feedback: readonly { decision_id: string }[] = [];
       const feedback_identity_prefix = `${sender_message_id}|decision|`;
       const upload_checks: CheckedVideoUpload[] = [];
       const inline_budget = { remaining: MAX_CONVERSATION_IMAGE_BYTES };
@@ -225,7 +232,6 @@ async function _admitted_start_ready_worker_step(
           });
         });
         database.write((sql) => {
-          tickets_data.mark_worker_step_dispatch_started(sql, ticket_id, taken_claim_revision);
           ensure_workspace_activity(sql, ticket_id, options.now());
         });
         const delivered = await conversation_start.send_to_ticket_conversation(
@@ -233,7 +239,7 @@ async function _admitted_start_ready_worker_step(
           database,
           ticket_id,
           async (sending_into) => {
-            const feedback = database.write((sql) => {
+            const feedback = database.read((sql) => {
               const rows = sql.all<{
                 decision_id: string;
                 model_text: string;
@@ -242,15 +248,9 @@ async function _admitted_start_ready_worker_step(
                 "SELECT m.decision_id,m.model_text,o.command_json FROM ticket_decision_messages m LEFT JOIN ticket_decision_operations o ON o.operation_id=m.decision_id AND o.ticket_id=m.ticket_id WHERE m.ticket_id=? AND m.delivery_status='pending' ORDER BY m.created_at,m.rowid",
                 [ticket_id],
               );
-              for (const row of rows) {
-                sql.run(
-                  "UPDATE ticket_decision_messages SET delivery_status='sending',conversation_id=?,sender_message_id=? WHERE decision_id=? AND delivery_status='pending'",
-                  [sending_into, feedback_identity_prefix + row.decision_id, row.decision_id],
-                );
-              }
               return rows;
             });
-            feedback_started = feedback.length > 0;
+            prepared_feedback = feedback;
             inline_budget.remaining = inline_image_budget(
               feedback.flatMap((row) => decision_attachments(row.command_json)),
             ).remaining;
@@ -286,6 +286,22 @@ async function _admitted_start_ready_worker_step(
             sender_label: LOOP_SENDER_LABEL,
             mode: 'queue',
             sender_message_id,
+            recording_receipt: {
+              sender_id: '',
+              submission_id: sender_message_id,
+              in_admission: (tx, sending_into) => {
+                tickets_data.mark_worker_step_dispatch_started(tx, ticket_id, taken_claim_revision);
+                for (const row of prepared_feedback) {
+                  tx.run(
+                    "UPDATE ticket_decision_messages SET delivery_status='sending',conversation_id=?,sender_message_id=? WHERE decision_id=? AND delivery_status='pending'",
+                    [sending_into, feedback_identity_prefix + row.decision_id, row.decision_id],
+                  );
+                }
+              },
+              admitted: () => {
+                feedback_started = prepared_feedback.length > 0;
+              },
+            },
             worker_type_registry: options.worker_type_registry,
             retain_definite_start_refusal: !paired_opener,
             workspace_activity_recorded: true,
@@ -325,7 +341,8 @@ async function _admitted_start_ready_worker_step(
         }
       } catch (error) {
         for (const checked of upload_checks) options.upload_service!.finish(checked, 'uncertain');
-        if (error instanceof ConversationStartAborted) throw error;
+        if (error instanceof ConversationStartAborted || is_shutdown_business_cancellation(error))
+          throw error;
         console.error(
           `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
           error,
@@ -454,7 +471,8 @@ export async function tell_a_worker_it_lost_its_memory(
           return false;
         return true;
       } catch (error) {
-        if (error instanceof ConversationStartAborted) throw error;
+        if (error instanceof ConversationStartAborted || is_shutdown_business_cancellation(error))
+          throw error;
         console.error(
           `memory-loss notice could not be sent (ticket=${ticket_id} conversation=${conversation_id})`,
           error,

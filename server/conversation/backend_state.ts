@@ -9,10 +9,11 @@ import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
 import type {
+  BackendUsageAccount,
   BackendUsageResult,
-  BackendUsageWindowKind,
   CachedBackendUsage,
 } from './backend_usage/contracts.ts';
+import { decode_usage_windows } from './backend_usage/machine.ts';
 export class BackendStateStore {
   private readonly database: Database;
   private readonly capability_sources = new Map<string, string>();
@@ -84,43 +85,26 @@ export class BackendStateStore {
     if (kept) this.capability_sources.set(JSON.stringify([machine_id, backend_key]), source);
     return kept;
   }
-  keep_successful_usage(result: BackendUsageResult, machine_id = HOME_MACHINE_ID): void {
+  /**
+   * Each machine keeps its own last observation, the home machine included, with the account it
+   * was read for. A later sign-in to another account cannot relabel an older observation.
+   */
+  keep_successful_usage(
+    result: BackendUsageResult,
+    machine_id = HOME_MACHINE_ID,
+    account: BackendUsageAccount = { account_label: null, account_detail: null },
+  ): void {
     if (result.outcome !== 'succeeded' || result.observed_at === null)
       throw new Error('only a successful observed usage result can be kept');
-    if (machine_id !== HOME_MACHINE_ID) {
-      this.database.write((tx) => {
-        tx.run(
-          'INSERT INTO machine_backend_state(machine_id,backend_key,usage_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET usage_json=excluded.usage_json',
-          [
-            machine_id,
-            result.backend_key,
-            JSON.stringify({ observed_at: result.observed_at, windows: result.windows }),
-          ],
-        );
-      });
-      return;
-    }
-
     this.database.write((tx) => {
       tx.run(
-        'INSERT INTO backend_usage_snapshots(backend_key,observed_at) VALUES (?,?) ' +
-          'ON CONFLICT(backend_key) DO UPDATE SET observed_at=excluded.observed_at',
-        [result.backend_key, Math.trunc(result.observed_at!.getTime() / 1000)],
+        'INSERT INTO machine_backend_state(machine_id,backend_key,usage_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET usage_json=excluded.usage_json',
+        [
+          machine_id,
+          result.backend_key,
+          JSON.stringify({ observed_at: result.observed_at, windows: result.windows, ...account }),
+        ],
       );
-      tx.run('DELETE FROM backend_usage_windows WHERE backend_key=?', [result.backend_key]);
-      for (const window of result.windows) {
-        tx.run(
-          'INSERT INTO backend_usage_windows(backend_key,window_kind,model_id,used_percent,resets_at) ' +
-            'VALUES (?,?,?,?,?)',
-          [
-            result.backend_key,
-            window.kind,
-            window.model_scope ?? '',
-            window.used_percent,
-            Math.trunc(window.resets_at.getTime() / 1000),
-          ],
-        );
-      }
     });
   }
   read_disabled_models(backend_key: BackendInstanceId): ReadonlySet<string> {
@@ -150,36 +134,6 @@ export class BackendStateStore {
   write_model_enablement(backend_key: BackendInstanceId, model_id: string, enabled: boolean): void {
     this.database.write((tx) => write_model_enablement(tx, backend_key, model_id, enabled));
   }
-}
-export function read_cached_backend_usage(
-  sql: ReadSql,
-  backend_key: BackendInstanceId,
-): CachedBackendUsage | null {
-  const snapshot = sql.get<{ observed_at: number }>(
-    'SELECT observed_at FROM backend_usage_snapshots WHERE backend_key=?',
-    [backend_key],
-  );
-  if (!snapshot) return null;
-  const windows = sql.all<{
-    window_kind: BackendUsageWindowKind;
-    model_id: string;
-    used_percent: number;
-    resets_at: number;
-  }>(
-    'SELECT window_kind,model_id,used_percent,resets_at FROM backend_usage_windows ' +
-      'WHERE backend_key=? ORDER BY window_kind,model_id',
-    [backend_key],
-  );
-  return {
-    observed_at: new Date(snapshot.observed_at * 1000),
-    windows: windows.map((row) => ({
-      kind: row.window_kind,
-      model_scope: row.model_id || null,
-      scope_label: null,
-      used_percent: row.used_percent,
-      resets_at: new Date(row.resets_at * 1000),
-    })),
-  };
 }
 export function model_is_enabled(
   sql: ReadSql,
@@ -329,19 +283,21 @@ export function backend_card_state(sql: ReadSql) {
       backend_key: BackendInstanceId,
       machine_id = HOME_MACHINE_ID,
     ): CachedBackendUsage | null {
-      if (machine_id === HOME_MACHINE_ID) return read_cached_backend_usage(sql, backend_key);
       const row = sql.get<{ usage_json: string | null }>(
         'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
         [machine_id, backend_key],
       );
       if (!row?.usage_json) return null;
       const value = JSON.parse(row.usage_json);
+      const windows = decode_usage_windows(value.windows);
+      // An observation saved in an older shape counts as none until the next refresh.
+      if (windows === null) return null;
       return {
         observed_at: new Date(value.observed_at),
-        windows: value.windows.map((window: Record<string, unknown>) => ({
-          ...window,
-          resets_at: new Date(window.resets_at as string),
-        })),
+        windows,
+        // An observation saved before it carried its account names none.
+        account_label: typeof value.account_label === 'string' ? value.account_label : null,
+        account_detail: typeof value.account_detail === 'string' ? value.account_detail : null,
       };
     },
     read_disabled_models: (backend_key: BackendInstanceId) => disabled_models(sql, backend_key),

@@ -249,6 +249,45 @@ test('text input takes --message, --body-file, or stdin, and refuses two sources
   }
 });
 
+// Risk: the CLI loses the ID that names an accepted message, or misprints an older home's
+// answer. Gap: no test read send-message output. The mocked transport is the plain-HTTP path.
+test('send-message names its message and prints acceptance and older answers', async () => {
+  const request = vi.spyOn(http, 'send');
+  const sent = async (answer: Record<string, unknown>, extra: string[] = []) => {
+    request.mockResolvedValueOnce(answer);
+    const output = await run(['send-message', '--chief', '--message', 'Hi', ...extra], SERVER);
+    const options = request.mock.lastCall?.[3] as {
+      json_body: { message_id: string };
+      request_id: string;
+    };
+    expect(options.request_id).toBe(options.json_body.message_id);
+    return { ...output, id: options.json_body.message_id };
+  };
+  try {
+    const accepted = await sent({ fate: 'accepted', message_id: 'echo' });
+    expect(accepted.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(accepted).toMatchObject({
+      exit_code: 0,
+      stdout: `accepted for delivery · ${accepted.id}\n`,
+    });
+    const recorded = await sent({ fate: 'recorded' });
+    expect(recorded.stdout).toBe(`recorded · ${recorded.id}\n`);
+    expect(recorded.id).not.toBe(accepted.id);
+    expect((await sent({ fate: 'refused', refusal_reason: 'no_such_conversation' })).stdout).toBe(
+      'message refused: no_such_conversation\n',
+    );
+    expect((await sent({ fate: 'started' })).stdout).toBe('message started\n');
+    const json = await sent({ fate: 'queued', queue_position: 2 }, ['--json']);
+    expect(JSON.parse(json.stdout)).toEqual({
+      fate: 'queued',
+      queue_position: 2,
+      message_id: json.id,
+    });
+  } finally {
+    request.mockRestore();
+  }
+});
+
 // Risk: recap writes another record, or writes the owner's when no identity is present.
 test('recap writes the caller record for each role and refuses without an identity', async () => {
   const request = vi.spyOn(http, 'send').mockResolvedValue({});

@@ -8,6 +8,16 @@
 
 import { readableConversationDetail } from "../conversationDetail";
 import type { ToolCallRow } from "../transcript";
+import {
+  callArguments,
+  commandWithoutShellInvocation,
+  countToolRun,
+  namedTool,
+  searchFoundNothing,
+  toolGlyphKind,
+  type ToolGlyphKind,
+  type ToolRunCounts
+} from "../toolRunKind";
 
 /** How a call ended, as the person should read it. A search that found nothing is not a
  *  failure, even when the backend reports its exit status as one. */
@@ -31,19 +41,6 @@ export type ToolCallPresentation = {
   outcome: ToolCallOutcome;
 };
 
-type ToolGlyphKind =
-  | "read"
-  | "edit"
-  | "delete"
-  | "move"
-  | "search"
-  | "execute"
-  | "think"
-  | "todo"
-  | "fetch"
-  | "switch_mode"
-  | "other";
-
 type ToolCallLine = {
   title: string;
   summary: string | null;
@@ -53,20 +50,6 @@ type ToolCallLine = {
   /** What the row opens onto, when that is not the call's raw output. */
   detail?: string | null;
 };
-
-const TOOL_GLYPH_KINDS: readonly ToolGlyphKind[] = [
-  "read",
-  "edit",
-  "delete",
-  "move",
-  "search",
-  "execute",
-  "think",
-  "todo",
-  "fetch",
-  "switch_mode",
-  "other"
-];
 
 /** Kind glyphs for tool-call steps, drawn as 24×24 stroke icons. */
 const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
@@ -96,25 +79,6 @@ const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
   switch_mode: ["M4 9h13", "m14 6 3 3-3 3", "M20 15H7", "m10 12-3 3 3 3"],
   other: ["M6 12h.01", "M12 12h.01", "M18 12h.01"]
 };
-
-/** What a tool did, read from what it is called.
- *
- * Backends do not agree on this field: one sends protocol kinds and another sends the
- * tool's name. Both are interpreted by meaning rather than by which backend sent them.
- * An unrecognised word gets the neutral glyph instead of a guess.
- */
-const TOOL_NAME_HINTS: readonly (readonly [ToolGlyphKind, readonly string[]])[] = [
-  // First, because a to-do tool's name also says what it does to the list ("TodoWrite").
-  ["todo", ["todo"]],
-  ["execute", ["bash", "shell", "exec", "command", "terminal", "process"]],
-  ["search", ["search", "grep", "glob", "find", "list", "ls"]],
-  ["fetch", ["fetch", "http", "curl", "download", "web"]],
-  ["edit", ["edit", "write", "patch", "apply", "update", "create", "notebook"]],
-  ["read", ["read", "view", "open", "cat"]],
-  ["delete", ["delete", "remove", "trash"]],
-  ["move", ["move", "rename"]],
-  ["think", ["think", "plan", "task", "reason"]]
-];
 
 /** The verb a row leads with when the call names its subject. The subject follows in the
  *  tool voice, so the verb alone reads as a sentence: "Ran npm test", "Read store.ts". */
@@ -146,17 +110,6 @@ const CALL_SUBJECT_ARGUMENT_NAMES: readonly string[] = [
   "description"
 ];
 
-/** Shells a command arrives wrapped in, each up to the flag that carries it.
- *
- * The wrapper is how the command was carried. The command inside it is what the person
- * needs to read, so Codex's repeated login-shell prefix does not become every row's title.
- */
-const SHELL_INVOCATIONS: readonly RegExp[] = [
-  /^(?:\S*\/)?(?:bash|sh|zsh)\s+-[a-z]*c\s+([\s\S]+)$/,
-  /^(?:\S*[/\\])?cmd(?:\.exe)?\s+\/c\s+([\s\S]+)$/i,
-  /^(?:\S*[/\\])?pwsh(?:\.exe)?\s+-(?:command|c)\s+([\s\S]+)$/i
-];
-
 const TOOL_KIND_WORDS: ReadonlySet<string> = new Set([
   "read",
   "write",
@@ -175,38 +128,6 @@ const TOOL_KIND_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 const TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS = 80;
-
-function toolGlyphKind(toolKind: string): ToolGlyphKind {
-  const named = toolKind.trim().toLowerCase();
-  const exact = TOOL_GLYPH_KINDS.find((kind) => kind === named);
-  if (exact !== undefined) return exact;
-  for (const [kind, hints] of TOOL_NAME_HINTS) {
-    if (hints.some((hint) => named.includes(hint))) return kind;
-  }
-  return "other";
-}
-
-function commandWithoutShellInvocation(text: string): string {
-  const trimmed = text.trim();
-  for (const invocation of SHELL_INVOCATIONS) {
-    const wrapped = invocation.exec(trimmed);
-    if (wrapped) return unquoted(wrapped[1].trim());
-  }
-  return text;
-}
-
-function unquoted(text: string): string {
-  const quote = text[0];
-  if (quote !== '"' && quote !== "'") return text;
-  // A backend that caps its titles cuts the closing quote off with the rest. The opening
-  // one is still only how the command was carried.
-  if (text.endsWith("…") && !text.slice(1).includes(quote)) return text.slice(1);
-  if (text.length < 2 || !text.endsWith(quote)) {
-    return text;
-  }
-  const inside = text.slice(1, -1);
-  return quote === '"' ? inside.replace(/\\(["\\])/g, "$1") : inside;
-}
 
 function identifyingFact(
   startedDetail: string | null,
@@ -258,18 +179,6 @@ function withoutTheKindItStated(text: string, toolKind: string): string {
     : text;
 }
 
-function callArguments(trimmed: string): Record<string, unknown> | null {
-  if (!trimmed.startsWith("{")) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function subjectOf(given: Record<string, unknown>): string | null {
   for (const name of CALL_SUBJECT_ARGUMENT_NAMES) {
     const value = given[name];
@@ -310,20 +219,6 @@ function addsNothingTo(said: string, within: string): boolean {
     if (sought.every((word, at) => already[from + at] === word)) return true;
   }
   return false;
-}
-
-/** A backend that sends a call's arguments as its detail titles the row with the tool's own name. */
-const TOOL_NAME_TITLE = /^[A-Za-z][\w-]*$/;
-
-/** The word that names the tool: its own name when the call's arguments came as detail,
- *  otherwise the kind. Claude sends a normalized kind with the raw name as the title. */
-function namedTool(row: ToolCallRow): string {
-  const title = row.title.trim();
-  if (title.toLowerCase() === row.toolKind.trim().toLowerCase()) return row.toolKind;
-  const started = row.startedDetail?.trim() ?? "";
-  return TOOL_NAME_TITLE.test(title) && callArguments(started) !== null
-    ? title
-    : row.toolKind;
 }
 
 function toolCallLine(row: ToolCallRow): ToolCallLine {
@@ -498,55 +393,6 @@ function knownToolLine(row: ToolCallRow, wholeDetail: string | null): ToolCallLi
   return null;
 }
 
-/** Search programs that report "nothing found" with exit status 1 and no output. */
-const SEARCH_PROGRAMS = /^(?:\S*\/)?(?:rg|grep|egrep|fgrep|ag|ack)$/;
-
-/** Whether a failed call is really a search that found nothing.
- *
- * rg and grep exit 1 when nothing matches, and a backend that reports exit status as
- * success or failure turns that into a failed call. A real search error says what went
- * wrong on stderr, so a failure with no output at all from a command whose last step is
- * a search is the empty result, not a fault.
- */
-function searchFoundNothing(row: ToolCallRow): boolean {
-  if (row.status !== "failed" || toolGlyphKind(namedTool(row)) !== "execute") return false;
-  if (row.cappedDetailSequence !== null) return false;
-  const output = row.detail?.trim() ?? "";
-  const startedArguments = callArguments(row.startedDetail?.trim() ?? "");
-  // Claude's Bash reports the bare exit status as the result of a silent failure.
-  if (output !== "" && output !== row.startedDetail?.trim() && !/^(?:Error: )?Exit code 1$/.test(output)) {
-    return false;
-  }
-  const command = typeof startedArguments?.command === "string"
-    ? startedArguments.command
-    : row.title;
-  const last = lastStep(commandWithoutShellInvocation(command.trim())).split(/\s+/);
-  const program = last[0] === "git" && last[1] === "grep" ? "grep" : last[0] ?? "";
-  return SEARCH_PROGRAMS.test(program);
-}
-
-/** The last step of a shell line: what follows its final unquoted `;`, `&&`, `||` or `|`,
- *  which is the step whose exit status the whole line reports. */
-function lastStep(command: string): string {
-  let quote: string | null = null;
-  let from = 0;
-  for (let at = 0; at < command.length; at += 1) {
-    const character = command[at];
-    if (quote !== null) {
-      if (character === "\\" && quote === '"') at += 1;
-      else if (character === quote) quote = null;
-    } else if (character === "\\") {
-      at += 1;
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === ";" || character === "|" || (character === "&" && command[at + 1] === "&")) {
-      if (command[at + 1] === character) at += 1;
-      from = at + 1;
-    }
-  }
-  return command.slice(from).trim();
-}
-
 function lineShowsWholeDetail(line: ToolCallLine, detail: string): boolean {
   // An expander that opens onto exactly what the closed line already says is an
   // affordance that does nothing.
@@ -639,27 +485,26 @@ function otherSteps(n: number): string {
 }
 
 /** Say a run of tool calls in one line. `total` is how many calls the run holds; when
- *  fewer of them are at hand than that, the line counts them rather than guess at kinds. */
-export function summarizeToolRun(rows: readonly ToolCallRow[], total = rows.length): ToolRunSummary {
-  const counted = new Map<ToolGlyphKind, number>();
-  let failedCount = 0;
+ *  fewer of them are at hand than that, the line reads the run's `counted` kinds, which
+ *  the server sends for a closed run, and otherwise counts the calls rather than guess. */
+export function summarizeToolRun(rows: readonly ToolCallRow[], total = rows.length, counted: ToolRunCounts | null = null): ToolRunSummary {
   let running: ToolCallRow | null = null;
-  for (const row of rows) {
-    const kind = toolGlyphKind(namedTool(row));
-    counted.set(kind, (counted.get(kind) ?? 0) + 1);
-    if (row.status === "failed" && !searchFoundNothing(row)) failedCount += 1;
-    if (row.status === "running") running = row;
-  }
+  for (const row of rows) if (row.status === "running") running = row;
   const runningPresentation = running === null ? null : presentToolCall(running);
-  const busiest = [...counted.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
-  const iconPaths = runningPresentation?.iconPaths ?? STEP_ICON_PATHS[busiest];
   const callCount = Math.max(total, rows.length);
-  if (rows.length < callCount || rows.length === 0) {
+  const atHand = countToolRun(rows);
+  const whole = rows.length > 0 && rows.length >= callCount ? atHand
+    : counted !== null && counted.kinds.reduce((sum, { count }) => sum + count, 0) === callCount ? counted
+    : null;
+  const { kinds, failedCount } = whole ?? atHand;
+  const busiest = [...kinds].sort((a, b) => b.count - a.count)[0]?.kind ?? "other";
+  const iconPaths = runningPresentation?.iconPaths ?? STEP_ICON_PATHS[busiest];
+  if (whole === null) {
     return { sentence: `${callCount} tool ${callCount === 1 ? "call" : "calls"}`, failedCount, running: runningPresentation, iconPaths };
   }
   const phrases: string[] = [];
   let unnamed = 0;
-  for (const [kind, count] of counted) {
+  for (const { kind, count } of kinds) {
     const phrase = RUN_PHRASES[kind];
     if (phrase === undefined || phrases.length >= RUN_PHRASES_SHOWN) unnamed += count;
     else phrases.push(phrase(count));

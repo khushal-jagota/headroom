@@ -96,9 +96,11 @@ export type BackendRequest = {
     | 'sign_in_start'
     | 'sign_in_cancel'
     | 'sign_in_return_url'
-    | 'sign_out';
+    | 'sign_out'
+    | 'read_usage_summary';
   secret_id?: string;
   session_id?: string;
+  usage_summary_input?: UsageSummaryRequest;
 };
 export type BackendSnapshot = {
   available_models: BackendModel[];
@@ -302,6 +304,7 @@ export type LeaseRequest = {
   oldest_item_age_ms: number | null;
   process_id: number;
   queue_depth: number;
+  recorded_usage?: boolean;
   waiting_conversations: WaitingConversation[];
   waiting_conversations_truncated: boolean;
   working_turns: WorkingTurn[];
@@ -501,6 +504,14 @@ export type UnconfirmedCliResult = {
   submission_id: string;
 };
 export type UpdateMode = 'now' | 'idle';
+export type UsageSummaryRequest = {
+  resolution?: 'day' | 'hour';
+  sinceDay: string;
+  sinceTime?: string;
+  timeZone: string;
+  untilDay: string;
+  untilTime?: string;
+};
 export type UserInputAnswer = {
   answers: string[];
   attachments?: (MessageImage | MessageFile)[];

@@ -41,6 +41,8 @@ import {
   MAX_MAC_RUNTIME_ARCHIVE_BYTES,
   MAX_MAC_UPDATE_DETAIL_CHARACTERS,
   MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
+  MAC_SIGNING_PROOF_NAME,
+  MAX_MAC_SIGNING_PROOF_BYTES,
 } from './configuration.ts';
 
 class InvalidMacArchive extends Error {}
@@ -67,12 +69,14 @@ function archive_failure(error: unknown): never {
   if (error instanceof Error && 'errno' in error && typeof error.errno === 'number') throw error;
   throw new InvalidMacArchive('The Mac runtime archive is invalid.', { cause: error });
 }
+/** Main-branch signing adds its proof next to the runtime and its publication record. */
 async function zip_runtime_size(
   path: string,
   signal: AbortSignal,
   archive_name: string,
   proof_name: string,
-): Promise<number> {
+  signing_proof_name: string | null,
+): Promise<{ size: number; signing_proof_size?: number }> {
   signal.throwIfAborted();
   let archive: ZipFile;
   try {
@@ -99,10 +103,16 @@ async function zip_runtime_size(
   }
   let abort: (() => void) | undefined;
   try {
-    return await new Promise<number>((resolve, reject) => {
+    return await new Promise<{ size: number; signing_proof_size?: number }>((resolve, reject) => {
       const names = new Set<string>();
+      const allowed = [
+        archive_name,
+        proof_name,
+        ...(signing_proof_name ? [signing_proof_name] : []),
+      ];
       let duplicate = false,
-        size: number | undefined;
+        size: number | undefined,
+        signing_proof_size: number | undefined;
       abort = () => {
         try {
           archive.close();
@@ -127,17 +137,13 @@ async function zip_runtime_size(
         if (names.has(entry.fileName)) duplicate = true;
         names.add(entry.fileName);
         if (entry.fileName === archive_name) size = entry.uncompressedSize;
+        if (entry.fileName === signing_proof_name) signing_proof_size = entry.uncompressedSize;
         archive.readEntry();
       });
       archive.once('end', () => {
-        if (
-          duplicate ||
-          size === undefined ||
-          names.size > 2 ||
-          [...names].some((name) => ![archive_name, proof_name].includes(name))
-        )
+        if (duplicate || size === undefined || [...names].some((name) => !allowed.includes(name)))
           reject(new UpdateConflict('The Mac runtime artifact is invalid.'));
-        else resolve(size);
+        else resolve(signing_proof_size === undefined ? { size } : { size, signing_proof_size });
       });
       if (signal.aborted) abort();
       else archive.readEntry();
@@ -146,6 +152,40 @@ async function zip_runtime_size(
     if (abort) signal.removeEventListener('abort', abort);
     archive.close();
   }
+}
+/** A present signing proof must name the exact package and build that the receipt publishes. */
+async function check_signing_proof(
+  path: string,
+  size: number,
+  release: PublishedUpdate,
+  archive_sha256: string,
+): Promise<void> {
+  if (size > MAX_MAC_SIGNING_PROOF_BYTES)
+    throw new UpdateConflict('The Mac signing proof is invalid.');
+  let proof: unknown;
+  try {
+    const chunks: Buffer[] = [];
+    await with_zip_member(path, MAC_SIGNING_PROOF_NAME, async (stream) => {
+      for await (const chunk of stream) chunks.push(chunk as Buffer);
+    });
+    proof = decode_json(Buffer.concat(chunks));
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof TypeError)
+      throw new UpdateConflict('The Mac signing proof is invalid.', { cause: error });
+    return archive_failure(error);
+  }
+  const build_id = release.parts?.machines['darwin-arm64']?.build_id;
+  if (
+    !is_object(proof) ||
+    proof.signed_archive_sha256 !== archive_sha256 ||
+    build_id == null ||
+    proof.signed_build_id !== build_id ||
+    typeof proof.team !== 'string' ||
+    !proof.team ||
+    typeof proof.notarization_id !== 'string' ||
+    !proof.notarization_id
+  )
+    throw new UpdateConflict('The Mac signing proof does not match this publication.');
 }
 export class MacUpdateService implements MacUpdateServiceContract {
   readonly root: string;
@@ -168,6 +208,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private linux_preparing = false;
   private last_preparation: { digest: string; at: number } | undefined;
   private readonly ready_archives = new Set<string>();
+  private readonly prepared_again = new Set<string>();
   private rejected_archive_digest: string | undefined;
   constructor(context: MacUpdateCompositionContext) {
     this.context = context;
@@ -277,9 +318,34 @@ export class MacUpdateService implements MacUpdateServiceContract {
       {
         archive_sha256: this.artifact(release)?.archive_sha256 ?? null,
         detail,
+        home_revision: this.current_app_sha,
       },
     );
     this.emit();
+  }
+  /** The previous home prepares a release before it installs, so its refusal can be its own defect. */
+  private stale_preparation(release: PublishedUpdate): boolean {
+    if (this.preparation_error(release) === null) return false;
+    const value = json(
+      join(this.root, 'preparation', this.artifact(release)!.archive_sha256 + '.json'),
+    );
+    return is_object(value) && value.home_revision !== this.current_app_sha;
+  }
+  // The saved record changes only with an outcome. An interrupted retry stays stale for the next start.
+  private prepare_again(release: PublishedUpdate): void {
+    const owner = this.archive_owner ?? this;
+    void owner.queue_preparation(async () => {
+      try {
+        await owner.prepare_once(release);
+        this.signal.throwIfAborted();
+        if (this.platform === 'linux' && release.linux_executor)
+          this.linux_owner().ready_archives.add(release.linux_executor.archive_sha256);
+        this.save_preparation(release, null);
+      } catch (error) {
+        if (this.signal.aborted) return;
+        this.save_preparation(release, error instanceof Error ? error.message : String(error));
+      }
+    });
   }
   retry_machine(machine_id: string, attempt_id: string): void {
     const inventory = this.context.machines();
@@ -299,21 +365,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       request_id: randomUUID().replaceAll('-', ''),
     });
     service.save_preparation(attempt.release, null);
-    const owner = service.archive_owner ?? service;
-    void owner.queue_preparation(async () => {
-      try {
-        await owner.prepare_once(attempt.release);
-        service.signal.throwIfAborted();
-        if (service.platform === 'linux' && attempt.release.linux_executor)
-          service.linux_owner().ready_archives.add(attempt.release.linux_executor.archive_sha256);
-      } catch (error) {
-        if (service.signal.aborted) return;
-        service.save_preparation(
-          attempt.release,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    });
+    service.prepare_again(attempt.release);
   }
   machine_states(release: PublishedUpdate | null = null): MachineUpdateState[] {
     return this.context.machines().map((machine) => {
@@ -620,15 +672,22 @@ export class MacUpdateService implements MacUpdateServiceContract {
         );
         this.signal.throwIfAborted();
         try {
-          if (
-            (await zip_runtime_size(
-              downloaded,
-              this.signal,
-              this.archive_name,
-              this.proof_name,
-            )) !== mac.archive_size
-          )
+          const contents = await zip_runtime_size(
+            downloaded,
+            this.signal,
+            this.archive_name,
+            this.proof_name,
+            this.platform === 'linux' ? null : MAC_SIGNING_PROOF_NAME,
+          );
+          if (contents.size !== mac.archive_size)
             throw new UpdateConflict('The Mac runtime artifact size differs.');
+          if (contents.signing_proof_size !== undefined)
+            await check_signing_proof(
+              downloaded,
+              contents.signing_proof_size,
+              release,
+              mac.archive_sha256,
+            );
           this.signal.throwIfAborted();
           const candidate = join(temporary, this.archive_name);
           const output = await open(candidate, 'wx');
@@ -755,7 +814,18 @@ export class MacUpdateService implements MacUpdateServiceContract {
   check(): MacUpdateCheck {
     const selected = this.selected_attempt();
     const release = selected?.release ?? this.ready_release();
+    // The machine asks again after a newer home replaced the code that refused its package.
     if (
+      selected !== null &&
+      !this.unchanged(selected.release) &&
+      this.stale_preparation(selected.release)
+    ) {
+      const digest = this.artifact(selected.release)!.archive_sha256;
+      if (!this.prepared_again.has(digest)) {
+        this.prepared_again.add(digest);
+        this.prepare_again(selected.release);
+      }
+    } else if (
       this.platform === 'linux' &&
       release !== null &&
       !this.unchanged(release) &&

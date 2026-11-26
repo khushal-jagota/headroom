@@ -1,3 +1,4 @@
+import { setup as core_setup } from '../tests/conversation_core_fixture.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -422,5 +423,167 @@ test('CLI numeric JSON reaches the Home route unchanged through the relay', asyn
     await app.close();
     made.database.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: prior relay tests await the route result. This proves an agent can continue
+// after home custody while a real scripted backend withholds its native receipt.
+test('recipient custody releases the sender before a native receipt and survives later inbox writes', async () => {
+  const w = world({ kind: 'manager', id: 'm_accept' });
+  w.database.write((tx) =>
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']),
+  );
+  const { ConversationStartRequest } = await import('../conversation/contracts.ts');
+  const f = core_setup({ restart_of: w.database, behavior: { barrier: 'native-receipt' } });
+  await f.start();
+  await f.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: w.child.conversation_id,
+      model: 'model',
+      workspace_folder: '/workspace',
+    }),
+  );
+  w.database.write((tx) =>
+    tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', ['chief_of_staff', 'core']),
+  );
+  w.writes.conversations = f.core;
+  const first = w.envelope(1, 'message.send', {
+    body: { target: { kind: 'chief', id: 'chief' }, message: 'correction', mode: 'steer' },
+  });
+  try {
+    const accepted = await w.send(first);
+    expect(accepted.result).toMatchObject({ fate: 'accepted', submission_id: first.submission_id });
+    const child = await f.child;
+    await child.wait_for_barrier('native-receipt');
+    const reply = await w.send(
+      w.envelope(2, 'message.send', {
+        body: { target: { kind: 'owner', id: 'owner' }, message: 'owner reply' },
+      }),
+    );
+    expect(reply.result).toMatchObject({ fate: 'recorded' });
+    expect(f.store.read_events_after(w.child.conversation_id, 0).map((row) => row.kind)).toEqual([
+      'message_to_owner',
+    ]);
+    expect(await w.send(first)).toEqual(accepted);
+    await child.release('native-receipt');
+    await vi.waitFor(() =>
+      expect(
+        w.database.read((sql) =>
+          sql.get<{ state: string }>(
+            'SELECT state FROM recipient_deliveries WHERE submission_id=?',
+            ['core:' + first.submission_id],
+          ),
+        )?.state,
+      ).toBe('delivered'),
+    );
+    expect((await child.inspect()).delivered_text).toEqual(['Role\n\ncorrection']);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// A crash can leave cleanup fenced. That destination must refuse durably rather than stop
+// the sender's inbox before its later owner reply. Reuse the real inbox and core host.
+test('an interrupted recipient lifecycle refuses one inbox item and admits the next owner reply', async () => {
+  const w = world({ kind: 'manager', id: 'm_fenced' });
+  w.database.write((tx) => {
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']);
+    tx.run("INSERT INTO recipient_lifecycles VALUES('chief','chief',1,1)");
+  });
+  const { ConversationStartRequest } = await import('../conversation/contracts.ts');
+  const f = core_setup({ restart_of: w.database });
+  await f.start();
+  await f.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: w.child.conversation_id,
+      model: 'model',
+      workspace_folder: '/workspace',
+    }),
+  );
+  const inbox = new MacInbox(w.writes.store, w.writes.clock, w.writes.runs);
+  inbox.agent_writes.conversations = f.core;
+  const first = w.envelope(1, 'message.send', {
+    body: { target: { kind: 'chief', id: 'chief' }, message: 'fenced correction' },
+  });
+  const second = w.envelope(2, 'message.send', {
+    body: { target: { kind: 'owner', id: 'owner' }, message: 'owner reply after refusal' },
+  });
+  try {
+    const accept = (envelope: QueuedEnvelope) =>
+      inbox.accept_batch(
+        w.child.conversation_id,
+        { sender_id: envelope.sender_id, items: [{ envelope, sender_refusal: null }] },
+        identity,
+      );
+    await expect(accept(first)).resolves.toMatchObject({
+      stop: null,
+      receipts: [{ disposition: 'refused', result: { error: { code: 'validation' } } }],
+    });
+    expect((await w.send(first)).disposition).toBe('refused');
+    await expect(accept(second)).resolves.toMatchObject({
+      stop: null,
+      receipts: [{ disposition: 'accepted', result: { fate: 'recorded' } }],
+    });
+    expect(f.store.read_events_after(w.child.conversation_id, 0).map((row) => row.kind)).toEqual([
+      'message_to_owner',
+    ]);
+  } finally {
+    await inbox.stop({ deadline: performance.now() / 1000 + 10 });
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: a dispatch reservation written before recipient journals holds no message, so it reads
+// as uncertain forever although its recipient recorded the prompt or refused it. Gap: nothing
+// read these rows. Reuse the real inbox store and a real conversation for the event.
+test('an old message dispatch reservation reconciles from its recorded event', async () => {
+  const w = world({ kind: 'manager', id: 'm_old' });
+  w.database.write((tx) =>
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']),
+  );
+  const f = core_setup({ restart_of: w.database });
+  await f.start();
+  const target = { kind: 'chief', id: 'chief' };
+  const first = w.envelope(1, 'message.send', { body: { target, message: 'old correction' } });
+  const reservation = {
+    sender_id: first.sender_id,
+    submission_id: first.submission_id,
+    disposition: 'uncertain' as const,
+    accepted_at_vps_ms: 1,
+    result: { target, conversation_id: null, fate: 'uncertain' },
+  };
+  w.database.write((tx) =>
+    w.writes.store.write_position(tx, first, reservation, { dispatching: true }),
+  );
+  const event = (sequence: number, kind: string, payload: JsonObject = {}) =>
+    w.database.write((tx) =>
+      tx.run('INSERT INTO conversation_events VALUES(?,?,?,?,0)', [
+        'core',
+        sequence,
+        kind,
+        JSON.stringify({ sender_message_id: first.submission_id, ...payload }),
+      ]),
+    );
+  try {
+    expect(await w.send(first)).toEqual(reservation);
+    event(1, 'prompt_delivery_refused', { refusal_reason: 'no_such_conversation' });
+    expect(await w.send(first)).toEqual({
+      ...reservation,
+      disposition: 'accepted',
+      result: {
+        target,
+        conversation_id: 'core',
+        fate: 'refused',
+        refusal_reason: 'no_such_conversation',
+      },
+    });
+    event(2, 'prompt');
+    expect(await w.send(first)).toEqual({
+      ...reservation,
+      disposition: 'accepted',
+      result: { target, conversation_id: 'core', fate: 'accepted', submission_id: 'submission-1' },
+    });
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
 });

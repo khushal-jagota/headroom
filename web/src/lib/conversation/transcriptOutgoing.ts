@@ -1,5 +1,5 @@
-import { messageContentText, type MessagePiece, type SentMessagePiece } from "./wire";
-import type { HeldPromptRow } from "./heldPrompts";
+import { messageContentOf, messageContentText, type MessagePiece, type PendingMessage, type SentMessagePiece } from "./wire";
+import { queuedMessageLabel, type HeldPromptRow } from "./heldPrompts";
 import type { OutgoingMessage } from "./outgoing";
 import type { PendingComposerSend } from "./videoUploads/localSends";
 
@@ -28,6 +28,36 @@ export function editableHeldWords(row: HeldPromptRow): string | null {
 
 export function displayedOutgoingContent(local: OutgoingMessage): readonly (MessagePiece | SentMessagePiece)[] {
   return local.presentation?.kind === "held" ? local.presentation.row.content : local.content;
+}
+
+/** Accepted messages the conversation has not placed yet, as rows accepted for delivery.
+ *  The sender ID joins each to its prompt row, which replaces it, and to this tab's own copy. */
+export function acceptedPendingMessages(
+  pending: readonly PendingMessage[],
+  committed: ReadonlySet<string>,
+  local: readonly OutgoingMessage[]
+): OutgoingMessage[] {
+  // A message without its own instant keeps the server's order, after everything before it.
+  let latest = Math.max(0, ...local.map(own => own.sentAtUnixMilliseconds));
+  return pending
+    .filter(message => !committed.has(message.sender_message_id)
+      && !local.some(own => own.messageId === message.sender_message_id))
+    .map(message => {
+      const pieces = messageContentOf(message);
+      const attached = pieces.filter((piece): piece is Exclude<MessagePiece, { piece: "text" }> => piece.piece !== "text");
+      latest = Math.max(latest, message.sent_at_unix_milliseconds ?? latest);
+      return {
+        messageId: message.sender_message_id,
+        content: pieces.flatMap(piece => piece.piece === "text" ? [piece] : []),
+        // Its files stay at home until delivery. The row names them, as a send on its way does.
+        ...(attached.length ? { attachmentNames: attached.map(piece => piece.file_name ?? queuedMessageLabel([piece])) } : {}),
+        senderLabel: message.sender_label,
+        mode: message.requested_mode,
+        sentAtUnixMilliseconds: message.sent_at_unix_milliseconds ?? latest,
+        restored: true,
+        knownFate: "accepted_for_delivery" as const
+      };
+    });
 }
 
 /** Upload, transport and server custody all use the same sender ID and transcript slot. */
@@ -93,11 +123,13 @@ export function transcriptOutgoing(
   return [...messages.values()].sort((left, right) => left.sentAtUnixMilliseconds - right.sentAtUnixMilliseconds);
 }
 
-/** A server-held queue row or an initial Queue send behind a running turn. */
+/** A server-held queue row, or a Queue send behind a running turn that the server has not
+ *  placed yet: on its way, or accepted and not yet held. It stays in the tray meanwhile. */
 export function belongsInHeldQueue(message: OutgoingMessage): boolean {
   if (message.mode !== "queue" || message.accepted) return false;
   if (message.knownFate === "waiting_for_the_agent") return true;
-  return message.queueWhilePending === true && message.knownFate === "nothing_yet";
+  return message.queueWhilePending === true
+    && (message.knownFate === "nothing_yet" || message.knownFate === "accepted_for_delivery");
 }
 
 export function heldQueuePosition(message: OutgoingMessage): number {

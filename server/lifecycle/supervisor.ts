@@ -126,7 +126,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         () => finish(1),
       );
   };
-  const signal = (name: 'SIGINT' | 'SIGTERM') => {
+  const signal = (name: 'SIGINT' | 'SIGTERM' | 'SIGHUP') => {
     if (stopping || finished) return;
     if (
       mode.kind === 'foreground' ||
@@ -140,13 +140,17 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
       );
   };
   const interrupt = () => signal('SIGINT'),
-    terminate = () => signal('SIGTERM');
+    terminate = () => signal('SIGTERM'),
+    hang_up = () => signal('SIGHUP');
   const start_child = () => {
     if (stopping || finished) return;
     const environment = { ...options.application.environment };
     delete environment.RUNTIME_DIRECTORY;
     delete environment.PLAN_SERVER_LISTENER_FD;
     environment.PLAN_SERVER_CONTROL_SOCKET = options.control_socket_path;
+    // fd 4 is APP's supervisor pipe. Only this supervisor holds the other end, so APP
+    // sees it close when this process dies for any reason, SIGKILL included.
+    environment.PLAN_SERVER_SUPERVISOR_PIPE_FD = '4';
     const listener = options.application.listener;
     if (listener) environment.PLAN_SERVER_LISTENER_FD = '3';
     const process_child = children.spawn(
@@ -156,9 +160,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         cwd: options.application.launch_root,
         env: environment,
         detached,
-        stdio: listener
-          ? ['ignore', 'inherit', 'inherit', listener.fd]
-          : ['ignore', 'inherit', 'inherit'],
+        stdio: ['ignore', 'inherit', 'inherit', listener ? listener.fd : 'ignore', 'pipe'],
       },
     );
     const { promise: closed, resolve: reaped } = Promise.withResolvers<0 | 1>();
@@ -194,6 +196,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
   };
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', terminate);
+  process.on('SIGHUP', hang_up);
   try {
     if (mode.kind === 'managed-linux')
       capability = await publish_stop_capability(mode.runtime_directory);
@@ -249,6 +252,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     } finally {
       process.off('SIGINT', interrupt);
       process.off('SIGTERM', terminate);
+      process.off('SIGHUP', hang_up);
       options.application.listener?.close();
       lease.close();
     }

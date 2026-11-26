@@ -2,6 +2,8 @@ export const SERVICE_COMMAND_TIMEOUT_SECONDS = 120;
 export const INTERRUPTION_CAPTURE_BUDGET_SECONDS = 2;
 export const DATABASE_SNAPSHOT_TIMEOUT_SECONDS = 900;
 export const DATABASE_RESTORE_TIMEOUT_SECONDS = 900;
+/** snapshot_main.ts exits with this when the copy fails SQLite's integrity check. */
+export const SNAPSHOT_INTEGRITY_FAILURE_EXIT_CODE = 65;
 export const SCHEMA_STEP_TIMEOUT_SECONDS = 900;
 export const HEALTH_POLL_SECONDS = 0.5;
 export const HEALTH_INACTIVITY_SECONDS = 5;

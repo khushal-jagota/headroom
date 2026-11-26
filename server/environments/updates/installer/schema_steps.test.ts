@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import BetterSqlite3 from 'better-sqlite3';
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -29,9 +33,17 @@ import {
 } from '../../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { register_test_root } from '../../../core/test_paths.ts';
-import { create_database_backup } from '../../backup/capture.ts';
+import { create_database_backup, stage_database_copy } from '../../backup/capture.ts';
 import { restore_database_snapshot } from '../../backup/restore.ts';
-import { create_installer_effects } from './commands.ts';
+import { BACKUP_ALARM_INTENT, raise_backup_integrity_alarm } from '../../backup/integrity_alarm.ts';
+import type { NotificationIntent } from '../../../notifications/contracts.ts';
+import { resolve } from '../logic/experience.ts';
+import type { UpdateAttempt } from '../contracts.ts';
+import {
+  create_installer_effects,
+  InstallFailed,
+  SNAPSHOT_INTEGRITY_FAILURE_REASON,
+} from './commands.ts';
 import { install } from './install.ts';
 import { InstallationRecord } from './record.ts';
 import type { InstallerEffects, InstallerRequest } from './contracts.ts';
@@ -78,6 +90,27 @@ function installation(prefix: string, backup: string | null) {
 function installed_sha(root: string): unknown {
   return JSON.parse(readFileSync(join(root, 'app/manifest.json'), 'utf8')).app_sha;
 }
+/** One push device, and an index whose stored definition no longer matches its entries. */
+function damage_with_push_device(path: string): void {
+  const connection = new BetterSqlite3(path);
+  try {
+    connection.exec(`
+      INSERT INTO notification_web_push_identity VALUES (1, 'private', 'public', 0);
+      INSERT INTO notification_push_subscriptions VALUES ('device', 'https://push.invalid/device', 'key', 'auth', 0, 0, NULL);
+      CREATE TABLE damaged (x TEXT, y TEXT);
+      CREATE INDEX damaged_x ON damaged(x);
+      INSERT INTO damaged VALUES ('x1', 'y1'), ('x2', 'y2');`);
+    connection.unsafeMode(true);
+    connection.pragma('writable_schema = ON');
+    connection
+      .prepare(
+        "UPDATE sqlite_schema SET sql = 'CREATE INDEX damaged_x ON damaged(y)' WHERE name = 'damaged_x'",
+      )
+      .run();
+  } finally {
+    connection.close();
+  }
+}
 function record(root: string) {
   return JSON.parse(readFileSync(join(root, 'data/update-attempt.json'), 'utf8'));
 }
@@ -104,6 +137,9 @@ it('steps run after the swap and before start', async () => {
           async schema_steps(descriptor, backup_taken) {
             events.push(['schema_steps', installed_sha(root), typeof descriptor, backup_taken]);
           },
+          async verify_snapshot() {
+            throw new Error('this attempt staged no copy');
+          },
           async restore() {
             assert.fail('a healthy install restores nothing');
           },
@@ -129,6 +165,64 @@ it('steps run after the swap and before start', async () => {
   }
 });
 
+it('a staged copy is caught up in the window and fully checked only after health', async () => {
+  // The late check must not delay the start or turn a healthy update into a failure.
+  const { root, request } = installation('panels-schema-step-staged-', null);
+  const staged = join(request.backup_directory, '.backup-staged-scripted');
+  const raw = JSON.parse(readFileSync(join(root, 'data/update-attempt.json'), 'utf8'));
+  writeFileSync(
+    join(root, 'data/update-attempt.json'),
+    JSON.stringify({ ...raw, snapshot_required: true, staged_snapshot: staged }),
+  );
+  const events: unknown[] = [];
+  try {
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async snapshot(deployed_revision, _descriptor, staged_copy) {
+          events.push(['snapshot', deployed_revision, staged_copy]);
+          new InstallationRecord(request).snapshot_taken('/scripted/snapshot');
+        },
+        async verify_snapshot(snapshot, deployed_revision) {
+          events.push(['verify_snapshot', snapshot, deployed_revision, record(root).state]);
+          throw new Error('the late check child did not finish');
+        },
+        async schema_steps() {
+          events.push('schema_steps');
+        },
+        async restore() {
+          assert.fail('a healthy install restores nothing');
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 0);
+    assert.deepEqual(events, [
+      'stop',
+      ['snapshot', FROM, staged],
+      'schema_steps',
+      'start',
+      ['healthy', TO],
+      ['verify_snapshot', '/scripted/snapshot', FROM, 'done'],
+    ]);
+    assert.equal(record(root).state, 'done');
+    assert.equal(typeof record(root).steps.snapshot_late_work_failed, 'string');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('a failing step restores the backup before the previous app starts', async () => {
   // A step failure must reach roll_back with no start of either app before the restore.
   const { root, request } = installation('panels-schema-step-failure-', '/scripted/snapshot');
@@ -149,6 +243,9 @@ it('a failing step restores the backup before the previous app starts', async ()
         async schema_steps() {
           events.push('schema_steps');
           throw new Error('scripted schema step failure');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
         },
         async restore(snapshot) {
           events.push(['restore', snapshot, installed_sha(root)]);
@@ -199,6 +296,9 @@ it('a failed snapshot leaves the app unchanged and starts it again', async () =>
         },
         async schema_steps() {
           assert.fail('no step runs without its snapshot');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
         },
         async restore() {
           assert.fail('nothing changed, so nothing is restored');
@@ -255,6 +355,9 @@ it('step applied, health fails, old app runs on the restored database', async ()
           refuse_pending: !backup_taken,
           baseline: BASELINE_SEED,
         });
+      },
+      async verify_snapshot() {
+        throw new Error('this attempt staged no copy');
       },
       async restore(snapshot, descriptor) {
         assert.equal(typeof descriptor, 'number');
@@ -366,6 +469,53 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
       live_stopped: true,
     });
 
+    // The staged route through the same children: rows written after the staged check reach
+    // the snapshot, which equals the stopped file byte for byte and passes the late check.
+    const staged = await stage_database_copy(request.database, request.backup_directory);
+    const writer = new BetterSqlite3(request.database);
+    writer.exec('CREATE TABLE after_staging (id INTEGER PRIMARY KEY, body BLOB)');
+    writer
+      .prepare(
+        'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50) ' +
+          'INSERT INTO after_staging (body) SELECT randomblob(3000) FROM n',
+      )
+      .run();
+    writer.prepare('INSERT INTO after_staging (body) VALUES (randomblob(200000))').run();
+    // An open idle connection keeps those frames in the WAL until the capture checkpoints.
+    assert.ok(statSync(request.database + '-wal').size > 0);
+    await effects.snapshot(FROM, lock, staged);
+    writer.close();
+    const caught_up = record(root).backup as string;
+    const bytes = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+    assert.equal(bytes(join(caught_up, 'database.sqlite')), bytes(request.database));
+    assert.equal(existsSync(staged), false);
+    const release = join(root, '.release-' + FROM, 'server/environments/updates');
+    mkdirSync(release, { recursive: true });
+    symlinkSync(
+      fileURLToPath(new URL('../snapshot_verify_main.ts', import.meta.url)),
+      join(release, 'snapshot_verify_main.ts'),
+    );
+    await effects.verify_snapshot(caught_up, FROM);
+    assert.equal(typeof record(root).steps.snapshot_verified, 'string');
+    // Retention, deferred from the window, keeps both verified snapshots.
+    assert.equal(
+      readdirSync(request.backup_directory).filter((name) => name.startsWith('snapshot-')).length,
+      2,
+    );
+    // The record shows the cost of each part, for the real window of later updates.
+    const seconds = record(root).snapshot_seconds;
+    for (const part of ['stopped_copy', 'catch_up', 'late_check', 'retention'])
+      assert.equal(typeof seconds[part], 'number', part);
+
+    // A damaged database: the child alarms, exits with its own code, and the installer
+    // names the integrity failure. A test home has no push transport, which must not matter.
+    damage_with_push_device(request.database);
+    await assert.rejects(
+      effects.snapshot(FROM, lock),
+      (error: unknown) =>
+        error instanceof InstallFailed && error.message === SNAPSHOT_INTEGRITY_FAILURE_REASON,
+    );
+
     // Pending steps without a backup refuse before the first write.
     const stepped = join(root, 'baseline.sqlite');
     createDatabaseFromSeed(stepped, BASELINE_SEED, () => {}).close();
@@ -388,6 +538,104 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
     owner.seal();
     controller.abort();
     await owner.settled();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: a damaged database once failed the update snapshot with nothing but a journal line.
+// Real capture and alarm on SQLite, a recorded push device, and a Chief that cannot be
+// reached because the server is stopped. Scripted service effects.
+it('a snapshot that fails its integrity check alerts the owner, names it on the card, and rolls back without the Chief', async () => {
+  const { root, request, attempt } = installation('panels-snapshot-integrity-', null);
+  attempt(null, true);
+  try {
+    createDatabaseFromSeed(request.database, application_schema_seed, () => {}).close();
+    damage_with_push_device(request.database);
+    const pushes: NotificationIntent[] = [];
+    const chief: string[] = [];
+    const outcomes: unknown[] = [];
+    const events: unknown[] = [];
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async snapshot(deployed_revision) {
+          events.push('snapshot');
+          let integrity_failed = false;
+          try {
+            await create_database_backup(
+              request.database,
+              request.backup_directory,
+              deployed_revision,
+              {
+                integrity_alarm: async (source) => {
+                  integrity_failed = true;
+                  outcomes.push(
+                    await raise_backup_integrity_alarm(
+                      source,
+                      {
+                        web_push: {
+                          async send(_subscription, intent) {
+                            pushes.push(intent);
+                            return { delivered: true };
+                          },
+                        },
+                        apns: null,
+                        push_origin: null,
+                        async message_chief(text) {
+                          chief.push(text);
+                          throw new Error('connect ECONNREFUSED');
+                        },
+                      },
+                      Date.now(),
+                    ),
+                  );
+                },
+              },
+            );
+          } catch (error) {
+            // As the installer's snapshot effect maps the child's exit code.
+            if (integrity_failed) throw new InstallFailed(SNAPSHOT_INTEGRITY_FAILURE_REASON);
+            throw error;
+          }
+          assert.fail('a damaged database must not snapshot');
+        },
+        async schema_steps() {
+          assert.fail('no step runs after a failed snapshot');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
+        },
+        async restore() {
+          assert.fail('nothing changed, so nothing is restored');
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, ['stop', 'snapshot', 'start', ['healthy', FROM]]);
+    assert.equal(installed_sha(root), FROM);
+    assert.deepEqual(pushes, [BACKUP_ALARM_INTENT]);
+    assert.equal(chief.length, 1);
+    assert.deepEqual(outcomes, [{ pushes_delivered: 1, chief_accepted: false }]);
+    // The update card shows the attempt's recorded detail.
+    const [state, , detail] = resolve(record(root) as UpdateAttempt, null);
+    assert.equal(state, 'failed');
+    assert.equal(
+      detail,
+      `${SNAPSHOT_INTEGRITY_FAILURE_REASON}, so Panels went back to the previous version.`,
+    );
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

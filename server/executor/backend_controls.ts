@@ -9,14 +9,38 @@ import {
   UnknownSignInSession,
 } from '../drivers/core/sign_in.ts';
 import { sign_in_json } from '../conversation/snapshot/presentation.ts';
+import type { RecordedUsageService, UsageSummaryInput } from '../conversation/usage/contracts.ts';
+import { UsageReadError, UsageServiceStopped } from '../conversation/usage/contracts.ts';
+export interface BackendRequestOwners {
+  readonly signal?: AbortSignal;
+  readonly resolve_secret?: (id: string) => Promise<string>;
+  readonly snapshots?: Pick<BackendSnapshotServiceContract, 'update_backend'>;
+  /** This machine's own transcript scan. Only aggregated buckets leave the machine. */
+  readonly recorded_usage?: Pick<RecordedUsageService, 'readSummary'>;
+}
 export async function run_backend_request(
   request: BackendRequest,
   source: ExecutorCatalogSource | undefined,
-  signal?: AbortSignal,
-  resolve_secret?: (id: string) => Promise<string>,
-  snapshots?: Pick<BackendSnapshotServiceContract, 'update_backend'>,
+  { signal, resolve_secret, snapshots, recorded_usage }: BackendRequestOwners = {},
 ): Promise<JsonObject> {
   try {
+    if (request.operation === 'read_usage_summary') {
+      if (recorded_usage === undefined || request.usage_summary_input === undefined)
+        return { error: { status: 503, message: 'This machine cannot read its recorded usage.' } };
+      try {
+        return JSON.parse(
+          JSON.stringify(
+            await recorded_usage.readSummary(request.usage_summary_input as UsageSummaryInput),
+          ),
+        ) as JsonObject;
+      } catch (error) {
+        if (error instanceof UsageServiceStopped)
+          return { error: { status: 503, message: error.message } };
+        if (error instanceof UsageReadError || error instanceof RangeError)
+          return { error: { status: 422, message: error.message } };
+        throw error;
+      }
+    }
     if (request.operation === 'update_backend') {
       if (snapshots === undefined)
         throw new SignInUnavailable('This machine cannot update providers.');

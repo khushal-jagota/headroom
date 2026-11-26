@@ -203,14 +203,14 @@ test('environment providers and poll hooks share the server, and both producer g
     const captured = await deployment.json();
     expect(captured.body.state).toBe('idle');
     expect(JSON.parse(captured.revision)).toEqual(captured.body);
-    // The installed build 11 Settings falls back to the direct resource.
+    // The direct resource still answers a supported build, and a build below the floor is refused.
     const old_settings = await fetch(server.address + '/api/deployment-status', {
-      headers: { 'X-Panels-iOS-Build': '11' },
+      headers: { 'X-Panels-iOS-Build': String(CLIENT_COMPATIBILITY.ios.minimum_build) },
     });
     expect(old_settings.status).toBe(200);
     expect(await old_settings.json()).toEqual(captured.body);
     const obsolete_settings = await fetch(server.address + '/api/deployment-status', {
-      headers: { 'X-Panels-iOS-Build': '10' },
+      headers: { 'X-Panels-iOS-Build': String(CLIENT_COMPATIBILITY.ios.minimum_build - 1) },
     });
     expect(obsolete_settings.status).toBe(426);
     expect(await obsolete_settings.json()).toMatchObject({

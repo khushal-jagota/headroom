@@ -8,7 +8,7 @@ import XCTest
     func testSavedMessageClearsOnlyItsOwnDraftAtOnceAndLandsOnce() async throws {
         let api = makeAPI()
         ReviewChiefProtocol.state.reset(pointer: "original")
-        ReviewChiefProtocol.state.fate = "started"
+        ReviewChiefProtocol.state.fate = "accepted"
         defer { clean(api) }
         let page = ReviewChiefMessageModel()
         page.restore(api: api)
@@ -83,6 +83,7 @@ import XCTest
         await Outbox.shared.drain(api: api)
         restored.refreshAttempt()
         XCTAssertEqual(restored.attempt?.state, .sent)
+        XCTAssertEqual(restored.attempt?.note, "", "An older home's queued answer is a plain delivery")
         XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 2)
     }
     func testUnreadableAttemptBlocksAnotherSend() async throws {

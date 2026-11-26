@@ -8,7 +8,6 @@ import {
   backend_io_is_test,
   executable_override,
 } from '../../../conversation/snapshot/environment.ts';
-import { http_get_usage } from '../../../conversation/backend_usage/http.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import { claude_driver } from '../driver.ts';
 import { claude_manifest } from '../manifest.ts';
@@ -17,7 +16,6 @@ import type { ClaudeAgentSdkChildLaunch } from './adapter.ts';
 import { ClaudeUsageAdapter } from './allowance_usage.ts';
 import { create_claude_catalog_source } from './catalog_source.ts';
 import { claude_auth_paths, create_claude_status, read_claude_auth_freshness } from './status.ts';
-import { claude_transcript_usage } from './transcript_usage.ts';
 
 export function claude_launch(host: DriverHost): ClaudeAgentSdkChildLaunch {
   const override = executable_override(claude_manifest.executable, host.environment, expand_path);
@@ -47,17 +45,12 @@ export async function create_claude_instance(
       one_shot_children: host.one_shot_children,
       worker_supervision: host.worker_supervision,
     }),
-    transcript_usage: claude_transcript_usage(
-      home_path(claude_manifest.home!, host.environment, homedir(), {
-        unset: '||',
-        expand_configured: false,
-      }),
-    ),
   };
   // A test instance reads no catalog or account. Its card says Claude did not answer.
   if (host.test_mode || backend_io_is_test())
     return { ...base, status: create_claude_status({ catalog: null }), dispose: async () => {} };
   const catalog = create_claude_catalog_source(host.one_shot_children);
+  const launch = claude_launch(host);
   const home = home_path(claude_manifest.home!, host.environment, homedir(), {
     unset: '??',
     expand_configured: false,
@@ -70,8 +63,7 @@ export async function create_claude_instance(
       read_freshness: () => read_claude_auth_freshness(auth_paths),
     }),
     allowance_usage: new ClaudeUsageAdapter({
-      credential_path: auth_paths.credentials_path,
-      http_get: http_get_usage,
+      read_usage: (options) => catalog.read_usage(launch.claude_executable, options),
       now: () => new Date(),
     }),
     dispose: (options) => catalog.dispose(options),

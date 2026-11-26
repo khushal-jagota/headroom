@@ -1,0 +1,786 @@
+/** Shared admission and recovery risks that isolated receipt and claim tests do not cover. */
+import { expect, test, vi } from 'vitest';
+import { setup } from './conversation_core_fixture.ts';
+import {
+  ConversationLinkLock,
+  configure_conversation_start,
+} from '../runtime/conversation_start.ts';
+import { send_message } from '../message_delivery/service.ts';
+import { owner_send_outcome, run_owner_send } from '../message_delivery/owner_sends.ts';
+import { delivery_fate_json } from '../conversation/http.ts';
+import { OWNER } from '../core/contracts.ts';
+import { buildClock, type Clock } from '../core/clock.ts';
+import { loadConfig } from '../core/config.ts';
+import {
+  ConversationStartRequest,
+  PromptDeliveryQueued,
+  PromptQueueReason,
+} from '../conversation/contracts.ts';
+import { text_message_content } from '../conversation/message_content.ts';
+import { resume_recipient_deliveries } from '../message_delivery/recovery.ts';
+import {
+  decode_recipient_message,
+  mark_recipient_attempt,
+  finish_recipient_delivery,
+  link_recipient_command,
+  with_recipient_attempts,
+  recipient_command_is_current,
+  prune_finished_recipient_deliveries,
+  hold_recipient_delivery,
+  hold_recipient_delivery_for_lifecycle,
+} from '../message_delivery/data/recipient_deliveries.ts';
+import { fixture } from './ticket_fixture.ts';
+
+// Existing native-receipt tests do not interleave two producers through the admission lock.
+// Reuse their scripted process. The second conversation proves the absence of a global wait.
+test('durable admission releases two senders and another recipient before a native receipt', async () => {
+  const f = setup({ behavior: { barrier: 'native' } });
+  await f.start();
+  const lock = new ConversationLinkLock();
+  const first = lock.run(() => f.send('first', 'first'));
+  const child = await f.child;
+  await child.wait_for_barrier('native');
+  try {
+    const duplicate = lock.run(() => f.send('first', 'first'));
+    expect(await lock.run(() => f.send('second', 'second'))).toBeInstanceOf(PromptDeliveryQueued);
+    expect(
+      f.database
+        .read((sql) =>
+          sql.all<{ submission_id: string }>(
+            'SELECT submission_id FROM recipient_deliveries ORDER BY delivery_order',
+          ),
+        )
+        .map((row) => row.submission_id),
+    ).toEqual(['core:first', 'core:second']);
+    await f.core.start_conversation(
+      new ConversationStartRequest({
+        conversation_id: 'other',
+        model: 'model',
+        workspace_folder: '/workspace',
+      }),
+    );
+    const independent = f.core.send('other', text_message_content('independent'), {
+      sender_label: 'Owner',
+      sender_message_id: 'independent',
+    });
+    await vi.waitFor(() => expect(f.children).toHaveLength(2));
+    await f.children[1].wait_for_barrier('native');
+    await f.children[1].release('native');
+    await independent;
+    expect((await f.children[1].inspect()).delivered_text).toEqual(['independent']);
+    await child.release('native');
+    await Promise.all([first, duplicate]);
+    expect((await child.inspect()).delivered_text).toEqual(['Role\n\nfirst']);
+  } finally {
+    await child.release('native');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Previous restart tests prove uncertainty, but do not restore the held line for every sender.
+test('restart restores held prompts in order and delivers their real content once', async () => {
+  const f = setup();
+  await f.start();
+  await f.send('running');
+  await f.send('pending earlier', 'earlier');
+  await f.send('held one', 'one');
+  await f.send('held two', 'two');
+  f.database.write((tx) => {
+    tx.run(
+      "DELETE FROM conversation_held_prompts WHERE json_extract(payload,'$.sender_message_id')='earlier'",
+    );
+    tx.run("UPDATE recipient_deliveries SET state='pending' WHERE submission_id='core:earlier'");
+    tx.run(
+      "UPDATE recipient_deliveries SET state='dispatching',native_transport='mailbox' WHERE submission_id='core:one'",
+    );
+    tx.run(
+      "UPDATE conversation_held_prompts SET dispatching=1,dispatch_turn=2 WHERE json_extract(payload,'$.sender_message_id')='one'",
+    );
+  });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database });
+  try {
+    expect((await restarted.core.held_prompts('core')).map((row) => row.sender_message_id)).toEqual(
+      ['one', 'two'],
+    );
+    resume_recipient_deliveries(restarted.core);
+    const child = await restarted.child;
+    await vi.waitFor(async () => {
+      const texts = (await child.inspect()).delivered_text;
+      expect(texts).toHaveLength(1);
+      expect(texts[0]).toMatch(/pending earlier[\s\S]*held one[\s\S]*held two/);
+    });
+    await vi.waitFor(() =>
+      expect(
+        restarted.database.read((sql) => sql.all('SELECT * FROM conversation_held_prompts')),
+      ).toEqual([]),
+    );
+    resume_recipient_deliveries(restarted.core);
+    expect((await child.inspect()).delivered_text).toHaveLength(1);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Gap: a message held for workspace cleanup has no conversation queue entry, so held-prompt
+// restore cannot settle it. Restart must give it one terminal refusal, not a delivery.
+test('restart refuses a message held for interrupted workspace cleanup exactly once', async () => {
+  const f = setup();
+  await f.start();
+  const recipient = { kind: 'ticket', id: 't_cleanup' } as const;
+  f.database.write((tx) => {
+    tx.run("INSERT INTO recipient_lifecycles VALUES('ticket','t_cleanup',1,1)");
+    hold_recipient_delivery_for_lifecycle(tx, 'fresh-core', 'core', recipient, {
+      requested_mode: 'queue',
+      held_prompt_id: '',
+      content: text_message_content('held correction'),
+      sender_label: 'Chief',
+      sender: { kind: 'chief', id: 'chief' },
+      recipient,
+      sender_message_id: 'held',
+      sent_at_unix_milliseconds: null,
+      snapshot_sent_at_unix_milliseconds: 0,
+      model_change: null,
+      reasoning_effort_change: null,
+      reasoning_effort_is_set: false,
+      owner_read_through_sequence: null,
+      acknowledge_owner_on_failure: false,
+      recovery_references: [],
+      recording_receipt: null,
+      queue_reason: PromptQueueReason.requested,
+      delivery_uncertain: false,
+      system_generated: false,
+    });
+  });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database });
+  const refusals = () =>
+    restarted.store
+      .read_events_after('core', 0)
+      .filter((row) => row.kind === 'prompt_delivery_refused');
+  try {
+    resume_recipient_deliveries(restarted.core);
+    await vi.waitFor(() => expect(refusals()).toHaveLength(1));
+    expect(refusals()[0].payload).toMatchObject({ sender_message_id: 'held' });
+    resume_recipient_deliveries(restarted.core);
+    expect(
+      restarted.database.read((sql) =>
+        sql.get<{ state: string }>(
+          "SELECT state FROM recipient_deliveries WHERE submission_id='fresh-core:held'",
+        ),
+      ),
+    ).toEqual({ state: 'refused' });
+    expect(refusals()).toHaveLength(1);
+    expect(
+      restarted.store.read_events_after('core', 0).filter((row) => row.kind === 'prompt'),
+    ).toEqual([]);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// A replacement after local admission must never receive the old recipient's input.
+test.each(['conversation', 'generation'] as const)(
+  'a replaced recipient %s is refused before its prompt reaches a backend',
+  async (replacement) => {
+    const f = setup();
+    await f.start();
+    f.database.write((tx) =>
+      tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', [
+        'chief_of_staff',
+        'core',
+      ]),
+    );
+    try {
+      const fate = await f.core.send('core', text_message_content('old target'), {
+        sender_label: 'Owner',
+        sender_message_id: 'stale',
+        recipient: { kind: 'chief', id: 'chief' },
+        recording_receipt: {
+          sender_id: '',
+          submission_id: 'stale',
+          admitted: () => {
+            f.database.write((tx) => {
+              if (replacement === 'conversation')
+                tx.run('UPDATE agents SET conversation_id=? WHERE agent_key=?', [
+                  'replacement',
+                  'chief_of_staff',
+                ]);
+              else tx.run("INSERT INTO recipient_lifecycles VALUES('chief','chief',1,0)");
+            });
+          },
+        },
+      });
+      expect(fate).toMatchObject({ refusal_reason: 'no_such_conversation' });
+      expect(
+        f.database.read((sql) =>
+          sql.get<{ state: string }>(
+            'SELECT state FROM recipient_deliveries WHERE submission_id=?',
+            ['core:stale'],
+          ),
+        )?.state,
+      ).toBe('refused');
+      for (const child of f.children) expect((await child.inspect()).delivered_text).toEqual([]);
+    } finally {
+      await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+    }
+  },
+);
+
+// Crash snapshots distinguish resumable work, known non-arrival, and a possible native effect.
+// They reuse the same record and process fixture rather than create another host.
+test.each([
+  'pending',
+  'dispatching',
+  'steer_refused',
+  'local_failure',
+  'mailbox_unattempted',
+] as const)('restart reconciles the %s dispatch boundary without guessing', async (state) => {
+  const f = setup();
+  await f.start();
+  await expect(
+    f.core.send('core', text_message_content('surviving input'), {
+      sender_label: 'Owner',
+      sender_message_id: 'crash-boundary',
+      mode: state === 'steer_refused' ? 'steer' : 'queue',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'crash-boundary',
+        admitted: () => {
+          if (state === 'local_failure') throw new Error('crash after commit');
+          throw new DOMException('crash after commit', 'AbortError');
+        },
+      },
+    }),
+  ).rejects.toThrow('crash after commit');
+  if (state === 'dispatching' || state === 'steer_refused' || state === 'mailbox_unattempted')
+    f.database.write((tx) =>
+      tx.run(
+        "UPDATE recipient_deliveries SET state='dispatching' WHERE submission_id='core:crash-boundary'",
+      ),
+    );
+  if (state === 'mailbox_unattempted')
+    f.database.write((tx) =>
+      tx.run(
+        "UPDATE recipient_deliveries SET native_transport='mailbox' WHERE submission_id='core:crash-boundary'",
+      ),
+    );
+  if (state === 'steer_refused')
+    f.database.write((tx) => {
+      tx.run(
+        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,outcome_json) VALUES('refused-steer','old','steer','core','child',1,'{}','finished',1,?)",
+        [
+          JSON.stringify({
+            child_outcome: { disposition: 'succeeded', result: { kind: 'steer_refused' } },
+          }),
+        ],
+      );
+      tx.run(
+        "INSERT INTO recipient_delivery_commands SELECT 'refused-steer',submission_id,attempt_id FROM recipient_deliveries WHERE submission_id='core:crash-boundary'",
+      );
+    });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database });
+  try {
+    resume_recipient_deliveries(restarted.core);
+    if (state === 'pending' || state === 'steer_refused' || state === 'mailbox_unattempted') {
+      const child = await restarted.child;
+      await vi.waitFor(async () =>
+        expect((await child.inspect()).delivered_text).toEqual(['Role\n\nsurviving input']),
+      );
+    } else {
+      expect(restarted.children).toHaveLength(0);
+      await vi.waitFor(() =>
+        expect(restarted.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+          state === 'local_failure' ? 'prompt_delivery_refused' : 'prompt_delivery_uncertain',
+        ]),
+      );
+    }
+    resume_recipient_deliveries(restarted.core);
+    expect(restarted.children).toHaveLength(
+      state === 'pending' || state === 'steer_refused' || state === 'mailbox_unattempted' ? 1 : 0,
+    );
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// A failed delivery commit must not leave a cleared recap without its obligation.
+test('recap clearing and recipient custody commit or roll back together', async () => {
+  const { request_recap } = await import('../message_delivery/recap_request.ts');
+  const { update_chief_recap, read_chief_settings } = await import('../worker_settings/service.ts');
+  const { OWNER } = await import('../core/contracts.ts');
+  const { buildClock } = await import('../core/clock.ts');
+  const { loadConfig } = await import('../core/config.ts');
+  const f = setup();
+  await f.start();
+  f.database.write((tx) =>
+    tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', ['chief_of_staff', 'core']),
+  );
+  update_chief_recap(f.database, { recap: 'Keep this recap' });
+  const clock = buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' }));
+  const target = { kind: 'chief' as const, id: 'chief' };
+  f.database.write((tx) =>
+    tx.run(
+      "CREATE TRIGGER reject_recap AFTER UPDATE OF recap ON chief_settings WHEN NEW.recap='' BEGIN SELECT RAISE(ABORT,'commit failed'); END",
+    ),
+  );
+  try {
+    await expect(
+      request_recap(f.core, f.database, clock, { principal: OWNER, conversationId: null }, target),
+    ).rejects.toThrow('commit failed');
+    f.database.write((tx) => tx.run('DROP TRIGGER IF EXISTS reject_recap'));
+    expect(f.database.read((sql) => read_chief_settings(sql)).recap).toBe('Keep this recap');
+    expect(f.database.read((sql) => sql.all('SELECT * FROM recipient_deliveries'))).toEqual([]);
+    const admitted = await request_recap(
+      f.core,
+      f.database,
+      clock,
+      { principal: OWNER, conversationId: null },
+      target,
+    );
+    expect(admitted.conversation_id).toBe('core');
+    expect(f.database.read((sql) => read_chief_settings(sql)).recap).toBe('');
+    expect(f.database.read((sql) => sql.all('SELECT * FROM recipient_deliveries'))).toHaveLength(1);
+  } finally {
+    f.database.write((tx) => tx.run('DROP TRIGGER IF EXISTS reject_recap'));
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// The source can finish at acceptance. Shutdown must still own the service's local tail.
+test('shutdown retains the admitted delivery and its original conversation link', async () => {
+  const { send_message } = await import('../message_delivery/service.ts');
+  const { configure_conversation_start, read_agent_conversation } =
+    await import('../runtime/conversation_start.ts');
+  const { OWNER } = await import('../core/contracts.ts');
+  const { buildClock } = await import('../core/clock.ts');
+  const { loadConfig } = await import('../core/config.ts');
+  const { Deferred } = await import('../core/deferred.ts');
+  const f = setup({ behavior: { barrier: 'shutdown-receipt' } });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: f.database_path,
+  });
+  const accepted = new Deferred<void>();
+  const delivery = send_message(
+    f.core,
+    f.database,
+    buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' })),
+    { principal: OWNER, conversationId: null },
+    { kind: 'chief', id: 'chief' },
+    'retained input',
+    'queue',
+    {
+      created_conversation_id: 'new-chief',
+      sender_message_id: 'shutdown-message',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'shutdown-message',
+        admitted: () => accepted.resolve(),
+      },
+    },
+  ).catch((error) => error);
+  await accepted.promise;
+  const child = await f.child;
+  await child.wait_for_barrier('shutdown-receipt');
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  expect((await delivery).name).toBe('AbortError');
+  expect(read_agent_conversation(f.database, 'chief_of_staff')).toBe('new-chief');
+  await f.core.settled();
+});
+
+// A queued result can return after the drain starts. It cannot replace that native attempt.
+test('a delayed queued result and an obsolete command cannot replace a newer attempt', async () => {
+  const f = setup();
+  await f.start();
+  await f.send('running');
+  await f.send('held', 'held');
+  try {
+    const held = f.database.read((sql) =>
+      sql.get<{ submission_id: string; attempt_id: string; payload: string }>(
+        "SELECT submission_id,attempt_id,payload FROM recipient_deliveries WHERE submission_id='core:held'",
+      ),
+    )!;
+    const message = decode_recipient_message(held.payload);
+    await with_recipient_attempts([held], async () =>
+      f.database.write((tx) => {
+        tx.run(
+          "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,command_json,state,created_at_ms) VALUES('waiting-start','old','start','core','child','{}','waiting',1)",
+        );
+        link_recipient_command(tx, 'waiting-start', 'start');
+        tx.run(
+          "INSERT INTO recipient_deliveries(submission_id,recipient_kind,recipient_id,conversation_id,generation,payload,state,attempt_id) SELECT 'core:suppressed',recipient_kind,recipient_id,conversation_id,generation,payload,'discarded','suppressed' FROM recipient_deliveries WHERE submission_id='core:held'",
+        );
+        tx.run(
+          "INSERT INTO recipient_delivery_commands VALUES('waiting-start','core:suppressed','suppressed')",
+        );
+      }),
+    );
+    const [dispatch] = mark_recipient_attempt(f.database, 'core', [message], 2, 'mailbox');
+    finish_recipient_delivery(f.database, held, new PromptDeliveryQueued({ queue_position: 1 }));
+    expect(
+      f.database.read((sql) =>
+        sql.get<{ state: string }>(
+          "SELECT state FROM recipient_deliveries WHERE submission_id='core:held'",
+        ),
+      )?.state,
+    ).toBe('dispatching');
+    await with_recipient_attempts([dispatch], async () =>
+      f.database.write((tx) => {
+        tx.run(
+          "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms) VALUES('old-attempt','old','write_prompt','core','child',2,'{}','waiting',1)",
+        );
+        link_recipient_command(tx, 'old-attempt', 'write_prompt');
+      }),
+    );
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(true);
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(true);
+    f.database.write((tx) => hold_recipient_delivery(tx, 'core', message.sender_message_id));
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(
+      false,
+    );
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(false);
+    const [next] = mark_recipient_attempt(f.database, 'core', [message], 3, 'mailbox');
+    expect(next.attempt_id).not.toBe(dispatch.attempt_id);
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(
+      false,
+    );
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(false);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Retention must release old payloads without dropping the fence for an unresolved native input.
+test('terminal retention removes settled payloads but retains unresolved command fences', () => {
+  const database = fixture();
+  database.write((tx) => {
+    for (const [id, state] of [
+      ['settled', 'delivered'],
+      ['waiting', 'refused'],
+      ['unknown', 'uncertain'],
+    ])
+      tx.run(
+        'INSERT INTO recipient_deliveries(submission_id,recipient_kind,recipient_id,conversation_id,generation,payload,state,attempt_id,settled_at) VALUES(?,?,?,?,?,?,?,?,?)',
+        [
+          id,
+          'conversation',
+          'core',
+          'core',
+          '{}',
+          '{"text":"retained content"}',
+          state,
+          id,
+          Date.now() - 8 * 24 * 60 * 60 * 1000,
+        ],
+      );
+    for (const [id, state] of [
+      ['settled', 'finished'],
+      ['waiting', 'waiting'],
+    ]) {
+      tx.run(
+        "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms) VALUES(?,'old','write_prompt','core','child',1,'{}',?,1)",
+        [id, state],
+      );
+      tx.run('INSERT INTO recipient_delivery_commands VALUES(?,?,?)', [id, id, id]);
+    }
+    prune_finished_recipient_deliveries(tx);
+  });
+  expect(
+    database
+      .read((sql) =>
+        sql.all<{ submission_id: string }>(
+          'SELECT submission_id FROM recipient_deliveries ORDER BY submission_id',
+        ),
+      )
+      .map((row) => row.submission_id),
+  ).toEqual(['unknown', 'waiting']);
+  expect(
+    database
+      .read((sql) =>
+        sql.all<{ command_id: string }>('SELECT command_id FROM recipient_delivery_commands'),
+      )
+      .map((row) => row.command_id),
+  ).toEqual(['waiting']);
+});
+
+/** One owner composer send through the owner-send door, as the Chief's route makes it. */
+function owner_sender(
+  f: ReturnType<typeof setup>,
+  clock: Clock,
+  target: { kind: 'chief'; id: string },
+) {
+  return (
+    id: string,
+    options: {
+      owner_read_through_sequence?: number;
+      after_admission?: () => void;
+    } = {},
+  ) =>
+    run_owner_send(
+      f.database,
+      f.core,
+      OWNER,
+      target,
+      {
+        conversation_id: null,
+        owner_read_through_sequence: options.owner_read_through_sequence ?? null,
+        backend_key: null,
+        model: null,
+        reasoning_effort: null,
+        content: [{ piece: 'text', text: id }],
+        sender_label: 'You',
+        mode: 'queue',
+        sender_message_id: id,
+        sent_at_unix_milliseconds: null,
+        reconciles_sequence: null,
+        provided_fields: new Set(),
+      },
+      async (body, remember_destination, recording_receipt) => {
+        const delivered = await send_message(
+          f.core,
+          f.database,
+          clock,
+          { principal: OWNER, conversationId: null },
+          target,
+          remember_destination(text_message_content(id)),
+          body.mode,
+          {
+            conversation_id: body.conversation_id,
+            created_conversation_id: 'new-chief',
+            owner_read_through_sequence: body.owner_read_through_sequence,
+            sender_message_id: id,
+            recording_receipt:
+              recording_receipt && options.after_admission
+                ? {
+                    ...recording_receipt,
+                    admitted: () => {
+                      recording_receipt.admitted?.();
+                      options.after_admission!();
+                    },
+                  }
+                : recording_receipt,
+          },
+        );
+        return {
+          conversation_id: delivered.conversation_id,
+          ...delivery_fate_json(delivered.fate),
+        };
+      },
+    );
+}
+
+// Risk: an owner send waits for native delivery, so a slow launch holds its sender, the next
+// owner send to the same target, and a repeat of a lost answer. Gap: the owner routes had no
+// test with native delivery held. This reuses the scripted core, and the first message
+// creates the Chief's conversation, as the incident's launch did. The queue takes the second
+// message after its answer, so the view stream must say so: a reader has no other cue.
+test('an owner send answers at acceptance and its outcome settles from stored rows', async () => {
+  const { ConversationViewLiveOutput } = await import('../conversation/views/live_output.ts');
+  const views = new ConversationViewLiveOutput();
+  const f = setup({
+    behavior: { barrier: 'native' },
+    core: { publish_frame: (id, frame) => views.publish_frame(id, frame) },
+  });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: f.database_path,
+  });
+  const clock = buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' }));
+  const target = { kind: 'chief' as const, id: 'chief' };
+  const owner_send = owner_sender(f, clock, target);
+  const stored_answer = (id: string) =>
+    f.database.read(
+      (sql) =>
+        sql.get<{ response: string | null }>(
+          'SELECT response FROM owner_send_receipts WHERE message_id=?',
+          [id],
+        )?.response,
+    );
+  const outcome = (id: string) => owner_send_outcome(f.database, target, id);
+  const accepted = (id: string) => ({
+    conversation_id: 'new-chief',
+    fate: 'accepted',
+    message_id: id,
+  });
+  expect(await owner_send('first')).toEqual(accepted('first'));
+  const child = await f.child;
+  await child.wait_for_barrier('native');
+  try {
+    // Previous code reads a stored answer as final, so nothing is stored before it is.
+    expect(stored_answer('first')).toBeNull();
+    expect(outcome('first')).toMatchObject({ conversation_id: 'new-chief', outcome: 'pending' });
+    expect(await owner_send('first')).toEqual(accepted('first'));
+    const view = views.subscribe('new-chief', 'focus', { transcript: true, turn_key: null });
+    const waiting = views.status('new-chief')[2];
+    expect(await owner_send('second')).toEqual(accepted('second'));
+    // One wake for its admission, and one for the hold decided after the answer.
+    await vi.waitFor(() => expect(views.status('new-chief')[2]).toBe(waiting + 2));
+    expect(await view.next_wake(0)).toBe(true);
+    view.close();
+    expect(stored_answer('second')).toBeNull();
+    expect(outcome('second')).toMatchObject({ outcome: 'pending' });
+    // A replaced recipient refuses the held message when its turn comes.
+    f.database.write((tx) =>
+      tx.run("UPDATE agents SET conversation_id='replacement' WHERE agent_key='chief_of_staff'"),
+    );
+    await child.release('native');
+    await vi.waitFor(() =>
+      expect(outcome('first')).toEqual({
+        message_id: 'first',
+        conversation_id: 'new-chief',
+        outcome: 'delivered',
+        refusal_reason: null,
+        reason: null,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(stored_answer('first')).toBe(
+        JSON.stringify({ conversation_id: 'new-chief', fate: 'started' }),
+      ),
+    );
+    await child.finish();
+    await vi.waitFor(() =>
+      expect(outcome('second')).toMatchObject({
+        outcome: 'refused',
+        refusal_reason: 'no_such_conversation',
+      }),
+    );
+    expect(
+      f.store
+        .read_events_after('new-chief', 0)
+        .filter((row) => row.kind === 'prompt')
+        .map((row) => (row.payload as { sender_message_id?: string }).sender_message_id),
+    ).toEqual(['first']);
+    expect((await child.inspect()).delivered_text).toHaveLength(1);
+  } finally {
+    await child.release('native');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: a steer that arrives while its recipient starts waits for the start without a held
+// prompt, so a reader shows nothing for an accepted message. Gap: the conversation read listed
+// only held prompts. This reuses the scripted core, held at its first native prompt.
+test('an accepted steer is listed as pending until its prompt row lands', async () => {
+  const { accepted_unplaced_messages } =
+    await import('../message_delivery/data/recipient_deliveries.ts');
+  const { Deferred } = await import('../core/deferred.ts');
+  const f = setup({ behavior: { barrier: 'native' } });
+  await f.start();
+  const first = f.send('first', 'first');
+  const child = await f.child;
+  await child.wait_for_barrier('native');
+  const pending = async () => {
+    const held = await f.core.held_prompts('core');
+    return f.database.read((sql) =>
+      accepted_unplaced_messages(
+        sql,
+        'core',
+        new Set(held.flatMap((row) => row.sender_message_id ?? [])),
+      ),
+    );
+  };
+  try {
+    const accepted = new Deferred<void>();
+    const steer = f.core.send('core', text_message_content('steer words'), {
+      sender_label: 'Chief',
+      sender: { kind: 'chief', id: 'chief' },
+      sender_message_id: 'steer',
+      mode: 'steer',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'steer',
+        admitted: () => accepted.resolve(),
+      },
+    });
+    await accepted.promise;
+    // The first message is on its way to the agent, so it is listed too until its row lands.
+    expect(await pending()).toEqual([
+      expect.objectContaining({ sender_message_id: 'first', requested_mode: 'queue' }),
+      {
+        sender_message_id: 'steer',
+        requested_mode: 'steer',
+        sender_label: 'Chief',
+        sender: { kind: 'chief', id: 'chief' },
+        recipient: null,
+        sent_at_unix_milliseconds: null,
+        text: 'steer words',
+      },
+    ]);
+    await child.release('native');
+    await Promise.all([first, steer]);
+    await vi.waitFor(async () => expect(await pending()).toEqual([]));
+    expect(
+      f.store
+        .read_events_after('core', 0)
+        .filter((row) => row.kind === 'prompt')
+        .map((row) => {
+          const payload = row.payload as { sender_message_id?: string; mode?: string };
+          return [payload.sender_message_id, payload.mode];
+        }),
+    ).toContainEqual(['steer', 'steer']);
+  } finally {
+    await child.release('native');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: an owner reply answered at acceptance no longer marks what the owner read when its row
+// lands, or marks it on a refusal that comes later. Gap: the earlier owner test names no read
+// boundary. Reuse the scripted core with a Chief conversation that already has rows.
+test('owner read-through applies when an accepted reply lands or is refused later', async () => {
+  const f = setup();
+  await f.start();
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: f.database_path,
+  });
+  f.database.write((tx) =>
+    tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','core')"),
+  );
+  const target = { kind: 'chief' as const, id: 'chief' };
+  const owner_send = owner_sender(
+    f,
+    buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' })),
+    target,
+  );
+  const read_through = () => f.store.read_conversation('core')!.owner_read_through_sequence;
+  const latest = () => f.store.read_conversation('core')!.latest_sequence;
+  const settled = (id: string, outcome: string) =>
+    vi.waitFor(() => expect(owner_send_outcome(f.database, target, id)).toMatchObject({ outcome }));
+  try {
+    await f.send('earlier', 'earlier');
+    const child = await f.child;
+    await child.finish();
+    await vi.waitFor(async () => expect(await f.core.is_running('core')).toBe(false));
+    const boundary = latest();
+    expect(read_through()).toBeLessThan(boundary);
+    expect(await owner_send('reply', { owner_read_through_sequence: boundary })).toMatchObject({
+      fate: 'accepted',
+    });
+    await settled('reply', 'delivered');
+    expect(read_through()).toBe(boundary);
+    await child.finish();
+    await vi.waitFor(async () => expect(await f.core.is_running('core')).toBe(false));
+    // Without a named boundary, the reply acknowledges what was there when it was sent,
+    // even when the conversation refuses it after the answer.
+    const later = latest();
+    expect(later).toBeGreaterThan(boundary);
+    expect(
+      await owner_send('refused-reply', {
+        after_admission: () =>
+          f.database.write((tx) =>
+            tx.run(
+              "UPDATE agents SET conversation_id='replacement' WHERE agent_key='chief_of_staff'",
+            ),
+          ),
+      }),
+    ).toMatchObject({ fate: 'accepted' });
+    await settled('refused-reply', 'refused');
+    expect(read_through()).toBe(later);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});

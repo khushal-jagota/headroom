@@ -5,13 +5,18 @@ import { antigravity_driver } from '../driver.ts';
 import { antigravity_manifest } from '../manifest.ts';
 import { antigravity_models } from '../models.ts';
 import type { AntigravityCatalogSource } from './contracts.ts';
+import { read_antigravity_account_email } from './allowance_usage.ts';
 import { antigravity_catalog_reader } from './status_readers.ts';
 
 export function create_antigravity_status(sources: {
   /** Null: the card lists no models and says agy did not answer. */
   readonly catalog: AntigravityCatalogSource | null;
+  /** agy's CLI login file, which names the signed-in account. */
+  readonly login_path: string;
 }): DriverStatus {
-  const read_catalog = antigravity_catalog_reader(sources.catalog);
+  const read_catalog = antigravity_catalog_reader(sources.catalog, () =>
+    read_antigravity_account_email(sources.login_path),
+  );
   return {
     version_detects_upgrade: true,
     probe: (context) =>

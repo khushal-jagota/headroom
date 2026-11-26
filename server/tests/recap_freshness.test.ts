@@ -80,7 +80,7 @@ test('recap admission precedes clearing and sends the requester through the ordi
   expect(read(db, ticket.id).recap).toBe('Keep until admitted');
   expect(send_message).not.toHaveBeenCalled();
   vi.mocked(send_message).mockImplementationOnce(async () => {
-    expect(read(db, ticket.id).recap_updated_at).toBeNull();
+    expect(read(db, ticket.id).recap).toBe('Keep until admitted');
     throw new Error('scripted refusal');
   });
   await expect(
@@ -92,10 +92,14 @@ test('recap admission precedes clearing and sends the requester through the ordi
       target,
     ),
   ).rejects.toThrow('scripted refusal');
-  expect(read(db, ticket.id).recap).toBe('');
-  expect(vi.mocked(send_message).mock.calls[0]?.slice(5)).toEqual([
+  expect(read(db, ticket.id).recap).toBe('Keep until admitted');
+  expect(vi.mocked(send_message).mock.calls[0]?.slice(5)).toMatchObject([
     `${RECAP_REQUEST_MESSAGE}\nRequested by Manager Own scope.`,
     'steer',
-    { system_message: true },
+    {
+      system_message: true,
+      sender_message_id: expect.stringMatching(/^recap_/),
+      recording_receipt: { in_admission: expect.any(Function), admitted: expect.any(Function) },
+    },
   ]);
 });

@@ -14,6 +14,14 @@ import { readUsageSummary, readUsageLimits } from "../src/lib/conversation/recor
 import { buildChartDays } from "../src/lib/usage/usageChartData";
 import { usageSourceColor, usageSourceLabel, usageSourceOrder } from "../src/lib/usage/usageProviders";
 import { DRIVERS } from "./support/drivers";
+import type { ServerProviderUsageLimits } from "../src/lib/usage/contracts";
+import { refreshMachineLimits, type MachineUsageLimits } from "../src/lib/usage/machineLimits";
+import type { Machine } from "../src/lib/machines/contracts";
+
+/** One machine's saved reading for one backend, as the limits read returns it. */
+function reading(backend_key: string, limits: ServerProviderUsageLimits, machine_name = "VPS 1", account_label: string | null = null): MachineUsageLimits {
+  return { machine_id: machine_name, machine_name, backend_key, account_label, account_detail: null, limits };
+}
 
 const input: UsageSummaryInput = {
   sinceDay: UsageDay.make("2026-10-28"), untilDay: UsageDay.make("2026-10-29"), timeZone: "UTC", resolution: "hour",
@@ -53,10 +61,10 @@ describe("T3 Svelte presentation", () => {
     expect(body).toContain("Across 0 sessions");
   });
   it("renders actual zero allowance, observation and reset without a credit-balance conversion", () => {
-    const body = render(UsageLimits, { props: { providers: ["codex", "claude"], drivers: DRIVERS, now: Date.parse("2026-10-29T12:00:00Z"), limits: {
-      codex: { checkedAt: "2026-10-29T11:59:00Z", windows: [{ id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 100, windowDurationMins: 10080, resetsAt: "2026-11-04T06:35:00Z" }] },
-      claude: { checkedAt: "2026-10-29T11:59:00Z", windows: [], unavailable: { reason: "probeFailed", message: "No valid local allowance observation." } },
-    } } }).body;
+    const body = render(UsageLimits, { props: { providers: ["codex", "claude"], drivers: DRIVERS, now: Date.parse("2026-10-29T12:00:00Z"), readings: [
+      reading("codex", { checkedAt: "2026-10-29T11:59:00Z", windows: [{ id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 100, windowDurationMins: 10080, resetsAt: "2026-11-04T06:35:00Z" }] }),
+      reading("claude", { checkedAt: "2026-10-29T11:59:00Z", windows: [], unavailable: { reason: "probeFailed", message: "No valid local allowance observation." } }),
+    ] } }).body;
     expect(body).toContain("0%");
     expect(body).toContain("Weekly");
     expect(body).toContain('datetime="2026-10-29T11:59:00Z"');
@@ -65,6 +73,27 @@ describe("T3 Svelte presentation", () => {
     expect(body).toContain("No valid local allowance observation.");
     expect(body).not.toContain("reset credits banked");
     expect(body.indexOf('datetime="2026-10-29T11:59:00Z"')).toBeLessThan(body.indexOf('data-allowance-window='));
+  });
+  // Distinct risk: limits belong to the provider account. Before this, the page showed one machine
+  // at a time, so the same account looked like two quotas, or one hid behind a machine picker.
+  it("merges one account signed in on two machines and pools different accounts", () => {
+    const weekly = (checkedAt: string, usedPercent: number): ServerProviderUsageLimits =>
+      ({ checkedAt, windows: [{ id: "seven_day", kind: "weekly", label: "7 days", usedPercent, windowDurationMins: 10080 }] });
+    const now = Date.parse("2026-11-26T12:00:00Z");
+    const shared = render(UsageLimits, { props: { providers: ["claude"], drivers: DRIVERS, now, readings: [
+      reading("claude", weekly("2026-11-26T10:00:00Z", 50), "VPS 1", "owner@example.com"),
+      reading("claude", weekly("2026-11-26T11:00:00Z", 79), "Mac 1", "Owner@Example.com "),
+    ] } }).body;
+    expect(shared.match(/class="segment[ "]/g)).toHaveLength(1);
+    expect(shared).toContain("21%");
+    expect(shared).not.toContain("50%");
+    expect(shared).toContain("Signed in: VPS 1, Mac 1");
+    const distinct = render(UsageLimits, { props: { providers: ["claude"], drivers: DRIVERS, now, readings: [
+      reading("claude", weekly("2026-11-26T10:00:00Z", 50), "VPS 1", "owner@example.com"),
+      reading("claude", weekly("2026-11-26T11:00:00Z", 79), "Mac 1", "other@example.com"),
+    ] } }).body;
+    expect(distinct.match(/class="segment[ "]/g)).toHaveLength(2);
+    for (const text of ["owner@example.com", "other@example.com", "Signed in: VPS 1", "Signed in: Mac 1"]) expect(distinct).toContain(text);
   });
   it("offers no Config tab, which moved to Settings, and disables the period only on Limits", () => {
     const body = render(UsageHeader, { props: { tab: "limits", href: prefixHref("#/backends"), days: 1,
@@ -95,9 +124,9 @@ describe("usage names and colours come from the drivers", () => {
     expect(body).toMatch(/<i[^>]*style="background: #d97757;"[^>]*><\/i>Claude<\/span>/);
   });
   it("colours an allowance pool with its driver's accent", () => {
-    const body = render(UsageLimits, { props: { providers: ["claude"], drivers: DRIVERS, now: Date.parse("2026-10-29T12:00:00Z"), limits: {
-      claude: { checkedAt: "2026-10-29T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 10, windowDurationMins: 300 }] },
-    } } }).body;
+    const body = render(UsageLimits, { props: { providers: ["claude"], drivers: DRIVERS, now: Date.parse("2026-10-29T12:00:00Z"), readings: [
+      reading("claude", { checkedAt: "2026-10-29T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 10, windowDurationMins: 300 }] }),
+    ] } }).body;
     expect(body).toContain("<h2 class=");
     expect(body).toMatch(/<h2[^>]*>Claude<\/h2>/);
     expect(body).toContain("--provider-color: #d97757");
@@ -152,15 +181,30 @@ describe("explicit provider refresh", () => {
     const result = await refreshBackendSnapshots(async () => ({ backends: [], usage_outcomes: outcomes }));
     expect(result.outcomes).toEqual(outcomes);
     expect(result.error).toBeNull();
-    const body = render(UsageLimits, { props: { providers: ["codex"], drivers: DRIVERS, now: Date.parse("2026-10-30T12:00:00Z"), outcomes: result.outcomes, limits: {
-      codex: { checkedAt: "2026-10-27T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] },
-    } } }).body;
-    for (const label of ["Codex: Failed", "Claude: Unauthenticated", "Hermes: Unavailable", "65%", "Oct 27, 2026, 11:59 AM UTC"])
+    const body = render(UsageLimits, { props: { providers: ["codex"], drivers: DRIVERS, now: Date.parse("2026-10-30T12:00:00Z"),
+      outcomes: result.outcomes.map(outcome => ({ ...outcome, machine_id: "mac", machine_name: "Mac 1" })), readings: [
+        reading("codex", { checkedAt: "2026-10-27T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] }),
+      ] } }).body;
+    for (const label of ["Mac 1 · Codex: Failed", "Mac 1 · Claude: Unauthenticated", "Mac 1 · Hermes: Unavailable", "65%", "Oct 27, 2026, 11:59 AM UTC"])
       expect(body).toContain(label);
     expect(backendUsageOutcomeLabel("succeeded")).toBeNull();
   });
   it("keeps transport errors separate from provider outcomes", async () => {
     const result = await refreshBackendSnapshots(async () => { throw new Error("Transport failed"); });
     expect(result).toEqual({ snapshots: null, outcomes: [], error: "Transport failed" });
+  });
+  // Distinct risk: Refresh now covers every machine. An unavailable machine must not be asked,
+  // so its saved reading stays, and one machine's outcomes must name that machine.
+  it("refreshes every available machine and names an unavailable one", async () => {
+    const machine = (machine_id: string, name: string, available: boolean) =>
+      ({ machine_id, name, available, icon: "server", color: "jade", is_home: false, running_workers: null, waiting_tickets: 0 }) as Machine;
+    const asked: string[] = [];
+    const result = await refreshMachineLimits([machine("vps", "VPS 1", true), machine("mac", "Mac 1", false)], async machineId => {
+      asked.push(machineId);
+      return { snapshots: [], error: null, outcomes: [{ backend_key: "claude", outcome: "succeeded", detail: null }] };
+    });
+    expect(asked).toEqual(["vps"]);
+    expect(result.outcomes).toEqual([{ backend_key: "claude", outcome: "succeeded", detail: null, machine_id: "vps", machine_name: "VPS 1" }]);
+    expect(result.notices).toEqual(["Mac 1 is unavailable, so its last observation stays."]);
   });
 });

@@ -505,10 +505,7 @@ export class MacRuns {
           typeof outcome.result.reason === 'string' &&
           MAILBOX_SETTLEMENTS.has(outcome.result.reason)
         )) ||
-        (child.operation === 'steer' &&
-          outcome.disposition === 'succeeded' &&
-          outcome.result.kind === 'steer_refused' &&
-          outcome.result.refusal_reason === 'no_running_turn_to_steer_into'))
+        child.operation === 'steer')
     ) {
       // Completion can require a prompt or steer receipt that this publisher releases.
       // Retain the work through shutdown, but never join it inside publication.

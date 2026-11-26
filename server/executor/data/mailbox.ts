@@ -1,3 +1,7 @@
+import {
+  link_recipient_command,
+  recipient_command_is_current,
+} from '../../message_delivery/data/recipient_deliveries.ts';
 /**
  * Scoped mailbox SQL assumes an authorized caller and a caller-owned SQL capability.
  * Poll/result callers require transport ingress, protocol and current-identity admission.
@@ -156,6 +160,7 @@ function insert(
     Buffer.from(body).toString('utf8'),
     counter(sequence),
   ]);
+  link_recipient_command(tx, command.command_id, operation(command));
   return decode_json(body, 'MailboxCommand');
 }
 export function insert_child_command(
@@ -732,7 +737,21 @@ export async function prepare_fetch(
           outcomes.set(
             key,
             attempt(() => {
-              const result = settlement_result(command.value, disposition, reason);
+              const settled = settlement_result(command.value, disposition, reason);
+              const result =
+                key === 'recipient_changed' && settled.child_outcome != null
+                  ? {
+                      ...settled,
+                      child_outcome: {
+                        ...settled.child_outcome,
+                        result: {
+                          ...settled.child_outcome.result,
+                          error_type: 'PromptWriteRefused',
+                          error_message: 'Recipient target or attempt changed before dispatch',
+                        },
+                      },
+                    }
+                  : settled;
               return { result, text: outcome_json(result) };
             }),
           );
@@ -741,6 +760,7 @@ export async function prepare_fetch(
           make('replacement_refused', 'refused', 'executor_process_replaced');
           make('replacement_uncertain', 'uncertain', 'executor_process_replaced');
         } else {
+          make('recipient_changed', 'refused', 'delivery_withdrawn');
           switch (operation(command.value)) {
             case 'steer':
               make('steer_turn_not_running', 'refused', 'steer_turn_not_running');
@@ -836,6 +856,15 @@ export function fetch(
     if (withdrawn_ids.has(command.command_id) || moved_conversations.has(row.conversation_id))
       continue;
     if (row.state === 'waiting') {
+      if (!recipient_command_is_current(tx, command.command_id)) {
+        const outcome = prepared_value(entry.outcomes.get('recipient_changed')!);
+        tx.run(
+          "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_sequence=?",
+          [outcome.text, now, counter(row.sequence)],
+        );
+        settled.push([command, outcome.result]);
+        continue;
+      }
       if (row.conversation_id !== null && !facts.has(row.conversation_id))
         facts.set(row.conversation_id, read_facts(tx, row.conversation_id));
       const reason = expiry_reason(command, facts.get(row.conversation_id ?? '') ?? [], now);
@@ -1175,7 +1204,7 @@ export function late_steers_left_by_a_restart(
   const uncertain = sql.all<{ conversation_id: string; sequence: string; payload: string }>(
     "SELECT e.conversation_id,CAST(e.sequence AS TEXT) AS sequence,e.payload FROM conversation_events AS e WHERE e.kind='prompt_delivery_uncertain' " +
       'AND EXISTS(SELECT 1 FROM executor_commands own WHERE own.conversation_id=e.conversation_id AND own.machine_id=?) ' +
-      "AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
+      "AND NOT EXISTS (SELECT 1 FROM recipient_deliveries r WHERE r.submission_id=e.conversation_id||':'||json_extract(e.payload,'$.sender_message_id')) AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
       "AND later.sequence>e.sequence AND later.kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
       "AND json_extract(later.payload,'$.sender_message_id')=json_extract(e.payload,'$.sender_message_id')) ORDER BY e.conversation_id,e.sequence",
     [machine_id],

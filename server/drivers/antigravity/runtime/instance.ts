@@ -18,7 +18,6 @@ import { AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME } from './configuratio
 import { create_antigravity_flavor } from './flavor.ts';
 import { AntigravitySignIn } from './sign_in.ts';
 import { create_antigravity_status } from './status.ts';
-import { antigravity_transcript_usage } from './transcript_usage.ts';
 
 export async function create_antigravity_instance(
   input: DriverCreateInput<null>,
@@ -38,6 +37,7 @@ export async function create_antigravity_instance(
     worker_process_root: host.worker_process_root,
     panels_server_url: host.panels_server_url,
   };
+  const login_path = join(launch_options.home, AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME);
   const base = {
     instance_id: input.instance_id,
     driver_kind: antigravity_driver.driver_kind,
@@ -54,13 +54,12 @@ export async function create_antigravity_instance(
       ),
       { child_processes: host.child_processes, worker_supervision: host.worker_supervision },
     ),
-    transcript_usage: antigravity_transcript_usage(configured_home),
   };
   // A test instance starts no catalog and reads no account. Its card says agy did not answer.
   if (host.test_mode || backend_io_is_test())
     return {
       ...base,
-      status: create_antigravity_status({ catalog: null }),
+      status: create_antigravity_status({ catalog: null, login_path }),
       dispose: async () => {},
     };
   const catalog = new AntigravityModelCatalog(launch_options, {
@@ -79,10 +78,13 @@ export async function create_antigravity_instance(
   });
   return {
     ...base,
-    status: create_antigravity_status({ catalog: (executable) => catalog.read(executable) }),
+    status: create_antigravity_status({
+      catalog: (executable) => catalog.read(executable),
+      login_path,
+    }),
     sign_in,
     allowance_usage: new AntigravityUsageAdapter({
-      login_path: join(launch_options.home, AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME),
+      login_path,
       http_post: http_post_usage,
       // A throwaway session makes agy renew its expired access token.
       refresh_login: async (signal) => {

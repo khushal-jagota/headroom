@@ -1,3 +1,4 @@
+import type { ReadSql } from '../core/database/contracts.ts';
 import type {
   APNsAdapter,
   APNsDevice,
@@ -35,6 +36,22 @@ export interface PushTargets {
   web_push_identity: WebPushIdentity | null;
   subscriptions: readonly PushSubscription[];
   apns_devices: readonly APNsDevice[];
+}
+/** Every device the owner enabled, for a Panels alarm that has no attention edge. */
+export function read_push_targets(sql: ReadSql): PushTargets {
+  const web_push_identity =
+    sql.get<WebPushIdentity>(
+      'SELECT private_key,public_key FROM notification_web_push_identity WHERE singleton=1',
+    ) ?? null;
+  const subscriptions = sql.all<PushSubscription>(`
+    SELECT subscription_id,endpoint,p256dh,auth FROM notification_push_subscriptions
+    WHERE disabled_at IS NULL ORDER BY created_at,subscription_id
+  `);
+  const apns_devices = sql.all<APNsDevice>(`
+    SELECT device_id,device_token,bundle_id,environment,registration_version,updated_at
+    FROM notification_apns_devices ORDER BY created_at,device_id
+  `);
+  return { web_push_identity, subscriptions, apns_devices };
 }
 export function since_utc(at_ms: number): string {
   return new Date(at_ms).toISOString().slice(11, 16);

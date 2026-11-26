@@ -6,7 +6,8 @@ import type {
   ConversationViewItem,
   ConversationViewPage,
   ConversationViewStatus,
-  ViewHistoryScope
+  ViewHistoryScope,
+  ViewWorkGroupCallSummary
 } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 import { executorAnswerSentence, executorAskUncertain } from "../src/lib/conversation/executorEvidence";
@@ -18,7 +19,7 @@ const turn = (settled: boolean): ConversationViewItem => ({
   duration_seconds: settled ? 420 : null, tool_call_count: 2, folded_message_count: 0,
   latest_message_key: null, is_latest: true
 });
-const group: ConversationViewItem = {
+const group: ConversationViewItem & { kind: "work_group" } = {
   kind: "work_group", key: "work:e2", order: { sequence: 2, slot: 0 }, changed_through_sequence: 4,
   turn_key: "turn:e1", entry_count: 2, latest_entry_key: "e3", settled: true
 };
@@ -39,12 +40,12 @@ function page(scope: ViewHistoryScope, items: ConversationViewItem[]): Conversat
   };
 }
 
-function draw(options: { expanded: boolean; settled?: boolean; status?: Partial<ConversationViewStatus>; lens?: "focus" | "full"; failed?: boolean; running?: boolean }) {
+function draw(options: { expanded: boolean; settled?: boolean; status?: Partial<ConversationViewStatus>; lens?: "focus" | "full"; failed?: boolean; running?: boolean; calls?: boolean; summary?: ViewWorkGroupCallSummary }) {
   const expanded = new Set(options.expanded ? ["turn:turn:e1"] : []);
   const pages = [
     page({ kind: "timeline", key: null }, [turn(options.settled ?? true)]),
-    page({ kind: "turn", key: "turn:e1" }, [group]),
-    page({ kind: "work_group", key: "work:e2" }, [tool(3, "npm run check", options.failed ? "failed" : "completed"), tool(4, "git status", options.running ? "running" : "completed")])
+    page({ kind: "turn", key: "turn:e1" }, [options.summary ? { ...group, call_summary: options.summary } : group]),
+    ...options.calls === false ? [] : [page({ kind: "work_group", key: "work:e2" }, [tool(3, "npm run check", options.failed ? "failed" : "completed"), tool(4, "git status", options.running ? "running" : "completed")])]
   ];
   const reader = {
     id: "c", lens: options.lens ?? "focus", pages, coverage: 5, entryPhase: "ready",
@@ -115,6 +116,15 @@ describe("Full keeps each run of tool calls behind one summary", () => {
     expect(html).toContain("Ran 2 commands");
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('data-conversation-row="tool_call"');
+  });
+
+  // Full no longer reads a closed run's calls on open, so its line must come from the
+  // server's count of them, not fall back to "2 tool calls".
+  it("says what a closed run did from the server's count, before any call is at hand", () => {
+    const html = draw({ expanded: false, lens: "full", calls: false, summary: { kinds: [{ kind: "execute", count: 2 }], failed_count: 1 } });
+    expect(html).toContain("Ran 2 commands");
+    expect(html).toContain("1 failed");
+    expect(html).not.toContain("2 tool calls");
   });
 
   it("says a failure in words, so a closed run never hides it", () => {

@@ -197,7 +197,7 @@ test('a storage failure rolls custody, file bytes and the sender position back t
   expect(database.read((sql) => sql.all('SELECT * FROM agent_message_files'))).toEqual([]);
   expect(database.read((sql) => sql.all('SELECT * FROM mac_inbox_positions'))).toEqual([]);
 });
-test('pending readers preserve recipient order and capacity refusal leaves no receipt or cursor advance', () => {
+test('pending capacity is isolated by recipient and refuses without a retry or partial acceptance', () => {
   const { database, message, accept } = world();
   const a = { ...message('a'), pending: true, recipient: { kind: 'chief' as const, id: 'chief' } };
   const b = { ...message('b', 2), pending: true, recipient: a.recipient };
@@ -212,7 +212,10 @@ test('pending readers preserve recipient order and capacity refusal leaves no re
     ['b', 2],
   ]);
   expect(() => accept({ ...message('c', 3), pending: true, recipient: a.recipient })).toThrow(
-    'cannot retain',
+    expect.objectContaining({
+      code: 'validation',
+      message: expect.stringContaining('cannot retain'),
+    }),
   );
   expect(database.read((sql) => read_agent_message(sql, 'c'))).toBeNull();
   expect(
@@ -220,6 +223,13 @@ test('pending readers preserve recipient order and capacity refusal leaves no re
       (sql) => sql.get<{ sequence: number }>('SELECT sequence FROM mac_inbox_positions')!.sequence,
     ),
   ).toBe(2);
+  const other = {
+    ...message('other', 3),
+    pending: true,
+    recipient: { kind: 'ticket' as const, id: 'another' },
+  };
+  expect(accept(other).submission_id).toBe('other');
+  expect(database.read((sql) => pending_agent_messages(sql, other.recipient))).toHaveLength(1);
   database.write((tx) => tx.run('UPDATE agent_message_acceptances SET pending=0'));
   const huge = { ...message('huge', 3), pending: true, message: 'é'.repeat(4000) };
   expect(() => accept(huge)).toThrow('cannot retain');

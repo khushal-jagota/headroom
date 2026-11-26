@@ -12,6 +12,7 @@ import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecyc
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { MacAdapterHost } from '../adapters.ts';
 import { MacCatalog } from './index.ts';
+import type { UsageService } from '../../../conversation/usage/UsageService.ts';
 export function create_mac_catalog(options: {
   readonly host: MacAdapterHost;
   readonly resolve_backend_secret?: (id: string) => Promise<string>;
@@ -20,6 +21,8 @@ export function create_mac_catalog(options: {
   readonly on_failure: (error: Error) => void;
   readonly environment?: BackendProbeEnvironment;
   readonly now?: () => Date;
+  /** This machine's recorded usage. The catalog stops it with its sources. */
+  readonly recorded_usage?: UsageService;
 }): MacCatalog {
   const environment =
     options.environment ??
@@ -86,9 +89,12 @@ export function create_mac_catalog(options: {
       run_backend_request(
         request,
         sources.find(({ instance_id }) => instance_id === request.backend_key)?.source,
-        signal,
-        options.resolve_backend_secret,
-        snapshots,
+        {
+          signal,
+          resolve_secret: options.resolve_backend_secret,
+          snapshots,
+          recorded_usage: options.recorded_usage,
+        },
       ),
     backend_ids: sources.map(({ instance_id }) => instance_id),
     on_failure: options.on_failure,
@@ -112,7 +118,10 @@ export function create_mac_catalog(options: {
       environment_stop ??= Promise.allSettled([
         Promise.resolve().then(() => environment.shutdown?.()),
       ]);
-      const shutdowns = owned.map((source) => Promise.resolve().then(() => source.shutdown?.()));
+      const shutdowns = [
+        ...owned.map((source) => Promise.resolve().then(() => source.shutdown?.())),
+        Promise.resolve().then(() => options.recorded_usage?.stop(stop_options)),
+      ];
       const cleanup = await Promise.allSettled([...shutdowns, ...probes]);
       for (const result of cleanup)
         if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)

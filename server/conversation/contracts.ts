@@ -293,6 +293,8 @@ export type PromptDeliveryFate =
   | PromptDeliverySuppressed;
 export type HeldPromptPromotionFate = PromptDeliveryFate;
 export interface NativeMessageOperation {
+  in_admission?: (transaction: TransactionSql, conversation_id: string) => void;
+  admitted?: () => void;
   sender_id: string;
   submission_id: string;
   in_commit?:
@@ -308,6 +310,8 @@ export interface NativeMessageAdmission {
   readonly fate: PromptDeliveryFate;
 }
 export interface SendOptions {
+  /** Preserve the original reply policy during durable recipient recovery. */
+  acknowledge_owner_on_failure?: boolean;
   sender_label: string;
   owner_read_through_sequence?: number | null;
   mode?: PromptDeliveryMode;
@@ -333,8 +337,6 @@ export interface RecordMessageToOwnerOptions {
   sent_at_unix_milliseconds?: number | null;
   recording_receipt?: NativeMessageOperation | null;
 }
-export type OwnerSendProgress =
-  { state: 'queued'; position: number } | { state: 'pending' } | { state: 'uncertain' };
 
 export interface ConversationSystem {
   configure_worker_cleanup_recheck?(
@@ -374,11 +376,6 @@ export interface ConversationSystem {
   ): Promise<void>;
   interrupt(conversation_id: string): Promise<void>;
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]>;
-  owner_send_progress(
-    conversation_id: string,
-    sender_message_id: string,
-    recipient: Principal,
-  ): Promise<OwnerSendProgress | null>;
 
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>>;
   promote_held_prompt(
@@ -399,6 +396,8 @@ export interface ConversationSystem {
     finish: (check_cleanup: ((sql: TransactionSql) => void) | null) => Promise<void>,
   ): Promise<void>;
   is_running(conversation_id: string): Promise<boolean>;
+  /** Give a message held for failed or interrupted workspace cleanup its terminal refusal. */
+  refuse_lifecycle_held_delivery(submission_id: string, detail: string): Promise<void>;
   has_pending_permission_ask(conversation_id: string): Promise<boolean>;
   has_pending_user_input(conversation_id: string): Promise<boolean>;
 }

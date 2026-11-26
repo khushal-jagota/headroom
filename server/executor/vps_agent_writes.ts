@@ -1,3 +1,4 @@
+import { answer_at_acceptance } from '../message_delivery/acceptance.ts';
 /** Bind canonical agent mutations and native message dispatch to one inbox position. */
 import { IncomingMessage } from 'node:http';
 import { ADMITTED_REQUEST_SCOPE } from '../core/http/lifetime.ts';
@@ -12,18 +13,9 @@ import { admitCommand, unidentifiedCommandRefusal } from '../core/authority/inta
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   ConversationSystem,
-  NativeMessageAdmission,
   NativeMessageOperation,
   PromptDeliveryMode,
 } from '../conversation/contracts.ts';
-import {
-  MessageToOwnerEventPayload,
-  PromptEventPayload,
-  PromptDeliveryUncertainEventPayload,
-  PromptDeliveryRefusedEventPayload,
-  PromptDiscardedEventPayload,
-} from '../conversation/events.ts';
-import { delivery_fate_json } from '../conversation/http.ts';
 import { send_message } from '../message_delivery/service.ts';
 import {
   read_agent_message,
@@ -309,38 +301,97 @@ export class AgentWrites {
     const body = write.arguments.body;
     if (is_json_object(body) && message_principal(body.target).kind === 'owner')
       return this.accept_owner_message(envelope, write, principal, identity, published);
-    const reserved = this.reserve_dispatch(envelope, write, principal, identity, published);
-    if (reserved.previous !== null) return reserved.previous;
-    const { recipient, message, mode } = reserved;
-    const operation: NativeMessageOperation = {
-      sender_id: envelope.sender_id,
-      submission_id: envelope.submission_id,
-      in_commit: (tx, conversation_id, payload, admission) =>
-        this.record_delivery(envelope, recipient, tx, conversation_id, payload, admission),
-    };
-    let result: Json;
-    try {
-      result = result_json(
-        await send_message(
+    const previous = this.store.preflight(envelope, { identity });
+    if (previous !== null) return previous;
+    if (!is_json_object(body))
+      throw new PlannerError('validation', 'message body must be an object');
+    const recipient = message_principal(body.target);
+    const message = message_text(body.message);
+    const mode = Object.hasOwn(body, 'mode')
+      ? message_delivery_mode(body.mode)
+      : message_delivery_mode();
+    this.store.database.read((sql) => {
+      require_same_agent_owner(sql, write.child, principal);
+      admitCommand(sql, principal, 'POST', '/api/messages/send', {}, body);
+    });
+    const files = await retain_published_message_files(published);
+    let receipt: WireValue<'AcceptanceReceipt'> | null = null;
+    return answer_at_acceptance(
+      (recording_receipt) =>
+        send_message(
           this.conversations,
           this.store.database,
           this.clock,
-          { principal, conversationId: null },
+          { principal, conversationId: envelope.conversation_id },
           recipient,
           message,
           mode,
-          { sender_message_id: envelope.submission_id, recording_receipt: operation },
+          { sender_message_id: envelope.submission_id, recording_receipt },
         ),
-      ) as Json;
-    } catch (error) {
-      if (!(error instanceof PlannerError)) throw error;
-      result = error.toPayload() as Json;
-    }
-    // Reservation admitted the native delivery. Its known outcome survives replacement.
-    return this.store.database.write((tx) =>
-      this.finish_dispatch(tx, envelope, result, delivery_disposition(result)),
+      {
+        sender_id: envelope.sender_id,
+        submission_id: envelope.submission_id,
+        in_admission: (tx, conversation_id) => {
+          require_current_incarnation_in_transaction(
+            tx,
+            identity.executor_incarnation,
+            this.store.machine_id,
+          );
+          require_same_agent_owner(tx, write.child, principal);
+          const prior = this.store.prior_receipt(tx, envelope, identity);
+          if (prior !== null)
+            throw new PlannerError('retry_later', 'Message position changed before acceptance');
+          admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
+          this.store.require_file_owner(tx, envelope);
+          this.store.require_unchanged_files(envelope, published);
+          receipt = {
+            sender_id: envelope.sender_id,
+            submission_id: envelope.submission_id,
+            disposition: 'accepted',
+            accepted_at_vps_ms: now_ms(),
+            result: {
+              target: { kind: recipient.kind, id: recipient.id },
+              conversation_id,
+              fate: 'accepted',
+              submission_id: envelope.submission_id,
+            },
+          };
+          write_agent_message_acceptance(
+            tx,
+            {
+              submission_id: envelope.submission_id,
+              machine_id: this.store.machine_id,
+              sender_id: envelope.sender_id,
+              source_conversation_id: envelope.conversation_id,
+              source: principal,
+              envelope,
+              recipient,
+              mode,
+              message,
+              target_conversation_id: conversation_id,
+              receipt,
+              pending: true,
+            },
+            files,
+            tx.get<{ delivery_order: number }>(
+              'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
+              [`${conversation_id}:${envelope.submission_id}`],
+            )!.delivery_order,
+          );
+          this.store.write_position(tx, envelope, receipt);
+        },
+        accepted: () => {
+          if (receipt === null) throw new Error('recipient admission omitted its receipt');
+          return receipt;
+        },
+        before_acceptance: () => {
+          throw new Error('recipient completed without durable custody');
+        },
+        failure_label: 'accepted recipient delivery failed',
+      },
     );
   }
+
   private async accept_owner_message(
     envelope: WireValue<'QueuedEnvelope'>,
     write: WireValue<'CliWrite'>,
@@ -473,57 +524,6 @@ export class AgentWrites {
       this.finish_dispatch(tx, envelope, result, disposition),
     );
   }
-  private reserve_dispatch(
-    envelope: WireValue<'QueuedEnvelope'>,
-    write: WireValue<'CliWrite'>,
-    principal: Principal,
-    identity: ExecutorIdentity,
-    published: PublishedFiles | null,
-  ): {
-    previous: WireValue<'AcceptanceReceipt'> | null;
-    recipient: Principal;
-    message: string;
-    mode: PromptDeliveryMode;
-  } {
-    return this.store.database.write((tx) => {
-      require_current_incarnation_in_transaction(
-        tx,
-        identity.executor_incarnation,
-        this.store.machine_id,
-      );
-      const previous = this.store.prior_receipt(tx, envelope, identity);
-      if (previous !== null) return { previous, recipient: principal, message: '', mode: 'queue' };
-      require_same_agent_owner(tx, write.child, principal);
-      const body = write.arguments.body;
-      if (!is_json_object(body))
-        throw new PlannerError('validation', 'message body must be an object');
-      const message = message_text(body.message);
-      const mode = Object.hasOwn(body, 'mode')
-        ? message_delivery_mode(body.mode)
-        : message_delivery_mode();
-      const recipient = message_principal(body.target);
-      admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
-      this.store.require_file_owner(tx, envelope);
-      this.store.require_unchanged_files(envelope, published);
-      this.store.write_position(
-        tx,
-        envelope,
-        {
-          sender_id: envelope.sender_id,
-          submission_id: envelope.submission_id,
-          disposition: 'uncertain',
-          accepted_at_vps_ms: now_ms(),
-          result: {
-            target: { kind: recipient.kind, id: recipient.id },
-            conversation_id: null,
-            fate: 'uncertain',
-          },
-        },
-        { dispatching: true },
-      );
-      return { previous: null, recipient, message, mode };
-    });
-  }
   private finish_dispatch(
     tx: TransactionSql,
     envelope: WireValue<'QueuedEnvelope'>,
@@ -546,40 +546,6 @@ export class AgentWrites {
     };
     this.store.write_position(tx, envelope, receipt);
     return receipt;
-  }
-  private record_delivery(
-    envelope: WireValue<'QueuedEnvelope'>,
-    recipient: Principal,
-    tx: TransactionSql,
-    conversation_id: string,
-    payload: unknown,
-    admission: NativeMessageAdmission | null,
-  ): void {
-    let fate: Json;
-    if (payload instanceof MessageToOwnerEventPayload) fate = { fate: 'recorded' };
-    else if (payload instanceof PromptEventPayload && admission !== null)
-      fate = delivery_fate_json(admission.fate) as Json;
-    else if (payload instanceof PromptDeliveryUncertainEventPayload) fate = { fate: 'uncertain' };
-    else if (payload instanceof PromptDeliveryRefusedEventPayload)
-      fate = { fate: 'refused', refusal_reason: payload.refusal_reason };
-    else if (payload instanceof PromptDiscardedEventPayload) fate = { fate: 'discarded' };
-    else return;
-    const current = tx.get<{ submission_id: string; disposition: string }>(
-      'SELECT submission_id,disposition FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
-      [envelope.sender_id, envelope.conversation_id],
-    );
-    if (
-      !current ||
-      current.submission_id !== envelope.submission_id ||
-      current.disposition !== 'dispatching'
-    )
-      return;
-    const result: Json = {
-      target: { kind: recipient.kind, id: recipient.id },
-      conversation_id,
-      ...fate,
-    };
-    this.finish_dispatch(tx, envelope, result, delivery_disposition(result));
   }
 }
 /** A message's receipt follows its delivery fate. */

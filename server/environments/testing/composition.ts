@@ -23,6 +23,7 @@ export function create_test_environment_operations(
     staging: { stage: async () => unavailable() },
     installer: {
       node_schema_steps_pending: unavailable,
+      stage_snapshot: async () => unavailable(),
       prepare: unavailable,
       launch: async () => unavailable(),
     },
