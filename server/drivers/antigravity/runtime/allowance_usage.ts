@@ -1,122 +1,128 @@
 /**
- * Antigravity's 5-hour and weekly windows, read with the agy CLI's own login. The login file, the
- * injected HTTP function and the injected login renewal are the only external doors.
+ * Antigravity's 5-hour and weekly windows, read from agy itself: `agy -p "/usage"` prints them as
+ * JSON, signed in through agy's own login wherever agy keeps it (a file on headless Linux, the OS
+ * keyring on macOS). Panels reads no token. The account email comes from agy's own log.
  */
-// Translated from T3 Code (MIT), apps/server/src/provider/antigravityUsageLimits.ts, commit b79d277c.
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readSync, readdirSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse_backend_instance_id } from '../../core/identity.ts';
 import type {
   BackendUsageAdapter,
   BackendUsageResult,
   BackendUsageWindow,
   BackendUsageWindowKind,
-  UsageHttpResponse,
 } from '../../../conversation/backend_usage/contracts.ts';
-import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
+import { stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
+import type { OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { is_record as object } from '../../../core/records.ts';
 import { parse_datetime, usage_window } from '../../../conversation/backend_usage/logic/windows.ts';
+import { acp_child_environment } from '../../acp/environment.ts';
+import { antigravity_acp_launch } from './flavor.ts';
+import type { AntigravityLaunchOptions } from './flavor.ts';
 
-const DAILY_HOST = 'https://daily-cloudcode-pa.googleapis.com';
-const PROD_HOST = 'https://cloudcode-pa.googleapis.com';
-// Personal sign-in is metered on the daily host first. Panels signs in personally only.
-const QUOTA_HOSTS = [DAILY_HOST, PROD_HOST];
 const ANTIGRAVITY_USAGE_TIMEOUT_SECONDS = 20;
-/** An access token this close to its expiry is renewed first. */
-const TOKEN_REUSE_MARGIN_MS = 60_000;
-const SIGN_IN_MESSAGE = 'Antigravity is signed out. Sign in to Antigravity again.';
+const USAGE_OUTPUT_LIMIT_BYTES = 1_048_576;
 const UNREACHABLE_MESSAGE = 'Antigravity usage could not be reached. Try again.';
 
-export interface UsageHttpPost {
-  (
-    url: string,
-    headers: Readonly<Record<string, string>>,
-    body: string,
-    timeout_seconds: number,
-    options?: { signal?: AbortSignal },
-  ): Promise<UsageHttpResponse>;
+/**
+ * Runs `agy -p "/usage" --output-format json` and returns its standard output. It runs no model
+ * turn. Throws when agy cannot be started, exits with an error, or does not answer in time.
+ */
+export type AntigravityUsageRunner = (signal?: AbortSignal) => Promise<string>;
+
+/** The runner on agy's own home, in a scratch folder, through the one-shot child owner. */
+export function antigravity_usage_runner(
+  options: Omit<AntigravityLaunchOptions, 'executable'>,
+  executable: () => string,
+  children: OwnedOneShotChildren,
+): AntigravityUsageRunner {
+  return async (signal) => {
+    signal?.throwIfAborted();
+    const launch = antigravity_acp_launch({ ...options, executable: executable() });
+    const cwd = await mkdtemp(join(tmpdir(), 'panels-antigravity-usage-'));
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        const child = children.spawn(launch.argv[0]!, ['-p', '/usage', '--output-format', 'json'], {
+          cwd,
+          env: acp_child_environment(
+            launch.environment_overrides,
+            { role_materials: null },
+            launch.inherited_environment,
+          ),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let failure: Error | null = null;
+        const fail = (error: Error) => {
+          failure ??= error;
+          stop_one_shot_child(child);
+        };
+        const abort = () => fail(new Error('Antigravity usage was cancelled.'));
+        signal?.addEventListener('abort', abort, { once: true });
+        const timeout = setTimeout(
+          () => fail(new Error('agy did not answer /usage in time.')),
+          ANTIGRAVITY_USAGE_TIMEOUT_SECONDS * 1000,
+        );
+        child.stdout!.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > USAGE_OUTPUT_LIMIT_BYTES) fail(new Error('agy /usage output was too large.'));
+          else chunks.push(chunk);
+        });
+        child.stderr!.resume();
+        child.once('error', (error) => {
+          clearTimeout(timeout);
+          signal?.removeEventListener('abort', abort);
+          reject(error);
+        });
+        child.once('close', (code) => {
+          clearTimeout(timeout);
+          signal?.removeEventListener('abort', abort);
+          if (failure !== null) reject(failure);
+          else if (code !== 0) reject(new Error(`agy /usage exited with code ${code}.`));
+          else resolve(Buffer.concat(chunks).toString('utf8'));
+        });
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true }).catch(() => {});
+    }
+  };
 }
 
-/** The production transport refuses test contexts before any credential reaches fetch. */
-export const http_post_usage: UsageHttpPost = async (
-  url,
-  headers,
-  body,
-  timeout_seconds,
-  options = {},
-) => {
-  if (backend_io_is_test())
-    throw new Error('Production backend I/O is unavailable in tests. Inject recording adapters.');
-  const timeout = AbortSignal.timeout(timeout_seconds * 1000);
-  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-  const response = await fetch(url, { method: 'POST', headers, body, signal, redirect: 'manual' });
-  let parsed: unknown = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    signal.throwIfAborted();
-    // The adapter reports a missing body by status.
-  }
-  return { status_code: response.status, body: parsed };
-};
+/** agy's ACP server logs begin with the sign-in line, so this much of a log is enough. */
+const LOG_HEAD_BYTES = 65_536;
+const SIGNED_IN_LINE = /OAuth: authenticated successfully as (\S+@\S+)/g;
 
-/** The CLI login's access token and when it expires. agy keeps the refresh to itself. */
-export interface AntigravityCliLogin {
-  readonly access_token: string;
-  readonly expires_at: Date;
-}
-
-/** `<home>/antigravity-cli/antigravity-oauth-token`, or null when it is missing or unreadable. */
-export function read_antigravity_cli_login(path: string): AntigravityCliLogin | null {
-  let document: unknown;
+/**
+ * The Google account agy signed in as, from the sign-in line of its newest ACP server log in
+ * `log_directory`. Null when there is no log or no such line: agy's log text is not a contract, and
+ * an older log is never used. Only the email leaves this reader.
+ */
+export function read_antigravity_account_email(log_directory: string): string | null {
   try {
-    document = JSON.parse(readFileSync(path, 'utf8'));
+    const newest = readdirSync(log_directory)
+      .filter((name) => /^acp-server-.*\.log$/.test(name))
+      .sort()
+      .at(-1);
+    if (newest === undefined) return null;
+    const descriptor = openSync(join(log_directory, newest), 'r');
+    try {
+      const buffer = Buffer.alloc(LOG_HEAD_BYTES);
+      const length = readSync(descriptor, buffer, 0, LOG_HEAD_BYTES, 0);
+      const matches = [...buffer.toString('utf8', 0, length).matchAll(SIGNED_IN_LINE)];
+      return matches.at(-1)?.[1] ?? null;
+    } finally {
+      closeSync(descriptor);
+    }
   } catch {
     return null;
   }
-  if (!object(document) || !object(document.token)) return null;
-  const { access_token, expiry } = document.token;
-  const expires_at = parse_datetime(expiry);
-  if (typeof access_token !== 'string' || !access_token || expires_at === null) return null;
-  return { access_token, expires_at };
-}
-
-/**
- * The Google account the CLI login belongs to, from its `id_token_email`. Null when the login is
- * missing, unreadable or names no email. Only the email leaves this reader, never a token.
- */
-export function read_antigravity_account_email(path: string): string | null {
-  let document: unknown;
-  try {
-    document = JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!object(document) || typeof document.id_token_email !== 'string') return null;
-  return document.id_token_email.trim() || null;
-}
-
-/** Node's platform and architecture as Go names them, as agy's own client reports them. */
-const GO_PLATFORM: Readonly<Record<string, string>> = { win32: 'windows' };
-const GO_ARCHITECTURE: Readonly<Record<string, string>> = { x64: 'amd64', ia32: '386' };
-/**
- * T3's client name. Without a user agent the quota summary answers 403, and with agy 1.5.10's own
- * it returns only the Claude and GPT buckets (verified on the VPS, 18 November 2026).
- */
-function antigravity_user_agent(): string {
-  const os_type = GO_PLATFORM[process.platform] ?? process.platform;
-  const arch = GO_ARCHITECTURE[process.arch] ?? process.arch;
-  return `antigravity/hub/2.24.0 (aidev_client; os_type=${os_type}; arch=${arch})`;
 }
 
 export interface AntigravityUsageOptions {
-  /** The CLI login file. */
-  readonly login_path: string;
-  readonly http_post: UsageHttpPost;
-  /**
-   * Makes agy renew its own login, as a throwaway session does. Throws when agy cannot be run.
-   * Panels cannot renew the token itself: the login holds no client credentials.
-   */
-  readonly refresh_login: (signal?: AbortSignal) => Promise<void>;
+  readonly run_usage: AntigravityUsageRunner;
   readonly now: () => Date;
 }
 
@@ -137,78 +143,31 @@ export class AntigravityUsageAdapter implements BackendUsageAdapter {
       observed_at: null,
       windows: [],
     });
-    const usable = (login: AntigravityCliLogin | null): login is AntigravityCliLogin =>
-      login !== null &&
-      login.expires_at.getTime() > this.options.now().getTime() + TOKEN_REUSE_MARGIN_MS;
-    let login = read_antigravity_cli_login(this.options.login_path);
-    if (login === null) return result('unauthenticated', SIGN_IN_MESSAGE);
-    if (!usable(login)) {
-      try {
-        await this.options.refresh_login(options.signal);
-      } catch {
-        options.signal?.throwIfAborted();
-        return result('failed', UNREACHABLE_MESSAGE);
-      }
-      login = read_antigravity_cli_login(this.options.login_path);
-      if (!usable(login)) return result('unauthenticated', SIGN_IN_MESSAGE);
+    let output: string;
+    try {
+      output = await this.options.run_usage(options.signal);
+    } catch {
+      options.signal?.throwIfAborted();
+      return result('failed', UNREACHABLE_MESSAGE);
     }
-    const access_token = login.access_token;
-    let reached = false;
-    let signed_out = false;
-    const query = async (operation: string, parse: (body: unknown) => Keyed[]) => {
-      const readings = await Promise.all(
-        QUOTA_HOSTS.map(async (host) => {
-          try {
-            const response = await this.options.http_post(
-              `${host}/v1internal:${operation}`,
-              {
-                authorization: `Bearer ${access_token}`,
-                'content-type': 'application/json',
-                'user-agent': antigravity_user_agent(),
-              },
-              '{}',
-              ANTIGRAVITY_USAGE_TIMEOUT_SECONDS,
-              options,
-            );
-            if (response.status_code === 401 || response.status_code === 403) signed_out = true;
-            if (response.status_code < 200 || response.status_code >= 300) return [];
-            reached = true;
-            return parse(response.body);
-          } catch {
-            options.signal?.throwIfAborted();
-            return [];
-          }
-        }),
-      );
-      // The first host's reading of a bucket wins.
-      const merged = new Map<string, BackendUsageWindow>();
-      for (const [bucket_id, window] of readings.flat())
-        if (!merged.has(bucket_id)) merged.set(bucket_id, window);
-      return [...merged.values()];
+    let body: unknown = null;
+    try {
+      body = JSON.parse(output);
+    } catch {
+      // The output names no windows below.
+    }
+    const windows = parse_usage_windows(body);
+    if (!windows.length)
+      return result('unavailable', 'Antigravity did not return usable quota information.');
+    return {
+      backend_key: parse_backend_instance_id('antigravity'),
+      outcome: 'succeeded',
+      detail: null,
+      observed_at: this.options.now(),
+      windows,
     };
-    let windows = await query('retrieveUserQuotaSummary', parse_summary_windows);
-    if (!windows.length) windows = await query('fetchAvailableModels', parse_model_windows);
-    if (windows.length)
-      return {
-        backend_key: parse_backend_instance_id('antigravity'),
-        outcome: 'succeeded',
-        detail: null,
-        observed_at: this.options.now(),
-        windows,
-      };
-    if (signed_out && !reached) return result('unauthenticated', SIGN_IN_MESSAGE);
-    if (!reached) return result('failed', UNREACHABLE_MESSAGE);
-    return result('unavailable', 'Antigravity did not return usable quota information.');
   }
 }
-
-function used_percent_of(quota: Record<string, unknown>): number | null {
-  const remaining = quota.remainingFraction;
-  if (typeof remaining !== 'number' || !Number.isFinite(remaining)) return null;
-  return (1 - Math.max(0, Math.min(1, remaining))) * 100;
-}
-
-type Keyed = [string, BackendUsageWindow];
 
 /**
  * A group's display name without its trailing "models": "Gemini Models" is Gemini, "Claude and
@@ -224,68 +183,37 @@ function family_of_bucket(bucket_id: string): string {
   if (bucket_id.startsWith('gemini-')) return 'Gemini';
   return bucket_id;
 }
-/** `retrieveUserQuotaSummary` buckets, keyed by bucket id. */
-function parse_summary_windows(body: unknown): Keyed[] {
-  if (!object(body)) return [];
-  const groups: { name: string | null; buckets: unknown[] }[] = [];
-  if (Array.isArray(body.groups))
-    for (const group of body.groups)
-      if (object(group) && Array.isArray(group.buckets))
-        groups.push({ name: scope_label_of_group(group.displayName), buckets: group.buckets });
-  if (!groups.some((group) => group.buckets.length) && Array.isArray(body.buckets))
-    groups.splice(0, groups.length, { name: null, buckets: body.buckets });
-  const windows: Keyed[] = [];
-  for (const group of groups)
+
+/** Quota buckets as agy's `/usage` JSON names them: `command.data.groups[].buckets[]`. */
+function parse_usage_windows(body: unknown): BackendUsageWindow[] {
+  if (!object(body) || !object(body.command) || !object(body.command.data)) return [];
+  const data = body.command.data;
+  if (!Array.isArray(data.groups)) return [];
+  const windows = new Map<string, BackendUsageWindow>();
+  for (const group of data.groups) {
+    if (!object(group) || !Array.isArray(group.buckets)) continue;
+    const name = scope_label_of_group(group.name);
     for (const bucket of group.buckets) {
       if (!object(bucket) || bucket.disabled === true) continue;
-      const bucket_id = bucket.bucketId;
-      if (typeof bucket_id !== 'string' || !bucket_id) continue;
+      const bucket_id = bucket.id;
+      if (typeof bucket_id !== 'string' || !bucket_id || windows.has(bucket_id)) continue;
       const kind: BackendUsageWindowKind | null =
         bucket.window === '5h' ? 'five_hour' : bucket.window === 'weekly' ? 'seven_day' : null;
-      const used_percent = used_percent_of(bucket);
-      if (kind === null || used_percent === null) continue;
-      // An untouched bucket names no reset. It stays, so the other host's reading of it
-      // cannot replace it with a reset time this host does not report.
-      const resets_at = parse_datetime(bucket.resetTime);
-      const model_scope = group.name ?? family_of_bucket(bucket_id);
-      windows.push([
-        bucket_id,
-        usage_window({ id: bucket_id, kind, used_percent, resets_at, model_scope }),
-      ]);
-    }
-  return windows;
-}
-
-/** Older accounts expose only per-model weekly quotas. Quotas without a window length are skipped. */
-function parse_model_windows(body: unknown): Keyed[] {
-  if (!object(body) || !object(body.models)) return [];
-  const windows = new Map<string, BackendUsageWindow>();
-  for (const [model_id, model] of Object.entries(body.models)) {
-    if (!object(model) || !object(model.weeklyQuotaInfo)) continue;
-    const provider = model.modelProvider;
-    const scope_label =
-      provider === 'MODEL_PROVIDER_GOOGLE' || model_id.startsWith('gemini-')
-        ? 'Gemini'
-        : provider === 'MODEL_PROVIDER_ANTHROPIC' || model_id.startsWith('claude-')
-          ? 'Claude'
-          : provider === 'MODEL_PROVIDER_OPENAI' || model_id.startsWith('gpt-')
-            ? 'GPT'
-            : null;
-    const used_percent = used_percent_of(model.weeklyQuotaInfo);
-    const resets_at = parse_datetime(model.weeklyQuotaInfo.resetTime);
-    if (scope_label === null || used_percent === null || resets_at === null) continue;
-    const previous = windows.get(scope_label);
-    if (previous === undefined || used_percent > previous.used_percent)
+      const remaining = bucket.remaining_fraction;
+      if (kind === null || typeof remaining !== 'number' || !Number.isFinite(remaining)) continue;
+      // An untouched bucket answers the Unix epoch, which means it names no reset.
+      const reset = parse_datetime(bucket.reset_time);
       windows.set(
-        scope_label,
+        bucket_id,
         usage_window({
-          id: `${scope_label.toLowerCase()}-weekly`,
-          kind: 'seven_day',
-          used_percent,
-          resets_at,
-          model_scope: scope_label,
+          id: bucket_id,
+          kind,
+          used_percent: (1 - Math.max(0, Math.min(1, remaining))) * 100,
+          resets_at: reset !== null && reset.getTime() > 0 ? reset : null,
+          model_scope: name ?? family_of_bucket(bucket_id),
         }),
       );
+    }
   }
-  return [...windows.entries()];
+  return [...windows.values()];
 }

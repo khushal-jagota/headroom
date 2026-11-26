@@ -30,9 +30,6 @@ import type { BackendUsageAdapter } from '../conversation/backend_usage/contract
 import { usage_window } from '../conversation/backend_usage/logic/windows.ts';
 import { VpsBackendControlRelay } from '../executor/backend_control_relay.ts';
 import { Deferred } from '../core/deferred.ts';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createUsageRoutes } from '../conversation/usage/routes.ts';
 import { AntigravityUsageAdapter } from '../drivers/antigravity/runtime/allowance_usage.ts';
 import { ClaudeUsageAdapter } from '../drivers/claude/runtime/allowance_usage.ts';
@@ -608,266 +605,258 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
   async (machine_id) => {
     const claude_key = parse_backend_instance_id('claude');
     const antigravity_key = parse_backend_instance_id('antigravity');
-    const folder = mkdtempSync(join(tmpdir(), 'machine-usage-'));
     const reset = '2026-11-30T21:02:00Z';
-    try {
-      const antigravity_login = join(folder, 'antigravity-oauth-token');
-      writeFileSync(
-        antigravity_login,
-        JSON.stringify({ token: { access_token: 'agy', expiry: '2026-12-01T00:00:00Z' } }),
-      );
-      const bucket = (bucketId: string, window: string, remaining: number, at?: string) => ({
-        bucketId,
-        window,
-        remainingFraction: remaining,
-        ...(at === undefined ? {} : { resetTime: at }),
-      });
-      // As on 26 Nov: the daily host names no reset for the untouched Claude and GPT buckets.
-      const quota = (daily: boolean) => ({
-        groups: [
-          {
-            displayName: 'Gemini Models',
-            buckets: [
-              bucket('gemini-weekly', 'weekly', 0.62, reset),
-              bucket('gemini-5h', '5h', 0.65, reset),
-            ],
-          },
-          {
-            displayName: 'Claude and GPT models',
-            buckets: [
-              bucket('3p-weekly', 'weekly', 1, daily ? undefined : reset),
-              bucket('3p-5h', '5h', 1, daily ? undefined : reset),
-            ],
-          },
-          {
-            displayName: 'Gemini 4 Argon',
-            buckets: [bucket('gemini-argon-wtu-weekly', 'weekly', 0.25, reset)],
-          },
-        ],
-      });
-      const sources = new Map<string, BackendUsageAdapter>([
-        [
-          antigravity_key,
-          new AntigravityUsageAdapter({
-            login_path: antigravity_login,
-            http_post: async (url) => ({ status_code: 200, body: quota(url.includes('daily')) }),
-            refresh_login: async () => {},
-            now: () => new Date('2026-11-26T00:30:00Z'),
-          }),
-        ],
-        [
-          claude_key,
-          // The CLI's get_usage answer as on 26 Nov: no 5-hour window, a weekly and Fable's.
-          new ClaudeUsageAdapter({
-            read_usage: async () => ({
-              rate_limits_available: true,
-              rate_limits: {
-                five_hour: null,
-                seven_day: { utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
-                model_scoped: [
-                  { display_name: 'Fable', utilization: 23, resets_at: '2026-11-28T15:00:00Z' },
-                ],
-              },
-            }),
-            now: () => new Date('2026-11-26T00:30:00Z'),
-          }),
-        ],
-      ]);
-      const model = (model_id: string, display_name: string) => ({
-        ...snapshot.available_models[0]!,
-        model_id,
-        display_name,
-      });
-      const cards = new Map<string, BackendSnapshot>([
-        [key, snapshot],
-        [
-          claude_key,
-          {
-            ...snapshot,
-            backend_key: claude_key,
-            available_models: [
-              model('claude-fable-5', 'Fable 5'),
-              model('claude-fable-5-1', 'Fable 5.1'),
-              model('claude-fable-5-2', 'Fable 5.2'),
-              model('claude-opus-5-5', 'Opus 5.5'),
-            ],
-          },
-        ],
-        [
-          antigravity_key,
-          {
-            ...snapshot,
-            backend_key: antigravity_key,
-            available_models: [
-              model('gemini-4-neon', 'Gemini 4 Neon'),
-              model('gemini-4-argon', 'Gemini 4 Argon'),
-            ],
-          },
-        ],
-      ]);
-      const database = fixture();
-      database.write((tx) => seed_machine_lease(tx, machine_id));
-      const state = new BackendStateStore(database);
-      const backend_ids = [key, claude_key, antigravity_key];
-      const runtime: BackendHttpRuntime = {
-        database,
-        backend_state: state,
-        backend_ids,
-        drivers: [],
-        driver_of: () => null,
-        reports_allowance_usage: () => true,
-        backend_snapshots: {
-          retained: () => snapshot,
-          snapshot: async () => snapshot,
-          snapshots: async () => [snapshot],
-          update_backend: vi.fn(),
-        },
-        backend_usage: { refresh: vi.fn() },
-        sign_in: () => null,
-        settled: async () => {},
-        machine_catalog: () => ({
-          retained: (backend_key) => cards.get(backend_key)!,
-          snapshot: async (backend_key) => cards.get(backend_key)!,
-          identity: null,
-          ready: true,
-          owns_conversation: () => false,
-        }),
-        machine_backends: () => ({
-          available: true,
-          async request(request) {
-            if (request.operation === 'capabilities')
-              return { can_sign_in: false, reports_allowance_usage: true };
-            if (request.operation !== 'refresh_usage') return {};
-            if (request.backend_key === key) throw new Error('Codex did not answer');
-            const allowance_usage = sources.get(request.backend_key)!;
-            return run_backend_request(request, { allowance_usage, status: {} as never });
-          },
-        }),
-      };
-      const app = await createApp(
-        loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
-        {
-          database,
-          areas: [
+    const bucket = (id: string, window: string, remaining: number, at: string) => ({
+      id,
+      window,
+      remaining_fraction: remaining,
+      reset_time: at,
+    });
+    // As agy 1.5.18 printed on 26 Nov: the untouched Claude and GPT buckets answer the epoch.
+    const epoch = '1970-01-01T00:00:00Z';
+    const usage = JSON.stringify({
+      status: 'SUCCESS',
+      command: {
+        name: 'usage',
+        data: {
+          groups: [
             {
-              prefix: '/api/conversation',
-              routes: createBackendRoutes(runtime, {
-                available: true,
-                writes: new ConversationHttpWriteScope(),
-              }),
+              name: 'Gemini Models',
+              buckets: [
+                bucket('gemini-weekly', 'weekly', 0.62, reset),
+                bucket('gemini-5h', '5h', 0.65, reset),
+              ],
             },
             {
-              prefix: '/api/conversation/usage',
-              routes: createUsageRoutes({
-                conversation_runtime_available: true,
-                backend_ids,
-                backend_state: state,
-                recorded_usage: {} as never,
-              }),
+              name: 'Claude and GPT models',
+              buckets: [bucket('3p-weekly', 'weekly', 1, epoch), bucket('3p-5h', '5h', 1, epoch)],
+            },
+            {
+              name: 'Gemini 4 Argon',
+              buckets: [bucket('gemini-argon-wtu-weekly', 'weekly', 0.25, reset)],
             },
           ],
         },
-      );
-      try {
-        const refreshed = await app.inject({
-          method: 'POST',
-          url: `/api/conversation/backends/refresh?machine_id=${machine_id}`,
-        });
-        expect(refreshed.statusCode).toBe(200);
-        expect(refreshed.json().usage_outcomes).toEqual([
-          { backend_key: 'codex', outcome: 'failed', detail: expect.any(String) },
-          { backend_key: 'claude', outcome: 'succeeded', detail: null },
-          { backend_key: 'antigravity', outcome: 'succeeded', detail: null },
-        ]);
-        const limits = (
-          await app.inject({
-            method: 'GET',
-            url: `/api/conversation/usage/limits?machine_id=${machine_id}`,
-          })
-        ).json();
-        expect(Object.keys(limits)).toEqual(['claude', 'antigravity']);
-        const rows = (backend: string) =>
-          limits[backend].windows.map((window: Record<string, unknown>) => [
-            window.id,
-            window.label,
-            window.usedPercent,
-            window.resetsAt ?? null,
-          ]);
-        expect(rows('antigravity')).toEqual([
-          ['gemini-weekly', '7 days · Gemini', 38, '2026-11-30T21:02:00Z'],
-          ['gemini-5h', '5 hours · Gemini', 35, '2026-11-30T21:02:00Z'],
-          ['3p-weekly', '7 days · Claude and GPT', 0, null],
-          ['3p-5h', '5 hours · Claude and GPT', 0, null],
-          ['gemini-argon-wtu-weekly', '7 days · Gemini 4 Argon', 75, '2026-11-30T21:02:00Z'],
-        ]);
-        expect(rows('claude')).toEqual([
-          ['seven_day', '7 days', 79, '2026-11-28T15:00:00Z'],
-          ['seven_day_fable', '7 days · Fable', 23, '2026-11-28T15:00:00Z'],
-        ]);
-        // Without a machine, Limits reads every machine's observation with the account the
-        // refreshed card named, so the browser can merge one account signed in on several
-        // machines. A later card for another account must not relabel that observation.
-        database.write((tx) =>
-          save_machine_model_list(tx, machine_id, {
-            ...cards.get(claude_key)!,
-            identity: { ...snapshot.identity!, account_label: 'other@example.com' },
+      },
+    });
+    const sources = new Map<string, BackendUsageAdapter>([
+      [
+        antigravity_key,
+        new AntigravityUsageAdapter({
+          run_usage: async () => usage,
+          now: () => new Date('2026-11-26T00:30:00Z'),
+        }),
+      ],
+      [
+        claude_key,
+        // The CLI's get_usage answer as on 26 Nov: no 5-hour window, a weekly and Fable's.
+        new ClaudeUsageAdapter({
+          read_usage: async () => ({
+            rate_limits_available: true,
+            rate_limits: {
+              five_hour: null,
+              seven_day: { utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
+              model_scoped: [
+                { display_name: 'Fable', utilization: 23, resets_at: '2026-11-28T15:00:00Z' },
+              ],
+            },
           }),
-        );
-        const every = (
-          await app.inject({ method: 'GET', url: '/api/conversation/usage/limits' })
-        ).json();
-        expect(
-          every.readings.map((reading: Record<string, unknown>) => [
-            reading.machine_id,
-            reading.backend_key,
-            reading.account_label,
-          ]),
-        ).toEqual([
-          [machine_id, 'claude', 'Machine account'],
-          [machine_id, 'antigravity', 'Machine account'],
-        ]);
-        expect(every.readings[0].machine_name).toEqual(expect.any(String));
-        // The failed codex refresh is served beside the readings, with its time.
-        expect(every.failures).toEqual([
+          now: () => new Date('2026-11-26T00:30:00Z'),
+        }),
+      ],
+    ]);
+    const model = (model_id: string, display_name: string) => ({
+      ...snapshot.available_models[0]!,
+      model_id,
+      display_name,
+    });
+    const cards = new Map<string, BackendSnapshot>([
+      [key, snapshot],
+      [
+        claude_key,
+        {
+          ...snapshot,
+          backend_key: claude_key,
+          available_models: [
+            model('claude-fable-5', 'Fable 5'),
+            model('claude-fable-5-1', 'Fable 5.1'),
+            model('claude-fable-5-2', 'Fable 5.2'),
+            model('claude-opus-5-5', 'Opus 5.5'),
+          ],
+        },
+      ],
+      [
+        antigravity_key,
+        {
+          ...snapshot,
+          backend_key: antigravity_key,
+          available_models: [
+            model('gemini-4-neon', 'Gemini 4 Neon'),
+            model('gemini-4-argon', 'Gemini 4 Argon'),
+          ],
+        },
+      ],
+    ]);
+    const database = fixture();
+    database.write((tx) => seed_machine_lease(tx, machine_id));
+    const state = new BackendStateStore(database);
+    const backend_ids = [key, claude_key, antigravity_key];
+    const runtime: BackendHttpRuntime = {
+      database,
+      backend_state: state,
+      backend_ids,
+      drivers: [],
+      driver_of: () => null,
+      reports_allowance_usage: () => true,
+      backend_snapshots: {
+        retained: () => snapshot,
+        snapshot: async () => snapshot,
+        snapshots: async () => [snapshot],
+        update_backend: vi.fn(),
+      },
+      backend_usage: { refresh: vi.fn() },
+      sign_in: () => null,
+      settled: async () => {},
+      machine_catalog: () => ({
+        retained: (backend_key) => cards.get(backend_key)!,
+        snapshot: async (backend_key) => cards.get(backend_key)!,
+        identity: null,
+        ready: true,
+        owns_conversation: () => false,
+      }),
+      machine_backends: () => ({
+        available: true,
+        async request(request) {
+          if (request.operation === 'capabilities')
+            return { can_sign_in: false, reports_allowance_usage: true };
+          if (request.operation !== 'refresh_usage') return {};
+          if (request.backend_key === key) throw new Error('Codex did not answer');
+          const allowance_usage = sources.get(request.backend_key)!;
+          return run_backend_request(request, { allowance_usage, status: {} as never });
+        },
+      }),
+    };
+    const app = await createApp(
+      loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
+      {
+        database,
+        areas: [
           {
-            machine_id,
-            machine_name: expect.any(String),
-            backend_key: 'codex',
-            outcome: 'failed',
-            detail: expect.any(String),
-            failed_at: expect.any(String),
+            prefix: '/api/conversation',
+            routes: createBackendRoutes(runtime, {
+              available: true,
+              writes: new ConversationHttpWriteScope(),
+            }),
           },
+          {
+            prefix: '/api/conversation/usage',
+            routes: createUsageRoutes({
+              conversation_runtime_available: true,
+              backend_ids,
+              backend_state: state,
+              recorded_usage: {} as never,
+            }),
+          },
+        ],
+      },
+    );
+    try {
+      const refreshed = await app.inject({
+        method: 'POST',
+        url: `/api/conversation/backends/refresh?machine_id=${machine_id}`,
+      });
+      expect(refreshed.statusCode).toBe(200);
+      expect(refreshed.json().usage_outcomes).toEqual([
+        { backend_key: 'codex', outcome: 'failed', detail: expect.any(String) },
+        { backend_key: 'claude', outcome: 'succeeded', detail: null },
+        { backend_key: 'antigravity', outcome: 'succeeded', detail: null },
+      ]);
+      const limits = (
+        await app.inject({
+          method: 'GET',
+          url: `/api/conversation/usage/limits?machine_id=${machine_id}`,
+        })
+      ).json();
+      expect(Object.keys(limits)).toEqual(['claude', 'antigravity']);
+      const rows = (backend: string) =>
+        limits[backend].windows.map((window: Record<string, unknown>) => [
+          window.id,
+          window.label,
+          window.usedPercent,
+          window.resetsAt ?? null,
         ]);
-        expect(every.readings[0].limits).toEqual(limits.claude);
-        // A family window covers each model of its family that no window names exactly, and
-        // cards leave out a window with no reset time.
-        const backends = (
-          await app.inject({
-            method: 'GET',
-            url: `/api/conversation/backends?machine_id=${machine_id}`,
-          })
-        ).json().backends;
-        const covered = (backend: string) =>
-          backends
-            .find((value: { backend_key: string }) => value.backend_key === backend)
-            .cached_usage.windows.map((window: { model_id: string; model_ids: string[] }) => [
-              window.model_id,
-              window.model_ids,
-            ]);
-        expect(covered('claude')).toEqual([
-          [null, []],
-          ['Fable', ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2']],
-        ]);
-        expect(covered('antigravity')).toEqual([
-          ['Gemini', ['gemini-4-neon']],
-          ['Gemini', ['gemini-4-neon']],
-          ['Gemini 4 Argon', ['gemini-4-argon']],
-        ]);
-      } finally {
-        await app.close();
-      }
+      expect(rows('antigravity')).toEqual([
+        ['gemini-weekly', '7 days · Gemini', 38, '2026-11-30T21:02:00Z'],
+        ['gemini-5h', '5 hours · Gemini', 35, '2026-11-30T21:02:00Z'],
+        ['3p-weekly', '7 days · Claude and GPT', 0, null],
+        ['3p-5h', '5 hours · Claude and GPT', 0, null],
+        ['gemini-argon-wtu-weekly', '7 days · Gemini 4 Argon', 75, '2026-11-30T21:02:00Z'],
+      ]);
+      expect(rows('claude')).toEqual([
+        ['seven_day', '7 days', 79, '2026-11-28T15:00:00Z'],
+        ['seven_day_fable', '7 days · Fable', 23, '2026-11-28T15:00:00Z'],
+      ]);
+      // Without a machine, Limits reads every machine's observation with the account the
+      // refreshed card named, so the browser can merge one account signed in on several
+      // machines. A later card for another account must not relabel that observation.
+      database.write((tx) =>
+        save_machine_model_list(tx, machine_id, {
+          ...cards.get(claude_key)!,
+          identity: { ...snapshot.identity!, account_label: 'other@example.com' },
+        }),
+      );
+      const every = (
+        await app.inject({ method: 'GET', url: '/api/conversation/usage/limits' })
+      ).json();
+      expect(
+        every.readings.map((reading: Record<string, unknown>) => [
+          reading.machine_id,
+          reading.backend_key,
+          reading.account_label,
+        ]),
+      ).toEqual([
+        [machine_id, 'claude', 'Machine account'],
+        [machine_id, 'antigravity', 'Machine account'],
+      ]);
+      expect(every.readings[0].machine_name).toEqual(expect.any(String));
+      // The failed codex refresh is served beside the readings, with its time.
+      expect(every.failures).toEqual([
+        {
+          machine_id,
+          machine_name: expect.any(String),
+          backend_key: 'codex',
+          outcome: 'failed',
+          detail: expect.any(String),
+          failed_at: expect.any(String),
+        },
+      ]);
+      expect(every.readings[0].limits).toEqual(limits.claude);
+      // A family window covers each model of its family that no window names exactly, and
+      // cards leave out a window with no reset time.
+      const backends = (
+        await app.inject({
+          method: 'GET',
+          url: `/api/conversation/backends?machine_id=${machine_id}`,
+        })
+      ).json().backends;
+      const covered = (backend: string) =>
+        backends
+          .find((value: { backend_key: string }) => value.backend_key === backend)
+          .cached_usage.windows.map((window: { model_id: string; model_ids: string[] }) => [
+            window.model_id,
+            window.model_ids,
+          ]);
+      expect(covered('claude')).toEqual([
+        [null, []],
+        ['Fable', ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2']],
+      ]);
+      expect(covered('antigravity')).toEqual([
+        ['Gemini', ['gemini-4-neon']],
+        ['Gemini', ['gemini-4-neon']],
+        ['Gemini 4 Argon', ['gemini-4-argon']],
+      ]);
     } finally {
-      rmSync(folder, { recursive: true, force: true });
+      await app.close();
     }
   },
 );
