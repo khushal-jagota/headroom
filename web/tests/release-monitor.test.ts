@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createReleaseMonitor, type ReleaseSnapshot } from "../src/lib/releaseMonitor";
 
+vi.mock("../src/lib/updates/handoff", () => ({
+  prepareUpdateScreenReplacement: vi.fn(async () => {}),
+  isUpdateScreenReplacement: () => false
+}));
+
 function listeners() {
   const handlers = new Map<string, Set<EventListener>>();
   return {

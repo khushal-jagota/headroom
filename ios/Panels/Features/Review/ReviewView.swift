@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Review: the summary screen, or one card with one purpose. The shell's ReviewSession
 /// owns the queue; this screen shows it, reads the next cards ahead and acts on them.
@@ -7,12 +8,11 @@ struct ReviewView: View {
     let session: ReviewSession
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active }
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.contentCovered }
     /// How many cards are read before they reach the screen, the shown one included.
     private static let readAhead = 3
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.reviewVisit) private var reviewVisit
     @Environment(\.openRoute) private var openRoute
     @State private var cardHeight: CGFloat = 180
     private var server: String { LocalStore.server(store.baseURL) }
@@ -25,9 +25,8 @@ struct ReviewView: View {
                 content
             }
         }
-        .onAppear { appeared = true; session.visit(reviewVisit) }
+        .onAppear { appeared = true }
         .onDisappear { appeared = false }
-        .onChange(of: reviewVisit) { _, visit in session.visit(visit) }
         .onChange(of: savedWork.key) { _, _ in restoreSavedWork() }
         .onChange(of: active) { _, active in if active { restoreSavedWork() } }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.note) { await store.refresh() }
@@ -42,7 +41,7 @@ struct ReviewView: View {
     @ViewBuilder private var content: some View {
         if savedWork.key?.server != server { Color.clear }
         else if let item = session.shown {
-            ReviewCardScreen(item: item, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
+            ReviewCardScreen(item: item, presentation: session.exits, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
                 .id("\(item.id)#\(session.exits)").transition(.identity)
         } else if session.loaded {
             ReviewSummaryView(summary: session.summary, workingCount: session.runningWorkerCount, isActive: active) {
@@ -123,6 +122,7 @@ struct ReviewView: View {
 /// it, its entrance and its exit.
 private struct ReviewCardScreen: View {
     let item: ReviewItem
+    let presentation: Int
     let session: ReviewSession
     let savedWork: ReviewSavedWork
     let isActive: Bool
@@ -141,12 +141,13 @@ private struct ReviewCardScreen: View {
         default:
             ReviewProposalCard(item: item, isActive: isActive, savedWork: savedWork, decision: session.decisions.decision(for: item),
                                refusal: session.refusalNotes[item.id], notice: session.notice?.item.id == item.id ? session.notice : nil,
-                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onHold: { session.resolve(item) }, onResolve: resolve)
+                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onHold: { if session.presents(item, at: presentation) { session.resolve(item) } }, onResolve: resolve)
         }
     }
 
     private func skip(_ swipeWidth: CGFloat?) {
         motion.leave(swipeWidth: swipeWidth) {
+            guard session.presents(item, at: presentation) else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { session.skip(item, store: store) }
@@ -156,10 +157,11 @@ private struct ReviewCardScreen: View {
     /// Handled here: the card leaves at once, and the next one follows its exit.
     private func resolve(_ afterExit: (() -> Void)?) {
         // A card already leaving by Skip finishes that exit instead.
-        guard !motion.leaving else { return }
+        guard session.presents(item, at: presentation), !motion.leaving else { afterExit?(); return }
         session.resolve(item)
         motion.leave(swipeWidth: nil) {
             afterExit?()
+            guard session.presents(item, at: presentation) else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { session.finishExit(item) }
@@ -206,37 +208,47 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppStore.self) private var store
 
+    @State private var selectingText = false
+    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 23
+    @ScaledMetric private var recapSize: CGFloat = 14
+
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title).panelsScaledFont(size: 23, relativeTo: .title, weight: .semibold)
-                        .tracking(-0.37).fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(PanelsTheme.Web.strong).frame(maxWidth: .infinity, alignment: .leading)
+                    PanelsSelectableText(title, font: .systemFont(ofSize: titleSize, weight: .semibold),
+                        color: UIColor(PanelsTheme.Web.strong), tracking: -0.37)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityAddTraits(.isHeader)
+                        .modifier(DecisionForegroundFade())
                     if let recap, !recap.isEmpty {
-                        Text((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap))
-                            .panelsScaledFont(size: 14).lineSpacing(5).foregroundStyle(PanelsTheme.Web.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                        PanelsSelectableText((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap),
+                            font: .systemFont(ofSize: recapSize), color: UIColor(PanelsTheme.Web.secondary), lineSpacing: 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 8)
                             .accessibilityLabel("Recap").accessibilityValue(recap)
+                            .modifier(DecisionForegroundFade())
                     }
                     content.padding(.top, 18)
                 }
+                .environment(\.panelsTextSelectionChanged, { selected in
+                    selectingText = selected
+                    if selected { motion.drag = 0; motion.crossedThreshold = false }
+                })
                 .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 28)
                 .offset(x: motion.drag)
                 .opacity(motion.visible && !motion.leaving ? 1 : 0)
                 .allowsHitTesting(!motion.leaving)
                 .simultaneousGesture(DragGesture(minimumDistance: 24)
                     .onChanged { value in
-                        guard !locked, !motion.leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        guard !locked, !selectingText, !motion.leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
                         motion.drag = min(0, value.translation.width)
                         let crossed = -motion.drag > geometry.size.width * ReviewStyle.swipeFraction
                         if crossed && !motion.crossedThreshold { Haptics.light() }
                         motion.crossedThreshold = crossed
                     }
                     .onEnded { value in
-                        guard !locked, !motion.leaving else { return }
+                        guard !locked, !selectingText, !motion.leaving else { return }
                         if -motion.drag > geometry.size.width * ReviewStyle.swipeFraction, abs(value.translation.width) > abs(value.translation.height) * 1.5 {
                             textEntry?.endEditing()
                             onSkip(geometry.size.width)
@@ -248,6 +260,7 @@ struct ReviewCardFrame<Content: View, Dock: View>: View {
             .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(motion.leaving)
+            .modifier(DecisionScrollViewport())
             .safeAreaInset(edge: .bottom, spacing: 0) { dock.opacity(motion.leaving ? 0 : 1).allowsHitTesting(!motion.leaving) }
             .panelsRefreshable { [store, refresh] in await store.refresh(); await refresh?() }
         }

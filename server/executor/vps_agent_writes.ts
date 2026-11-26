@@ -26,6 +26,12 @@ import {
 import { delivery_fate_json } from '../conversation/http.ts';
 import { send_message } from '../message_delivery/service.ts';
 import {
+  read_agent_message,
+  replay_agent_message,
+  retain_published_message_files,
+  write_agent_message_acceptance,
+} from '../message_delivery/data/agent_acceptances.ts';
+import {
   principal as message_principal,
   message_text,
   message_delivery_mode,
@@ -300,6 +306,9 @@ export class AgentWrites {
     identity: ExecutorIdentity,
     published: PublishedFiles | null,
   ): Promise<WireValue<'AcceptanceReceipt'>> {
+    const body = write.arguments.body;
+    if (is_json_object(body) && message_principal(body.target).kind === 'owner')
+      return this.accept_owner_message(envelope, write, principal, identity, published);
     const reserved = this.reserve_dispatch(envelope, write, principal, identity, published);
     if (reserved.previous !== null) return reserved.previous;
     const { recipient, message, mode } = reserved;
@@ -331,6 +340,94 @@ export class AgentWrites {
     return this.store.database.write((tx) =>
       this.finish_dispatch(tx, envelope, result, delivery_disposition(result)),
     );
+  }
+  private async accept_owner_message(
+    envelope: WireValue<'QueuedEnvelope'>,
+    write: WireValue<'CliWrite'>,
+    principal: Principal,
+    identity: ExecutorIdentity,
+    published: PublishedFiles | null,
+  ): Promise<WireValue<'AcceptanceReceipt'>> {
+    const previous = this.store.preflight(envelope, { identity });
+    if (previous !== null) return previous;
+    const body = write.arguments.body;
+    if (!is_json_object(body))
+      throw new PlannerError('validation', 'message body must be an object');
+    const recipient = message_principal(body.target);
+    const message = message_text(body.message);
+    const mode = Object.hasOwn(body, 'mode')
+      ? message_delivery_mode(body.mode)
+      : message_delivery_mode();
+    const files = await retain_published_message_files(published);
+    const operation: NativeMessageOperation = {
+      sender_id: envelope.sender_id,
+      submission_id: envelope.submission_id,
+      in_commit: (tx, conversation_id) => {
+        require_current_incarnation_in_transaction(
+          tx,
+          identity.executor_incarnation,
+          this.store.machine_id,
+        );
+        require_same_agent_owner(tx, write.child, principal);
+        if (conversation_id !== envelope.conversation_id)
+          throw new PlannerError(
+            'agent_forbidden',
+            'sender conversation changed before message acceptance',
+          );
+        const replay = replay_agent_message(tx, envelope, this.store.machine_id, principal);
+        if (replay !== null) return;
+        if (this.store.prior_receipt(tx, envelope, identity) !== null)
+          throw new PlannerError('retry_later', 'Message position changed before acceptance');
+        admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
+        this.store.require_file_owner(tx, envelope);
+        this.store.require_unchanged_files(envelope, published);
+        const receipt: WireValue<'AcceptanceReceipt'> = {
+          sender_id: envelope.sender_id,
+          submission_id: envelope.submission_id,
+          disposition: 'accepted',
+          accepted_at_vps_ms: now_ms(),
+          result: {
+            target: { kind: recipient.kind, id: recipient.id },
+            conversation_id,
+            fate: 'recorded',
+          },
+        };
+        write_agent_message_acceptance(
+          tx,
+          {
+            submission_id: envelope.submission_id,
+            machine_id: this.store.machine_id,
+            sender_id: envelope.sender_id,
+            source_conversation_id: envelope.conversation_id,
+            source: principal,
+            envelope,
+            recipient,
+            mode,
+            message,
+            target_conversation_id: conversation_id,
+            receipt,
+            pending: false,
+          },
+          files,
+        );
+        this.store.write_position(tx, envelope, receipt);
+      },
+    };
+    await send_message(
+      this.conversations,
+      this.store.database,
+      this.clock,
+      { principal, conversationId: envelope.conversation_id },
+      recipient,
+      message,
+      mode,
+      { sender_message_id: envelope.submission_id, recording_receipt: operation },
+    );
+    const accepted = this.store.database.read((sql) =>
+      read_agent_message(sql, envelope.submission_id),
+    );
+    if (accepted === null) throw new Error('owner message completed without durable custody');
+    return accepted.receipt;
   }
   /**
    * Exactly one route run per inbox position. The admitted route and receipt remain owned

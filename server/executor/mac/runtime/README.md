@@ -9,11 +9,9 @@ Failed native closes retain their capabilities. The file worker seals admission,
 `settled()` joins actual worker exit and retains the failure after successful cleanup.
 
 These records live under the executor's `updates/` directory, beside `updates/releases/`.
-The update controller and fixed supervisor will supply their deterministic local record paths.
-Darwin ABI and power-loss durability remain later native checks.
+The update controller and supervisor supply their deterministic local record paths.
 
-`supervisor.ts` keeps the original installation fixed and launches the selected runtime with the same CLI arguments.
-It checks the ready request and revision before promotion. An unconfirmed trial restores the previous selection and handoff.
+`supervisor.ts` starts the selected runtime. On the first candidate start, the old supervisor passes the update to a separate native service. The update job records the previous definition, stops the old service, and starts the candidate supervisor through the new definition. The candidate checks the ready request and revision before promotion. If the trial fails, the update job restores the saved service definition and selection. A joined Mac also restores the previous signed app.
 The selected runtime's `bin` leads the child PATH. Callers retain the invocation owners and close files after supervision settles.
 
 `FilesService.read_runtime_revision` and `extract_runtime` accept an optional expected target through the owned files worker.

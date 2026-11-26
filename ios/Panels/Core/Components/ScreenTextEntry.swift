@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A visible screen owns focus. Draft content remains with its existing model.
 struct ScreenTextEntryScope<Content: View>: View {
@@ -15,7 +16,10 @@ struct ScreenTextEntryScope<Content: View>: View {
     let focus: FocusState<UUID?>.Binding
 
     func requestFocus(_ id: UUID) { focus.wrappedValue = id }
-    func endEditing() { focus.wrappedValue = nil }
+    func endEditing() {
+        focus.wrappedValue = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
 
     func endEditingBeforeNavigation(_ navigate: () -> Void) {
         endEditing()

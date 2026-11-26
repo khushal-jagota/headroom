@@ -8,8 +8,11 @@ import type { Database } from '../../core/database/contracts.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { FileUpdateAttemptStore } from './attempts.ts';
 import type { MachineUpdateState, PublishedUpdate } from './contracts.ts';
+import { GitHubUpdateProvider } from './provider.ts';
 import { UpdateService } from './service.ts';
 import { attempt_body } from './routes.ts';
+import { WorkspaceAdmission } from '../../conversation/workspace_admission.ts';
+import { UpdateBarrier } from '../update_barrier.ts';
 
 test('a newer offer retains machine failure and recomputes interruption at the press', async () => {
   const root = mkdtempSync(join(tmpdir(), 'update-impact-'));
@@ -44,13 +47,24 @@ test('a newer offer retains machine failure and recomputes interruption at the p
   };
   const interrupted = vi.fn().mockReturnValue(['First agent']);
   const attempts = new FileUpdateAttemptStore(join(root, 'attempt.json'), () => {});
+  let now = 10_000;
+  const provider = new GitHubUpdateProvider('owner/repo', null);
+  const available = vi
+    .spyOn(provider, 'available')
+    .mockRejectedValueOnce(new Error('catalog unavailable'))
+    .mockResolvedValue(null);
+  const admission = new WorkspaceAdmission();
+  const barrier = new UpdateBarrier(join(root, 'barrier'));
   const service = new UpdateService({
-    provider: null,
+    update_barrier: barrier,
+    provider,
+    now: () => now,
     attempts,
     runtime: {
       database: {} as Database,
       conversation: () =>
         ({
+          workspace_admission: admission,
           workspace_activity: () => 'busy',
           update_interrupted_work: interrupted,
         }) as unknown as ConversationSystem,
@@ -81,21 +95,41 @@ test('a newer offer retains machine failure and recomputes interruption at the p
       ],
       retry_machine: () => {},
       prepare: async () => {},
-      phase: () => 'failed',
-      reported_at: () => null,
-      configured: () => true,
     },
   });
-  vi.spyOn(service, 'ready_release').mockReturnValue(release);
   vi.spyOn(service as unknown as { launch(): void }, 'launch').mockImplementation(() => {});
   try {
     service.start();
-    vi.mocked(service.ready_release).mockReturnValueOnce(null);
+    // Distinct gap: terminal attempt state alone does not prove admission reopened.
+    expect(service.status().writes_admitted).toBe(true);
+    admission.close_starts();
+    expect(service.status().writes_admitted).toBe(false);
+    admission.reopen();
+    barrier.close();
+    expect(service.status().writes_admitted).toBe(false);
+    barrier.reopen();
+    admission.seal();
+    expect(service.status().writes_admitted).toBe(false);
+    admission.reopen();
+    expect(service.status().writes_admitted).toBe(true);
     expect(service.status()).toMatchObject({
-      state: 'up_to_date',
+      state: 'not_checked',
       activity: 'busy',
       allowed_actions: [],
     });
+    await expect(service.prefetch()).rejects.toThrow('catalog unavailable');
+    expect(service.status().state).toBe('check_unavailable');
+    now += 899;
+    service.status();
+    await Promise.resolve();
+    expect(available).toHaveBeenCalledTimes(1);
+    now += 1;
+    service.status();
+    await Promise.resolve();
+    expect(available).toHaveBeenCalledTimes(2);
+    await service.prefetch();
+    expect(service.status().state).toBe('up_to_date');
+    vi.spyOn(service, 'ready_release').mockReturnValue(release);
     const offered = service.status();
     expect(offered).toMatchObject({
       state: 'available',

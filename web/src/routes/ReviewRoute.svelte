@@ -21,7 +21,7 @@
   import { reviewMessageHref, unreadOwnerMessages } from "../lib/review/messages";
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
-  import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
+  import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory} from "../lib/review/return";
   import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey} from "../lib/navigation/contracts";
 
@@ -62,7 +62,6 @@
   // leaves at once. This holds only until the queue's refresh arrives: from then on the queue
   // is the truth, and a newer message in the same conversation is shown.
   let readMessages=$state<Record<string,boolean>>({});
-  let returnLabel=$derived.by(()=>{void reviewRequest;return reviewReturnLabel(displayed,navigation.owner.getRequest(),skippedHistory);});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
   // keystroke reaches.
@@ -110,10 +109,13 @@
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   // The queue's count still holds what was answered on this screen until its refresh arrives.
   // The final screen must not say that something waits for it.
-  let answeredHere = $derived((review?.items ?? []).filter(item => undecided(item) === null).length);
-  let waitingCount = $derived.by(() => {
-    const count = displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null;
-    return count === null ? null : Math.max(0, count - answeredHere);
+  let finalSummary = $derived.by(() => {
+    void reviewRequest;
+    const answered=(review?.items ?? []).filter(item=>undecided(item)===null);
+    const summary=currentReviewSummary(displayed,navigation.owner.getRequest(),skippedHistory,answered.length);
+    const history=new Set(skippedHistory.map(key=>JSON.stringify(key)));
+    const answeredSkipped=answered.filter(item=>history.has(JSON.stringify(reviewHistoryKey(item)))).length;
+    return remainingReviewSummary(summary,answered.length-answeredSkipped,answeredSkipped);
   });
   let finalLatched = $state(false);
   let returning = $state(false);
@@ -473,13 +475,13 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- The card stays drawn under an artifact, so the artifact can drop onto it. It takes no input meanwhile. -->
-    <section class="review-screen" data-screen="review" inert={Boolean(artifact.shown)} bind:this={screenElement} onclick={artifact.claimPress}>
-      <ResourceState shape="block" loading={!opened} hasData={opened} loadingText="Loading review...">
+    <section class="review-screen" class:review-screen--final={showFinal} data-screen="review" inert={Boolean(artifact.shown)} bind:this={screenElement} onclick={artifact.claimPress}>
+      <ResourceState shape="block" layout={showFinal ? "fill" : "flow"} loading={!opened} hasData={opened} loadingText="Loading review...">
         {#if opened}
         <ReviewDeck {deck} view={viewKey} final={showFinal} bind:element={deckItemElement}>
           {#key coverEpoch}
           {#if showFinal}
-            <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
+            <ReviewFinalState summary={finalSummary} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
           {:else if currentItem}
             {#if currentItem.review_item_type === "message"}
               {@const message = currentItem}
@@ -543,5 +545,7 @@
      scrolling, so it covers what is on screen however far the card is scrolled. */
   .review-root { position:relative; flex:1; min-height:0; display:flex; flex-direction:column; }
   .review-scroll { flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; }
+  .review-scroll:has(.review-screen--final) { container-type:size; }
+  .review-screen--final { width:100%; min-height:0; padding:var(--page-top) 0 0; }
   .review-layer { position:absolute; inset:0; z-index:1; }
 </style>

@@ -5,8 +5,8 @@
   import MachineSymbol from "./MachineSymbol.svelte";
   let { locale, machineId, accessible = true, showName = false }: { locale?: TicketLocale; machineId?: string; accessible?: boolean; showName?: boolean } = $props();
   const machines = createQuery(() => queries.machines());
-  const machine = $derived(machines.data?.machines.find(item => machineId ? item.machine_id === machineId : item.is_home === (locale !== "macos")));
-  const name = $derived(machine?.name ?? (machineId ? "Machine unavailable" : machineName(locale ?? "vps")));
+  const machine = $derived(machines.data?.machines.find(item => machineId && item.machine_id === machineId));
+  const name = $derived(machineName(locale, machineId, machines.data?.machines));
 </script>
 <span class="machine-identity" class:with-name={showName} data-ticket-locale={locale} data-machine-id={machineId} data-machine-color={machine?.color} role={accessible ? "img" : undefined} aria-label={accessible ? `Runs on ${name}` : undefined} title={`Runs on ${name}`} aria-hidden={accessible ? undefined : "true"}>
   <MachineSymbol {locale} icon={machine?.icon} />{#if showName}<span>{name}</span>{/if}

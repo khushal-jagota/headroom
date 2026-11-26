@@ -14,12 +14,14 @@ import type { ScreenPresentation } from './screens/controller';
 // Node gives a URL of a custom scheme the origin "null", so pages are told apart by host.
 export const SCREENS_HOST = 'app';
 export const ADDRESS_PAGE_HOST = 'setup';
+export const SCREEN_RECOVERY_HOST = 'recovery';
+export const SCREEN_RECOVERY_URL = `panels://${SCREEN_RECOVERY_HOST}/`;
 export const SCREENS_URL = `panels://${SCREENS_HOST}/`;
 export const ADDRESS_PAGE_URL = `panels://${ADDRESS_PAGE_HOST}/`;
 
 /** The packed bundle: `web/dist`, `assets` and `static`, and the address page. */
 export const PACKED = join(__dirname, 'packed');
-let presentation: ScreenPresentation = { root: PACKED, appSha: null, serverUpdate: false };
+let presentation: ScreenPresentation = { root: PACKED, appSha: null, serverUpdate: false, screenRecovery: false };
 export function selectScreenPresentation(value: ScreenPresentation): void { presentation = value; }
 
 const MIME: Record<string, string> = {
@@ -62,6 +64,7 @@ export function handleAppScheme(): void {
       if (presentation.serverUpdate) return packedFile(url.pathname, serverUpdateFile);
       return packedFile(url.pathname, screensFile, presentation.root, presentation.appSha);
     }
+    if (url.host === SCREEN_RECOVERY_HOST) return packedFile(url.pathname, screenRecoveryFile);
     if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, screensFile);
     return notFound();
   });
@@ -95,6 +98,15 @@ function screensFile(pathname: string): string | null {
   return null;
 }
 
+function screenRecoveryFile(pathname: string): string | null {
+  if (pathname === '/' || pathname === '/index.html') return 'screen_recovery_page/index.html';
+  if (pathname === '/recovery.js') return 'screen_recovery_page/recovery.js';
+  if (pathname === '/recovery.css') return 'screen_recovery_page/recovery.css';
+  if (pathname === '/assets/tokens.css' || pathname === '/assets/app.css'
+    || pathname === '/assets/fonts/InterVariable.woff2') return pathname.slice(1);
+  return null;
+}
+
 function serverUpdateFile(pathname: string): string | null {
   if (pathname === '/' || pathname === '/index.html') return 'server_update_page/index.html';
   if (pathname === '/server-update.js') return 'server_update_page/server-update.js';
@@ -121,7 +133,8 @@ async function packedFile(pathname: string, choose: (decoded: string) => string 
     let body = await readFile(file);
     if (relative === 'web/dist/index.html' && appSha) {
       const escaped = appSha.replace(/[&<>"']/g, value => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[value]!);
-      body = Buffer.from(body.toString('utf8').replace('</head>', `<meta name="panels-app-sha" content="${escaped}"></head>`));
+      const address = (serverAddress() ?? "").replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[value]!);
+      body = Buffer.from(body.toString('utf8').replace('</head>', `<meta name="panels-app-sha" content="${escaped}"><meta name="panels-server-address" content="${address}"></head>`));
     }
     return new Response(body, {
       headers: { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' },

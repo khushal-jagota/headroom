@@ -24,13 +24,18 @@ export async function publish_github_release(options: GitHubPublicationOptions):
   const json = async (path: string) => record(JSON.parse(await readFile(path, 'utf8')));
   const receipt = await json(join(root, 'receipt/publication.json'));
   const audit = await json(join(root, 'receipt/publication-audit.json'));
+  const publisher = record(audit.publishing_run) as unknown as PublicationSourceRun;
+  require_publication_run(publisher);
   const source = record(audit.source_run) as unknown as PublicationSourceRun;
   require_publication_run(source);
   if (
     source.repository !== repository ||
-    source.source_sha !== source_sha ||
+    publisher.repository !== repository ||
+    publisher.source_sha !== source_sha ||
+    publisher.run_id !== source.run_id ||
+    publisher.run_attempt !== source.run_attempt ||
     receipt.publication_run_id !== Number(source.run_id) ||
-    record(receipt.manifest).app_sha !== source_sha ||
+    record(receipt.manifest).app_sha !== source.source_sha ||
     !is_record(receipt.parts)
   )
     throw new Error('Permanent publication differs from checked source');
@@ -54,14 +59,14 @@ export async function publish_github_release(options: GitHubPublicationOptions):
     }
     return record(await response.json());
   };
-  const tag = `server-${source_sha}-${source.run_id}-${source.run_attempt}`;
+  const tag = `server-${source.source_sha}-${source.run_id}-${source.run_attempt}`;
   const draft = await request(
     `${api}/releases`,
     'POST',
     JSON.stringify({
       tag_name: tag,
-      target_commitish: source_sha,
-      name: `Panels server ${source_sha.slice(0, 12)}`,
+      target_commitish: source.source_sha,
+      name: `Panels server ${source.source_sha.slice(0, 12)}`,
       draft: true,
       prerelease: false,
       make_latest: 'false',
@@ -97,6 +102,7 @@ export async function publish_github_release(options: GitHubPublicationOptions):
   const permanent: Record<string, unknown> = {
     ...receipt,
     source_run: source,
+    publishing_run: publisher,
     artifact_source: 'github-release',
     expires_at: null,
     artifact_id: await checked_zip('app.zip', receipt.artifact_id),

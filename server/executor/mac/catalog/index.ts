@@ -310,7 +310,6 @@ export class MacCatalog {
           parse_backend_instance_id(request.backend_key),
           {
             refresh: request.refresh,
-            discover_update_advisory: false,
             signal,
           },
         );

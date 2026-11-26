@@ -1,6 +1,10 @@
 /** One admission owner separates new starts from already accepted saves. */
 import type { WorkspaceAdmission as HttpWorkspaceAdmission } from '../core/http/middleware.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { PlannerError } from '../core/contracts.ts';
+
 export class WorkspaceAdmission implements HttpWorkspaceAdmission {
+  private readonly send_scope = new AsyncLocalStorage<{ active: boolean }>();
   private _closed = false;
   private _starts_closed = false;
   private _active = 0;
@@ -13,6 +17,12 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
   }
   get starts_closed(): boolean {
     return this._starts_closed;
+  }
+  refusal(): PlannerError {
+    return new PlannerError(
+      'update_in_progress',
+      'Workspace admission is closed for an owner update.',
+    );
   }
   close_starts(): boolean {
     if (this._closed || this._starts_closed) return false;
@@ -27,6 +37,11 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
     this._closed = this._starts_closed = true;
   }
 
+  /** A send handler retains its admission through content preparation and dispatch. */
+  run_send<T>(operation: (admitted: boolean) => T): T {
+    return this.operation(operation, { starts: true });
+  }
+
   operation(options?: { starts?: boolean }): ReturnType<HttpWorkspaceAdmission['operation']>;
   operation<T>(operation: (admitted: boolean) => T, options?: { starts?: boolean }): T;
   operation<T>(
@@ -37,7 +52,8 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
     const starts = (
       operation === undefined ? (operation_or_options as { starts?: boolean } | undefined) : options
     )?.starts;
-    const admitted = !this._closed && !(starts && this._starts_closed);
+    const inherited = this.send_scope.getStore()?.active === true;
+    const admitted = !this._closed && !(starts && this._starts_closed && !inherited);
     if (admitted) this._active += 1;
     let released = false;
     const release = () => {
@@ -56,15 +72,20 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
       }
     };
     if (operation === undefined) return { admitted, release };
+    const scope = admitted && starts && !inherited ? { active: true } : null;
+    const finish = () => {
+      if (scope) scope.active = false;
+      release();
+    };
     let result: T;
     try {
-      result = operation(admitted);
+      result = scope ? this.send_scope.run(scope, () => operation(admitted)) : operation(admitted);
     } catch (error) {
-      release();
+      finish();
       throw error;
     }
-    if (result instanceof Promise) return result.finally(release) as T;
-    release();
+    if (result instanceof Promise) return result.finally(finish) as T;
+    finish();
     return result;
   }
 

@@ -1,32 +1,12 @@
 /** Repository-scoped external reads. Credentials stay outside records and errors. */
-import { readFileSync, createWriteStream } from 'node:fs';
-import { mkdtemp, open, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Readable } from 'node:stream';
-import type { ReadableStream } from 'node:stream/web';
-import { pipeline } from 'node:stream/promises';
-import { parseIsoDatetime } from '../../core/clock.ts';
+import { open } from 'node:fs/promises';
 import type { ArtifactSource, PublishedUpdate, UpdateProvider } from './contracts.ts';
+import { UPDATE_AVAILABILITY_REFRESH_SECONDS } from './configuration.ts';
 import { is_object, parse_release } from './codec.ts';
-import { instant } from './logic/experience.ts';
-import { with_zip_member } from './zip.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
-import { TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
+import { release_request_headers, TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
 
-function repository_stream(response: Response, message: string): Readable {
-  if (response.body === null) throw new Error(message);
-  return Readable.from(
-    (async function* () {
-      try {
-        for await (const chunk of Readable.fromWeb(response.body! as ReadableStream)) yield chunk;
-      } catch (error) {
-        throw new Error(message, { cause: error });
-      }
-    })(),
-  );
-}
 /** Logs a failed body cancel. An abort is expected here because the request controller aborts first. */
 function cancel_failed(error: unknown): void {
   if (error instanceof Error && error.name === 'AbortError') return;
@@ -43,15 +23,13 @@ function list(value: unknown): Record<string, unknown>[] {
 }
 export interface GitHubUpdateProviderOptions {
   fetch?: typeof fetch;
-  temporary_directory?: string;
   target?: RuntimeTarget;
 }
 export class GitHubUpdateProvider implements UpdateProvider {
   readonly repository: string;
+  readonly refresh_interval_seconds: number;
   private readonly token_file: string | null;
   private readonly fetch: typeof fetch;
-  private readonly temporary_directory: string;
-  private publication_cache: PublishedUpdate | null = null;
   private readonly target: RuntimeTarget;
   constructor(
     repository: string,
@@ -61,38 +39,19 @@ export class GitHubUpdateProvider implements UpdateProvider {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid update repository');
     this.repository = repository;
     this.token_file = token_file;
+    this.refresh_interval_seconds =
+      token_file === null ? 15 * 60 : UPDATE_AVAILABILITY_REFRESH_SECONDS;
     this.fetch = options.fetch ?? globalThis.fetch;
-    this.temporary_directory = options.temporary_directory ?? tmpdir();
     this.target = options.target ?? LINUX_HOME;
   }
-  private headers(): Record<string, string> {
-    const token = this.token_file === null ? '' : readFileSync(this.token_file, 'utf8').trim();
-    if (!token) throw new Error('The repository update credential is unavailable.');
-    return { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
-  }
-  private request(
-    path: string,
-    parameters: Record<string, string>,
-    missing_ok: true,
-  ): Promise<Response | null>;
-  private request(path: string, parameters?: Record<string, string>): Promise<Response>;
-  private request(
-    path: string,
-    parameters: Record<string, string>,
-    missing_ok: false,
-    signal?: AbortSignal,
-    accept?: string,
-  ): Promise<Response>;
   private async request(
     path: string,
     parameters: Record<string, string> = {},
-    missing_ok = false,
     signal?: AbortSignal,
     accept?: string,
-  ): Promise<Response | null> {
+  ): Promise<Response> {
     signal?.throwIfAborted();
-    const headers = this.headers();
-    if (accept !== undefined) headers.Accept = accept;
+    const headers = release_request_headers(this.token_file, accept);
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     let response: Response;
@@ -126,11 +85,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
         cause: error,
       });
     }
-    if (missing_ok && response.status === 404) {
-      controller.abort();
-      await response.body?.cancel().catch(cancel_failed);
-      return null;
-    }
     if (!response.ok) {
       controller.abort();
       await response.body?.cancel().catch(cancel_failed);
@@ -163,13 +117,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
       headers: response.headers,
     });
   }
-  private async json(
-    path: string,
-    parameters: Record<string, string> = {},
-    signal?: AbortSignal,
-  ): Promise<Record<string, unknown>> {
-    return this.response_json(await this.request(path, parameters, false, signal));
-  }
   private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
       return record(JSON.parse(await response.text()));
@@ -177,7 +124,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       throw new Error('The repository update service refused the operation.', { cause: error });
     }
   }
-  async available(): Promise<PublishedUpdate | null> {
+  async available(proof_artifact_id?: number): Promise<PublishedUpdate | null> {
     const publications: Record<string, unknown>[] = [];
     for (let page = 1; ; page++) {
       const response = await this.request('releases', { per_page: '100', page: String(page) });
@@ -203,12 +150,15 @@ export class GitHubUpdateProvider implements UpdateProvider {
     for (const { publication } of eligible) {
       const assets = list(publication.assets);
       const proof = assets.find((asset) => asset.name === 'publication.json');
-      if (proof === undefined) continue;
+      if (
+        proof === undefined ||
+        (proof_artifact_id !== undefined && proof.id !== proof_artifact_id)
+      )
+        continue;
       const payload = await this.response_json(
         await this.request(
           `releases/assets/${proof.id}`,
           {},
-          false,
           undefined,
           'application/octet-stream',
         ),
@@ -252,7 +202,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       let selected = payload;
       if (this.target.system === 'darwin') {
         if (!is_object(payload.mac_home)) continue;
-        selected = { ...payload, ...payload.mac_home, mac: null };
+        selected = { ...payload, ...payload.mac_home };
       }
       const release = parse_release({ ...selected, proof_artifact_id: proof.id });
       if (
@@ -273,91 +223,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
     }
     return null;
   }
-  async publication(run_id: number): Promise<PublishedUpdate | null> {
-    const run = await this.json(`actions/runs/${run_id}`);
-    if (
-      run.head_branch !== 'main' ||
-      run.event !== 'push' ||
-      run.conclusion !== 'success' ||
-      !is_object(run.head_repository) ||
-      run.head_repository.full_name !== this.repository ||
-      run.path !== TRUSTED_RELEASE_WORKFLOW
-    )
-      return null;
-    const artifacts = await this.json(`actions/runs/${run_id}/artifacts`, {
-      per_page: '100',
-    });
-    const by_name = new Map(
-      list(artifacts.artifacts)
-        .filter((artifact) => artifact.expired === false)
-        .map((artifact) => [artifact.name, artifact]),
-    );
-    const proof = by_name.get('panels-publication-proof'),
-      app = by_name.get(this.target.system === 'darwin' ? 'panels-mac-home' : 'panels-app');
-    if (proof === undefined || app === undefined) return null;
-    let release = this.publication_cache;
-    if (
-      release === null ||
-      release.publication_run_id !== run_id ||
-      release.artifact_id !== app.id ||
-      release.proof_artifact_id !== proof.id
-    ) {
-      const directory = await mkdtemp(join(this.temporary_directory, 'panels-update-proof-'));
-      try {
-        const path = join(directory, 'proof.zip');
-        const response = await this.request(`actions/artifacts/${proof.id}/zip`);
-        await pipeline(
-          repository_stream(
-            response,
-            'The repository update service is unavailable or its result is uncertain.',
-          ),
-          createWriteStream(path, { flags: 'wx' }),
-        );
-        const payload = await with_zip_member(path, 'publication.json', async (stream) => {
-          const chunks: Buffer[] = [];
-          for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-          return record(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        });
-        let selected = payload;
-        if (this.target.system === 'darwin') {
-          if (!is_object(payload.mac_home)) return null;
-          selected = { ...payload, ...payload.mac_home, mac: null };
-        }
-        selected.proof_artifact_id = proof.id;
-        release = parse_release(selected);
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
-    }
-    if (
-      release.publication_run_id !== run_id ||
-      release.artifact_id !== app.id ||
-      release.manifest.app_sha !== run.head_sha ||
-      (release.mac !== null && by_name.get('panels-mac-runtime')?.id !== release.mac.artifact_id)
-    )
-      throw new Error('Publication identity differs from trusted repository evidence.');
-    if (
-      release.expires_at === null ||
-      instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n
-    )
-      return null;
-    if (release.manifest.runtime_contract === null) return null;
-    if (
-      release.manifest.runtime_contract.system !== this.target.system ||
-      release.manifest.runtime_contract.architecture !== this.target.architecture
-    )
-      throw new Error('Publication runtime target differs from this home');
-    if (
-      this.target.system === 'darwin' &&
-      (release.manifest.runtime_contract.version !== 2 ||
-        release.manifest.runtime_contract.system !== 'darwin' ||
-        release.manifest.runtime_contract.architecture !== 'arm64' ||
-        release.manifest.runtime_contract.role !== 'home')
-    )
-      throw new Error('Publication runtime target differs from this home');
-    this.publication_cache = release;
-    return release;
-  }
   async download_artifact(
     artifact_id: number,
     destination: string,
@@ -366,12 +231,16 @@ export class GitHubUpdateProvider implements UpdateProvider {
   ): Promise<void> {
     signal?.throwIfAborted();
     if (source === undefined) {
-      const metadata = await this.json(`actions/artifacts/${artifact_id}`, {}, signal);
+      const metadata = await this.response_json(
+        await this.request(`actions/artifacts/${artifact_id}`, {}, signal),
+      );
       signal?.throwIfAborted();
       if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
     }
-    const headers = this.headers();
-    if (source === 'github-release') headers.Accept = 'application/octet-stream';
+    const headers = release_request_headers(
+      this.token_file,
+      source === 'github-release' ? 'application/octet-stream' : undefined,
+    );
     const controller = new AbortController();
     const request_signal = signal
       ? AbortSignal.any([controller.signal, signal])

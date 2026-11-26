@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
 import {
   attempt_path,
   exclusive_existing_lock,
+  read_record_json,
   replace_existing_json,
   utc_now,
 } from '../attempts.ts';
@@ -22,28 +22,32 @@ export class InstallationRecord {
   }
   read(): Record<string, unknown> {
     assert_installer_path(this.path);
-    const value = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(this.path)),
-    );
+    const value = read_record_json(this.path);
     if (!is_object(value)) throw new TypeError('update attempt must be an object');
     return value;
+  }
+  /** Caller holds the journal lock. Preserve fields written by earlier releases. */
+  private write_step(current: Record<string, unknown>, step: string): void {
+    const now = utc_now();
+    assert_installer_path(this.path);
+    replace_existing_json(this.path, {
+      ...current,
+      steps: { ...(is_object(current.steps) ? current.steps : {}), [step]: now },
+      updated_at: now,
+    });
   }
   record(step: string, state?: string, detail: string | null = null): void {
     assert_installer_path(this.lock_path);
     exclusive_existing_lock(this.lock_path, () => {
       const current = this.read();
       if (current.attempt_id !== this.request.attempt_id) return;
-      const now = utc_now();
-      current.steps = { ...(is_object(current.steps) ? current.steps : {}), [step]: now };
       if (state !== undefined) {
         current.state = state;
         current.detail = detail;
       }
       // The installer unit's journal keeps the reason when no app returns to report it.
       if (state === 'failed') console.error(`Update failed: ${detail ?? 'no reason was recorded'}`);
-      current.updated_at = now;
-      assert_installer_path(this.path);
-      replace_existing_json(this.path, current);
+      this.write_step(current, step);
     });
   }
   /** The rollback restores this snapshot, so the record names it before the swap. */
@@ -53,23 +57,18 @@ export class InstallationRecord {
       const current = this.read();
       if (current.attempt_id !== this.request.attempt_id)
         throw new Error('The update attempt changed before its snapshot was recorded');
-      const now = utc_now();
       current.backup = snapshot;
-      current.steps = { ...(is_object(current.steps) ? current.steps : {}), backup: now };
-      current.updated_at = now;
-      assert_installer_path(this.path);
-      replace_existing_json(this.path, current);
+      this.write_step(current, 'backup');
     });
   }
   claim(): Record<string, unknown> | null {
     assert_installer_path(this.lock_path);
-    const current = exclusive_existing_lock(this.lock_path, () => {
-      const value = this.read();
-      return value.attempt_id === this.request.attempt_id && value.state === 'installing'
-        ? value
-        : null;
+    return exclusive_existing_lock(this.lock_path, () => {
+      const current = this.read();
+      if (current.attempt_id !== this.request.attempt_id || current.state !== 'installing')
+        return null;
+      this.write_step(current, 'installer_started');
+      return current; // The caller needs to know whether this step existed before the claim.
     });
-    if (current !== null) this.record('installer_started');
-    return current;
   }
 }

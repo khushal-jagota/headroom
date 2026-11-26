@@ -12,7 +12,7 @@ export interface EnvironmentRuntime {
   readonly mac_updates?: MacUpdateServiceContract;
   readonly update_barrier?: UpdateBarrier;
   /** Startup and bounded retry probe; holds the installer lock during orphan recovery. */
-  recover_update_barrier?(): void;
+  recover_update_barrier?(): void | Promise<void>;
   update_attempt_id?(): string;
   /** Only an admitted waiting release can supply a prefetched screen snapshot. */
   waiting_screens_root?(): string | null;

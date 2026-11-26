@@ -9,7 +9,9 @@ import SwiftUI
     /// Unfinished Goal edits survive route pop/reentry for this app session only.
     let goalEdits = PageSessionRoute()
     let updateActions = UpdateActionsState()
-    var client: APIClient { APIClient(baseURL: baseURL, session: session) }
+    let serverConnection: ServerConnection
+    var contentCovered: Bool { serverConnection.isCovered || NativeBuildGate.requiresUpdate(baseURL) }
+    var client: APIClient { APIClient(baseURL: baseURL, session: session, serverConnection: serverConnection) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.
     var managers: [ManagerSummary] = []
@@ -23,8 +25,9 @@ import SwiftUI
     var workspaceHidden: [String: Int] = [:]
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
     var updateResource: ResourceHandle<PanelsUpdateStatus> { resources.handle(UpdateResources.status) }
-    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    private var machinesResource: ResourceHandle<MachineCatalog> { resources.handle(ChiefResources.machines) }
+    var machines: [MachineCatalog.Machine] { machinesResource.value?.machines ?? [] }
     private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
     /// The server's driver list; nil until it arrives, or when the server has none.
     var drivers: DriverCatalog? { driversResource.value }
@@ -42,11 +45,10 @@ import SwiftUI
     var executorHealth: ExecutorHealth? { healthResource.value }
     var updateStatus: PanelsUpdateStatus? { updateResource.value }
     var updateFailure: ServerReadFailure? { updateResource.failure }
-    var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
     var serverUnreachable: Bool {
         errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
-            deploymentResource.failure?.isServerUnreachable == true || updateResource.failure?.isServerUnreachable == true
+            updateResource.failure?.isServerUnreachable == true
     }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
@@ -91,8 +93,9 @@ import SwiftUI
     private var viewReading = false
     private var viewReadsStarted = 0
 
-    init(baseURL: URL, session: URLSession = .shared) {
+    init(baseURL: URL, session: URLSession = .shared, serverConnection: ServerConnection? = nil) {
         self.session = session
+        self.serverConnection = serverConnection ?? ServerConnection(server: baseURL)
         self.baseURL = baseURL
         restore()
     }
@@ -119,6 +122,7 @@ import SwiftUI
         displayGeneration += 1
         displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
         self.baseURL = baseURL
+        serverConnection.configure(server: baseURL)
         updateActions.reset()
         resources.configure(api: client)
         SettingsServerAddress.save(baseURL)
@@ -371,8 +375,9 @@ import SwiftUI
         runGeneration += 1
         let generation = runGeneration
         running = true
-        let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource
-        chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
+        serverConnection.begin()
+        let chief = chiefResource, updates = updateResource, health = healthResource, drivers = driversResource, machines = machinesResource
+        chief.acquire(); updates.acquire(); health.acquire(); drivers.acquire(); machines.acquire()
         resources.start()
         // An earlier run's streams close now, so a new run never follows beside them.
         closeStreams()
@@ -384,9 +389,10 @@ import SwiftUI
         hasRun = true
         defer {
             updateReads.cancel()
-            chief.release(); deployment.release(); updates.release(); health.release(); drivers.release()
+            chief.release(); updates.release(); health.release(); drivers.release(); machines.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
+                serverConnection.pause()
                 resources.stop(); running = false; closeStreams(); connection = "Connecting"
             }
         }
@@ -440,6 +446,7 @@ import SwiftUI
 
     private func consume(_ request: ViewRequest, api: APIClient, stream: Int) async -> ViewStreamEnd {
         let generation = runGeneration
+        let connectionAttempt = serverConnection.attempt(server: api.baseURL)
         defer {
             if pendingStream?.id == stream { pendingStream = nil }
             lastEndedStream = max(lastEndedStream, stream)
@@ -484,12 +491,15 @@ import SwiftUI
         } catch {
             if Task.isCancelled || generation != runGeneration || api.baseURL != baseURL { return .cancelled }
             // A replacement that fails leaves the followed stream as it was.
-            if activeStream?.id == stream { errors["Navigation"] = ServerReadFailure(error) }
+            if activeStream?.id == stream {
+                errors["Navigation"] = ServerReadFailure(error)
+                serverConnection.failed(error, attempt: connectionAttempt)
+            }
             return .failed
         }
     }
 
-    /// Pull to refresh. Chief settings and deployment read again, and the view opens a
+    /// Pull to refresh. Chief settings and update status read again, and the view opens a
     /// new stream, whose first frame is a fresh snapshot. The pull ends when that
     /// snapshot lands, or when the new stream ends without one. Without a foreground
     /// stream, one snapshot is read.
@@ -525,7 +535,7 @@ import SwiftUI
         }
     }
 
-    /// Refresh after confirmed writes. Chief settings and deployment read again. The
+    /// Refresh after confirmed writes. Chief settings and update status read again. The
     /// view follows its stream, which carries the write; a stream that is not current reconnects now. Without a
     /// foreground stream, one snapshot is read.
     func refresh() async {
@@ -546,10 +556,10 @@ import SwiftUI
         if probing { await resources.reconcile() }
         else {
             async let chief: Void = chiefResource.refresh()
-            async let deployment: Void = deploymentResource.refresh()
             async let health: Void = healthResource.refresh()
             async let updates: Void = updateResource.refresh()
-            _ = await (chief, deployment, health, updates)
+            async let machines: Void = machinesResource.refresh()
+            _ = await (chief, health, updates, machines)
         }
     }
 

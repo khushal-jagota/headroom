@@ -35,7 +35,7 @@ function snapshot(label: string, ready = true): { digest: string; payload: Scree
 
 test('server screens swap fixed-name assets and recover from an unready copy', async () => {
   const started = Date.now();
-  const copies = { A: snapshot('A'), B: snapshot('B'), C: snapshot('C', false) };
+  const copies = { A: snapshot('A'), B: snapshot('B'), C: snapshot('C', false), D: snapshot('D') };
   let current: keyof typeof copies = 'A';
   let waiting: keyof typeof copies | null = 'B';
   const downloads: { digest: string; identity: string | undefined; origin: string | undefined }[] = [];
@@ -106,15 +106,23 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
     current = 'C';
     await expect(page.locator('h1')).toHaveText('Screen C', { timeout: 35_000 });
     await expect(page.locator('#script')).toHaveText('Script C');
-    await expect(page.locator('h1')).toHaveText('Screen B', { timeout: 30_000 });
-    await expect(page.locator('#script')).toHaveText('Script B');
+    await expect(page.locator('h1')).toHaveText('Panels could not open the update', { timeout: 30_000 });
+    await expect(page).toHaveURL('panels://recovery/');
+    await expect(page.locator('#script')).toHaveCount(0);
     const statePath = join(desktop.userData, 'screens/state.json');
     await expect.poll(async () => JSON.parse(await readFile(statePath, 'utf8')).rejected).toBe(copies.C.digest);
     await captureSuccess(page, 'screens-rollback.png');
-    // A fresh renderer load still uses B while the server continues to name C.
+    // Reload cannot expose old editable screens while the server still names C.
     await page.reload();
-    await expect(page.locator('h1')).toHaveText('Screen B');
-    await expect(page.locator('#script')).toHaveText('Script B');
+    await expect(page.locator('h1')).toHaveText('Panels could not open the update');
+    await expect(page).toHaveURL('panels://recovery/');
+    // The real recovery bridge opens a usable, verified replacement.
+    current = 'D';
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await expect(page.locator('h1')).toHaveText('Screen D', { timeout: 35_000 });
+    await expect(page.locator('#script')).toHaveText('Script D');
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.panelsReady)).toBe('true');
+    await captureSuccess(page, 'screens-retry.png');
   } finally {
     await desktop?.app.close();
     peer.closeAllConnections();

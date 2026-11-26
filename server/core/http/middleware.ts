@@ -21,6 +21,8 @@ import { is_executor_link_connection } from './executor_link.ts';
 import { ClientLiveStreams, count_live_stream } from './live_streams/index.ts';
 import { SERVER_LOCATION_PATH } from '../../server_link/contracts.ts';
 export interface WorkspaceAdmission {
+  readonly starts_closed?: boolean;
+  run_send?<T>(operation: (admitted: boolean) => T): T;
   operation(): {
     admitted: boolean;
     release(): void;
@@ -82,6 +84,33 @@ export function installMiddleware(
   update_barrier?: UpdateBarrier,
   client_versions?: { database: Database; clock: Clock },
 ): void {
+  app.addHook('onRoute', (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    if (
+      !workspace?.run_send ||
+      !methods.includes('POST') ||
+      !SEND_PATHS.some((pattern) => pattern.test(route.url))
+    )
+      return;
+    const handler = route.handler;
+    route.handler = function (request, reply) {
+      return workspace.run_send!((admitted) => {
+        if (!admitted) {
+          return reply
+            .code(503)
+            .header('X-Panels-Write-Admitted', 'false')
+            .send({
+              error: {
+                code: 'update_in_progress',
+                message: 'Owner update in progress.',
+                detail: {},
+              },
+            });
+        }
+        return handler.call(this, request, reply);
+      });
+    };
+  });
   const identities = new WeakMap<FastifyRequest, ClientIdentity>();
   const live_streams = new ClientLiveStreams();
   app.decorateRequest('count_live_stream', null);
@@ -169,28 +198,50 @@ export function installMiddleware(
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
         const sha = request.headers['x-panels-app-sha'];
         if (sha !== undefined && sha !== config.app_sha) {
-          reply.code(409).send({
-            error: {
-              code: 'validation',
-              message: 'Refresh page before making changes.',
-              detail: {},
-            },
-          });
+          reply
+            .code(409)
+            .header('X-Panels-Write-Admitted', 'false')
+            .send({
+              error: {
+                code: 'screens_outdated',
+                message: 'Refresh page before making changes.',
+                detail: {},
+              },
+            });
           return;
         }
         if (
-          update_barrier?.frozen &&
+          (update_barrier?.frozen ||
+            (workspace?.starts_closed && SEND_PATHS.some((pattern) => pattern.test(path)))) &&
           !path.startsWith('/api/updates') &&
           !path.startsWith('/api/executor/')
         ) {
-          reply.code(503).send({ detail: 'Owner update in progress.' });
+          reply
+            .code(503)
+            .header('X-Panels-Write-Admitted', 'false')
+            .send({
+              error: {
+                code: 'update_in_progress',
+                message: 'Owner update in progress.',
+                detail: {},
+              },
+            });
           return;
         }
         if (workspace && !path.startsWith('/api/updates') && !path.startsWith('/api/executor/')) {
           const lease = workspace.operation();
           if (!lease.admitted) {
             lease.release();
-            reply.code(503).send({ detail: 'Owner update in progress.' });
+            reply
+              .code(503)
+              .header('X-Panels-Write-Admitted', 'false')
+              .send({
+                error: {
+                  code: 'update_in_progress',
+                  message: 'Owner update in progress.',
+                  detail: {},
+                },
+              });
             return;
           }
           let released = false;

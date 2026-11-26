@@ -39,7 +39,7 @@ final class ConversationLatestTests: XCTestCase {
         try await proof(base, "start/latest-stream")
         thread.swipeDown(velocity: .slow)
         XCTAssertTrue(latest.waitForExistence(timeout: 3))
-        let anchor = try XCTUnwrap(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Review '")).allElementsBoundByIndex.first(where: { $0.isHittable }))
+        let anchor = try XCTUnwrap(app.readableTexts.matching(NSPredicate(format: "label BEGINSWITH 'Review ' OR value BEGINSWITH 'Review '")).allElementsBoundByIndex.first(where: { $0.isHittable }))
         let before = anchor.frame.minY
         try await proof(base, "stream")
         try await Task.sleep(for: .seconds(3))

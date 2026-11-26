@@ -51,6 +51,7 @@ jobs:
           npm --prefix desktop run check
           npm --prefix desktop run test:updates
           npm --prefix desktop run test:screens
+          npm --prefix desktop run test:installation
           npm --prefix tests/e2e run check
       - name: Build the screens and the app
         run: |
@@ -129,6 +130,10 @@ jobs:
           umask 077
           printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
           node desktop/scripts/build_signed.mjs "$DESKTOP_VERSION" "$RUNNER_TEMP/desktop" "$PRIVATE_FEED_URL"
+          dmg=$(ls "$RUNNER_TEMP"/desktop/dist/*.dmg)
+          xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait --output-format json > "$RUNNER_TEMP/dmg-notarization.json"
+          node -e 'const fs = require("node:fs"); const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (result.status !== "Accepted") throw new Error(`DMG notarization: ${result.status}`); console.log(`DMG notarization accepted: ${result.id}`)' "$RUNNER_TEMP/dmg-notarization.json"
+          xcrun stapler staple "$dmg"
           rm -f "$APPLE_API_KEY"
       - name: Check the signature, notarization and Gatekeeper
         run: |
@@ -150,6 +155,28 @@ jobs:
           shasum -a 256 "$zip"
           test -s "$RUNNER_TEMP/desktop/dist/latest-mac.yml"
           node desktop/scripts/check_update_artifacts.mjs "$RUNNER_TEMP/desktop/dist" "$DESKTOP_VERSION"
+      - name: Check the DMG and its installation contents
+        run: |
+          set -euo pipefail
+          dmg=$(ls "$RUNNER_TEMP"/desktop/dist/*.dmg)
+          codesign --verify --strict --verbose=2 "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+          mount="$RUNNER_TEMP/dmg-check"
+          mkdir "$mount"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          test -d "$mount/Panels.app"
+          test "$(readlink "$mount/Applications")" = /Applications
+          app="$mount/Panels.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          test "$(defaults read "$app/Contents/Info.plist" CFBundleIdentifier)" = com.khushaljagota.panels.desktop
+          test "$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)" = "$DESKTOP_VERSION"
+          ditto "$app" "$RUNNER_TEMP/dmg-installed/Panels.app"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg-installed/Panels.app"
+          shasum -a 256 "$dmg"
       - name: Check the signed icon and process name
         run: python3 desktop/scripts/check_mac_icon.py "$RUNNER_TEMP/check/Panels.app" desktop/resources/icon.icns "$RUNNER_TEMP/icon-proof"
       - name: Upload the signed icon proof
@@ -164,6 +191,7 @@ jobs:
         with:
           name: panels-desktop-mac-${{ matrix.build }}
           path: |
+            ${{ runner.temp }}/desktop/dist/*.dmg
             ${{ runner.temp }}/desktop/dist/*.zip
             ${{ runner.temp }}/desktop/dist/*.blockmap
             ${{ runner.temp }}/desktop/dist/latest-mac.yml

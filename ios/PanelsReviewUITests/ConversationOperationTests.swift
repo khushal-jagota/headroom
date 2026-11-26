@@ -15,7 +15,7 @@ final class ConversationOperationTests: XCTestCase {
         defer { app.terminate() }
         let line = app.buttons["conversation-line"]
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
-        let prose = app.staticTexts["The plan is ready. What should I work on next?"]
+        let prose = app.readableText("The plan is ready. What should I work on next?")
         XCTAssertTrue(prose.waitForExistence(timeout: 8))
         let input = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 5))
@@ -71,8 +71,8 @@ final class ConversationOperationTests: XCTestCase {
             input.tap(); input.typeText("Draft survives replacement")
         }
         line.tap()
-        let old = app.staticTexts["Old Chief transcript"]
-        let replacement = app.staticTexts["New Chief transcript"]
+        let old = app.readableText("Old Chief transcript")
+        let replacement = app.readableText("New Chief transcript")
         XCTAssertTrue(old.waitForExistence(timeout: 8))
         capture(app, "replacement-before")
         try await proof(base, "replacement/clear")
@@ -118,11 +118,11 @@ final class ConversationOperationTests: XCTestCase {
         app.openDestination("sidebar-review", timeout: 5)
         try await proof(base, "replacement/unread")
         app.openReviewCards()
-        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("First unread message").waitForExistence(timeout: 8))
         let open = app.buttons["review.openConversation"]
         XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
         XCTAssertTrue(old.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Historical conversation · read only"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Historical conversation · read only").waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["Send message"].exists)
         capture(app, "replacement-explicit-history")
         // The conversation opens on top of Review, so Back returns to the card.
@@ -138,8 +138,8 @@ final class ConversationOperationTests: XCTestCase {
         try await proof(base, "replacement/unread")
         app.openDestination("sidebar-review", timeout: 5)
         app.openReviewCards()
-        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
-        let historical = app.staticTexts["Historical conversation · read only"]
+        XCTAssertTrue(app.readableText("First unread message").waitForExistence(timeout: 8))
+        let historical = app.readableText("Historical conversation · read only")
         XCTAssertTrue(historical.waitForNonExistence(timeout: 5))
         try await proof(base, "replacement/new")
         // Observe the historical state through the next streamed snapshots.
@@ -198,15 +198,15 @@ final class ConversationOperationTests: XCTestCase {
             }
             app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
             page.swipeUp(velocity: .slow)
-            let anchor = try XCTUnwrap(page.staticTexts.allElementsBoundByIndex.first(where: { $0.isHittable }))
+            let anchor = try XCTUnwrap(page.readableTexts.allElementsBoundByIndex.first(where: { $0.isHittable }))
             let originalY = anchor.frame.minY
             line.tap()
             let actions = app.buttons["conversation-actions"]
             XCTAssertTrue(actions.waitForExistence(timeout: 5))
-            XCTAssertFalse(app.staticTexts[title].exists)
+            XCTAssertFalse(app.readableText(title).exists)
             XCTAssertFalse(app.buttons["Conversation lens"].exists)
             XCTAssertTrue(back.exists)
-            XCTAssertTrue(app.staticTexts["Keep this message visible."].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.readableText("Keep this message visible.").firstMatch.waitForExistence(timeout: 5))
             capture(app, "after-\(name)-\(appearance)-conversation")
             actions.tap()
             XCTAssertTrue(app.buttons["Focus"].waitForExistence(timeout: 3))
@@ -304,10 +304,10 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(recoveryLine.waitForExistence(timeout: 5))
         capture(app, "recovery-system-rest-line")
         line.tap()
-        XCTAssertTrue(app.staticTexts["Panels deployment recovery"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["You: Inspect the interrupted work and continue the current authorized step."].exists)
+        XCTAssertTrue(app.readableText("Panels deployment recovery").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.readableText("You: Inspect the interrupted work and continue the current authorized step.").exists)
         capture(app, "recovery-system-transcript")
-        XCTAssertTrue(app.staticTexts["Panels deployment recovery"].isHittable)
+        XCTAssertTrue(app.readableText("Panels deployment recovery").isHittable)
         close.tap()
         // Both cases share the persisted draft in this loopback host.
         input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()

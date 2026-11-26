@@ -8,8 +8,7 @@
   import { skipPreviewTabStops } from "../lib/previewTabOrder";
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
-  import { macActivityKnown, macPresenceLabel, macTicketActivityLabel } from "../lib/ticketMachines";
-  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
+  import { machineName as resolveMachineName, unknownActivityText, macActivityKnown, macPresenceLabel, macTicketActivityLabel } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -43,10 +42,10 @@
     : workerSetup ? workerSetupSentence(workerSetup, setupElapsed.seconds) : preview.activity);
   const health=createQuery(() => ({...queries.executorHealth(worker?.machine_id),enabled:worker?.locale === "macos"}));
   const machines = createQuery(() => queries.machines());
-  const machineName = $derived(machines.data?.machines.find(item => item.machine_id === worker?.machine_id)?.name);
+  const machineName = $derived(resolveMachineName(worker?.locale, worker?.machine_id, machines.data?.machines));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
   let macHealth = $derived(health.isError ? undefined : health.data);
-  let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker, machineName) : null) ?? macPresenceLabel(macHealth, undefined, undefined, machineName) ?? MACHINE_ACTIVITY_UNKNOWN
+  let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker, machineName) : null) ?? macPresenceLabel(macHealth, undefined, undefined, machineName) ?? `${unknownActivityText(machineName)} Last progress remains available.`
     : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);

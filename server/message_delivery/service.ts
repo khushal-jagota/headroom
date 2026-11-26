@@ -96,31 +96,34 @@ export async function send_message(
     if (caller.kind === 'owner') {
       throw new PlannerError('validation', 'the owner cannot send a message to the owner');
     }
+    const record = async () => {
+      const current = sender_conversation_id(database, caller);
+      if (current === null) {
+        throw new PlannerError('not_found', 'the sender has no current conversation', {
+          kind: caller.kind,
+          id: caller.id,
+        });
+      }
+      const resolved = typeof content === 'function' ? await content(current) : content;
+      await conversations.record_message_to_owner(current, resolved, {
+        sender_label: label,
+        sender: caller,
+        recipient,
+        sender_message_id: options.sender_message_id ?? null,
+        sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
+        recording_receipt: options.recording_receipt ?? null,
+      });
+      return {
+        recipient,
+        conversation_id: current,
+        fate: new MessageRecordedToOwner(),
+      };
+    };
+    // Home custody records a local event. A native operation cannot hold its receipt.
+    if (options.recording_receipt != null) return record();
     return conversation_start
       .conversation_link_lock(sender_conversation_link_key(database, caller))
-      .run(async () => {
-        const current = sender_conversation_id(database, caller);
-        if (current === null) {
-          throw new PlannerError('not_found', 'the sender has no current conversation', {
-            kind: caller.kind,
-            id: caller.id,
-          });
-        }
-        const resolved = typeof content === 'function' ? await content(current) : content;
-        await conversations.record_message_to_owner(current, resolved, {
-          sender_label: label,
-          sender: caller,
-          recipient,
-          sender_message_id: options.sender_message_id ?? null,
-          sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
-          recording_receipt: options.recording_receipt ?? null,
-        });
-        return {
-          recipient,
-          conversation_id: current,
-          fate: new MessageRecordedToOwner(),
-        };
-      });
+      .run(record);
   }
   const metadata = {
     runs_under,

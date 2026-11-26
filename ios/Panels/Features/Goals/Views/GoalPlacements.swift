@@ -8,7 +8,6 @@ struct HolderContent: View {
     @State private var goalsHandle: ResourceHandle<GoalsResponse>?
     @State private var projectsHandle: ResourceHandle<GoalJSON>?
     private var goals: [GoalRecord] { goalsHandle?.value?.goals ?? [] }
-    private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
     private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
     private var sessions: PageSessionCollection { editOwner.goals }
     private var soleSession: PageSession? { sole.flatMap { sessions.session($0.id, server: store.baseURL) } }
@@ -18,30 +17,32 @@ struct HolderContent: View {
     private var holderStamp: String { (holder.kind == .chief ? store.chiefStamp() : store.managerStamp(holder.id ?? "")) ?? "" }
     private var held: [GoalRecord] { holder.goals(in: goals) }
     private var sole: GoalRecord? { holder.kind == .manager ? holder.soleGoal(in: goals) : nil }
+    private var activeGoals: [GoalRecord] { held.filter(\.active) }
+    private var documentBlocks: [GoalJSON] { (pageSession?.page?["blocks"].array ?? []).filter { $0.type != "tickets" } }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if let sole, let soleSession {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+            HolderTickets(holder: holder)
+            if sole != nil, let soleSession {
                 GoalDocumentContent(session: soleSession, showsTitle: false)
-                    .environment(\.pageTicketHolder, holder)
-                if !PageDocumentPresentation.hasTickets(sole.page["blocks"].array) { HolderTickets(holder: holder) }
+                    .accessibilityIdentifier("holder-goal-content")
             } else {
-                HStack {
-                    Text(holder.kind == .chief ? "Active goals" : "Goals").panelsScaledFont(size: 22, weight: .semibold).foregroundStyle(PanelsTheme.muted)
-                    Spacer()
-                    if holder.kind == .chief { NavigationLink("All goals", value: AppRoute.goals).panelsScaledFont(size: 13) }
-                }
-                ForEach(held.filter(\.active)) { goal in
-                    if let session = sessions.session(goal.id, server: store.baseURL) {
-                        ChiefGoalCard(goal: goal, project: projects.first { $0.id == goal.projectId }?["name"].string ?? "", session: session)
-                    }
+                if !activeGoals.isEmpty {
+                    VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                        ForEach(activeGoals) { goal in
+                            if let session = sessions.session(goal.id, server: store.baseURL) {
+                                ChiefGoalCard(goal: goal, project: projects.first { $0.id == goal.projectId }?["name"].string ?? "", session: session)
+                            }
+                        }
+                    }.accessibilityIdentifier("holder-goal-cards")
                 }
                 if let session = pageSession {
-                    GoalPageBlocks(blocks: session.page?["blocks"].array ?? [], session: session)
-                        .environment(\.pageTicketHolder, holder)
+                    if !documentBlocks.isEmpty {
+                        GoalPageBlocks(blocks: documentBlocks, session: session)
+                            .accessibilityIdentifier("holder-document")
+                    }
                     GoalSaveFailure(session: session)
                     if let error = session.readError { LoadErrorView(message: error) { await session.refresh() } }
                 }
-                if !PageDocumentPresentation.hasTickets(pageSession?.page?["blocks"].array ?? []) { HolderTickets(holder: holder) }
             }
             if let error { LoadErrorView(message: error) { await load() } }
         }.task(id: "\(store.baseURL):\(holder.pagePath)") { await follow() }
@@ -71,13 +72,6 @@ struct HolderContent: View {
 
 }
 
-private struct PageTicketHolderKey: EnvironmentKey { static let defaultValue: GoalHolder? = nil }
-extension EnvironmentValues {
-    var pageTicketHolder: GoalHolder? {
-        get { self[PageTicketHolderKey.self] }
-        set { self[PageTicketHolderKey.self] = newValue }
-    }
-}
 private struct ChiefGoalCard: View {
     let goal: GoalRecord
     let project: String
@@ -90,7 +84,7 @@ private struct ChiefGoalCard: View {
                     HStack { Text(project); Text("·"); Text(goal.deadline.map { "By " + GoalPresentation.date($0) } ?? "No deadline").foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(goal.deadline, completed: goal.completed, today: goal.statusDate))) }.font(.system(size: 12)).foregroundStyle(PanelsTheme.Goal.faint)
                     Text(goal.title).panelsScaledFont(size: 22, weight: .semibold).foregroundStyle(PanelsTheme.strong)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(PanelsTheme.raised)
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plain).systemCopyText(goal.title)
             if let accepted = session.goal {
                 VStack(alignment: .leading, spacing: 16) {
                     if let checklist = GoalPresentation.primaryChecklist(accepted) { GoalChecklist(block: checklist, session: session) }

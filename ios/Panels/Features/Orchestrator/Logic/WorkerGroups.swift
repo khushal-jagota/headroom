@@ -4,6 +4,7 @@ import Foundation
 protocol GroupedWorker: Identifiable where ID == String {
     var integrityError: TicketIntegrityIssue? { get }
     var locale: String? { get }
+    var machineId: String? { get }
     var title: String { get }
     var recapPreview: String { get }
     var stage: String { get }

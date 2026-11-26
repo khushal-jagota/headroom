@@ -8,7 +8,9 @@ import type { ChildProcess } from 'node:child_process';
 import { with_publication_entry } from './publication_entry.ts';
 import { publication_json_file, publication_text } from './publication_identity.ts';
 import { extract_app_archive, remove_owned_tree } from './archive.ts';
-import { validate_app_manifest } from './identity.ts';
+import { prove_retained_installer } from './testing/retained_installer.ts';
+import { check_home_imports } from './testing/check_home_imports.ts';
+import { digest_app_source, validate_app_manifest } from './identity.ts';
 import { validate_app_sha } from './logic/manifest.ts';
 import { require_host_node } from './logic/host.ts';
 import { PROBE_HOME_DIRECTORIES, probe_environment } from './admission_process.ts';
@@ -137,6 +139,7 @@ try {
         execution,
         process.platform === 'darwin' ? MAC_HOME : undefined,
       );
+      await check_home_imports(app);
       if (manifest.runtime_contract?.version !== 2)
         throw new Error('Boot requires the sealed Node runtime');
       require_host_node(process.version, manifest.runtime_contract);
@@ -249,9 +252,12 @@ try {
         ...(process.platform === 'darwin' ? { expected_target: MAC_HOME } : {}),
       });
       assert_release_execution(execution);
+      const retained_installer = await prove_retained_installer(work, sha, execution);
       replace_existing_json(join(work, 'boot-proof.json'), {
+        retained_installer,
         requested_sha: sha,
         archive_sha256: hash,
+        screens_sha256: await digest_app_source(join(app, 'web/dist')),
         manifest,
         health,
         supervisor_exit: result,

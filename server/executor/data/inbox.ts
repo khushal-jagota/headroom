@@ -21,7 +21,12 @@ import {
   require_current_incarnation_in_transaction,
   require_incarnation_owner,
 } from '../vps_presence_store.ts';
-import { open_child_assignment } from './child_custody.ts';
+import { open_child_assignment, current_agent_owner } from './child_custody.ts';
+import {
+  read_agent_message,
+  replay_agent_message,
+} from '../../message_delivery/data/agent_acceptances.ts';
+import type { Principal } from '../../core/contracts.ts';
 import { is_record as is_json_object } from '../../core/records.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
 import { manager_agent_key } from '../../managers/data.ts';
@@ -249,6 +254,11 @@ export class InboxStore {
     const reference = InboxStore.payload_child(envelope.payload);
     if (reference !== null)
       this.require_child(sql, envelope, decode_value(reference, 'ChildReference'));
+    if (read_agent_message(sql, envelope.submission_id) !== null) {
+      const child = decode_value(reference, 'ChildReference');
+      const source = current_agent_owner(sql, child) as Principal;
+      return replay_agent_message(sql, envelope, this.machine_id, source)!.receipt;
+    }
     const previous = sql.get<InboxPosition>(
       'SELECT CAST(sequence AS TEXT) AS sequence,result_json,machine_id FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
       [envelope.sender_id, envelope.conversation_id],
@@ -262,6 +272,16 @@ export class InboxStore {
         throw invalid('Submission identity conflicts with its first receipt');
       return stored;
     }
+    const args = envelope.payload.arguments;
+    const body = is_json_object(args) ? args.body : null;
+    const target = is_json_object(body) ? body.target : null;
+    if (
+      envelope.kind === 'cli_write' &&
+      envelope.payload.operation === 'message.send' &&
+      is_json_object(target) &&
+      target.kind === 'owner'
+    )
+      throw invalid('No retained acceptance exists for this older message submission');
     return {
       sender_id: envelope.sender_id,
       submission_id: envelope.submission_id,

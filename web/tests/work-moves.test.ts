@@ -69,8 +69,8 @@ it("retains source refusals and distinguishes a moved conversation that cannot s
   expect(workMoveNextAction({...item, result: {...base, error: null}})).toBe("");
 });
 
-it("keeps completed phase durations fixed while an active phase advances", () => {
+it("keeps completed phase durations precise and active durations in whole seconds", () => {
   expect(workMoveDuration(1000, 2500, 5000)).toBe("1.5s");
-  expect(workMoveDuration(1000, null, 5000)).toBe("4.0s");
+  expect(workMoveDuration(1000, null, 5500)).toBe("4s");
   expect(workMoveDuration(1000, null, 65000)).toBe("1m 4s");
 });

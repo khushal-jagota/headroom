@@ -26,6 +26,8 @@ import { randomUUID } from 'node:crypto';
 import { leading_run_that_can_share_a_turn } from '../logic/held_line.ts';
 import { contention_only_write } from './synchronization.ts';
 import { isDeepStrictEqual } from 'node:util';
+import { conversation_event_payload_from_canonical_json } from '../record/codec.ts';
+import type { ConversationEventKind } from '../events.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
 function workspace_is_retiring(
@@ -55,7 +57,7 @@ export async function send(
 ): Promise<PromptDeliveryFate> {
   return host.workspace_admission.operation(
     async (admitted) => {
-      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+      if (!admitted) throw host.workspace_admission.refusal();
       if (options.record_refusal && options.sender_message_id == null)
         throw new Error('record_refusal requires a sender_message_id');
       host.require_runtime_ownership();
@@ -541,7 +543,7 @@ export async function record_events_transaction<T>(
   ) => import('../record/contracts.ts').EventMutation<T>,
 ): Promise<T> {
   return host.workspace_admission.operation(async (admitted) => {
-    if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+    if (!admitted) throw host.workspace_admission.refusal();
     const state = host.conversation_state(conversation_id);
     if (!state) throw new Error('conversation is absent');
     return own_settlement(
@@ -567,6 +569,53 @@ export async function record_message_to_owner(
   require_message_content(content);
   const state = host.conversation_state(conversation_id);
   if (!state) throw new Error('no such conversation');
+  if (options.recording_receipt != null) {
+    const receipt = options.recording_receipt;
+    return own_settlement(
+      state,
+      contention_only_write(() => {
+        if (host.shutting_down) throw new DOMException('The operation was aborted', 'AbortError');
+        const result = host.options.store.transact_events(
+          conversation_id,
+          (tx) => {
+            const previous =
+              options.sender_message_id == null
+                ? undefined
+                : tx.get<{
+                    kind: ConversationEventKind;
+                    payload: string;
+                  }>(
+                    "SELECT kind,payload FROM conversation_events WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? ORDER BY sequence LIMIT 1",
+                    [conversation_id, options.sender_message_id],
+                  );
+            if (previous !== undefined) {
+              const payload = conversation_event_payload_from_canonical_json(
+                previous.kind,
+                previous.payload,
+              );
+              if (
+                !(payload instanceof MessageToOwnerEventPayload) ||
+                !isDeepStrictEqual(
+                  [payload.content, payload.sender_label, payload.sender, payload.recipient],
+                  [content, options.sender_label, options.sender, options.recipient],
+                )
+              )
+                throw new Error('sender_message_id already names a different message');
+              receipt.in_commit?.(tx, conversation_id, payload, null);
+              return { value: undefined, payloads: [] };
+            }
+            return {
+              value: undefined,
+              payloads: [new MessageToOwnerEventPayload({ ...options, content })],
+            };
+          },
+          { recording_receipt: receipt },
+        );
+        // Publish before this attempt yields, so later writes cannot overtake its event.
+        host.note_written(state, result.written);
+      }),
+    );
+  }
   return own_settlement(
     state,
     state.lock.run(async () => {

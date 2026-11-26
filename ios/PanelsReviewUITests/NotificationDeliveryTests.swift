@@ -33,7 +33,7 @@ final class NotificationDeliveryTests: XCTestCase {
         capture("preference-saved")
         try await control(base, "/proof/fail-preference")
         tapSwitch(preference)
-        let failure = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Local preference save refused'")).firstMatch
+        let failure = app.readableTexts.matching(NSPredicate(format: "label CONTAINS 'Local preference save refused' OR value CONTAINS 'Local preference save refused'")).firstMatch
         XCTAssertTrue(failure.waitForExistence(timeout: 5))
         assertValue(preference, "0")
         capture("preference-failed-confirmed-value")

@@ -82,7 +82,7 @@ struct SidebarView: View {
                     VStack(spacing: 0) {
                         ForEach(store.workspaceSettled) { settledRow($0) }
                         if let settledError {
-                            Text(settledError).panelsScaledFont(size: PanelsTheme.Web.smallSize).foregroundStyle(PanelsTheme.Web.tertiary)
+                            Text(settledError).textSelection(.enabled).panelsScaledFont(size: PanelsTheme.Web.smallSize).foregroundStyle(PanelsTheme.Web.tertiary)
                                 .padding(.horizontal, PanelsTheme.Web.Rail.textInset)
                         }
                     }
@@ -102,6 +102,7 @@ struct SidebarView: View {
                     ConversationSignalMark(signal: manager.conversationSignal)
                 }.contentShape(Rectangle())
             }.buttonStyle(SidebarButtonStyle(resting: manager.conversationSignal?.messageForOwner == true ? PanelsTheme.Web.strong : PanelsTheme.Web.railRow))
+                .systemCopyText(manager.title)
                 .conversationAccessibility(label: manager.title, signal: manager.conversationSignal)
             Button("Reopen") { reopen(manager.id) }
                 .panelsScaledFont(size: PanelsTheme.Web.smallSize).foregroundStyle(PanelsTheme.Web.tertiary)
@@ -203,6 +204,7 @@ private struct SidebarCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarCardStyle())
+        .systemCopyText(title)
         // One button element carries the whole card: its label, signal and identifier.
         .accessibilityLabel([eyebrow, title, tagLabel.map { "Goals: " + $0 }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityValue(signal?.messageForOwner == true ? "Unread message" : signal?.working == true ? "Working" : "")

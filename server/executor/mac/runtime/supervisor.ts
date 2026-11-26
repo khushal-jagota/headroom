@@ -1,7 +1,7 @@
-/** The fixed installation supervises versioned runtimes without replacing itself. */
+/** An installed service starts its selected runtime and owns its lease trial. */
 import { randomUUID } from 'node:crypto';
 import { constants as os_constants, homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { copy_environment } from '../../../core/environment.ts';
@@ -22,6 +22,8 @@ import {
   MAC_RUNTIME_UPDATE_EXIT_CODE,
   MAC_UPDATE_POLL_SECONDS,
   MAC_UPDATE_TERMINATE_SECONDS,
+  MACHINE_SERVICE_TRIAL_ENV,
+  MACHINE_SERVICE_TRIAL_FILE,
 } from '../configuration.ts';
 import { atomic_record, read_record } from './records.ts';
 import { failure_detail } from '../failure_detail.ts';
@@ -75,7 +77,16 @@ export async function supervise(
   )) as MacRuntimeSelection | null;
   const custody = await read_record(files, join(root, 'handoff.json'));
   let handoff = custody?.replay_pending === true ? join(root, 'handoff.json') : null;
-  if (initial_pending !== null) {
+  // Only the service's freshly installed supervisor can accept the service trial.
+  const service_trial = await read_record(files, join(root, MACHINE_SERVICE_TRIAL_FILE));
+  const trial_selection = service_trial?.pending as MacRuntimeSelection | undefined;
+  const owns_service_trial =
+    service_trial?.started === true &&
+    trial_selection?.runtime_path === resolve(options.baseline_root);
+  const starts_service_trial =
+    owns_service_trial && selected?.request_id !== trial_selection?.request_id;
+  if (starts_service_trial && initial_pending?.request_id !== trial_selection?.request_id) return 1;
+  if (initial_pending !== null && !starts_service_trial) {
     if (selected?.request_id !== initial_pending.request_id) {
       await atomic_record(files, join(root, 'failure.json'), {
         request_id: initial_pending.request_id,
@@ -92,6 +103,7 @@ export async function supervise(
     app_revision: string,
     ready: string | null,
     saved: string | null,
+    service_trial = false,
   ): Promise<OwnedProcess> => {
     options.signal.throwIfAborted();
     const linux = process.platform === 'linux';
@@ -105,6 +117,8 @@ export async function supervise(
     environment[MAC_RUNTIME_CHILD_ENV] = '1';
     delete environment[MAC_RUNTIME_READY_ENV];
     delete environment[MAC_RUNTIME_HANDOFF_ENV];
+    delete environment[MACHINE_SERVICE_TRIAL_ENV];
+    if (service_trial) environment[MACHINE_SERVICE_TRIAL_ENV] = '1';
     environment.PLAN_EXECUTOR_ROOT = options.paths.root;
     environment.PLAN_APP_ROOT = directory;
     environment.PLAN_APP_SHA = app_revision;
@@ -153,20 +167,24 @@ export async function supervise(
     }
   };
   try {
-    current = await launch(
-      selected?.runtime_path ?? null,
-      selected?.application_revision ?? revision.value,
-      null,
-      handoff,
-    );
+    if (!starts_service_trial) {
+      current = await launch(
+        selected?.runtime_path ?? null,
+        selected?.application_revision ?? revision.value,
+        null,
+        handoff,
+      );
+    }
     while (true) {
-      await wait_exit(current);
-      if (options.signal.aborted || status(current) !== MAC_RUNTIME_UPDATE_EXIT_CODE)
-        return status(current);
-      const pending = (await read_record(
-        files,
-        join(root, 'pending.json'),
-      )) as MacRuntimeSelection | null;
+      const entering_service_trial = current === undefined;
+      if (current !== undefined) {
+        await wait_exit(current);
+        if (options.signal.aborted || status(current) !== MAC_RUNTIME_UPDATE_EXIT_CODE)
+          return status(current);
+      }
+      const pending = entering_service_trial
+        ? initial_pending
+        : ((await read_record(files, join(root, 'pending.json'))) as MacRuntimeSelection | null);
       if (pending === null)
         throw new Error('Runtime requested a swap without a durable selection.');
       const ready = join(root, 'ready', randomUUID() + '.json');
@@ -178,6 +196,7 @@ export async function supervise(
           pending.application_revision,
           ready,
           join(root, 'handoff.json'),
+          entering_service_trial,
         );
         launched = true;
       } catch (error) {
@@ -205,7 +224,7 @@ export async function supervise(
           confirmed = true;
           break;
         }
-        if (current.child.exitCode !== null || current.child.signalCode !== null) break;
+        if (!current || current.child.exitCode !== null || current.child.signalCode !== null) break;
         try {
           await delay(
             Math.min(MAC_UPDATE_POLL_SECONDS * 1000, Math.max(0, deadline - performance.now())),
@@ -217,7 +236,7 @@ export async function supervise(
         }
       }
       await files.remove_runtime_record(ready);
-      if (confirmed) {
+      if (confirmed && current) {
         await atomic_record(files, join(root, 'selection.json'), pending);
         selected = pending;
         await files.remove_runtime_record(join(root, 'pending.json'));
@@ -228,7 +247,7 @@ export async function supervise(
           `Mac runtime ready marker was unreadable request=${pending.request_id}:`,
           failure_detail(read_failure),
         );
-      await current.stop({
+      await current?.stop({
         grace_seconds:
           process.platform === 'linux'
             ? LINUX_UPDATE_TERMINATE_SECONDS
@@ -240,6 +259,7 @@ export async function supervise(
         detail: 'The new runtime did not confirm its VPS connection before the deadline.',
       });
       await files.remove_runtime_record(join(root, 'pending.json'));
+      if (entering_service_trial) return 1;
       if (options.signal.aborted) return 128 + os_constants.signals.SIGTERM;
       current = await launch(
         selected?.runtime_path ?? null,

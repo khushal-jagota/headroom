@@ -302,7 +302,7 @@
           "update_command": null,
           "latest_version": null,
           "update_available": false,
-          "detail": "Panels only updates `claude` from the configured vps-owned user-local npm prefix; update this installation manually."
+          "detail": "Panels only updates `claude` from this machine's user-local npm prefix; update this installation on the machine itself."
         },
         "diagnoses": [
           "`claude --version` did not report a version, so Panels cannot tell which one is installed.",
@@ -840,7 +840,7 @@
           "update_command": null,
           "latest_version": null,
           "update_available": false,
-          "detail": "Panels only updates `codex` from the configured vps-owned user-local npm prefix; update this installation manually."
+          "detail": "Panels only updates `codex` from this machine's user-local npm prefix; update this installation on the machine itself."
         },
         "diagnoses": [],
         "cached_usage": null,

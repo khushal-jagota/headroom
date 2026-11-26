@@ -16,7 +16,11 @@ import { expect, test, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
-import { ExecutorPaths } from '../configuration.ts';
+import {
+  ExecutorPaths,
+  MACHINE_SERVICE_TRIAL_ENV,
+  MACHINE_SERVICE_TRIAL_FILE,
+} from '../configuration.ts';
 import { FilesService } from '../files.ts';
 import { atomic_record } from './records.ts';
 import { supervise } from './supervisor.ts';
@@ -47,10 +51,13 @@ test.each([
   { platform: 'darwin', trial: 'dies_before_marker' },
   { platform: 'linux', trial: 'dies_before_marker' },
   { platform: 'darwin', trial: 'kept' },
+  { platform: 'darwin', trial: 'service_boot' },
   { platform: 'darwin', trial: 'marker_after_last_poll' },
 ] as const)(
   '$platform runtime $trial preserves handoff until the supervisor keeps it',
   async ({ platform, trial }) => {
+    const service_boot = trial === 'service_boot';
+    const kept = trial === 'kept' || service_boot;
     const original_platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-supervisor-')));
     const baseline = join(root, 'baseline');
@@ -102,10 +109,10 @@ fs.writeFileSync(join(process.env.PLAN_EXECUTOR_ROOT,'trial.json'),JSON.stringif
           trial === 'dies_before_marker'
             ? 'exit 1'
             : `
-while [ ! -f "$PLAN_EXECUTOR_ROOT/${trial === 'kept' ? 'first-poll' : 'last-poll'}" ]; do sleep 0.01; done
+while [ ! -f "$PLAN_EXECUTOR_ROOT/${kept ? 'first-poll' : 'last-poll'}" ]; do sleep 0.01; done
 mkdir -p "$PLAN_EXECUTOR_ROOT/updates/ready"
 printf '%s\\n' '{"request_id":"trial","application_revision":"${next_revision}"}' > "$PLAN_EXECUTOR_RUNTIME_READY"
-sleep ${trial === 'kept' ? '0.3' : '5'}
+sleep ${kept ? '0.3' : '5'}
 exit 0`;
         writeFileSync(
           join(runtime, 'mac-runtime.json'),
@@ -152,13 +159,18 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
       );
       await atomic_record(files, join(root, 'updates/pending.json'), {
         ...pending,
-        request_id: 'interrupted',
+        request_id: service_boot ? pending.request_id : 'interrupted',
       });
       await atomic_record(files, join(root, 'updates/handoff.json'), {
         executor_incarnation: pending.executor_incarnation,
         connection_generation: 7,
         replay_pending: true,
       });
+      if (service_boot)
+        await atomic_record(files, join(root, 'updates', MACHINE_SERVICE_TRIAL_FILE), {
+          started: true,
+          pending,
+        });
       const read = files.read_runtime_record.bind(files);
       const remove = files.remove_runtime_record.bind(files);
       let ready_polls = 0;
@@ -264,7 +276,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
           archive_path: '/api/executor/update/trial/archive',
           archive_size: 1,
           mode: 'idle',
-          activate: false,
+          activate: true,
         },
       });
       const handover = controller.close_handover_once_kept();
@@ -281,7 +293,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
       expect(
         await supervise(args, {
           paths: new ExecutorPaths(root),
-          baseline_root: baseline,
+          baseline_root: service_boot ? runtime + '/' : baseline,
           baseline_node: process.execPath,
           environment: { PATH: '/usr/bin:/bin', HOME: root },
           files,
@@ -291,7 +303,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         }),
       ).toBe(0);
       await owners.settled();
-      if (trial === 'kept') {
+      if (kept) {
         expect((await observe_promise(handover, 2000)).completed).toBe(true);
         expect(closes).toEqual([pending]);
       } else {
@@ -308,12 +320,14 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         });
       }
       expect(failure).not.toHaveBeenCalled();
-      const observed = JSON.parse(readFileSync(join(root, 'observed.json'), 'utf8'));
+      const observed = service_boot
+        ? []
+        : JSON.parse(readFileSync(join(root, 'observed.json'), 'utf8'));
       const forwarded = args.map((value) => (value === base_revision ? next_revision : value));
       expect(launches.mock.calls.map(([node]) => node)).toEqual([
-        process.execPath,
+        ...(service_boot ? [] : [process.execPath]),
         platform === 'linux' ? process.execPath : join(runtime, 'node/bin/node'),
-        ...(trial === 'kept' ? [] : [process.execPath]),
+        ...(kept ? [] : [process.execPath]),
       ]);
       for (const [, argv, options] of launches.mock.calls) {
         expect(argv).not.toContain(credential);
@@ -353,10 +367,11 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
           ...forwarded,
         ]);
       }
-      expect(observed.map((row: { failure: string }) => row.failure)).toEqual([
-        'interrupted',
-        ...(trial === 'kept' ? [] : ['trial']),
-      ]);
+      if (service_boot)
+        expect(launches.mock.calls[0]?.[2]?.env?.[MACHINE_SERVICE_TRIAL_ENV]).toBe('1');
+      expect(observed.map((row: { failure: string }) => row.failure)).toEqual(
+        service_boot ? [] : ['interrupted', ...(kept ? [] : ['trial'])],
+      );
       expect(
         observed.every(
           (row: { args: string[]; path: string; handoff: string }) =>
@@ -365,10 +380,12 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
             row.handoff === join(root, 'updates/handoff.json'),
         ),
       ).toBe(true);
-      expect(JSON.parse(readFileSync(join(root, 'updates/failure.json'), 'utf8'))).toMatchObject({
-        request_id: trial === 'kept' ? 'interrupted' : 'trial',
-        phase: 'reverted',
-      });
+      if (service_boot) expect(existsSync(join(root, 'updates/failure.json'))).toBe(false);
+      else
+        expect(JSON.parse(readFileSync(join(root, 'updates/failure.json'), 'utf8'))).toMatchObject({
+          request_id: kept ? 'interrupted' : 'trial',
+          phase: 'reverted',
+        });
       expect(
         JSON.parse(readFileSync(join(root, 'updates/handoff.json'), 'utf8')).replay_pending,
       ).toBe(true);

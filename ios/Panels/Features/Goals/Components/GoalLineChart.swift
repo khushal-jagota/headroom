@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One plotted series: values per datum in data units, with the colours the web derives.
 struct GoalLineSeries: Equatable {
@@ -342,6 +343,15 @@ struct GoalLineChart: View {
                     }
                 }
                 .frame(width: gutter, height: h + 16)
+                .overlay(alignment: .topLeading) {
+                    ForEach(motion.ticks.keys.sorted(), id: \.self) { key in
+                        if let fade = motion.ticks[key] {
+                            selectableAxisLabel(fade.label)
+                                .position(x: 10 + axisLabelWidth(fade.label) / 2, y: rowY(fade.value) + 8)
+                                .opacity(fade.opacity.value(at: time))
+                        }
+                    }
+                }
                 .padding(.vertical, -8)
             }
             Canvas { context, size in
@@ -353,9 +363,27 @@ struct GoalLineChart: View {
                 motion.settle(at: time)
             }
             .frame(height: 26)
+            .overlay(alignment: .topLeading) {
+                ForEach(motion.picks.keys.sorted(), id: \.self) { key in
+                    if let fade = motion.picks[key] {
+                        selectableAxisLabel(fade.label)
+                            .position(x: fade.value * w + (0.5 - fade.value) * axisLabelWidth(fade.label), y: 8 + axisLabelFont.lineHeight / 2)
+                            .opacity(fade.opacity.value(at: time))
+                    }
+                }
+            }
             .padding(.trailing, gutter)
         }
-        .overlay { if data.isEmpty { Text("No readings yet").font(.system(size: 13)).foregroundStyle(PanelsTheme.faint).padding(.trailing, gutter).padding(.bottom, 26) } }
+        .overlay { if data.isEmpty { Text("No readings yet").textSelection(.enabled).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint).padding(.trailing, gutter).padding(.bottom, 26) } }
+    }
+
+    private var axisLabelFont: UIFont { .monospacedDigitSystemFont(ofSize: 11, weight: .regular) }
+    private func axisLabelWidth(_ label: String) -> CGFloat {
+        ceil((label as NSString).size(withAttributes: [.font: axisLabelFont]).width) + 1
+    }
+    private func selectableAxisLabel(_ label: String) -> some View {
+        PanelsSelectableText(label, font: axisLabelFont, color: .clear, lineLimit: 1)
+            .frame(width: axisLabelWidth(label), height: axisLabelFont.lineHeight)
     }
 
     private var inspection: some View {
@@ -367,8 +395,17 @@ struct GoalLineChart: View {
         }, ended: { inspecting in
             if inspecting, let active, let select { select(active) }
             active = nil
-        }, scrolling: { active = nil })
+        }, scrolling: { active = nil }, copyText: inspectionCopyText)
         .accessibilityHidden(true)
+    }
+
+    /// Inspection owns the touch. A stationary long press copies the displayed readout
+    /// through the native edit menu, while a moving finger retains chart inspection.
+    private var inspectionCopyText: String {
+        guard let index = activeIndex ?? data.indices.last else { return "" }
+        return ([data[index].label] + visible.map { line in
+            line.label + ": " + (line.values[index].map(formatValue) ?? "No reading")
+        }).joined(separator: "\n")
     }
 
     private func tooltip(_ datum: GoalChartDatum?) -> some View {

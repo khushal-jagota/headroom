@@ -53,7 +53,7 @@ final class OfflineOperationTests: XCTestCase {
         assertQuiet(app, "offline message")
         // The conversation page goes back to the Chief page; the Sidebar leads to Review.
         app.backButton.tap()
-        XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Chief of Staff").waitForExistence(timeout: 8))
         app.openDestination("sidebar-review")
         enterCards(app)
         let approve = app.buttons["review.approve"]
@@ -108,14 +108,14 @@ final class OfflineOperationTests: XCTestCase {
         try await proof(base, "agent-message")
         chief.tap()
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
-        XCTAssertTrue(app.staticTexts["Agent update 1"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.readableText("Agent update 1").waitForExistence(timeout: 15))
         delivery = try await waitForDelivery(base) { $0.reads == [2] }
         XCTAssertEqual(delivery.reads, [2])
         XCTAssertEqual(delivery.dropped, [Fault(kind: "read", id: "2")], "The dropped read did not happen")
         XCTAssertGreaterThanOrEqual(delivery.readAttempts["2"] ?? 0, 2)
         assertQuiet(app, "after dropped read")
         app.backButton.tap()
-        XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Chief of Staff").waitForExistence(timeout: 8))
         app.openSidebar()
 
         // 2. The server does each write, then drops the reply: message, approval, read.
@@ -127,9 +127,9 @@ final class OfflineOperationTests: XCTestCase {
         app.buttons["Send message"].tap()
         XCTAssertTrue(element(app, containing: "Sent through a lost reply").waitForExistence(timeout: 5))
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
-        XCTAssertTrue(app.staticTexts["Agent update 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.readableText("Agent update 2").waitForExistence(timeout: 15))
         app.backButton.tap()
-        XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Chief of Staff").waitForExistence(timeout: 8))
         app.openDestination("sidebar-review")
         enterCards(app)
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 10))
@@ -193,7 +193,7 @@ final class OfflineOperationTests: XCTestCase {
         capture(app, "conversation-refused-retried")
         assertQuiet(app, "after Try Again")
         app.backButton.tap()
-        XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Chief of Staff").waitForExistence(timeout: 8))
     }
 
     private struct Fault: Decodable, Equatable { let kind: String; let id: String }
@@ -239,16 +239,16 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
     @MainActor private func element(_ app: XCUIApplication, containing text: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch
     }
     /// No cover screen and no outbox status note, anywhere on screen.
     @MainActor private func assertQuiet(_ app: XCUIApplication, _ moment: String) {
         XCTAssertFalse(app.buttons["server-unreachable.retry"].exists, "The server cover appeared: \(moment)")
-        let notes = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", Self.removedNotes))
-        XCTAssertEqual(notes.count, 0, "A removed status note appeared (\(moment)): \(notes.allElementsBoundByIndex.map(\.label))")
+        let notes = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR value IN %@", Self.removedNotes, Self.removedNotes))
+        XCTAssertEqual(notes.count, 0, "A removed status note appeared (\(moment)): \(notes.allElementsBoundByIndex.map(\.readableContent))")
         for prefix in Self.removedReadNotes {
-            let reads = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
-            XCTAssertEqual(reads.count, 0, "A read note appeared (\(moment)): \(reads.allElementsBoundByIndex.map(\.label))")
+            let reads = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", prefix, prefix))
+            XCTAssertEqual(reads.count, 0, "A read note appeared (\(moment)): \(reads.allElementsBoundByIndex.map(\.readableContent))")
         }
     }
     /// Review opens on its summary at launch and after another destination.

@@ -2,6 +2,11 @@
 
 These are standing rules. They apply unless a live owner decision overrides them.
 
+## Homes and machines
+- There is no intended home. A Panels home can run on any supported machine kind (Linux x86_64 and Apple Silicon today), and any supported machine can join it. Never assume the home is a Linux server, or that a Mac is only a joined machine.
+- Every supported kind is a full home. A change that works on one kind of home and fails on another is broken, and a release that fails on any kind of home must not publish.
+- Release checks run a full home on every supported kind: install or upgrade, a joined machine, a message with a file, and a large conversation.
+
 ## Codebase structure
 - Top level is organised by semantic domain (e.g. rooms/, sharing/, billing/, games/<game>/). Within every domain, organise by kind of work: logic/algorithms together, data layer together, components together, views together. Layers within domains — never feature-slices within domains, never one flat pile.
 - If something is non-trivial, it gets a folder. Folders are cheap and create structure that lets things expand or be isolated later.

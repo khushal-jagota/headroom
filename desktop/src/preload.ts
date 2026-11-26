@@ -15,6 +15,7 @@ function call<Method extends keyof PanelsBridge>(
 }
 
 const bridge: PanelsBridge = {
+  retryScreens: () => call('retryScreens'),
   localServerAddress: () => call('localServerAddress'),
   returnToServer: () => call('returnToServer'),
   storedServerAddress: () => call('storedServerAddress'),

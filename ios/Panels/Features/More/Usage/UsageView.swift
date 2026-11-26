@@ -60,27 +60,25 @@ struct UsageView: View {
                     ForEach(Array(usage.windows.enumerated()), id: \.offset) { _, window in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                             HStack {
-                                Text(window.kind == "five_hour" ? "5 hours" : "7 days").font(PanelsTheme.TypeScale.allowanceLabel)
+                                MoreSelectableText(window.kind == "five_hour" ? "5 hours" : "7 days", weight: .medium)
                                 Spacer()
-                                Text("\(window.usedPercent.formatted(.number.precision(.fractionLength(0))))% used").font(PanelsTheme.TypeScale.allowanceValue).monospacedDigit()
+                                MoreSelectableText("\(window.usedPercent.formatted(.number.precision(.fractionLength(0))))% used", weight: .semibold, monospacedDigits: true)
                             }
                             ProgressView(value: UsagePresentation.fraction(window.usedPercent)).tint(PanelsTheme.accent)
-                            if let model = window.modelId { Text(model).font(PanelsTheme.TypeScale.small) }
+                            if let model = window.modelId { MoreSelectableText(model, style: .footnote) }
                             if let reset = UsagePresentation.date(window.resetsAt) {
-                                Text("Resets \(reset.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                                MoreSelectableText("Resets \(reset.formatted(date: .abbreviated, time: .shortened))", style: .footnote, color: PanelsTheme.muted)
                             }
                         }.padding(.vertical, PanelsTheme.Space.xs)
                     }
                     if let date = UsagePresentation.date(usage.observedAt) {
-                        Text("Last read \(date.formatted(date: .abbreviated, time: .shortened))")
-                            .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+                        MoreSelectableText("Last read \(date.formatted(date: .abbreviated, time: .shortened))", style: .caption2, color: PanelsTheme.faint)
                     }
                 } else {
-                    Text(backend.installed ? "No recorded allowance" : "Not installed").foregroundStyle(PanelsTheme.muted)
+                    MoreSelectableText(backend.installed ? "No recorded allowance" : "Not installed", color: PanelsTheme.muted)
                 }
-                ForEach(backend.diagnoses, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
-            } header: { Text(store.backendLabel(backend.backendKey)).panelsSectionHeading(.usage) }
+                ForEach(backend.diagnoses, id: \.self) { MoreSelectableText($0, style: .footnote, color: PanelsTheme.muted) }
+            } header: { MoreSelectableText(store.backendLabel(backend.backendKey), style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }
             .listRowBackground(PanelsTheme.raised)
         }
     }
@@ -92,10 +90,14 @@ struct UsageView: View {
                     Text("Today").tag(1); Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90)
                 }.accessibleSegmentedPicker().disabled(refreshing)
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                    Text(metric == "Cost" ? UsagePresentation.cost(selectedMetrics?.costUsd) : UsagePresentation.number(selectedMetrics?.totalTokens))
+                    let value = metric == "Cost" ? UsagePresentation.cost(selectedMetrics?.costUsd) : UsagePresentation.number(selectedMetrics?.totalTokens)
+                    Text(value)
                         .font(PanelsTheme.TypeScale.title).monospacedDigit().contentTransition(.numericText())
-                    Text(metric == "Cost" ? "Recorded cost · USD" : "Recorded tokens")
-                        .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                        .accessibilityHidden(true)
+                        .overlay(alignment: .leading) {
+                            MoreSelectableText(value, style: .largeTitle, weight: .semibold, color: .clear, monospacedDigits: true)
+                        }
+                    MoreSelectableText(metric == "Cost" ? "Recorded cost · USD" : "Recorded tokens", style: .footnote, color: PanelsTheme.muted)
                 }.padding(.vertical, PanelsTheme.Space.sm)
                 if let summary, !summary.periods.isEmpty {
                     Chart(Array(summary.periods.enumerated()), id: \.offset) { index, period in
@@ -107,38 +109,37 @@ struct UsageView: View {
                         }
                     }.chartXAxis(.hidden).chartYAxis { AxisMarks(position: .leading) }
                         .frame(height: 140).accessibilityLabel("Recorded \(metric.lowercased()) by period")
-                    Text("\(summary.periods.first?.label ?? "") – \(summary.periods.last?.label ?? "") · \(summary.timezone)")
-                        .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+                    MoreSelectableText("\(summary.periods.first?.label ?? "") – \(summary.periods.last?.label ?? "") · \(summary.timezone)", style: .caption2, color: PanelsTheme.faint)
                 }
             }.listRowBackground(PanelsTheme.raised)
             if let totals = selectedMetrics {
                 Section {
                     if metric == "Cost" {
-                        LabeledContent("Estimated", value: UsagePresentation.cost(totals.estimatedCostUsd))
-                        LabeledContent("Provider reported", value: UsagePresentation.cost(totals.providerReportedCostUsd))
-                        if totals.unknownCostRecords > 0 { Text("\(totals.unknownCostRecords) records have unknown cost").foregroundStyle(PanelsTheme.muted) }
-                        if let note = summary?.pricingNote { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
-                        Text("Recorded server CLI use. Estimates are not a bill.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                        MoreSelectableValue("Estimated", value: UsagePresentation.cost(totals.estimatedCostUsd))
+                        MoreSelectableValue("Provider reported", value: UsagePresentation.cost(totals.providerReportedCostUsd))
+                        if totals.unknownCostRecords > 0 { MoreSelectableText("\(totals.unknownCostRecords) records have unknown cost", color: PanelsTheme.muted) }
+                        if let note = summary?.pricingNote { MoreSelectableText(note, style: .footnote, color: PanelsTheme.faint) }
+                        MoreSelectableText("Recorded server CLI use. Estimates are not a bill.", style: .footnote, color: PanelsTheme.faint)
                     } else {
-                        LabeledContent("Input", value: UsagePresentation.number(totals.inputTokens))
-                        LabeledContent("Cache read", value: UsagePresentation.number(totals.cachedInputTokens))
-                        LabeledContent("Cache write", value: UsagePresentation.number(totals.cacheCreationTokens))
-                        LabeledContent("Output", value: UsagePresentation.number(totals.outputTokens))
+                        MoreSelectableValue("Input", value: UsagePresentation.number(totals.inputTokens))
+                        MoreSelectableValue("Cache read", value: UsagePresentation.number(totals.cachedInputTokens))
+                        MoreSelectableValue("Cache write", value: UsagePresentation.number(totals.cacheCreationTokens))
+                        MoreSelectableValue("Output", value: UsagePresentation.number(totals.outputTokens))
                     }
-                } header: { Text(metric == "Cost" ? "Cost Detail" : "Token Detail").panelsSectionHeading(.usage) }.listRowBackground(PanelsTheme.raised)
+                } header: { MoreSelectableText(metric == "Cost" ? "Cost Detail" : "Token Detail", style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
             }
             if let summary {
                 Section {
                     ForEach(summary.sources.filter { provider == "All" || $0.provider == provider }, id: \.id) { source in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                            LabeledContent("\(store.backendLabel(source.provider)) · \(source.host)", value: source.state.capitalized)
-                            ForEach(source.issues, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
+                            MoreSelectableValue("\(store.backendLabel(source.provider)) · \(source.host)", value: source.state.capitalized)
+                            ForEach(source.issues, id: \.self) { MoreSelectableText($0, style: .footnote, color: PanelsTheme.muted) }
                         }
                     }
                     if let observed = summary.observedAt, let date = UsagePresentation.date(observed) {
-                        Text("Last read \(date.formatted(date: .abbreviated, time: .shortened))").font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+                        MoreSelectableText("Last read \(date.formatted(date: .abbreviated, time: .shortened))", style: .caption2, color: PanelsTheme.faint)
                     }
-                } header: { Text("Sources").panelsSectionHeading(.usage) }.listRowBackground(PanelsTheme.raised)
+                } header: { MoreSelectableText("Sources", style: .footnote, weight: .medium, color: Color(uiColor: .secondaryLabel)) }.listRowBackground(PanelsTheme.raised)
             }
         }
     }

@@ -16,6 +16,7 @@ import { FILE_CHUNK_BYTES } from './configuration.ts';
 import {
   close_native_descriptor,
   open_directory_descriptor,
+  open_regular_descriptor as regular_descriptor,
   open_relative,
   rename_relative,
   require_relative_component,
@@ -28,33 +29,7 @@ if (isMainThread)
   throw new Error('Executor file operations require the owned FilesService worker.');
 /** The caller owns the returned descriptor. Reject '..' before path normalization. */
 export const directory_descriptor = open_directory_descriptor;
-export function regular_descriptor(path: string): number {
-  const parent = directory_descriptor(dirname(path));
-  let descriptor: number;
-  try {
-    descriptor = open_relative(
-      parent,
-      basename(path),
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-  } catch (error) {
-    close_native_descriptor(parent);
-    throw error;
-  }
-  try {
-    close_native_descriptor(parent);
-  } catch (error) {
-    close_native_descriptor(descriptor);
-    throw error;
-  }
-  try {
-    if (!fstatSync(descriptor).isFile()) throw invalid('artifact is not regular file');
-    return descriptor;
-  } catch (error) {
-    close_native_descriptor(descriptor);
-    throw error;
-  }
-}
+export { regular_descriptor };
 export function fsync_file(descriptor: number): void {
   sync_file_descriptor(descriptor);
 }

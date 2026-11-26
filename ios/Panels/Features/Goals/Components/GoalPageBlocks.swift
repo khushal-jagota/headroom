@@ -6,18 +6,16 @@ struct GoalPageBlocks: View {
     let session: PageSession
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
-            ForEach(blocks, id: \.id) { block in GoalPageBlock(block: block, session: session) }
+            ForEach(blocks.filter { $0.type != "tickets" }, id: \.id) { block in GoalPageBlock(block: block, session: session) }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 private struct GoalPageBlock: View {
     let block: GoalJSON
     let session: PageSession
-    @Environment(\.pageTicketHolder) private var holder
     @State private var selectedView: String?
     @ViewBuilder var body: some View {
         switch block.type {
-        case "tickets": if let holder { HolderTickets(holder: holder) }
         case "text": text(block["text"].text, markdown: true)
         case "chart": GoalChart(block: block, session: session)
         case "checklist": GoalChecklist(block: block, session: session, supplementary: true)
@@ -176,5 +174,5 @@ private struct GoalPageTable: View {
 /// One Goal text field, shown as plain text.
 struct GoalReadText: View {
     let value: String
-    var body: some View { Text(value).frame(maxWidth: .infinity, alignment: .leading) }
+    var body: some View { Text(value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
 }

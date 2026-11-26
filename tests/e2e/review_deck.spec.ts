@@ -149,7 +149,8 @@ test('test_deck_move_keeps_the_leaving_card_where_it_was', async ({ railServer, 
       const leaving = document.querySelector('[data-deck-item][data-deck-leaving]');
       const arriving = document.querySelector('[data-deck-item]:not([data-deck-leaving])');
       if (leaving) seen.leaving.push(Math.round(leaving.getBoundingClientRect().left * 10) / 10);
-      if (arriving) seen.arriving.push(Math.round(arriving.getBoundingClientRect().left * 10) / 10);
+      // The sampler starts before the keypress. Track the final scene's arrival only.
+      if (arriving?.querySelector('[data-review-empty]')) seen.arriving.push(Math.round(arriving.getBoundingClientRect().left * 10) / 10);
       if (performance.now() - started < 600) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -160,7 +161,8 @@ test('test_deck_move_keeps_the_leaving_card_where_it_was', async ({ railServer, 
   const lefts = await page.evaluate(() => (window as unknown as { __reducedLefts: { leaving: number[]; arriving: number[] } }).__reducedLefts);
   expect(lefts.leaving.length, 'the last card fades out over several frames').toBeGreaterThan(1);
   expect(new Set(lefts.leaving).size).toBe(1);
-  expect(new Set(lefts.arriving.filter((left) => left > 0)).size).toBe(1);
+  expect(lefts.arriving.length, 'the final page fades in over several frames').toBeGreaterThan(1);
+  expect(new Set(lefts.arriving).size).toBe(1);
 });
 
 test('test_resolved_part_keeps_its_place_while_it_leaves_and_the_gap_closes', async ({ signalServer, newContext }) => {

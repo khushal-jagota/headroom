@@ -126,7 +126,7 @@
 <section bind:this={root} class="key-request" class:is-ask={current.state === 'pending' && !readOnly} aria-label={`${current.provider} API key request`} data-conversation-row="credential_request" data-credential-request={current.request_id} data-credential-state={current.state}>
   {#if current.state !== 'pending'}
     <div bind:this={result} class="result-status" role="status" tabindex="-1">
-      <!-- The shared system line: its dot hangs outside the column, the words start at x = 0. -->
+      <!-- The shared system line: its dot leads the words inside the column. -->
       <SystemLine mark="dot" data-credential-record="">{current.provider} API key · <span class="saved-name">{current.credential?.reference.name ?? current.name}</span> · {outcome}</SystemLine>
       {#if current.delivery?.status === 'queued'}<p class="state-note">Result queued for the agent.</p>
       {:else if current.delivery?.status === 'refused'}

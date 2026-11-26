@@ -47,10 +47,10 @@ export class ReviewSendOutcome {
     $effect(() => () => clearTimeout(this.#timer));
   }
 
-  /** A send is going: it is being saved, waiting its turn, on its way, or being checked. */
+  /** A send is going: it is being saved or uploaded, waiting its turn, on its way, or being checked. */
   get sending(): boolean {
-    return this.#composer.attempts.some(attempt => attempt.status === 'preparing' || attempt.status === 'waiting'
-      || attempt.status === 'sending' || attempt.status === 'checking');
+    return this.#composer.attempts.some(attempt => attempt.status === 'preparing' || attempt.status === 'uploading'
+      || attempt.status === 'waiting' || attempt.status === 'sending' || attempt.status === 'checking');
   }
 
   #show(next: 'sent' | 'failed' | 'unsure', reason?: string): void {

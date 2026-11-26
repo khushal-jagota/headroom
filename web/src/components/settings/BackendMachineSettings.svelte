@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import Button from "../Button.svelte";
+  import BackendGuidedSignIn from "../conversation/BackendGuidedSignIn.svelte";
   import BackendSignInBlock from "../conversation/BackendSignInBlock.svelte";
   import SettingsPage from "./SettingsPage.svelte";
   import SettingsRow from "./SettingsRow.svelte";
@@ -10,7 +11,7 @@
   import { backendStatus } from "../../lib/settings/statusText";
   import { withinScreenWait } from "../../lib/mutate";
   import { loadBackendPageSnapshots } from "../../lib/conversation/backendRefresh";
-  import { backendCanBeSignedIn, signInIsPending } from "../../lib/conversation/backendSignIn";
+  import { backendCanBeReSignedIn, backendCanBeSignedIn, backendNeedsGuidedSignIn, signInIsPending } from "../../lib/conversation/backendSignIn";
   import { BackendSignInSession, type SignInPageState } from "../../lib/conversation/backendSignInSession";
   import { backendLabel } from "../../lib/drivers/presentation";
   import { queries } from "../../lib/queryCatalogue";
@@ -30,6 +31,9 @@
      what is installed and what is current, and offers an update or a sign-in. */
   let { machineId, isHome, machineChoice }: { machineId: string; isHome: boolean; machineChoice: Snippet } = $props();
   const drivers = createQuery(() => queries.drivers());
+  const machines = createQuery(() => queries.machines());
+  /** The guided sign-in names the machine whose terminal the owner must use. */
+  const machineName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "this machine");
   let snapshots = $state<BackendSnapshot[]>([]);
   /** Backends Panels updates, in the server's order, then any other it can sign in. */
   const backends = $derived.by(() => {
@@ -127,6 +131,11 @@
       && snapshot.identity?.status === "unauthenticated" && !signInIsPending(signInState.signIn);
   }
 
+  /** An expired or unconfirmed saved login: the owner may start a new sign-in. */
+  function offersReSignIn(snapshot: BackendSnapshot | undefined, signInState: SignInPageState): boolean {
+    return snapshot !== undefined && backendCanBeReSignedIn(snapshot) && !signInIsPending(signInState.signIn);
+  }
+
   function failureLine(label: string, snapshot: BackendSnapshot | undefined): string {
     return snapshot?.version ? `The update did not finish. ${label} is still on ${snapshot.version}.` : "The update did not finish.";
   }
@@ -171,6 +180,9 @@
               {#if offersSignIn(snapshot, signInState)}
                 <Button variant="primary" disabled={signInState.busy} onclick={() => void signInSession(backend.key).start(backend.key)}
                   data-backend-sign-in-start={backend.key}>{signInState.busy ? "Starting…" : "Sign in"}</Button>
+              {:else if offersReSignIn(snapshot, signInState)}
+                <Button disabled={signInState.busy} onclick={() => void signInSession(backend.key).start(backend.key)}
+                  data-backend-sign-in-start={backend.key}>{signInState.busy ? "Starting…" : "Re-sign in"}</Button>
               {/if}
             </div>
           {/snippet}
@@ -182,6 +194,10 @@
                   <details class="backend-output"><summary>Update output</summary><pre class="backend-codebox">{result.output_tail}</pre></details>
                 {/if}
               </div>
+            {/if}
+            {#if snapshot && backendNeedsGuidedSignIn(snapshot)}
+              <BackendGuidedSignIn label={backend.label} {machineName} command={snapshot.identity?.login_command ?? ""}
+                checking={refreshing} onCheck={() => void refresh()} />
             {/if}
             {#if snapshot}
               <BackendSignInBlock label={backend.label} {snapshot} state={signInState} offerStart={false}

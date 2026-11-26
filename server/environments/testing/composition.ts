@@ -37,24 +37,15 @@ export function create_test_environment_operations(
             prepare: async () => unavailable(),
             check: unavailable,
             status: () => null,
-            phase: () => null,
-            reported_at: () => null,
             report: unavailable,
             archive: unavailable,
             prefetch_archive: unavailable,
           }
-        : create_mac_update_composition(mac_context, null).service,
+        : create_mac_update_composition(mac_context).service,
       operations: {
         machine_states: () => [],
         retry_machine: unavailable,
         prepare: async () => unavailable(),
-        phase: () => null,
-        reported_at: () => null,
-        configured: () => false,
-      },
-      reads: {
-        health_payload: () => null,
-        status: async () => null,
       },
     }),
     collect_status: (config) =>

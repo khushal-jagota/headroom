@@ -1,3 +1,4 @@
+import type { Machine } from "./machines/contracts";
 import type { ConversationSignal } from "./conversationSignal";
 import { agentHoldsTicket, type AgentHoldFacts } from "./workAttentionPresentation";
 
@@ -37,7 +38,13 @@ export type MacStatus = {
 export type ExecutorHealth = MacStatus & {
   mode: "local" | "remote";
 };
-export const machineName = (locale: TicketLocale): string => locale === "macos" ? "Remote machine" : "Home";
+export function machineName(locale?: TicketLocale, machineId?: string | null, machines?: readonly Machine[]): string {
+  const stored = machineId ? machines?.find(machine => machine.machine_id === machineId)?.name : undefined;
+  return stored || (locale === "macos" ? "Remote machine" : locale === "vps" ? "Home" : "Machine");
+}
+export function unknownActivityText(name?: string): string {
+  return name ? `Current activity on ${name} is unknown.` : "Current activity is unknown.";
+}
 export function macActivityKnown(health: ExecutorHealth | undefined): boolean {
   return health?.mode === "remote" && health.presence === "present";
 }

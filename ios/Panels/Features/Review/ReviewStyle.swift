@@ -4,6 +4,7 @@ import UIKit
 enum ReviewStyle {
     static let gutter: CGFloat = 20
     static let actionHeight: CGFloat = 46
+    static let contentFadeHeight: CGFloat = 22
     static let enter = 0.32
     static let fadeOut = PanelsTheme.Motion.exit
     static let fadeIn = 0.20
@@ -32,19 +33,57 @@ struct ReviewButtonStyle: ButtonStyle {
     }
 }
 
-/// A card's bottom controls, above the keyboard and the home indicator, with the page
-/// fading in behind them.
+/// The visible scroll boundary already excludes the dock and keyboard.
+private struct DecisionScrollBottomKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+private extension EnvironmentValues {
+    var decisionScrollBottom: CGFloat? {
+        get { self[DecisionScrollBottomKey.self] }
+        set { self[DecisionScrollBottomKey.self] = newValue }
+    }
+}
+
+struct DecisionScrollViewport: ViewModifier {
+    var enabled = true
+    func body(content: Content) -> some View {
+        GeometryReader { geometry in
+            content.environment(\.decisionScrollBottom, enabled
+                ? geometry.frame(in: .global).maxY : nil)
+        }
+    }
+}
+
+/// Mask the foreground before its card background, so text fades into that exact fill.
+struct DecisionForegroundFade: ViewModifier {
+    @Environment(\.decisionScrollBottom) private var bottom
+    @ViewBuilder func body(content: Content) -> some View {
+        if let bottom {
+            content.mask {
+                GeometryReader { geometry in
+                    let fadeStart = bottom - geometry.frame(in: .global).minY - ReviewStyle.contentFadeHeight
+                    VStack(spacing: 0) {
+                        Color.black.frame(height: max(0, fadeStart))
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: ReviewStyle.contentFadeHeight)
+                        Color.clear
+                    }
+                    .offset(y: min(0, fadeStart))
+                }
+            }
+        } else { content }
+    }
+}
+
+/// A continuous opaque surface below the scroll fade, above the keyboard and home indicator.
 struct ReviewDock<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         VStack(spacing: 10) { content }
             .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 12)
-            .background {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [PanelsTheme.Web.surface.opacity(0), PanelsTheme.Web.surface], startPoint: .top, endPoint: .bottom).frame(height: 22).offset(y: -22)
-                    PanelsTheme.Web.surface
-                }.ignoresSafeArea(.container, edges: .bottom)
-            }
+            .frame(maxWidth: .infinity)
+            .background(PanelsTheme.Web.surface.ignoresSafeArea(.container, edges: .bottom))
     }
 }
 
@@ -66,8 +105,8 @@ struct ReviewInlineNote: View {
     let text: String
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).panelsScaledFont(size: 13, weight: .semibold)
-            Text(text).panelsScaledFont(size: 13).fixedSize(horizontal: false, vertical: true)
+            Text(title).textSelection(.enabled).panelsScaledFont(size: 13, weight: .semibold)
+            Text(text).textSelection(.enabled).panelsScaledFont(size: 13).fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(tone == .refused ? PanelsTheme.Web.errorText : PanelsTheme.accentText)
         .padding(.horizontal, 13).padding(.vertical, 11)
@@ -93,7 +132,7 @@ struct DecisionProposalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text(fieldLabel).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
+                Text(fieldLabel).textSelection(.enabled).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
                 Spacer(minLength: 0)
                 Button(action: onReviewer) {
                     HStack(spacing: 4) { Text(reviewer); Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)) }
@@ -101,6 +140,7 @@ struct DecisionProposalCard: View {
                         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
                         .frame(minHeight: 32)
                 }.buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
+                    .systemCopyText(reviewer)
                     .disabled(!reviewerEnabled)
                     .accessibilityLabel("Reviewer, \(reviewer)")
                     .accessibilityIdentifier("decision.reviewer")
@@ -108,6 +148,7 @@ struct DecisionProposalCard: View {
             PanelsMarkdown(source: text, baseURL: baseURL, emphasizesFirstParagraph: true)
         }.padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(DecisionForegroundFade())
             .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
             .reviewArtifactLinks(dock: dock)
     }
@@ -142,14 +183,14 @@ struct DecisionNoteActions: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let attachments, !attachments.attachments.isEmpty || attachments.preparingPhoto {
                     ConversationAttachmentTray(pieces: attachments.attachments, preparingPhotoNames: attachments.preparingPhotos.values.sorted(),
-                        preparing: attachments.preparingDraftPhotos, remove: noteEnabled && busyAction == nil ? { index in
+                        preparing: attachments.preparingDraftPhotos, preparingVideos: Array(attachments.preparingVideos.values), remove: noteEnabled && busyAction == nil ? { index in
                             guard attachments.attachments.indices.contains(index) else { return }
                             attachments.attachments.remove(at: index)
                         } : nil)
                         .padding(.top, 6)
                 }
                 if let error = attachments?.error {
-                    Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error)
+                    Text(error).textSelection(.enabled).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error)
                 }
                 HStack(alignment: .bottom, spacing: 4) {
                     if attachments != nil {
@@ -187,11 +228,11 @@ struct DecisionNoteActions: View {
                     .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
             }
             if showsSendBack && !canReturn {
-                Text("No existing Worker conversation to return it to.")
+                Text("No existing Worker conversation to return it to.").textSelection(.enabled)
                     .panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let error {
-                Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
+                Text(error).textSelection(.enabled).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("review.decisionError")
             }
         }
