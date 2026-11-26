@@ -21,11 +21,16 @@ import type {
   ViewBodyChunk,
   ViewBodyReference,
   ViewHistoryScope,
+  ViewWorkGroupCallSummary,
   ViewPageCursor,
   ViewRowBody,
   ViewRowKind,
 } from '../contracts.ts';
 import { row_body } from '../logic/bodies.ts';
+import {
+  countToolRun,
+  type ToolRunCall,
+} from '../../../../web/src/lib/conversation/toolRunKind.ts';
 import { sequence_expired } from '../omissions.ts';
 
 export class ViewBodyChanged extends Error {}
@@ -324,7 +329,11 @@ export function read_group(
   sql: ReadSql,
   conversation_id: string,
   key: string,
-  options: { stopped?: boolean } = {},
+  options: {
+    stopped?: boolean;
+    lens?: ConversationViewLens;
+    backend_key?: BackendInstanceId | null;
+  } = {},
 ): ConversationViewWorkGroup {
   const row = sql.get<GroupRecord>(
     'SELECT * FROM conversation_view_groups WHERE conversation_id=? AND group_key=?',
@@ -333,7 +342,7 @@ export function read_group(
   if (row === undefined) {
     throw new Error('View work group is absent');
   }
-  return {
+  const group: ConversationViewWorkGroup = {
     kind: 'work_group',
     key,
     order: { sequence: row.source_sequence, slot: 0 },
@@ -343,6 +352,76 @@ export function read_group(
     latest_entry_key: `e${row.latest_entry_sequence}`,
     settled: row.ending_sequence !== null || (!!options.stopped && row.turn_key !== null),
   };
+  // Full draws a run of more than one call closed, as one line that says what it did.
+  if (options.lens === 'full' && row.entry_count > 1) {
+    group.call_summary = read_call_summary(sql, conversation_id, key, options);
+  }
+  return group;
+}
+
+/** A run's calls counted by kind, read from its own rows by the rule the browser draws with.
+ *
+ * The kind needs only a call's start and how it ended. Only a failure needs the output, to
+ * tell a search that found nothing from a fault, so only a failed call reads its whole body. */
+function read_call_summary(
+  sql: ReadSql,
+  conversation_id: string,
+  key: string,
+  options: { stopped?: boolean; backend_key?: BackendInstanceId | null },
+): ViewWorkGroupCallSummary {
+  const calls: ToolRunCall[] = [];
+  let backend_key = options.backend_key;
+  for (const row of sql.all<{
+    sequence: number;
+    source_kind: event.ConversationEventKind;
+    source_payload: string;
+    status: 'completed' | 'failed' | null;
+  }>(
+    'SELECT r.sequence,s.kind AS source_kind,s.payload AS source_payload,' +
+      "CASE WHEN f.kind='tool_call_finished' THEN json_extract(f.payload,'$.tool_call_status') END AS status " +
+      'FROM conversation_view_rows r ' +
+      'JOIN conversation_events s ON s.conversation_id=r.conversation_id AND s.sequence=r.sequence ' +
+      'LEFT JOIN conversation_events f ON f.conversation_id=r.conversation_id AND f.sequence=r.settlement_sequence ' +
+      'WHERE r.conversation_id=? AND r.work_group_key=? AND r.removed=0 ORDER BY r.sequence',
+    [conversation_id, key],
+  )) {
+    if (row.source_kind === 'tool_call_started' && row.status !== 'failed') {
+      const start = conversation_event_payload_from_canonical_json(
+        row.source_kind,
+        row.source_payload,
+      );
+      if (start.kind === 'tool_call_started') {
+        calls.push({
+          title: start.title,
+          toolKind: start.tool_kind,
+          detail: null,
+          startedDetail: start.detail,
+          cappedDetailSequence: null,
+          status: row.status ?? 'running',
+        });
+        continue;
+      }
+    }
+    if (backend_key === undefined) {
+      backend_key = conversation_backend(sql, conversation_id);
+    }
+    const value = _body(sql, conversation_id, _row_record(sql, conversation_id, row.sequence), {
+      stopped: options.stopped,
+      backend_key,
+    });
+    if (value.kind === 'tool_call') {
+      calls.push({
+        title: value.title,
+        toolKind: value.tool_kind,
+        detail: value.detail,
+        startedDetail: value.started_detail,
+        cappedDetailSequence: value.capped_detail_sequence,
+        status: value.status,
+      });
+    }
+  }
+  const counted = countToolRun(calls);
+  return { kinds: counted.kinds, failed_count: counted.failedCount };
 }
 
 type Member = [string, SqlValue[]];
@@ -355,7 +434,6 @@ function candidate_members(
   const focus = lens === 'focus';
   const visible = focus ? 'r.focus_visible=1 AND ' : '';
   const latest = focus ? 't.latest_focus_message_sequence' : 't.latest_full_message_sequence';
-  const has_head = focus ? 'COALESCE(t.focus_head,0)=1' : 't.turn_key IS NOT NULL';
   const settled = stopped ? '1' : 't.ending_sequence IS NOT NULL';
   const join =
     'LEFT JOIN conversation_view_turns t ON r.conversation_id=t.conversation_id AND r.turn_key=t.turn_key ';
@@ -394,14 +472,20 @@ function candidate_members(
     ]);
     return members;
   }
+  // Full draws every message, a settled turn's narration included, so its timeline holds
+  // them all. Focus keeps a settled turn's earlier messages behind the turn's head.
+  const folded = focus
+    ? ` AND NOT(r.row_kind='agent_message' AND r.focus_visible=0 ` +
+      `AND COALESCE(t.focus_head,0)=1 AND (${settled}) AND r.sequence<>${latest})`
+    : '';
   const members: Member[] = [
     [
       "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot " +
         'FROM conversation_view_rows r ' +
-        join +
+        (focus ? join : '') +
         'WHERE r.conversation_id=? AND r.removed=0 ' +
-        `AND ${visible}r.row_kind<>'tool_call' AND NOT(r.row_kind='agent_message' AND r.focus_visible=0 ` +
-        `AND ${has_head} AND (${settled}) AND r.sequence<>${latest})`,
+        `AND ${visible}r.row_kind<>'tool_call'` +
+        folded,
       [],
     ],
     [
@@ -414,19 +498,29 @@ function candidate_members(
   if (focus) {
     return members;
   }
-  const unturned = stopped ? ' AND turn_key IS NULL' : '';
+  // Full's timeline holds every run, so a settled turn opens whole. A run of more than
+  // one call is drawn closed from its summary; a run of one is drawn as its call.
   members.push([
     "SELECT 'work_group' AS kind,group_key AS key,source_sequence AS sequence,0 AS slot " +
-      'FROM conversation_view_groups WHERE conversation_id=? AND ending_sequence IS NULL' +
-      unturned,
+      'FROM conversation_view_groups WHERE conversation_id=?',
     [],
   ]);
+  // A run of one call starts at that call, so the run's own position orders it.
+  members.push([
+    "SELECT 'row' AS kind,'e'||g.source_sequence AS key,g.source_sequence AS sequence,1 AS slot " +
+      'FROM conversation_view_groups g CROSS JOIN conversation_view_rows r ' +
+      'ON r.conversation_id=g.conversation_id AND r.sequence=g.source_sequence ' +
+      'WHERE g.conversation_id=? AND g.entry_count=1 AND r.removed=0 AND r.work_group_key=g.group_key',
+    [],
+  ]);
+  // A live run's newest call names its current step.
+  const unturned = stopped ? ' AND g.turn_key IS NULL' : '';
   members.push([
     "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,1 AS slot " +
       'FROM conversation_view_groups g CROSS JOIN conversation_view_rows r ' +
       'ON r.conversation_id=g.conversation_id AND r.sequence=g.latest_entry_sequence ' +
-      'WHERE g.conversation_id=? AND g.ending_sequence IS NULL' +
-      unturned.replace(' turn_key', ' g.turn_key') +
+      'WHERE g.conversation_id=? AND g.ending_sequence IS NULL AND g.entry_count>1' +
+      unturned +
       ' AND r.removed=0 AND r.work_group_key=g.group_key',
     [],
   ]);
@@ -500,7 +594,7 @@ export function read_page(
     } else if (candidate.kind === 'turn') {
       item = read_turn(sql, conversation_id, candidate.key, lens, { stopped });
     } else {
-      item = read_group(sql, conversation_id, candidate.key, { stopped });
+      item = read_group(sql, conversation_id, candidate.key, { stopped, lens, backend_key });
     }
     if (items.length && body_bytes + count > HISTORY_PAGE_BODY_BYTES) {
       break;
@@ -729,14 +823,7 @@ export function scope_contains_item(
     if (scope.kind === 'turn') {
       return row.turn_key === scope.key;
     }
-    if (lens === 'focus') {
-      return false;
-    }
-    return (
-      scope.kind === 'timeline' &&
-      row.ending_sequence === null &&
-      (!options.stopped || row.turn_key === null)
-    );
+    return lens === 'full' && scope.kind === 'timeline';
   }
   const row = _row_record(sql, conversation_id, sequence);
   if (scope.kind === 'work_group') {
@@ -758,25 +845,28 @@ export function scope_contains_item(
       return false;
     }
     const group = sql.get<{
+      entry_count: number;
       latest_entry_sequence: number;
       ending_sequence: number | null;
       turn_key: string | null;
     }>(
-      'SELECT latest_entry_sequence,ending_sequence,turn_key FROM conversation_view_groups WHERE conversation_id=? AND group_key=?',
+      'SELECT entry_count,latest_entry_sequence,ending_sequence,turn_key FROM conversation_view_groups WHERE conversation_id=? AND group_key=?',
       [conversation_id, row.work_group_key],
     );
     return (
       group !== undefined &&
       sequence === group.latest_entry_sequence &&
-      group.ending_sequence === null &&
-      (!options.stopped || group.turn_key === null)
+      (group.entry_count === 1 ||
+        (group.ending_sequence === null && (!options.stopped || group.turn_key === null)))
     );
   }
-  const headed = lens === 'focus' ? row.focus_head : row.turn_key !== null;
+  if (lens === 'full') {
+    return true;
+  }
   return !(
     row.row_kind === 'agent_message' &&
     !row.focus_visible &&
-    headed &&
+    row.focus_head &&
     (options.stopped || row.turn_ending_sequence !== null) &&
     sequence !== latest
   );

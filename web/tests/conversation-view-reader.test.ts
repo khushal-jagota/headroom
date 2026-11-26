@@ -25,6 +25,23 @@ async function start(initial = snapshot()) {
   return reader;
 }
 
+// A reader made at the bottom (a switch from Focus to Full, say) used to skip entry, so it
+// was drawn before it was placed. It must enter hidden like a first open, and following the
+// bottom asks for no restoration history.
+it('keeps a reader made at the bottom hidden until its snapshot is placed, without a history read', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  const reader = new ConversationViewReader('c', 'full', true, () => {}, { key: 'e1', order: { sequence: 1, slot: 0 }, offset: 0, following: true });
+  readers.push(reader);
+  expect(reader.entryPhase).toBe('loading');
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', viewSnapshot('c', 'full', rows)); await ready;
+  expect(reader.entryPhase).toBe('placing');
+  reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it('does not replay existing live output when its first body read races a newer version', async () => {
   const initial = snapshot();
   const reference: ViewBodyReference = { body_id: 'live:turn', version: '1', byte_count: 100, media_type: 'text/markdown' };

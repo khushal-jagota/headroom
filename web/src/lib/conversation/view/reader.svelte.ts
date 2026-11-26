@@ -205,7 +205,9 @@ export class ConversationViewReader {
         this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
         this.restorationAnchor = this.restoring ? initialAnchor ? copyViewReaderAnchor(initialAnchor) : null : null;
         this.restorationOutcome = this.restoring ? 'pending' : 'idle';
-        if (transcript && initialAnchor === null) this.entryPhase = 'loading';
+        // Every new transcript reader stays hidden until it is placed, a reader made at the
+        // bottom (a switch of lens, say) as much as a first open. Restoration has its own path.
+        if (transcript && !this.restoring) this.entryPhase = 'loading';
     }
     /** Restore a bounded neighborhood, not a page that ends at the held line.
      * The newest snapshot already suffices when it still contains that line.
