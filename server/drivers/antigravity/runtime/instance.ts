@@ -53,7 +53,6 @@ export async function create_antigravity_instance(
       ),
       { child_processes: host.child_processes, worker_supervision: host.worker_supervision },
     ),
-    transcript_usage: antigravity_driver.transcript_usage!(host.environment),
   };
   // A test instance starts no catalog and reads no account. Its card says agy did not answer.
   if (host.test_mode || backend_io_is_test())

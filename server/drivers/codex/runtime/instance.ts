@@ -40,7 +40,6 @@ export async function create_codex_instance(
       // Separate instances share this database's durable rejection row.
       remembered_login_rejection: create_durable_codex_login_rejection(host.database, host.now),
     }),
-    transcript_usage: codex_driver.transcript_usage!(host.environment),
   };
   // A test instance reads no catalog, login or account, and cannot sign in.
   if (host.test_mode || backend_io_is_test())

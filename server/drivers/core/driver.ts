@@ -70,7 +70,6 @@ export interface DriverInstance {
   readonly child_factory: BackendChildFactory;
   readonly status: DriverStatus;
   readonly allowance_usage?: BackendUsageAdapter;
-  readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;
   /** Every local child reports a supervision record before `start()` resolves. */
   readonly supervises_local_launches?: boolean;

@@ -20,7 +20,8 @@ function card_usage_windows(
   windows: readonly BackendUsageWindow[],
   models: BackendSnapshot['available_models'],
 ) {
-  return windows.flatMap((window) =>
+  const covered = usage_window_model_ids(windows, models);
+  return windows.flatMap((window, index) =>
     window.resets_at === null
       ? []
       : [
@@ -29,7 +30,7 @@ function card_usage_windows(
             used_percent: window.used_percent,
             resets_at: datetime_json(window.resets_at),
             model_id: window.model_scope,
-            model_ids: usage_window_model_ids(window, models),
+            model_ids: covered[index]!,
           },
         ],
   );

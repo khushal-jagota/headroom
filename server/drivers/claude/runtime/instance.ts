@@ -46,7 +46,6 @@ export async function create_claude_instance(
       one_shot_children: host.one_shot_children,
       worker_supervision: host.worker_supervision,
     }),
-    transcript_usage: claude_driver.transcript_usage!(host.environment),
   };
   // A test instance reads no catalog or account. Its card says Claude did not answer.
   if (host.test_mode || backend_io_is_test())

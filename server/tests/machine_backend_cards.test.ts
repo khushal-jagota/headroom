@@ -585,6 +585,7 @@ test('capability facts distinguish missing and false and reject stale machine re
 // Fable window was dropped against three Fable catalog models, and one backend a machine could
 // not answer for failed the whole refresh. The adapters run for real, behind the executor's own
 // serialization, so the proof covers adapter, wire, store, Limits and cards on both machines.
+// A family window must not cover a model another window names exactly (Gemini and Gemini 4 Argon).
 test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
   'machine %s refresh keeps every Antigravity bucket and the Fable window when Codex fails',
   async (machine_id) => {
@@ -622,6 +623,10 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
               bucket('3p-weekly', 'weekly', 1, daily ? undefined : reset),
               bucket('3p-5h', '5h', 1, daily ? undefined : reset),
             ],
+          },
+          {
+            displayName: 'Gemini 4 Argon',
+            buckets: [bucket('gemini-argon-wtu-weekly', 'weekly', 0.25, reset)],
           },
         ],
       });
@@ -676,7 +681,17 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
             ],
           },
         ],
-        [antigravity_key, { ...snapshot, backend_key: antigravity_key }],
+        [
+          antigravity_key,
+          {
+            ...snapshot,
+            backend_key: antigravity_key,
+            available_models: [
+              model('gemini-4-neon', 'Gemini 4 Neon'),
+              model('gemini-4-argon', 'Gemini 4 Argon'),
+            ],
+          },
+        ],
       ]);
       const database = fixture();
       database.write((tx) => seed_machine_lease(tx, machine_id));
@@ -771,22 +786,36 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
           ['gemini-5h', '5 hours · Gemini', 35, '2026-11-30T21:02:00Z'],
           ['3p-weekly', '7 days · Claude and GPT', 0, null],
           ['3p-5h', '5 hours · Claude and GPT', 0, null],
+          ['gemini-argon-wtu-weekly', '7 days · Gemini 4 Argon', 75, '2026-11-30T21:02:00Z'],
         ]);
         expect(rows('claude')).toEqual([
           ['seven_day', '7 days', 79, '2026-11-28T15:00:00Z'],
           ['seven_day_fable', '7 days · Fable', 23, '2026-11-28T15:00:00Z'],
         ]);
-        const card = (
+        // A family window covers each model of its family that no window names exactly, and
+        // cards leave out a window with no reset time.
+        const backends = (
           await app.inject({
             method: 'GET',
             url: `/api/conversation/backends?machine_id=${machine_id}`,
           })
-        )
-          .json()
-          .backends.find((value: { backend_key: string }) => value.backend_key === 'claude');
-        expect(
-          card.cached_usage.windows.map((window: { model_ids: string[] }) => window.model_ids),
-        ).toEqual([[], ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2']]);
+        ).json().backends;
+        const covered = (backend: string) =>
+          backends
+            .find((value: { backend_key: string }) => value.backend_key === backend)
+            .cached_usage.windows.map((window: { model_id: string; model_ids: string[] }) => [
+              window.model_id,
+              window.model_ids,
+            ]);
+        expect(covered('claude')).toEqual([
+          [null, []],
+          ['Fable', ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2']],
+        ]);
+        expect(covered('antigravity')).toEqual([
+          ['Gemini', ['gemini-4-neon']],
+          ['Gemini', ['gemini-4-neon']],
+          ['Gemini 4 Argon', ['gemini-4-argon']],
+        ]);
       } finally {
         await app.close();
       }
