@@ -230,9 +230,36 @@ export class DarwinHomeService {
   }
   async stop(): Promise<void> {
     const scope = this.scope(),
-      inventory = this.io.processes(scope.deadline),
-      captured = new Map<number, DarwinHomeProcess>();
-    const loaded: string[] = [];
+      captured = new Map<number, DarwinHomeProcess>(),
+      booted_out: string[] = [];
+    // An auxiliary job starts and ends short processes on its own timer, such as the
+    // stall watchdog every 30 seconds. A process change there starts the capture again.
+    while (!(await this.capture_and_boot_out(scope, captured, booted_out)))
+      await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
+    for (;;) {
+      assert_release_execution(scope);
+      const jobs_gone = (
+        await Promise.all(booted_out.map((label) => this.job(label, scope)))
+      ).every((text) => text === null);
+      const processes_gone = [...captured].every(
+        ([pid, original]) => this.io.process(pid)?.birth !== original.birth,
+      );
+      if (jobs_gone && processes_gone) {
+        this.phase = 'stopped';
+        return;
+      }
+      await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
+    }
+  }
+  /** Returns false when an auxiliary job's process changed. The home process must never change. */
+  private async capture_and_boot_out(
+    scope: ReleaseExecution & { deadline: number },
+    captured: Map<number, DarwinHomeProcess>,
+    booted_out: string[],
+  ): Promise<boolean> {
+    assert_release_execution(scope);
+    const inventory = this.io.processes(scope.deadline),
+      loaded: string[] = [];
     for (const label of [
       ...DARWIN_HOME_SCHEDULE_SUFFIXES.map((suffix) => this.identity.label + suffix),
       this.identity.label + '.backup',
@@ -257,8 +284,10 @@ export class DarwinHomeService {
           !current ||
           current.uid !== this.io.uid ||
           current.birth !== original.birth
-        )
+        ) {
+          if (label !== this.identity.label) return false;
           throw new Error('Loaded Mac job process identity is unavailable');
+        }
         const pending = [pid],
           selected = new Set<number>();
         while (pending.length) {
@@ -276,28 +305,18 @@ export class DarwinHomeService {
     for (const label of loaded) {
       // Rebind every label immediately before its control operation, including its current birth.
       const { pid } = await this.authenticate(label, false, scope);
-      if (pid !== null && this.io.process(pid)?.birth !== captured.get(pid)?.birth)
+      if (pid !== null && this.io.process(pid)?.birth !== captured.get(pid)?.birth) {
+        if (label !== this.identity.label) return false;
         throw new Error('Mac job process identity changed before stop');
+      }
       await this.io.command(
         ['/bin/launchctl', 'bootout', `${this.identity.domain}/${label}`],
         scope,
         Math.max(0, scope.deadline - performance.now() / 1000),
       );
+      booted_out.push(label);
     }
-    for (;;) {
-      assert_release_execution(scope);
-      const jobs_gone = (await Promise.all(loaded.map((label) => this.job(label, scope)))).every(
-        (text) => text === null,
-      );
-      const processes_gone = [...captured].every(
-        ([pid, original]) => this.io.process(pid)?.birth !== original.birth,
-      );
-      if (jobs_gone && processes_gone) {
-        this.phase = 'stopped';
-        return;
-      }
-      await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
-    }
+    return true;
   }
   async start(): Promise<void> {
     const scope = this.scope();
