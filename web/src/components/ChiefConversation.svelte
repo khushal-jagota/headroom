@@ -106,7 +106,7 @@
   {#if goals.error}<ErrorLine error={goals.error}/>{/if}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} recapTarget={{ kind: "chief", id: "chief" }}>
-    {#snippet actions()}<WorkMoveDialog owner={{kind:"chief"}} label="the Chief" currentMachineId={startValues.data?.machine_id} />{/snippet}
+    {#snippet actions()}<WorkMoveDialog owner={{kind:"chief"}} currentMachineId={startValues.data?.machine_id} />{/snippet}
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
   <section class="manager-workers" aria-label="Workers">
