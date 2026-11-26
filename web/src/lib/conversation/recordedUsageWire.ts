@@ -1,11 +1,10 @@
 /** Thin HTTP transport for the copied T3 usage contracts. */
-import { backendMachinePath } from "./wire";
 import { fetchJson } from "../api";
 import { USAGE_SCAN_LIMIT_MS } from "../requestLimit/config";
-import type { ServerProviderUsageLimits, UsageSummaryInput, UsageSummary, UsagePricing } from "../usage/contracts";
+import type { UsageSummaryInput, UsageSummary, UsagePricing } from "../usage/contracts";
+import type { MachineUsageLimitsResponse } from "../usage/machineLimits";
 export type { UsageSummaryInput, UsageSummary, UsageProviderKind as UsageProvider } from "../usage/contracts";
 export type UsageDays = 1 | 7 | 30 | 90;
-export type LocalUsageLimits = Readonly<Record<string, ServerProviderUsageLimits>>;
 
 /** The home machine's summary omits `machineId`; a joined machine's names it. */
 export function usageSummaryPath(input: UsageSummaryInput, machineId?: string): string {
@@ -19,8 +18,9 @@ export function usageSummaryPath(input: UsageSummaryInput, machineId?: string): 
 export function readUsageSummary(input: UsageSummaryInput): Promise<UsageSummary> {
   return fetchJson(usageSummaryPath(input), { limitMs: USAGE_SCAN_LIMIT_MS });
 }
-export function readUsageLimits(machineId?: string): Promise<LocalUsageLimits> {
-  return fetchJson(backendMachinePath("/api/conversation/usage/limits", machineId));
+/** Every machine's saved allowance readings, an unavailable machine's included. */
+export function readUsageLimits(): Promise<MachineUsageLimitsResponse> {
+  return fetchJson("/api/conversation/usage/limits");
 }
 
 /** Pricing only. This does not refresh a native provider or account. */

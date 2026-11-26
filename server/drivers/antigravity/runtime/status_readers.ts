@@ -65,7 +65,10 @@ export function antigravity_catalog(
     complete,
   };
 }
-export function antigravity_catalog_reader(source: AntigravityCatalogSource | null): CatalogReader {
+export function antigravity_catalog_reader(
+  source: AntigravityCatalogSource | null,
+  read_account_email: () => string | null,
+): CatalogReader {
   return async (request) => {
     let read;
     try {
@@ -83,7 +86,8 @@ export function antigravity_catalog_reader(source: AntigravityCatalogSource | nu
     }
     // agy has no identity command: a session opening is the sign-in answer.
     if (!read.signed_in) return answer({ identity: identity('unauthenticated') });
-    const signed_in = identity('authenticated');
+    // The login file names the account, so Usage can merge it with the same account elsewhere.
+    const signed_in = identity('authenticated', read_account_email());
     const catalog = antigravity_catalog(read.initial, read.after_selecting);
     if (catalog === null)
       return answer({

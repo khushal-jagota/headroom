@@ -17,7 +17,7 @@ import { read_ticket } from '../../tickets/data/index.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
-import type { BackendUsageResult } from '../backend_usage/contracts.ts';
+import type { BackendUsageAccount, BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { BackendHttpRuntime, BackendSnapshot } from './contracts.ts';
 import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
 import {
@@ -37,6 +37,20 @@ function card_facts(runtime: BackendHttpRuntime, key: string, home = true): Card
 }
 function home_card(runtime: BackendHttpRuntime, snapshot: BackendSnapshot) {
   return snapshot_json(snapshot, runtime.backend_state, card_facts(runtime, snapshot.backend_key));
+}
+/**
+ * The account the refreshed card names, kept with the observation read alongside it. The card's
+ * detail is a plan line only for a confirmed sign-in. Otherwise it is a warning, not a plan.
+ */
+function usage_account(
+  snapshots: readonly BackendSnapshot[],
+  backend_key: BackendInstanceId,
+): BackendUsageAccount {
+  const identity = snapshots.find((snapshot) => snapshot.backend_key === backend_key)?.identity;
+  return {
+    account_label: identity?.account_label ?? null,
+    account_detail: identity?.status === 'authenticated' ? identity.detail : null,
+  };
 }
 export function selected_machine(
   runtime: Pick<BackendHttpRuntime, 'database'>,
@@ -366,7 +380,11 @@ export function createBackendRoutes(
               signal_of(request),
             );
             if (result.outcome === 'succeeded' && result.observed_at !== null)
-              runtime.backend_state?.keep_successful_usage(result, machine_id);
+              runtime.backend_state?.keep_successful_usage(
+                result,
+                machine_id,
+                usage_account(snapshots, backend_key),
+              );
             return { backend_key, outcome: result.outcome, detail: result.detail };
           }),
         );
@@ -393,7 +411,11 @@ export function createBackendRoutes(
       if (runtime.backend_state !== null) {
         for (const result of refreshed) {
           if (result.outcome === 'succeeded' && result.observed_at !== null)
-            runtime.backend_state.keep_successful_usage(result);
+            runtime.backend_state.keep_successful_usage(
+              result,
+              HOME_MACHINE_ID,
+              usage_account(snapshots, result.backend_key),
+            );
         }
       }
       return {

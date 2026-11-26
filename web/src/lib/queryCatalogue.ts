@@ -88,8 +88,8 @@ export const queries = {
     ...jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
     meta: { resourceBody: true, savedForNextLaunch: false }
   }),
-  usageLimits: (machineId: string) => queryOptions({
-    queryKey: ["usage-limits", machineId], queryFn: () => readUsageLimits(machineId), retry: false
+  usageLimits: () => queryOptions({
+    queryKey: ["usage-limits"], queryFn: () => readUsageLimits(), retry: false
   }),
   recordedUsage: (input: UsageSummaryInput, machineId?: string) => ({
     ...resourceQuery<UsageSummary>(["recorded-usage", input, machineId ?? null], usageSummaryPath(input, machineId), false, USAGE_SCAN_LIMIT_MS),
