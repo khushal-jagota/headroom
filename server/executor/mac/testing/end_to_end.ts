@@ -14,7 +14,7 @@ import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { row_envelope } from '../storage/envelopes.ts';
-import { as_object } from '../../protocol.ts';
+import { as_object, ExecutorValidationError } from '../../protocol.ts';
 import type { BackendEventSink, BackendChild } from '../../../conversation/backends/contracts.ts';
 import {
   BackendPromptAccepted,
@@ -45,6 +45,7 @@ import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launc
 import { child_ticket_id } from '../runner/logic/child_owner.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
+import type { MessageContent } from '../../../conversation/message_content.ts';
 import { create_claude_backend_child_factory } from '../../../drivers/claude/runtime/adapter.ts';
 import { create_claude_cleanup_fixture } from './claude_cleanup.ts';
 import { runtime_archive } from '../updates/testing/runtime_archive.ts';
@@ -95,6 +96,25 @@ let catalog_models: string[] | undefined = claude_cleanup
   ? ['claude-old', 'claude-new']
   : undefined;
 let held_steer: Promise<void> | undefined, release_steer: (() => void) | undefined;
+// Opt-in holds on a native start and on input downloads. Stop and abort release them.
+let held_start: Promise<void> | undefined, release_start: (() => void) | undefined;
+let held_download: Promise<void> | undefined, release_download: (() => void) | undefined;
+let fail_download = false;
+const release_holds = () => {
+  release_start?.();
+  release_download?.();
+  held_start = held_download = undefined;
+};
+const opened = (gate: Promise<void>, signal?: AbortSignal) =>
+  signal === undefined
+    ? gate
+    : Promise.race([
+        gate,
+        new Promise<never>((_resolve, reject) => {
+          if (signal.aborted) reject(signal.reason);
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+      ]);
 let final_event_on_stop = false;
 const catalog_observed = { calls: 0, cancelled: 0 };
 const calls = {
@@ -105,12 +125,19 @@ const calls = {
   cancels: 0,
   steers: 0,
   starts_details: [] as unknown[],
+  held_starts: [] as string[],
+  downloads: [] as string[],
+  steer_texts: [] as { conversation_id: string; text: string }[],
   deliveries: [] as unknown[],
   answers: [] as unknown[],
   user_answers: [] as unknown[],
 };
 let active_sink: BackendEventSink | undefined, turn: TurnToken | undefined;
 let retired_sink: BackendEventSink | undefined;
+const sinks = new Map<string, BackendEventSink>(),
+  turns = new Map<string, TurnToken>();
+const content_text = (content: MessageContent) =>
+  content.flatMap((piece) => ('text' in piece ? [piece.text] : [])).join('\n');
 const bindings: MacHostBindings = {
   ...concrete,
   adapters(owners) {
@@ -165,6 +192,7 @@ const bindings: MacHostBindings = {
           const owned_sink = values.event_sink;
           retired_sink = active_sink;
           active_sink = values.event_sink;
+          sinks.set(resolved.conversation_id, values.event_sink);
           let stopped = false;
           const unsupported = async (): Promise<never> => {
             throw new Error('Unscripted provider operation');
@@ -175,6 +203,10 @@ const bindings: MacHostBindings = {
             detach: unsupported,
             async start(resolved, start_options) {
               await record_scripted_worker(resolved);
+              if (held_start) {
+                calls.held_starts.push(resolved.conversation_id);
+                await held_start;
+              }
               calls.starts++;
               calls.starts_details.push({
                 conversation_id: resolved.conversation_id,
@@ -193,11 +225,13 @@ const bindings: MacHostBindings = {
                 );
               calls.prompts++;
               calls.deliveries.push({
+                conversation_id: resolved.conversation_id,
                 turn: current,
-                text: content.flatMap((piece) => ('text' in piece ? [piece.text] : [])).join('\n'),
+                text: content_text(content),
                 options: prompt_options,
               });
               turn = current;
+              turns.set(resolved.conversation_id, current);
               if (early_event)
                 await owned_sink.report(
                   current,
@@ -210,8 +244,12 @@ const bindings: MacHostBindings = {
                 );
               return new BackendPromptAccepted({ composed_content_delivered: true });
             },
-            async steer() {
+            async steer(_turn, content) {
               calls.steers++;
+              calls.steer_texts.push({
+                conversation_id: resolved.conversation_id,
+                text: content_text(content),
+              });
               if (held_steer) await held_steer;
               if (stopped) throw new Error('Native stopped after the steer invocation.');
               return new BackendSteerAccepted({ composed_content_delivered: true });
@@ -295,6 +333,15 @@ const bindings: MacHostBindings = {
   },
 };
 const service = await MacService.open(configuration, bindings, options());
+const download = service.transfer.download_command_file.bind(service.transfer);
+service.transfer.download_command_file = async (command_id, stored_file_id, target, signal) => {
+  calls.downloads.push(stored_file_id);
+  if (held_download) await opened(held_download, signal);
+  // The incident's failure: a response that never passes the download's validation.
+  if (fail_download)
+    throw new ExecutorValidationError('executor download lacks its length or digest');
+  return download(command_id, stored_file_id, target, signal);
+};
 const published: QueuedEnvelope[] = [],
   receipts: AcceptanceReceipt[] = [];
 const append = service.outbox.append.bind(service.outbox);
@@ -347,10 +394,21 @@ async function state() {
 async function emit(
   kind: string,
   id?: string,
-  values: { text?: string; detail?: string; turn_offset?: number; retired?: boolean } = {},
+  values: {
+    text?: string;
+    detail?: string;
+    turn_offset?: number;
+    retired?: boolean;
+    conversation_id?: string;
+  } = {},
 ) {
-  const sink = values.retired ? retired_sink : active_sink;
-  const current = turn;
+  const sink =
+    values.conversation_id !== undefined
+      ? sinks.get(values.conversation_id)
+      : values.retired
+        ? retired_sink
+        : active_sink;
+  const current = values.conversation_id !== undefined ? turns.get(values.conversation_id) : turn;
   assert.ok(sink && current);
   const token = { ...current, turn_number: current.turn_number + (values.turn_offset ?? 0) };
   if (kind === 'delta')
@@ -523,6 +581,7 @@ try {
         continue;
       }
       if (command.operation === 'stop') {
+        release_holds();
         await service.stop(options());
         await service.settled();
         write({ id: command.id, result: { stopped: true, calls } });
@@ -600,6 +659,27 @@ try {
         if ('catalog_models' in command) catalog_models = command.catalog_models;
         if ('catalog_complete' in command) catalog_complete = command.catalog_complete;
         if ('final_event_on_stop' in command) final_event_on_stop = command.final_event_on_stop;
+        if ('hold_start' in command) {
+          if (command.hold_start)
+            held_start = new Promise((resolve) => {
+              release_start = resolve;
+            });
+          else {
+            release_start?.();
+            held_start = undefined;
+          }
+        }
+        if ('hold_download' in command) {
+          if (command.hold_download)
+            held_download = new Promise((resolve) => {
+              release_download = resolve;
+            });
+          else {
+            release_download?.();
+            held_download = undefined;
+          }
+        }
+        if ('fail_download' in command) fail_download = command.fail_download;
         if ('hold_steer' in command) {
           if (command.hold_steer)
             held_steer = new Promise((resolve) => {
@@ -618,6 +698,7 @@ try {
   }
 } finally {
   lines.close();
+  release_holds();
   try {
     await service.stop(options());
   } finally {
