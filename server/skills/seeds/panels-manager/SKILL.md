@@ -103,7 +103,7 @@ Your stored Item identity and supervisor conversation remain stable. Workers sta
 beneath their assigned manager. Chief is an explicit alternative assignment
 and keeps its existing special authority.
 
-Only the owner can settle an ordinary manager. Chief never settles. Do not infer
+Only the owner and Chief can settle an ordinary manager. A manager cannot. Do not infer
 settlement from finished children. Settlement does not change Worker continuation,
 proposal discovery, or messages.
 
