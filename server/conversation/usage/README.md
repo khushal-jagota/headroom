@@ -87,8 +87,12 @@ types, compressed transcripts, and speed pricing are not part of this copy.
 
 ## Safety and evidence
 
-Production composition reads the transcript sources each backend instance gives
-it. Test composition maps each source to a synthetic directory, and uses recording
+Production composition reads the transcript sources each driver names, through
+`driverTranscriptSources.ts`. Every joined machine composes the same service over
+its own homes. `GET /summary?machine_id=` relays a `read_usage_summary` machine
+control to that machine, which answers with its aggregated summary only. The
+machine advertises the operation in its lease; older machine code answers 503.
+The browser merges the machine summaries. Test composition maps each source to a synthetic directory, and uses recording
 rate fetchers. The production
 rates transport refuses test contexts. Real provider transcripts, authentication
 files, provider CLIs, and billing endpoints do not participate in local proof.

@@ -24,8 +24,8 @@ import {
   compose_production_backends,
   require_backend_bindings,
   prepare_machine_backends,
-  driver_transcript_sources,
 } from './production_bindings.ts';
+import { driver_transcript_sources } from '../conversation/usage/driverTranscriptSources.ts';
 import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import type { ProductionBackendBindings } from './production_bindings.ts';
 import type { ShutdownCompletion } from './contracts.ts';

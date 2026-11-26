@@ -9,20 +9,23 @@ Three tabs: Limits, Tokens, and Cost.
 - **Limits** is allowance: how much each provider says is left.
 - **Tokens and Cost** are recorded spend: what the agents have used.
 
-The two numbers come from different places and do not mix. Recorded usage comes from one local server. The browser calculates its totals and charts directly from that server's summary.
+The two numbers come from different places and do not mix. Recorded usage comes from every machine. Each machine scans its own transcripts and sends the server only its totals, so raw transcripts never leave the machine. The browser reads each machine's summary and merges them into one set of totals and charts.
 
 ```
  provider login ──► Limits (saved observation, refreshed on request)
- local transcripts ─► server summary ─► browser totals and charts
+ home transcripts ──► home summary ───────────────┐
+ joined machine transcripts ─► machine summary ───┴─► browser merge ─► totals and charts
 ```
 
 ## Allowance and spend
 
 Opening Limits reads the last observation Headroom saved for each backend that reports allowance. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Each backend refreshes on its own, so one backend that fails does not stop the others. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Each backend's driver supplies its own allowance reading. Each backend's name and chart colour come from its driver. Each window carries the provider's own id and a label, as in T3 Code. The reset time is optional: a bucket the provider names no reset for shows no countdown. A window can name a model or a model family: Antigravity's 5-hour and weekly windows come from Google's quota service, one set per family, such as Gemini, or Claude and GPT. Panels saves the windows as the provider reports them. Model pickers match a named window to every model of that family when they show it, so a Fable window shows on each Fable model.
 
-Tokens and Cost are totalled from the transcripts of Codex, Claude, Antigravity and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. Each backend's driver names where its transcripts live and the parser that reads them, so the server reads them without running an agent. Antigravity's parser reads its local session databases. That path never asks a provider for allowance. Grok Build appears in the scan but is a usage source, not a driver or a conversation backend, so its name and colour are kept with the usage page. See [Conversations](conversations.md).
+Tokens and Cost are totalled from the transcripts of Codex, Claude, Antigravity and Grok Build on each machine, including sessions never started in Headroom, with prices refreshed separately. Each backend's driver names where its transcripts live and the parser that reads them, so each machine reads them without running an agent. Antigravity's parser reads its local session databases. That path never asks a provider for allowance. Grok Build appears in the scan but is a usage source, not a driver or a conversation backend, so its name and colour are kept with the usage page. See [Conversations](conversations.md).
 
 Tokens and Cost read a summary when the selected window first opens. Refresh reads it again. Background changes do not trigger transcript scans. Provider filters use the loaded summary.
+
+The home summary is read on the server. A joined machine's summary comes through that machine's controls, as a limits refresh does, and the machine prices its own records. The merge follows T3 Code: a transcript folder that two machines report with the same host, path and volume counts once. A machine that is offline, slow, or on older machine code does not hold the page. Its totals are left out, and a notice names it. The Sources list names the machine of each folder when more than one machine contributes.
 
 Costs use each request’s token counts and model prices before the server combines totals. Long prompts use the applicable higher rates. A model missing from the price table shows as unpriced. Claude cache writes use their reported cache duration.
 
@@ -44,4 +47,4 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 `server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Settings and sign-in are `web/src/components/settings/BackendSettings.svelte` and `web/src/components/conversation/BackendSignInBlock.svelte`, with the session in `web/src/lib/conversation/backendSignInSession.ts`.
 
-_Last verified: 2026-11-24._
+_Last verified: 2026-11-26._
