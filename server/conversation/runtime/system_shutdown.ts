@@ -2,6 +2,7 @@ import { recipient_delivery_settlements } from '../../message_delivery/lifetime.
 /** Native operation tracking, quiescence, and conversation core shutdown. */
 import { observe_shutdown, is_shutdown_business_cancellation } from '../shutdown.ts';
 import { detach_children } from './maintenance.ts';
+import { cancel_no_turn_fallback } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
 export function native_operation<T>(
@@ -102,6 +103,7 @@ function begin_shutdown(
     state.closing = true;
     state.child_event_sink = null;
     if (state.running_turn) state.running_turn.callbacks_revoked = true;
+    cancel_no_turn_fallback(state);
     state.backend_events.length = 0;
     state.backend_event_pump = null;
     state.late_steer_generation += 1;

@@ -80,6 +80,13 @@ export class ConversationState {
   reserved_turn: ReservedTurn | null = null;
   running_turn: RunningTurn | null = null;
   last_ended_turn_token: TurnToken | null = null;
+  /** In memory only: a turn whose steer was refused for lack of a running turn, and the timer that ends it. */
+  no_turn_fallback: {
+    readonly turn: TurnToken;
+    readonly timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  /** The turn that the no-turn timer ended. Its late closing events are still taken in. */
+  late_events_turn: TurnToken | null = null;
   last_ended_turn_was_automatic_compaction = false;
   child: BackendChild | null = null;
   /** The selection the current child was started or last set with. Only read while `child` is that child. */
@@ -119,6 +126,10 @@ export function same_turn(left: TurnToken | null, right: TurnToken | null): bool
     left.conversation_id === right.conversation_id &&
     left.turn_number === right.turn_number
   );
+}
+export function cancel_no_turn_fallback(state: ConversationState): void {
+  if (state.no_turn_fallback !== null) clearTimeout(state.no_turn_fallback.timer);
+  state.no_turn_fallback = null;
 }
 export function set_phase(state: ConversationState, phase: ConversationPhase): void {
   state.phase = phase;
