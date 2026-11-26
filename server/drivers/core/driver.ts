@@ -48,7 +48,7 @@ export interface AgentDriver<Config> {
    * Where this driver's transcripts live under `environment`, for recorded usage. On the driver,
    * so the server reads transcripts without a live instance. Absent: the driver keeps none.
    */
-  transcript_usage?(environment: DriverHost['environment']): TranscriptUsageSource;
+  transcript_usage?(environment: DriverHost['environment']): Promise<TranscriptUsageSource>;
 }
 export interface DriverModelRules {
   /** The model family a card shows as selected_variant, or null. */

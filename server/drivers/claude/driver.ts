@@ -5,9 +5,6 @@ import type { AgentDriver } from '../core/driver.ts';
 import { parse_driver_kind } from '../core/identity.ts';
 import { claude_client } from './client.ts';
 import { claude_manifest } from './manifest.ts';
-import { claude_transcript_usage } from './runtime/transcript_usage.ts';
-import { home_path } from '../core/paths.ts';
-import { homedir } from 'node:os';
 import { claude_models } from './models.ts';
 import { claude_readable_tool_call_detail } from './tool_detail.ts';
 
@@ -21,13 +18,11 @@ export const claude_driver: AgentDriver<null> = {
   config: NO_DRIVER_CONFIG,
   models: claude_models,
   readable_tool_call_detail: claude_readable_tool_call_detail,
-  transcript_usage: (environment) =>
-    claude_transcript_usage(
-      home_path(claude_manifest.home!, environment, homedir(), {
-        unset: '||',
-        expand_configured: false,
-      }),
-    ),
+  async transcript_usage(environment) {
+    return (await import('./runtime/transcript_usage.ts')).claude_configured_transcript_usage(
+      environment,
+    );
+  },
   async create(input, host) {
     const { create_claude_instance } = await import('./runtime/instance.ts');
     return create_claude_instance(input, host);

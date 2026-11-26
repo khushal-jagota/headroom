@@ -5,9 +5,6 @@ import type { AgentDriver } from '../core/driver.ts';
 import { parse_driver_kind } from '../core/identity.ts';
 import { codex_client } from './client.ts';
 import { codex_manifest } from './manifest.ts';
-import { codex_transcript_usage } from './runtime/transcript_usage.ts';
-import { home_path } from '../core/paths.ts';
-import { homedir } from 'node:os';
 import { codex_launch_model_refusal, codex_models } from './models.ts';
 
 export const codex_driver: AgentDriver<null> = {
@@ -23,13 +20,11 @@ export const codex_driver: AgentDriver<null> = {
   config: NO_DRIVER_CONFIG,
   models: codex_models,
   launch_model_refusal: codex_launch_model_refusal,
-  transcript_usage: (environment) =>
-    codex_transcript_usage(
-      home_path(codex_manifest.home!, environment, homedir(), {
-        unset: '||',
-        expand_configured: false,
-      }),
-    ),
+  async transcript_usage(environment) {
+    return (await import('./runtime/transcript_usage.ts')).codex_configured_transcript_usage(
+      environment,
+    );
+  },
   async create(input, host) {
     const { create_codex_instance } = await import('./runtime/instance.ts');
     return create_codex_instance(input, host);
