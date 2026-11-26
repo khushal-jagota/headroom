@@ -4,7 +4,7 @@ import type { OwnedOneShotChildren, StopOptions } from '../../../lifecycle/contr
 import { copy_environment } from '../../../core/environment.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './sdk.ts';
+import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION, PANELS_CLAUDE_CODE_ENTRYPOINT } from './sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ensure_cli_compatible } from '../../../conversation/backends/cli_compatibility.ts';
 import { ModelCatalogCleanupFailed } from '../../../conversation/backends/catalog_cleanup.ts';
@@ -187,7 +187,7 @@ export async function probe_claude_model_catalog(
         );
       const child_environment: NodeJS.ProcessEnv = {
         ...environment,
-        CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+        CLAUDE_CODE_ENTRYPOINT: PANELS_CLAUDE_CODE_ENTRYPOINT,
         CLAUDE_AGENT_SDK_VERSION,
       };
       delete child_environment.CLAUDECODE;

@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { copy_environment } from '../../../core/environment.ts';
 import { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { CLAUDE_AGENT_SDK_VERSION, load_claude_sdk } from './sdk.ts';
+import { CLAUDE_AGENT_SDK_VERSION, load_claude_sdk, PANELS_CLAUDE_CODE_ENTRYPOINT } from './sdk.ts';
 import type {
   EffortLevel,
   Query,
@@ -166,10 +166,9 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     });
     const environment = copy_environment(process.env);
     delete environment.CLAUDECODE;
-    environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
     Object.assign(environment, overrides);
-    // Report the active JavaScript SDK identity after explicit environment overrides.
-    environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
+    // Report the Panels identity after explicit environment overrides.
+    environment.CLAUDE_CODE_ENTRYPOINT = PANELS_CLAUDE_CODE_ENTRYPOINT;
     environment.CLAUDE_AGENT_SDK_VERSION = CLAUDE_AGENT_SDK_VERSION;
     if (this.options.cwd) environment.PWD = this.options.cwd;
     if (this.options.enableFileCheckpointing)

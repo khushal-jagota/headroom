@@ -199,8 +199,9 @@ function setup_client<T extends object>(
   };
 }
 
+// Risk: agent turns, the traffic that spends the 5-hour limit, report the SDK entrypoint.
 it('waits for actual stdin completion', async () => {
-  const { client, child, writes, pumping } = setup();
+  const { client, child, writes, pumping } = setup({ CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' });
   try {
     await client.connect();
     let completed = false;
@@ -221,6 +222,7 @@ it('waits for actual stdin completion', async () => {
         detached: process.platform !== 'win32',
       }),
     );
+    expect(vi.mocked(spawn).mock.calls[0]![2]!.env!.CLAUDE_CODE_ENTRYPOINT).toBe('panels');
     await client.disconnect();
     await pumping();
     expect(child.kill).not.toHaveBeenCalled();

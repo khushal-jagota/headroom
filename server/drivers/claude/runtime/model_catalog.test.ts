@@ -116,7 +116,7 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
   expect(spawn).toHaveBeenCalledExactlyOnceWith('/synthetic/selected-cli', [], {
     cwd: '/synthetic/workspace',
     env: expect.objectContaining({
-      CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+      CLAUDE_CODE_ENTRYPOINT: 'panels',
       CLAUDE_AGENT_SDK_VERSION: '0.3.316',
     }),
     stdio: ['pipe', 'pipe', 'pipe'],
