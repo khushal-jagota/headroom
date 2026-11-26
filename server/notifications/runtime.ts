@@ -8,6 +8,9 @@ import { observe_shutdown } from '../conversation/shutdown.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
+import * as live_activity_data from './live_activity_data.ts';
+import { LIVE_ACTIVITY_RETRY_SECONDS } from './config.ts';
+import { live_activity_payload, plan_live_activity, read_review_cards } from './live_activity.ts';
 import { task_alert_is_current } from './attention.ts';
 import { desktop_notification_streams } from './desktop_streams.ts';
 export interface NotificationLoopOptions {
@@ -26,6 +29,8 @@ export class NotificationLoop {
   private interval = 60;
   private stop_requested = false;
   private expired = false;
+  /** A refused Live Activity push waits before the next try, so a commit wake cannot repeat it. */
+  private readonly live_activity_retry_at = new Map<string, number>();
   private readonly pending = new Set<Promise<number>>();
   private closing: Promise<void> | undefined;
   private shutdown_settlement: Promise<void> | undefined;
@@ -97,12 +102,62 @@ export class NotificationLoop {
           if (this.expired) return sent;
           database.write((sql) => apns_data.record_result(sql, delivery, result, send_now));
         }
-        return sent;
       }
+      if (apns_adapter && !this.stop_requested)
+        sent += await this.push_live_activities(apns_adapter);
       return sent;
     } finally {
       admission?.release();
     }
+  }
+  /** Tell each phone's Review Live Activity what the queue holds. Writes only when it sends. */
+  private async push_live_activities(apns_adapter: APNsAdapter): Promise<number> {
+    const { database, clock } = this.options;
+    const devices = database.read((sql) => live_activity_data.live_activity_devices(sql));
+    if (!devices.length) return 0;
+    const cards = database.read((sql) => read_review_cards(sql));
+    if (cards === null) return 0;
+    let sent = 0;
+    for (const device of devices) {
+      if (this.stop_requested) return sent;
+      const now = clock.nowUnix();
+      if ((this.live_activity_retry_at.get(device.device_id) ?? 0) > now) continue;
+      const plan = plan_live_activity(device, cards, now);
+      if (!plan) continue;
+      sent++;
+      const result = await apns_adapter.send_live_activity(
+        {
+          token: plan.token,
+          bundle_id: device.bundle_id,
+          environment: device.environment,
+          payload: live_activity_payload(plan, now),
+        },
+        { now },
+      );
+      if (this.expired) return sent;
+      if (result.delivered) {
+        this.live_activity_retry_at.delete(device.device_id);
+        database.write((sql) =>
+          live_activity_data.record_live_activity_sent(sql, device.device_id, {
+            kind: plan.kind,
+            cards: cards.map((card) => card.key),
+            now,
+          }),
+        );
+      } else {
+        this.live_activity_retry_at.set(device.device_id, now + LIVE_ACTIVITY_RETRY_SECONDS);
+        if (result.dead_token)
+          database.write((sql) =>
+            live_activity_data.record_live_activity_dead_token(
+              sql,
+              device.device_id,
+              plan.kind === 'start' ? 'push_to_start_token' : 'update_token',
+              now,
+            ),
+          );
+      }
+    }
+    return sent;
   }
   start(interval: number): void {
     if (this.timer || this.active || this.stop_requested)

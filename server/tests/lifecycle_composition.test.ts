@@ -300,7 +300,10 @@ test.each(['web', 'apns'] as const)(
       clock: context.clock,
       canonical_origin: 'https://fresh.invalid',
       adapter: { send },
-      apns_adapter: transport === 'apns' ? { send, close() {} } : null,
+      apns_adapter:
+        transport === 'apns'
+          ? { send, send_live_activity: async () => ({ delivered: true }), close() {} }
+          : null,
     });
     expect(await loop.poll_once()).toBe(1);
     expect(send).toHaveBeenCalledOnce();
@@ -386,7 +389,11 @@ test.each(['web', 'apns'] as const)(
       adapter: { send: async (_subscription, intent) => send(intent.route) },
       apns_adapter:
         transport === 'apns'
-          ? { send: async (delivery) => send(delivery.intent.route), close() {} }
+          ? {
+              send: async (delivery) => send(delivery.intent.route),
+              send_live_activity: async () => ({ delivered: true }),
+              close() {},
+            }
           : null,
     });
     expect(await loop.poll_once()).toBe(1);
@@ -697,7 +704,11 @@ test('notification deadline fences late web and native results and bounds adapte
         return web.promise;
       },
     },
-    apns_adapter: { send: nativeSend, close: adapterClose },
+    apns_adapter: {
+      send: nativeSend,
+      send_live_activity: async () => ({ delivered: true }),
+      close: adapterClose,
+    },
   });
   const pass = loop.poll_once();
   try {
@@ -733,7 +744,11 @@ test('notification deadline fences late web and native results and bounds adapte
     clock: context.clock,
     canonical_origin: 'https://unit21.invalid',
     adapter: { send: async () => ({ delivered: true }) },
-    apns_adapter: { send: nativeSend, close() {} },
+    apns_adapter: {
+      send: nativeSend,
+      send_live_activity: async () => ({ delivered: true }),
+      close() {},
+    },
   });
   const nativePass = nativeLoop.poll_once();
   try {

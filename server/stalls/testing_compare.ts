@@ -75,6 +75,9 @@ try {
       },
     };
     const apns: APNsAdapter = {
+      async send_live_activity() {
+        return { delivered: true };
+      },
       async send(delivery, options) {
         sends.push({ transport: 'apns', delivery, ...options });
         return {

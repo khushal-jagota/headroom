@@ -50,11 +50,12 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 ## Code
 
-- `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, APNs, and the desktop streams (`desktop_streams.ts`).
+- `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, APNs, the Live Activity (`live_activity.ts`), and the desktop streams (`desktop_streams.ts`).
+- `ios/PanelsLiveActivity/`: the widget extension that draws the Lock Screen card and the Island.
 - `static/service-worker.js`: the service worker.
 - `web/src/components/settings/NotificationSettings.svelte`: the settings section.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-26._
 
 
 ## Desktop app
@@ -67,6 +68,14 @@ The native app uses Apple Push Notification service (APNs). Press and hold a mes
 existing Web Push path. Each path records delivery separately for the same attention
 edge and notification preference. Native retries stop after five minutes or five attempts.
 Native push for other homes is deferred. The stock app does not require the owner to provision Apple credentials.
+
+## Review Live Activity
+
+The iPhone shows the Review count outside the app: a card on the Lock Screen and a count in the Dynamic Island. It reads `3 new.` / `Ready to review.`, or `All clear.` / `Nothing to review.` when the queue is empty. A tap opens Review's summary. This is not a notification and does not pass the policy. It follows the queue itself.
+
+The count is the number of cards that the summary screen counts: a Ticket's proposal, each of its unread runs and its ask, and a Manager's or Chief's run and ask. The server does not know which cards the phone skipped, so skipped cards count as new here. An unavailable queue sends nothing, so the card never says `All clear.` by mistake.
+
+The notification loop already wakes on every commit. Each pass also compares the queue with what it last sent to each phone and pushes an APNs `liveactivity` update when the cards differ. A card that was not in the last push also sends an alert, so the Island expands for a moment with that card's title. The phone reports two tokens: a push-to-start token and, once an activity runs, its update token. With no running activity, the server starts one. iOS ends an activity after about eight hours, so the server starts a new one shortly before that, and the app ends the older one. A refused update token means that the activity ended, and the server starts a new one. A phone that cannot start an activity is tried again every 15 minutes.
 
 ## Publisher configuration for iOS push
 

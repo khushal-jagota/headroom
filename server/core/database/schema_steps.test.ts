@@ -328,7 +328,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0018_backup_failed_preference',
+      to_revision: 'ts_0019_live_activities',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -348,10 +348,11 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0016_agent_message_acceptances',
         'ts_0017_recipient_deliveries',
         'ts_0018_backup_failed_preference',
+        'ts_0019_live_activities',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0018_backup_failed_preference'],
+      revision: ['ts_0019_live_activities'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
