@@ -1,21 +1,17 @@
 /** Project only persisted provider observations into the existing limits cards. */
-import type { CachedBackendUsage } from '../backend_usage/contracts.ts';
+import type { BackendUsageAccount, CachedBackendUsage } from '../backend_usage/contracts.ts';
 import { datetime_json } from '../snapshot/presentation.ts';
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from './contracts.ts';
 
 /**
- * One machine's saved observation for one backend, with the account that machine is signed in
- * to. Limits belong to the account, so the browser merges readings that name the same one.
+ * One machine's saved observation for one backend, with the account it was read for. Limits
+ * belong to the account, so the browser merges readings that name the same one.
  */
-export interface MachineUsageLimits {
+export interface MachineUsageLimits extends BackendUsageAccount {
   readonly machine_id: string;
   readonly machine_name: string;
   readonly backend_key: BackendInstanceId;
-  /** The account the machine's saved card names, usually an email. Null when it names none. */
-  readonly account_label: string | null;
-  /** The plan line of that card, such as `max plan via claude.ai`. */
-  readonly account_detail: string | null;
   readonly limits: ServerProviderUsageLimits;
 }
 export function presentProviderLimits(observation: CachedBackendUsage): ServerProviderUsageLimits {

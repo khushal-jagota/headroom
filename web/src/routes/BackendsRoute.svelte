@@ -75,7 +75,7 @@
     onDays={selectWindow} onProviders={value => providerSelection = value} onRefresh={() => void refresh()} />
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
-      {#if machineNotices.length}<div class="machine-notices">{#each machineNotices as notice (notice)}<p class="notice" role="status">{notice}</p>{/each}</div>{/if}
+      {#if machineNotices.length}<div class="machine-notices">{#each machineNotices as notice, index (index)}<p class="notice" role="status">{notice}</p>{/each}</div>{/if}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. The last successful observation stays available.</p>{/if}
       <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !readings.length && !limits.error)} loadingText="Reading subscription limits…">
         {#if drivers !== undefined}<UsageLimits {readings} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />{/if}

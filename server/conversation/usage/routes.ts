@@ -123,13 +123,12 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
           for (const backend_key of runtime.backend_ids) {
             const observation = state.read_usage(backend_key, machine.machine_id);
             if (observation === null) continue;
-            const identity = state.read_saved_identity(machine.machine_id, backend_key);
             readings.push({
               machine_id: machine.machine_id,
               machine_name: machine.name,
               backend_key,
-              account_label: identity?.account_label ?? null,
-              account_detail: identity?.detail ?? null,
+              account_label: observation.account_label,
+              account_detail: observation.account_detail,
               limits: presentProviderLimits(observation),
             });
           }

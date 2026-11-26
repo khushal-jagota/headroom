@@ -182,7 +182,7 @@ describe("explicit provider refresh", () => {
     expect(result.outcomes).toEqual(outcomes);
     expect(result.error).toBeNull();
     const body = render(UsageLimits, { props: { providers: ["codex"], drivers: DRIVERS, now: Date.parse("2026-10-30T12:00:00Z"),
-      outcomes: result.outcomes.map(outcome => ({ ...outcome, machine_name: "Mac 1" })), readings: [
+      outcomes: result.outcomes.map(outcome => ({ ...outcome, machine_id: "mac", machine_name: "Mac 1" })), readings: [
         reading("codex", { checkedAt: "2026-10-27T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] }),
       ] } }).body;
     for (const label of ["Mac 1 · Codex: Failed", "Mac 1 · Claude: Unauthenticated", "Mac 1 · Hermes: Unavailable", "65%", "Oct 27, 2026, 11:59 AM UTC"])
@@ -204,7 +204,7 @@ describe("explicit provider refresh", () => {
       return { snapshots: [], error: null, outcomes: [{ backend_key: "claude", outcome: "succeeded", detail: null }] };
     });
     expect(asked).toEqual(["vps"]);
-    expect(result.outcomes).toEqual([{ backend_key: "claude", outcome: "succeeded", detail: null, machine_name: "VPS 1" }]);
+    expect(result.outcomes).toEqual([{ backend_key: "claude", outcome: "succeeded", detail: null, machine_id: "vps", machine_name: "VPS 1" }]);
     expect(result.notices).toEqual(["Mac 1 is unavailable, so its last observation stays."]);
   });
 });

@@ -28,7 +28,7 @@
 </script>
 <div class="limits" data-usage-limits>
   {#if failed.length}<div class="notices">
-    {#each failed as outcome (`${outcome.machine_name}:${outcome.backend_key}`)}
+    {#each failed as outcome (`${outcome.machine_id}:${outcome.backend_key}`)}
       <p class="notice" role="status" data-allowance-outcome={outcome.outcome}>{outcome.machine_name} · {name(outcome.backend_key)}: {backendUsageOutcomeLabel(outcome.outcome)}</p>
     {/each}
   </div>{/if}

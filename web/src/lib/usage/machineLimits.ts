@@ -18,9 +18,9 @@ export interface MachineUsageLimits {
   readonly machine_id: string;
   readonly machine_name: string;
   readonly backend_key: string;
-  /** The account the machine's card names, usually an email. */
+  /** The account the machine's card named when the observation was read, usually an email. */
   readonly account_label: string | null;
-  /** The card's plan line, such as `max plan via claude.ai`. */
+  /** That card's plan line, such as `max plan via claude.ai`, for a confirmed sign-in only. */
   readonly account_detail: string | null;
   readonly limits: ServerProviderUsageLimits;
 }
@@ -28,7 +28,7 @@ export interface MachineUsageLimitsResponse {
   readonly readings: readonly MachineUsageLimits[];
 }
 /** One backend's refresh outcome on one machine. */
-export type MachineUsageRefreshOutcome = BackendUsageRefreshOutcome & { readonly machine_name: string };
+export type MachineUsageRefreshOutcome = BackendUsageRefreshOutcome & { readonly machine_id: string; readonly machine_name: string };
 
 type LimitPresentations = Map<EnvironmentId, {
   readonly entry: { readonly target: { readonly label: string } };
@@ -69,7 +69,7 @@ export async function refreshMachineLimits(
     .map(async machine => ({ machine, result: await refresh(machine.machine_id) })));
   return {
     outcomes: results.flatMap(({ machine, result }) =>
-      result.outcomes.map(outcome => ({ ...outcome, machine_name: machine.name }))),
+      result.outcomes.map(outcome => ({ ...outcome, machine_id: machine.machine_id, machine_name: machine.name }))),
     notices: [
       ...machines.filter(machine => !machine.available).map(machine => `${machine.name} is unavailable, so its last observation stays.`),
       ...results.flatMap(({ machine, result }) => result.error ? [`${machine.name}: ${result.error}`] : []),
