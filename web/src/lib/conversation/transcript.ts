@@ -200,6 +200,7 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   remote_steer_not_delivered: "the machine did not take this steer in time",
   refused_before_acceptance: "Panels refused this message",
   recipient_unavailable: "the recipient no longer exists",
+  machine_unavailable: "its machine can no longer join",
   conversation_save_failed: "the conversation could not save",
   home_restarted_before_acceptance: "Panels restarted before it accepted this message",
   recipient_conversation_replaced: "the recipient's conversation was replaced"

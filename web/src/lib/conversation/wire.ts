@@ -61,6 +61,7 @@ export type PromptDeliveryRefusalReason =
   // Home refused an owner message before it took custody. Its reason holds the sentence.
   | "refused_before_acceptance"
   | "recipient_unavailable"
+  | "machine_unavailable"
   | "conversation_save_failed"
   | "home_restarted_before_acceptance"
   | "recipient_conversation_replaced";

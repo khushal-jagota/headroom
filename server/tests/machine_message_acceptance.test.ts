@@ -31,6 +31,8 @@ import {
 } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { create_ticket, write_ticket_conversation_start } from '../tickets/data/index.ts';
+import { create_manager } from '../managers/data.ts';
+import { createProject } from '../projects/data/index.ts';
 import { start_ready_worker_step } from '../runtime/worker_step_readiness_loop.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { JsonObject } from '../executor/wire.generated.ts';
@@ -433,6 +435,80 @@ test('a message to the absent home machine waits and dispatches when that machin
   await endpoint.presence.accept_lease(machine_lease_request());
   await until(starts, (rows) => rows.length === 1);
   expect(await server!.core.held_prompts(conversation_id)).toEqual([]);
+}, 30_000);
+
+// Risk: a message to a machine that can never lease again waits with no end, shown as
+// "Waiting for <machine>". Gap: the cases above prove machines that return. Panels has no
+// machine removal; a machine left with no credential is the state that cannot return.
+test('an owner message to a machine that can never join is refused and names why', async () => {
+  const machine_id = randomUUID();
+  const manager = server!.context.database.write((tx) => {
+    tx.run(
+      "INSERT INTO machines(machine_id,name,icon,color,is_home) VALUES(?,'Old Mac','laptop','orchid',0)",
+      [machine_id],
+    );
+    tx.run('INSERT INTO machine_executor_credentials(machine_id) VALUES(?)', [machine_id]);
+    return create_manager(tx, {
+      title: 'Old Mac Manager',
+      project_id: createProject(tx, { name: 'Old Mac work', summary: 'Acceptance proof.' }, 0).id,
+      clock: server!.context.clock,
+    });
+  });
+  const conversation_id = 'manager_' + randomUUID().replaceAll('-', '');
+  await server!.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id,
+      backend_key: parse_backend_instance_id('codex'),
+      model: NATIVE_CODEX_MODEL,
+      reasoning_effort: null,
+      role_materials: new ConversationRoleMaterials({
+        role_text: 'Run only the scripted acceptance proof.',
+        identity_environment_variables: [
+          ['PLAN_ACTOR', 'manager'],
+          ['PLAN_MANAGER_ID', manager.id],
+        ],
+      }),
+      workspace_folder: '/native-rehearsal/' + conversation_id,
+      workspace_path_policy: WorkspacePathPolicy.executor_default,
+      access: 'full',
+      machine_id,
+    }),
+  );
+  server!.context.database.write((tx) =>
+    tx.run('UPDATE agents SET conversation_id=? WHERE agent_key=?', [
+      conversation_id,
+      'manager_' + manager.id,
+    ]),
+  );
+  const message_id = 'never-' + randomUUID();
+  const response = await fetch(`${server!.address}/api/managers/${manager.id}/conversation/send`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      conversation_id,
+      content: [{ piece: 'text', text: 'Are you there?' }],
+      sender_label: 'You',
+      mode: 'queue',
+      sender_message_id: message_id,
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect((await response.json()).error.code).toBe('machine_unavailable');
+  expect(
+    (
+      await http(
+        `/api/conversation/owner-sends/${message_id}?owner_kind=manager&owner_id=${manager.id}`,
+      )
+    ).outcome,
+  ).toEqual({
+    message_id,
+    conversation_id,
+    outcome: 'refused',
+    refusal_reason: 'machine_unavailable',
+    reason:
+      'Old Mac can no longer join: it has no machine credential. Replace its credential and run the join command to use it again.',
+  });
+  expect(await pending_ids(conversation_id)).toEqual([]);
 }, 30_000);
 
 test('a Chief correction is accepted, shown and answered around a held Worker launch', async () => {

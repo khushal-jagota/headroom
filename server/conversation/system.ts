@@ -13,7 +13,7 @@ import { performance } from 'node:perf_hooks';
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
-import { AnswerFate, HeldPrompt, PromptDeliveryQueued } from './contracts.ts';
+import { AnswerFate, HeldPrompt, MACHINE_UNAVAILABLE, PromptDeliveryQueued } from './contracts.ts';
 import type {
   ConversationStartRequest,
   ConversationSystem,
@@ -264,20 +264,22 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         ),
     );
   }
-  /**
-   * Why this conversation cannot run now: an admission refusal first, then the owner's
-   * execution policy, which waits for the conversation's machine.
-   */
+  /** Why this conversation cannot run now: a save refusal, then the machine policy. */
   execution_refusal(conversation_id: string): PlannerError | null {
-    return (
-      this.admission_refusal(conversation_id) ?? this.options.execution_refusal(conversation_id)
-    );
+    return this.save_refusal(conversation_id) ?? this.options.execution_refusal(conversation_id);
   }
   /**
    * Why this conversation cannot take a message at all. An absent machine is not one: a
-   * message for it is accepted and held until the machine returns.
+   * message for it is accepted and held until the machine returns. A machine that can never
+   * join again is one.
    */
   admission_refusal(conversation_id: string): PlannerError | null {
+    const saving = this.save_refusal(conversation_id);
+    if (saving !== null) return saving;
+    const machine = this.options.execution_refusal(conversation_id);
+    return machine?.code === MACHINE_UNAVAILABLE ? machine : null;
+  }
+  private save_refusal(conversation_id: string): PlannerError | null {
     if (this.options.store.database_unusable_error !== null)
       return new PlannerError(
         'conversation_save_failed',

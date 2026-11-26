@@ -5,6 +5,7 @@ import { canonical_principal } from '../agent_identity/data.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import {
   can_execute_machine,
+  machine_never_joins_refusal,
   machine_unavailable_reason,
 } from '../tickets/locale_configuration.ts';
 import { read_machine } from './data.ts';
@@ -75,7 +76,10 @@ export function conversation_machine_refusal(
 ): PlannerError | null {
   if (canonical_principal(sql, conversation_id)?.kind === 'ticket') return null;
   const machine_id = conversation_machine_id(sql, conversation_id);
-  if (machine_id === null || can_execute_machine(machine_id, sql)) return null;
+  if (machine_id === null) return null;
+  const never = machine_never_joins_refusal(machine_id, sql, { conversation_id });
+  if (never !== null) return never;
+  if (can_execute_machine(machine_id, sql)) return null;
   return new PlannerError('validation', machine_unavailable_reason(machine_id, sql), {
     conversation_id,
     machine_id,
@@ -93,6 +97,8 @@ export function conversation_machine_waiting_reason(
 ): string | null {
   const machine_id = conversation_machine_id(sql, conversation_id);
   if (machine_id === null) return null;
+  const never = machine_never_joins_refusal(machine_id, sql, {});
+  if (never !== null) return never.message;
   const presence = read_presence(sql, machine_id);
   // A version mismatch names both versions, so the owner can see what to update.
   if (presence?.refusal) return machine_unavailable_reason(machine_id, sql);

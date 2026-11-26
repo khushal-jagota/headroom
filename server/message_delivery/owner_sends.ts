@@ -4,6 +4,7 @@ import { own_recipient_delivery } from './lifetime.ts';
 import { OwnerSendRefusalReason, type OwnerSendOutcome } from './contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { PromptDeliveryRefusedEventPayload } from '../conversation/events.ts';
+import { MACHINE_UNAVAILABLE } from '../conversation/contracts.ts';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -129,7 +130,9 @@ function refusal_for_error(conversation_id: string | null, error: unknown): Deli
       ? OwnerSendRefusalReason.conversation_save_failed
       : code === 'not_found'
         ? OwnerSendRefusalReason.recipient_unavailable
-        : OwnerSendRefusalReason.refused_before_acceptance,
+        : code === MACHINE_UNAVAILABLE
+          ? OwnerSendRefusalReason.machine_unavailable
+          : OwnerSendRefusalReason.refused_before_acceptance,
     reason,
   );
 }

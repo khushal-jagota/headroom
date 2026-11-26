@@ -39,6 +39,6 @@ Publish iPhone build 13 with this server release.
 
 ## Absent machine release
 
-A send to a conversation whose machine is absent is accepted and waits, instead of HTTP 400. The conversation read adds the optional `machine_waiting_reason`, and a refusal before acceptance names its cause in new refusal codes with a `reason` sentence.
+A send to a conversation whose machine is absent is accepted and waits, instead of HTTP 400. A machine that can never join again still refuses, with the new code `machine_unavailable`. The conversation read adds the optional `machine_waiting_reason`, and a refusal before acceptance names its cause in new refusal codes with a `reason` sentence.
 
 The minimum iPhone build stays **13**. Build 13 ignores the new field, still shows the message as queued, and shows an unknown refusal code as words with Try Again. A newer build names the waiting machine.

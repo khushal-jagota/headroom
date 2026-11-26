@@ -305,6 +305,7 @@ struct ConversationDelivery: Decodable, Sendable {
         case "backend_rejected_steer": "agent could not accept steering"
         case "refused_before_acceptance": "Panels refused this message"
         case "recipient_unavailable": "the recipient no longer exists"
+        case "machine_unavailable": "its machine can no longer join"
         case "conversation_save_failed": "the conversation could not save"
         case "home_restarted_before_acceptance": "Panels restarted before it accepted this message"
         case "recipient_conversation_replaced": "the recipient's conversation was replaced"

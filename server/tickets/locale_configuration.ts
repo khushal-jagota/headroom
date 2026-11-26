@@ -5,6 +5,9 @@ import { judge_presence } from '../executor/logic/presence.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
 import type { ExecutorRefusal } from '../executor/contracts.ts';
 import type { TicketLocale } from './contracts.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { MACHINE_UNAVAILABLE } from '../conversation/contracts.ts';
 export const CURRENT_EXECUTION_LOCALE: TicketLocale = 'vps';
 export const WAITING_FOR_THE_MAC = 'Waiting for the Mac';
 export function can_execute_locale(sql: ReadSql, locale: TicketLocale): boolean {
@@ -66,6 +69,36 @@ export function can_execute_machine(machine_id: string, connection: ReadSql): bo
       record.identity.protocol_version,
       record.identity.spool_format_version,
     )
+  );
+}
+
+/**
+ * A machine that can never lease again under current records: it holds no credential, and
+ * it is neither the home machine, which enrolls at install, nor the original Mac with its
+ * legacy authority still open. A replaced credential is not this: its join is pending.
+ */
+export function machine_can_never_join(machine_id: string, sql: ReadSql): boolean {
+  if (machine_id === HOME_MACHINE_ID) return false;
+  const row = sql.get<{ credential_sha256: string | null; legacy_closed_at_ms: number | null }>(
+    'SELECT credential_sha256,legacy_closed_at_ms FROM machine_executor_credentials WHERE machine_id=?',
+    [machine_id],
+  );
+  if (!row) return true;
+  if (row.credential_sha256 !== null) return false;
+  return machine_id !== ORIGINAL_MAC_MACHINE_ID || row.legacy_closed_at_ms !== null;
+}
+
+/** The terminal refusal for a machine that can never join, or null while it still can. */
+export function machine_never_joins_refusal(
+  machine_id: string,
+  sql: ReadSql,
+  detail: Record<string, unknown>,
+): PlannerError | null {
+  if (!machine_can_never_join(machine_id, sql)) return null;
+  return new PlannerError(
+    MACHINE_UNAVAILABLE,
+    `${read_machine(sql, machine_id).name} can no longer join: it has no machine credential. Replace its credential and run the join command to use it again.`,
+    { ...detail, machine_id },
   );
 }
 
