@@ -10,6 +10,7 @@ import { timezone } from './timeZone.ts';
 import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type { UsageHttpRuntime, UsageSummaryInput } from './contracts.ts';
 import { presentProviderLimits, type MachineUsageLimits } from './providerLimits.ts';
+import { datetime_json } from '../snapshot/presentation.ts';
 import { list_machines } from '../../machines/data.ts';
 import { is_record as object } from '../../core/records.ts';
 
@@ -129,10 +130,21 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       if (every_machine) {
         // Every machine's last observation, an unavailable machine's included.
         const readings: MachineUsageLimits[] = [];
+        const failures: Record<string, unknown>[] = [];
         const state = runtime.backend_state;
-        if (state === null) return { readings };
+        if (state === null) return { readings, failures };
         for (const machine of services.database.read((sql) => list_machines(sql)))
           for (const backend_key of runtime.backend_ids) {
+            const failure = state.read_failed_usage(backend_key, machine.machine_id);
+            if (failure !== null)
+              failures.push({
+                machine_id: machine.machine_id,
+                machine_name: machine.name,
+                backend_key,
+                outcome: failure.outcome,
+                detail: failure.detail,
+                failed_at: datetime_json(failure.failed_at),
+              });
             const observation = state.read_usage(backend_key, machine.machine_id);
             if (observation === null) continue;
             readings.push({
@@ -144,7 +156,7 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
               limits: presentProviderLimits(observation),
             });
           }
-        return { readings };
+        return { readings, failures };
       }
       const machine_id = selected_machine({ database: services.database }, request.query);
       if (runtime.backend_state === null) return {};

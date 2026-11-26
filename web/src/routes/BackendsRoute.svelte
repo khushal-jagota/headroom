@@ -12,7 +12,7 @@
   import { type UsageDays } from "../lib/conversation/recordedUsageWire";
   import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
   import { refreshBackends } from "../lib/conversation/wire";
-  import { refreshMachineLimits, type MachineUsageRefreshOutcome } from "../lib/usage/machineLimits";
+  import { refreshMachineLimits } from "../lib/usage/machineLimits";
   import { refreshUsage } from "../lib/usage/usage";
   import { makeWindow } from "../lib/usage/usageFormat";
   import { mergeUsageSummaries, type MachineUsage } from "../lib/usage/usageMerge";
@@ -55,10 +55,10 @@
   }));
   const limits = createQuery(() => ({ ...queries.usageLimits(), enabled: tab === "limits", retry: false }));
   const readings = $derived(limits.data?.readings ?? []);
-  const providerKeys = $derived([...new Set(tab === "limits" ? readings.map(reading => reading.backend_key) : summary?.sources.map(source => source.fingerprint.provider) ?? [])]);
+  const failures = $derived(limits.data?.failures ?? []);
+  const providerKeys = $derived([...new Set(tab === "limits" ? [...readings, ...failures].map(item => item.backend_key) : summary?.sources.map(source => source.fingerprint.provider) ?? [])]);
   const selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
   let refreshing = $state(false);
-  let refreshOutcomes = $state<MachineUsageRefreshOutcome[]>([]);
   let limitsNotices = $state<string[]>([]);
   let refreshError = $state<string | null>(null);
   let now = $state(Date.now());
@@ -75,7 +75,6 @@
         // Every available machine refreshes at once. An unavailable one keeps its last reading.
         const known = (await machines.refetch({ throwOnError: true })).data?.machines ?? [];
         const result = await refreshMachineLimits(known, machineId => refreshBackendSnapshots(() => refreshBackends(machineId)));
-        refreshOutcomes = result.outcomes;
         limitsNotices = result.notices;
         await limits.refetch({ throwOnError: true });
       } else {
@@ -103,8 +102,8 @@
     {#if tab === "limits"}
       {#if limitsNotices.length}<div class="machine-notices">{#each limitsNotices as notice, index (index)}<p class="notice" role="status">{notice}</p>{/each}</div>{/if}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. The last successful observation stays available.</p>{/if}
-      <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !readings.length && !limits.error)} loadingText="Reading subscription limits…">
-        {#if drivers !== undefined}<UsageLimits {readings} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />{/if}
+      <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !readings.length && !failures.length && !limits.error)} loadingText="Reading subscription limits…">
+        {#if drivers !== undefined}<UsageLimits {readings} {failures} providers={selectedProviders} {now} {drivers} />{/if}
       </SkeletonRegion>
     {:else}
       {#if recorded.error}<p class="error" role="alert">Usage unavailable{recorded.data ? " · showing saved totals" : ""}</p>{/if}

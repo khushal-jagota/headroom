@@ -2,12 +2,11 @@
   // Local HTTP presentation replaces T3's connected-environment presentation atoms.
   // Pool operations and card content follow UsageLimitsPooled.tsx:69–257.
   import { collectLimitAccounts, collectLimitPools, formatDuration, formatResetsIn, limitsNotice, remainingPercent } from "../../lib/usage/usageLimits";
-  import { limitPresentations, type MachineUsageLimits, type MachineUsageRefreshOutcome } from "../../lib/usage/machineLimits";
+  import { failureLines, limitPresentations, type MachineUsageFailure, type MachineUsageLimits } from "../../lib/usage/machineLimits";
   import { usageSourceColor, usageSourceLabel } from "../../lib/usage/usageProviders";
   import type { DriverPresentation } from "../../lib/drivers/contracts";
   import AllowanceWindows from "./AllowanceWindows.svelte";
-  import { backendUsageOutcomeLabel } from "../../lib/conversation/backendRefresh";
-  let { readings, providers, now, outcomes = [], drivers }: { readings: readonly MachineUsageLimits[]; providers: readonly string[]; now: number; outcomes?: readonly MachineUsageRefreshOutcome[]; drivers: readonly DriverPresentation[] | undefined } = $props();
+  let { readings, failures = [], providers, now, drivers }: { readings: readonly MachineUsageLimits[]; failures?: readonly MachineUsageFailure[]; providers: readonly string[]; now: number; drivers: readonly DriverPresentation[] | undefined } = $props();
   let openAccount = $state<string | null>(null);
   const observedFormat = new Intl.DateTimeFormat("en-US", {
     timeZone: "UTC", year: "numeric", month: "short", day: "numeric",
@@ -23,16 +22,16 @@
   // One account signed in on several machines is one entry: its freshest reading, every machine named.
   const accounts = $derived(collectLimitAccounts(limitPresentations(shown)));
   const pools = $derived(collectLimitPools(accounts, now));
-  const failed = $derived(outcomes.filter(outcome => outcome.outcome !== "succeeded"));
+  const failed = $derived(failureLines(failures.filter(failure => providers.includes(failure.backend_key)), readings, now, name));
   const accountName = (account: (typeof accounts)[number]): string => account.email ?? account.displayName ?? name(account.driver);
 </script>
 <div class="limits" data-usage-limits>
   {#if failed.length}<div class="notices">
-    {#each failed as outcome (`${outcome.machine_id}:${outcome.backend_key}`)}
-      <p class="notice" role="status" data-allowance-outcome={outcome.outcome}>{outcome.machine_name} · {name(outcome.backend_key)}: {backendUsageOutcomeLabel(outcome.outcome)}</p>
+    {#each failed as line (line.key)}
+      <p class="notice" role="status" data-allowance-outcome={line.outcome}>{line.text}</p>
     {/each}
   </div>{/if}
-  {#if pools.length === 0}<p class="notice">No provider on any machine reports subscription limits.</p>{/if}
+  {#if pools.length === 0 && failed.length === 0}<p class="notice">No provider on any machine reports subscription limits.</p>{/if}
   {#each pools as pool (pool.driver)}
     {@const color = usageSourceColor(pool.driver, drivers)}
     <section><div class="provider-heading"><h2>{name(pool.driver)}</h2>

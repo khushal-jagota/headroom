@@ -12,6 +12,7 @@ import type {
   BackendUsageAccount,
   BackendUsageResult,
   CachedBackendUsage,
+  FailedBackendUsage,
 } from './backend_usage/contracts.ts';
 import { decode_usage_windows } from './backend_usage/machine.ts';
 export class BackendStateStore {
@@ -106,6 +107,47 @@ export class BackendStateStore {
         ],
       );
     });
+  }
+  /**
+   * Keep the latest refresh that did not succeed beside the last good figures, which stay as they
+   * are. The next success replaces the whole row and so clears the failure.
+   */
+  keep_failed_usage(
+    result: BackendUsageResult,
+    machine_id = HOME_MACHINE_ID,
+    failed_at = new Date(),
+  ): void {
+    if (result.outcome === 'succeeded')
+      throw new Error('a successful usage result is not a failure');
+    this.database.write((tx) => {
+      const row = tx.get<{ usage_json: string | null }>(
+        'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
+        [machine_id, result.backend_key],
+      );
+      const kept = row?.usage_json ? JSON.parse(row.usage_json) : {};
+      const failure = { outcome: result.outcome, detail: result.detail, at: failed_at };
+      tx.run(
+        'INSERT INTO machine_backend_state(machine_id,backend_key,usage_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET usage_json=excluded.usage_json',
+        [machine_id, result.backend_key, JSON.stringify({ ...kept, failure })],
+      );
+    });
+  }
+  /** Both refresh routes save a result through here, so a failure is never dropped. */
+  keep_usage_result(
+    result: BackendUsageResult,
+    machine_id = HOME_MACHINE_ID,
+    account?: BackendUsageAccount,
+  ): void {
+    if (result.outcome !== 'succeeded') this.keep_failed_usage(result, machine_id);
+    else if (result.observed_at !== null) this.keep_successful_usage(result, machine_id, account);
+  }
+  read_failed_usage(
+    backend_key: BackendInstanceId,
+    machine_id = HOME_MACHINE_ID,
+  ): FailedBackendUsage | null {
+    return this.database.read((sql) =>
+      backend_card_state(sql).read_failed_usage(backend_key, machine_id),
+    );
   }
   read_disabled_models(backend_key: BackendInstanceId): ReadonlySet<string> {
     return this.database.read((sql) => disabled_models(sql, backend_key));
@@ -298,6 +340,27 @@ export function backend_card_state(sql: ReadSql) {
         // An observation saved before it carried its account names none.
         account_label: typeof value.account_label === 'string' ? value.account_label : null,
         account_detail: typeof value.account_detail === 'string' ? value.account_detail : null,
+      };
+    },
+    read_failed_usage(
+      backend_key: BackendInstanceId,
+      machine_id = HOME_MACHINE_ID,
+    ): FailedBackendUsage | null {
+      const row = sql.get<{ usage_json: string | null }>(
+        'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
+        [machine_id, backend_key],
+      );
+      const failure = row?.usage_json ? JSON.parse(row.usage_json).failure : null;
+      if (
+        !failure ||
+        !['unavailable', 'unauthenticated', 'failed'].includes(failure.outcome) ||
+        !Number.isFinite(Date.parse(failure.at))
+      )
+        return null;
+      return {
+        outcome: failure.outcome,
+        detail: typeof failure.detail === 'string' ? failure.detail : null,
+        failed_at: new Date(failure.at),
       };
     },
     read_disabled_models: (backend_key: BackendInstanceId) => disabled_models(sql, backend_key),

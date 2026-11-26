@@ -181,11 +181,15 @@ describe("explicit provider refresh", () => {
     const result = await refreshBackendSnapshots(async () => ({ backends: [], usage_outcomes: outcomes }));
     expect(result.outcomes).toEqual(outcomes);
     expect(result.error).toBeNull();
-    const body = render(UsageLimits, { props: { providers: ["codex"], drivers: DRIVERS, now: Date.parse("2026-10-30T12:00:00Z"),
-      outcomes: result.outcomes.map(outcome => ({ ...outcome, machine_id: "mac", machine_name: "Mac 1" })), readings: [
-        reading("codex", { checkedAt: "2026-10-27T11:59:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] }),
+    // Saved failures show in plain words beside the last good figures, with their age. A provider
+    // that never had a good reading says so.
+    const failure = (backend_key: string, outcome: "failed" | "unauthenticated" | "unavailable") =>
+      ({ machine_id: "mac", machine_name: "Mac 1", backend_key, outcome, detail: null, failed_at: "2026-10-30T11:00:00Z" });
+    const body = render(UsageLimits, { props: { providers: ["codex", "claude", "hermes"], drivers: DRIVERS, now: Date.parse("2026-10-30T12:00:00Z"),
+      failures: [failure("codex", "failed"), failure("claude", "unauthenticated"), failure("hermes", "unavailable")], readings: [
+        { ...reading("codex", { checkedAt: "2026-10-30T09:00:00Z", windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 35, windowDurationMins: 300 }] }), machine_id: "mac", machine_name: "Mac 1" },
       ] } }).body;
-    for (const label of ["Mac 1 · Codex: Failed", "Mac 1 · Claude: Unauthenticated", "Mac 1 · Hermes: Unavailable", "65%", "Oct 27, 2026, 11:59 AM UTC"])
+    for (const label of ["Codex on Mac 1: could not reach the provider. Showing figures from 3h 0m ago.", "Claude on Mac 1: not signed in. No figures yet.", "Hermes on Mac 1: limits are not available. No figures yet.", "65%"])
       expect(body).toContain(label);
     expect(backendUsageOutcomeLabel("succeeded")).toBeNull();
   });
