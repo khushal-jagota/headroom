@@ -351,11 +351,11 @@ struct ConversationConfiguration: Decodable, Sendable {
         var note: String {
             if let machineWaitingReason { return "Queued · \(machineWaitingReason)" }
             switch queueReason {
-            case "attachment": "Queued · attachments wait for the turn to end"
-            case "run_change": "Queued · a model change waits for the turn to end"
-            case "steer_refused": "Queued · could not join the running turn"
-            case "command_needs_its_own_turn": "Queued · a command needs its own turn"
-            default: "Queued"
+            case "attachment": return "Queued · attachments wait for the turn to end"
+            case "run_change": return "Queued · a model change waits for the turn to end"
+            case "steer_refused": return "Queued · could not join the running turn"
+            case "command_needs_its_own_turn": return "Queued · a command needs its own turn"
+            default: return "Queued"
             }
         }
     }
