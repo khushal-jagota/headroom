@@ -1,7 +1,9 @@
 /** Installer-only entry, run from the current app after the stop and before the swap. */
 import { create_database_backup } from '../backup/capture.ts';
+import { alarm_backup_integrity_failure } from '../backup/integrity_alarm.ts';
 import { assert_test_database_path } from '../../core/test_paths.ts';
 import { expand_path } from '../paths.ts';
+import { SNAPSHOT_INTEGRITY_FAILURE_EXIT_CODE } from './installer/configuration.ts';
 import { InstallationRecord } from './installer/record.ts';
 const args = process.argv.slice(2);
 if (args.length !== 5 && args.length !== 6) {
@@ -21,14 +23,23 @@ if (args.length !== 5 && args.length !== 6) {
     assert_test_database_path(path);
     assert_test_database_path(expand_path(path));
   }
-  const started = performance.now();
-  const snapshot = await create_database_backup(
-    database,
-    backup_directory,
-    deployed_revision,
-    staged_copy,
-  );
-  new InstallationRecord({ data_directory, attempt_id }).snapshot_taken(snapshot, {
-    [staged_copy ? 'catch_up' : 'stopped_copy']: (performance.now() - started) / 1000,
-  });
+  // A staged copy had its full check before the stop, so only a full stopped copy can fail one.
+  let integrity_failed = false;
+  try {
+    const started = performance.now();
+    const snapshot = await create_database_backup(database, backup_directory, deployed_revision, {
+      staged_copy,
+      integrity_alarm: async (source) => {
+        integrity_failed = true;
+        await alarm_backup_integrity_failure(source);
+      },
+    });
+    new InstallationRecord({ data_directory, attempt_id }).snapshot_taken(snapshot, {
+      [staged_copy ? 'catch_up' : 'stopped_copy']: (performance.now() - started) / 1000,
+    });
+  } catch (error) {
+    if (!integrity_failed) throw error;
+    console.error(error);
+    process.exitCode = SNAPSHOT_INTEGRITY_FAILURE_EXIT_CODE;
+  }
 }

@@ -91,9 +91,12 @@ function assertSynchronous<T>(result: T): T {
   return result;
 }
 
+function withoutLeadingComments(sql: string): string {
+  return sql.replace(/^(?:[\s;]|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, '');
+}
+
 function firstWord(sql: string): string {
-  const withoutLeadingComments = sql.replace(/^(?:[\s;]|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, '');
-  return /^[A-Za-z]+/.exec(withoutLeadingComments)?.[0]?.toUpperCase() ?? '';
+  return /^[A-Za-z]+/.exec(withoutLeadingComments(sql))?.[0]?.toUpperCase() ?? '';
 }
 
 function assertScopedStatement(sql: string): void {
@@ -480,6 +483,135 @@ function schemaRevision(connection: BetterSqlite3.Database): string {
   return String(rows[0]);
 }
 
+interface SchemaEntry {
+  type: string;
+  name: string;
+  tbl_name: string;
+  rootpage: number;
+  sql: string | null;
+}
+
+function schemaEntries(connection: BetterSqlite3.Database): SchemaEntry[] {
+  return connection
+    .prepare('SELECT type,name,tbl_name,rootpage,sql FROM sqlite_schema')
+    .all() as SchemaEntry[];
+}
+
+/** SQLite's OPFLAG_P2ISREG: P2 of this OpenWrite names a register, not a root page. */
+const OPEN_WRITE_ROOT_IN_REGISTER = 0x10;
+
+/**
+ * The tables one schema step wrote, read from SQLite itself so a step declares nothing.
+ * The schema before and after gives every table and index the step created, rebuilt,
+ * altered, moved or dropped. Each statement's plan gives every table it writes rows in,
+ * including the writes of triggers.
+ */
+class SchemaStepFootprint {
+  readonly #connection: BetterSqlite3.Database;
+  readonly #before: SchemaEntry[];
+  readonly #written = new Set<string>();
+
+  constructor(connection: BetterSqlite3.Database) {
+    this.#connection = connection;
+    this.#before = schemaEntries(connection);
+  }
+
+  /** Call before the statement runs, while its root pages still name today's tables. */
+  record(sql: string): void {
+    if (firstWord(sql) === 'EXPLAIN') return;
+    const plan = this.#connection.prepare(`EXPLAIN ${withoutLeadingComments(sql)}`).all() as {
+      opcode: string;
+      p1: number;
+      p2: number;
+      p3: number;
+      p5: number;
+    }[];
+    const tables = new Map(
+      schemaEntries(this.#connection).map((entry) => [entry.rootpage, entry.tbl_name]),
+    );
+    for (const step of plan) {
+      // Database 0 is main. A register root is a b-tree this statement creates, which the
+      // schema comparison finds. A DELETE with no WHERE empties the b-tree with Clear.
+      const root =
+        step.opcode === 'OpenWrite' &&
+        step.p3 === 0 &&
+        (step.p5 & OPEN_WRITE_ROOT_IN_REGISTER) === 0
+          ? step.p2
+          : step.opcode === 'Clear' && step.p2 === 0
+            ? step.p1
+            : undefined;
+      const table = root === undefined ? undefined : tables.get(root);
+      if (table !== undefined) this.#written.add(table.toLowerCase());
+    }
+  }
+
+  /** Touched tables that still exist, and touched names that no longer name a table. */
+  touched(): { tables: string[]; removed: string[] } {
+    const key = (entry: SchemaEntry) => `${entry.type}\0${entry.name.toLowerCase()}`;
+    const shape = (entry: SchemaEntry) => `${entry.tbl_name}\0${entry.rootpage}\0${entry.sql}`;
+    const after = schemaEntries(this.#connection);
+    const before = new Map(this.#before.map((entry) => [key(entry), shape(entry)]));
+    const now = new Map(after.map((entry) => [key(entry), shape(entry)]));
+    const touched = new Set(this.#written);
+    // Triggers and views own no pages. Their table is touched only if it was written.
+    for (const [entries, other] of [
+      [this.#before, now],
+      [after, before],
+    ] as const)
+      for (const entry of entries)
+        if (
+          (entry.type === 'table' || entry.type === 'index') &&
+          other.get(key(entry)) !== shape(entry)
+        )
+          touched.add(entry.tbl_name.toLowerCase());
+    const existing = new Map(
+      after
+        .filter((entry) => entry.type === 'table' && entry.rootpage > 0)
+        .map((entry) => [entry.name.toLowerCase(), entry.name]),
+    );
+    const tables: string[] = [],
+      removed: string[] = [];
+    for (const name of touched) {
+      const table = existing.get(name);
+      if (table === undefined) removed.push(name);
+      else tables.push(table);
+    }
+    return { tables, removed };
+  }
+}
+
+/** Foreign keys of the touched tables, and of every table that points at one of them. */
+function scopedForeignKeyViolations(
+  connection: BetterSqlite3.Database,
+  touched: { tables: string[]; removed: string[] },
+): number {
+  const targets = new Set(
+    [...touched.tables, ...touched.removed].map((name) => name.toLowerCase()),
+  );
+  const references = connection
+    .prepare(
+      `SELECT DISTINCT m.name AS child, f."table" AS parent FROM sqlite_schema AS m, pragma_foreign_key_list(m.name, 'main') AS f WHERE m.type = 'table' AND m.rootpage > 0`,
+    )
+    .all() as { child: string; parent: string }[];
+  const scope = new Set(touched.tables);
+  for (const { child, parent } of references)
+    if (targets.has(parent.toLowerCase())) scope.add(child);
+  const count = connection
+    .prepare("SELECT count(*) FROM pragma_foreign_key_check(?, 'main')")
+    .pluck();
+  let violations = 0;
+  for (const table of scope) violations += Number(count.get(table));
+  return violations;
+}
+
+/** The schema table and each touched table with its indexes. Untouched pages are not re-read. */
+function scopedIntegrityProblems(connection: BetterSqlite3.Database, tables: string[]): string[] {
+  const check = connection.prepare("SELECT * FROM pragma_integrity_check(?, 'main')").pluck();
+  return ['sqlite_schema', ...tables].flatMap((table) =>
+    (check.all(table) as string[]).filter((line) => line !== 'ok'),
+  );
+}
+
 /**
  * Bring a stopped database to `head_revision`, one transaction per step. Each step
  * either commits whole, with its revision, or leaves the database as it was.
@@ -536,7 +668,9 @@ export function applySchemaSteps(
     for (const [index, step] of pending.entries()) {
       connection.exec('BEGIN IMMEDIATE');
       let active = true;
+      let integrity_scope: string[] = [];
       try {
+        const footprint = new SchemaStepFootprint(connection);
         const revision = schemaRevision(connection);
         if (revision !== step.previous_revision)
           throw new Error(
@@ -546,6 +680,7 @@ export function applySchemaSteps(
           run(sql: string): void {
             if (!active) throw new TypeError('schema step transaction is no longer active');
             assertScopedStatement(sql);
+            footprint.record(sql);
             connection.prepare(sql).run();
           },
         });
@@ -554,10 +689,14 @@ export function applySchemaSteps(
         } finally {
           active = false;
         }
-        const violations = connection.prepare('PRAGMA foreign_key_check').all();
-        if (violations.length > 0)
+        // The update's snapshot checked the whole file just before, in the same stopped
+        // window, so each check reads only what this step touched.
+        const touched = footprint.touched();
+        integrity_scope = [...new Set([...touched.tables, 'alembic_version'])];
+        const violations = scopedForeignKeyViolations(connection, touched);
+        if (violations > 0)
           throw new Error(
-            `Schema step ${step.revision} left ${violations.length} foreign key violation(s)`,
+            `Schema step ${step.revision} left ${violations} foreign key violation(s)`,
           );
         const changed = connection
           .prepare('UPDATE alembic_version SET version_num = ? WHERE version_num = ?')
@@ -580,7 +719,7 @@ export function applySchemaSteps(
         if (connection.inTransaction) connection.exec('ROLLBACK');
         throw error;
       }
-      if (connection.pragma('integrity_check', { simple: true }) !== 'ok')
+      if (scopedIntegrityProblems(connection, integrity_scope).length > 0)
         throw new Error(`SQLite integrity check failed after schema step ${step.revision}`);
       applied.push(step.revision);
     }

@@ -4,17 +4,11 @@ import { is_object } from '../codec.ts';
 import { read_record_json } from '../attempts.ts';
 import { release_installer_barrier, with_installer_lock } from '../../update_barrier.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
-import { error_detail } from './commands.ts';
+import { error_detail, InstallFailed } from './commands.ts';
 import { pin_existing, release_path, select_release, selected_release } from './selection.ts';
 import { InstallationRecord } from './record.ts';
 import type { InstallerEffects, InstallerIO, InstallerRequest } from './contracts.ts';
 
-export class InstallFailed extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InstallFailed';
-  }
-}
 function field(attempt: Record<string, unknown>, key: string): string {
   if (!Object.hasOwn(attempt, key)) throw new TypeError(`Update attempt is missing ${key}`);
   const value = attempt[key];

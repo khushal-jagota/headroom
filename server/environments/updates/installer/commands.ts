@@ -18,6 +18,7 @@ import {
   DATABASE_SNAPSHOT_TIMEOUT_SECONDS,
   DATABASE_RESTORE_TIMEOUT_SECONDS,
   SCHEMA_STEP_TIMEOUT_SECONDS,
+  SNAPSHOT_INTEGRITY_FAILURE_EXIT_CODE,
 } from './configuration.ts';
 import type {
   InstallerCommandOptions,
@@ -27,6 +28,15 @@ import type {
   InstallerRequest,
 } from './contracts.ts';
 
+/** The update card shows this when the update snapshot finds a damaged database. */
+export const SNAPSHOT_INTEGRITY_FAILURE_REASON =
+  'The database failed its integrity check during the update snapshot, so the update stopped before any change. Panels raised a Backup failed alert';
+export class InstallFailed extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InstallFailed';
+  }
+}
 export class InstallerCommandFailure extends Error {
   readonly argv: readonly string[];
   readonly returncode: number;
@@ -299,27 +309,43 @@ export function create_installer_effects(
         ...(staged_copy === undefined ? [] : [staged_copy]),
       ])
         assert_installer_path(path, execution.environment);
-      await run_installer_command(
-        [
-          request.node_executable,
-          main,
-          request.database,
-          request.backup_directory,
-          deployed_revision,
-          request.data_directory,
-          request.attempt_id,
-          ...(staged_copy === undefined ? [] : [staged_copy]),
-        ],
-        value,
-        { check: true, output: 'inherit', lifetime_lock_fd },
-      );
+      try {
+        await run_installer_command(
+          [
+            request.node_executable,
+            main,
+            request.database,
+            request.backup_directory,
+            deployed_revision,
+            request.data_directory,
+            request.attempt_id,
+            ...(staged_copy === undefined ? [] : [staged_copy]),
+          ],
+          value,
+          { check: true, output: 'inherit', lifetime_lock_fd },
+        );
+      } catch (error) {
+        if (
+          error instanceof InstallerCommandFailure &&
+          error.returncode === SNAPSHOT_INTEGRITY_FAILURE_EXIT_CODE
+        )
+          throw new InstallFailed(SNAPSHOT_INTEGRITY_FAILURE_REASON);
+        throw error;
+      }
     },
     async verify_snapshot(snapshot, deployed_revision) {
       const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
       // The release that took the snapshot also checks it.
       const app = release_path(request.current_root, deployed_revision),
         main = join(app, 'server/environments/updates/snapshot_verify_main.ts');
-      for (const path of [snapshot, request.backup_directory, request.data_directory, app, main])
+      for (const path of [
+        snapshot,
+        request.backup_directory,
+        request.database,
+        request.data_directory,
+        app,
+        main,
+      ])
         assert_installer_path(path, execution.environment);
       await run_installer_command(
         [
@@ -327,6 +353,7 @@ export function create_installer_effects(
           main,
           snapshot,
           request.backup_directory,
+          request.database,
           request.data_directory,
           request.attempt_id,
         ],

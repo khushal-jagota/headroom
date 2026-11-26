@@ -481,12 +481,11 @@ export async function qualify_installed_upgrade(o: Options): Promise<void> {
     phase = 'reopening the update screen';
     const rail = page.getByRole('region', { name: 'Workspace', exact: true });
     const reopen = async (alreadyQuiet = false) => {
-      const [response] = await Promise.all([
-        page.waitForResponse(
-          (response) => new URL(response.url()).pathname === '/api/updates' && response.ok(),
-        ),
-        page.reload(),
-      ]);
+      // Read the settled status after the reload. A status poll from the old page can answer
+      // during the reload, and its body is gone once the navigation discards that page.
+      await page.reload();
+      const response = await fetch(url + '/api/updates', { signal: AbortSignal.timeout(10_000) });
+      assert.ok(response.ok, `Update status returned HTTP ${response.status}`);
       const settled = await response.json();
       assert.equal(settled.state, 'up_to_date');
       assert.equal(settled.attempt?.to_sha, candidate);

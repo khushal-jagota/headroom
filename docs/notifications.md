@@ -6,10 +6,10 @@ A notification is a phone or desktop push for a kind of attention the owner sele
 
 - **Subjects.** Tickets, the Chief, Managers, and Panels itself (for the stall alarm). Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
 - **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to the owner.
-- **Edges.** A flag flipping from false to true is an edge. Apart from the stall alarm below, an edge is the only thing that can notify.
+- **Edges.** A flag flipping from false to true is an edge. Apart from the Panels alarms below, an edge is the only thing that can notify.
 - **The policy.** One decision door that turns an edge into a push or drops it, according to the owner's preferences.
 - **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link. The iPhone app uses APNs. A running desktop app holds a live stream instead; see [Desktop app](#desktop-app).
-- **The stall alarm.** Panels itself is a subject with one switch, Stalled work. The stall watchdog unit sends it when work stops moving or the server's stall checker stops; it has no edge and does not pass the policy, but it reads that switch. See [Executor](executor.md) for the watchdog.
+- **Panels alarms.** Panels itself is a subject with two switches, Stalled work and Backup failed. The stall watchdog unit sends the first when work stops moving or the server's stall checker stops. A backup sends the second when its copy of the database fails SQLite's integrity check, in the nightly backup or the update snapshot. Both run outside the server, so they have no edge and do not pass the policy, but each reads its switch. Each also messages the Chief, when the server is up. See [Executor](executor.md) for the watchdog and [Backups](backups.md).
 - **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
 
 ```
@@ -43,7 +43,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 ## Decisions that shape it
 
-- Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
+- Only edges notify, apart from the Panels alarms. A flag that stays true does not keep pushing, and a correction never pushes.
 - Every push passes the one policy door. Sources never call delivery. Delivery checks the retained attention flags.
 - Push providers and the lock screen receive the bounded message preview. The full transcript, prompt, attachment contents, and text of asks stay in Panels. System notification preview controls determine what the locked device displays.
 - Preferences are by class, not by item, so a new Manager needs no setup.

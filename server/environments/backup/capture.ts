@@ -8,6 +8,10 @@ import {
   verifyDatabaseIntegrity,
 } from '../../core/database/index.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
+import {
+  alarm_backup_integrity_failure,
+  alarm_update_snapshot_failure,
+} from './integrity_alarm.ts';
 import type {
   ManagedRootName,
   ManagedFilesManifest,
@@ -26,8 +30,12 @@ import {
   SNAPSHOT_FORMAT,
   is_verified_snapshot,
   verified_snapshot_retention_plan,
+  verified_snapshots,
   missing,
 } from './evidence.ts';
+
+/** Tells the owner that a copy failed SQLite's integrity check. Never throws. */
+export type IntegrityAlarm = (sourceDatabase: string) => Promise<void>;
 
 const TEMPORARY_PREFIX = '.backup-';
 // Under the temporary prefix, so cleanup of expired temporary folders also covers it.
@@ -98,6 +106,7 @@ async function capture_managed_files(
 export async function stage_database_copy(
   sourceDatabase: string,
   backupDirectory: string,
+  options: { integrity_alarm?: IntegrityAlarm } = {},
 ): Promise<string> {
   const source = await resolved_path(sourceDatabase);
   const root = await resolved_path(backupDirectory);
@@ -107,7 +116,12 @@ export async function stage_database_copy(
   try {
     const image = join(temporary, 'database.sqlite');
     await onlineBackup(source, image);
-    verifyDatabaseIntegrity(image);
+    try {
+      verifyDatabaseIntegrity(image);
+    } catch (error) {
+      await (options.integrity_alarm ?? alarm_backup_integrity_failure)(source);
+      throw error;
+    }
     return temporary;
   } catch (error) {
     await remove_temporary(temporary);
@@ -194,8 +208,9 @@ export async function create_database_backup(
   sourceDatabase: string,
   backupDirectory: string,
   deployedRevision: string,
-  stagedCopy?: string,
+  options: { integrity_alarm?: IntegrityAlarm; staged_copy?: string } = {},
 ): Promise<string> {
+  const stagedCopy = options.staged_copy;
   const source = await resolved_path(sourceDatabase);
   const root = await resolved_path(backupDirectory);
   if (!(await is_file(source))) throw new Error(source);
@@ -212,7 +227,12 @@ export async function create_database_backup(
     let sha256: string;
     if (stagedCopy === undefined) {
       await onlineBackup(source, image);
-      verifyDatabaseIntegrity(image);
+      try {
+        verifyDatabaseIntegrity(image);
+      } catch (error) {
+        await (options.integrity_alarm ?? alarm_backup_integrity_failure)(source);
+        throw error;
+      }
       sha256 = await sha256_file(image);
     } else {
       if (!(await is_file(image))) throw new Error('the staged copy has no database image');
@@ -267,8 +287,14 @@ export class UpdateSnapshotCheckFailure extends Error {
 export async function verify_update_snapshot(
   snapshot: string,
   backupDirectory: string,
-  timed: (part: 'late_check' | 'retention', seconds: number) => void = () => {},
+  options: {
+    /** The live database, which holds the owner's push devices. */
+    readonly database: string;
+    readonly timed?: (part: 'late_check' | 'retention', seconds: number) => void;
+    readonly integrity_alarm?: (database: string, restore_point: string | null) => Promise<void>;
+  },
 ): Promise<void> {
+  const timed = options.timed ?? (() => {});
   const started = performance.now();
   const path = await resolved_path(snapshot);
   const root = await resolved_path(backupDirectory);
@@ -291,6 +317,15 @@ export async function verify_update_snapshot(
         { cause: error },
       );
     }
+  } catch (error) {
+    if (error instanceof UpdateSnapshotCheckFailure) {
+      const restore_point = (await verified_snapshots(root))[0];
+      await (options.integrity_alarm ?? alarm_update_snapshot_failure)(
+        options.database,
+        restore_point === undefined ? null : basename(restore_point),
+      );
+    }
+    throw error;
   } finally {
     timed('late_check', (performance.now() - started) / 1000);
   }
