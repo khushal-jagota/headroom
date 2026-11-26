@@ -21,9 +21,9 @@
   import { reviewMessageHref, unreadOwnerMessages } from "../lib/review/messages";
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
-  import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory} from "../lib/review/return";
+  import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,type ReviewSummaryState} from "../lib/review/return";
   import {shownReviewItem} from "../lib/review/shown";
-  import type {ReviewHistoryKey} from "../lib/navigation/contracts";
+  import type {ReviewHistoryKey,ReviewSummary} from "../lib/navigation/contracts";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
@@ -109,14 +109,18 @@
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   // The queue's count still holds what was answered on this screen until its refresh arrives.
   // The final screen must not say that something waits for it.
-  let finalSummary = $derived.by(() => {
+  let finalSummaryState = $derived.by((): ReviewSummaryState => {
     void reviewRequest;
     const answered=(review?.items ?? []).filter(item=>undecided(item)===null);
-    const summary=currentReviewSummary(displayed,navigation.owner.getRequest(),skippedHistory,answered.length);
+    const state=currentReviewSummary(displayed,navigation.owner.getRequest(),skippedHistory,answered.length,navigation.state.health!==null);
+    if(state.kind!=='known')return state;
     const history=new Set(skippedHistory.map(key=>JSON.stringify(key)));
     const answeredSkipped=answered.filter(item=>history.has(JSON.stringify(reviewHistoryKey(item)))).length;
-    return remainingReviewSummary(summary,answered.length-answeredSkipped,answeredSkipped);
+    return {kind:'known',summary:remainingReviewSummary(state.summary,answered.length-answeredSkipped,answeredSkipped)!};
   });
+  // A summary from before the skip is wrong, so only a summary this page showed can stand in for a pending one.
+  let shownSummary = $state.raw<ReviewSummary | null>(null);
+  let finalSummary = $derived(finalSummaryState.kind==='known' ? finalSummaryState.summary : finalSummaryState.kind==='pending' ? shownSummary : null);
   let finalLatched = $state(false);
   let returning = $state(false);
   let returnError = $state<unknown>(null);
@@ -179,6 +183,10 @@
   let showFinal = $derived(finalLatched || !returning && terminalWindow);
   $effect(() => {
     if (!returning && terminalWindow) finalLatched = true;
+  });
+  $effect(() => {
+    if (!showFinal) shownSummary = null;
+    else if (finalSummaryState.kind==='known') shownSummary = finalSummaryState.summary;
   });
   $effect(()=>{
     if (!reviewReady || finalLatched) return;
@@ -481,7 +489,7 @@
         <ReviewDeck {deck} view={viewKey} final={showFinal} bind:element={deckItemElement}>
           {#key coverEpoch}
           {#if showFinal}
-            <ReviewFinalState summary={finalSummary} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
+            <ReviewFinalState summary={finalSummary} pending={finalSummaryState.kind==='pending'} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
           {:else if currentItem}
             {#if currentItem.review_item_type === "message"}
               {@const message = currentItem}
