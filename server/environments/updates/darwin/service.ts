@@ -23,6 +23,7 @@ import {
   DARWIN_HOME_COMMAND_SECONDS,
   DARWIN_HOME_POLL_MILLISECONDS,
   DARWIN_HOME_SCHEDULE_SUFFIXES,
+  DARWIN_HOME_STOP_CAPTURE_PASSES,
   DARWIN_HOME_AUXILIARY_ENVIRONMENT,
 } from './configuration.ts';
 import type {
@@ -234,8 +235,13 @@ export class DarwinHomeService {
       booted_out: string[] = [];
     // An auxiliary job starts and ends short processes on its own timer, such as the
     // stall watchdog every 30 seconds. A process change there starts the capture again.
-    while (!(await this.capture_and_boot_out(scope, captured, booted_out)))
+    for (let pass = 1; ; pass++) {
+      const changed = await this.capture_and_boot_out(scope, captured, booted_out);
+      if (changed === null) break;
+      if (pass === DARWIN_HOME_STOP_CAPTURE_PASSES)
+        throw new Error(`Loaded Mac job process identity is unavailable: ${changed} kept changing`);
       await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
+    }
     for (;;) {
       assert_release_execution(scope);
       const jobs_gone = (
@@ -251,12 +257,15 @@ export class DarwinHomeService {
       await pause(DARWIN_HOME_POLL_MILLISECONDS, undefined, { signal: scope.signal });
     }
   }
-  /** Returns false when an auxiliary job's process changed. The home process must never change. */
+  /**
+   * Returns the auxiliary label whose process changed, or null after every loaded job is booted out.
+   * A changed home process refuses the stop.
+   */
   private async capture_and_boot_out(
     scope: ReleaseExecution & { deadline: number },
     captured: Map<number, DarwinHomeProcess>,
     booted_out: string[],
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     assert_release_execution(scope);
     const inventory = this.io.processes(scope.deadline),
       loaded: string[] = [];
@@ -265,6 +274,8 @@ export class DarwinHomeService {
       this.identity.label + '.backup',
       this.identity.label,
     ]) {
+      // An earlier pass already booted this job out. The final wait covers its teardown.
+      if (booted_out.includes(label)) continue;
       const { pid, text } = await this.authenticate(
         label,
         label === this.identity.label && this.phase !== 'stopped',
@@ -285,7 +296,7 @@ export class DarwinHomeService {
           current.uid !== this.io.uid ||
           current.birth !== original.birth
         ) {
-          if (label !== this.identity.label) return false;
+          if (label !== this.identity.label) return label;
           throw new Error('Loaded Mac job process identity is unavailable');
         }
         const pending = [pid],
@@ -306,7 +317,7 @@ export class DarwinHomeService {
       // Rebind every label immediately before its control operation, including its current birth.
       const { pid } = await this.authenticate(label, false, scope);
       if (pid !== null && this.io.process(pid)?.birth !== captured.get(pid)?.birth) {
-        if (label !== this.identity.label) return false;
+        if (label !== this.identity.label) return label;
         throw new Error('Mac job process identity changed before stop');
       }
       await this.io.command(
@@ -316,7 +327,7 @@ export class DarwinHomeService {
       );
       booted_out.push(label);
     }
-    return true;
+    return null;
   }
   async start(): Promise<void> {
     const scope = this.scope();

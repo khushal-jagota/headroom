@@ -193,15 +193,20 @@ test('Mac stop captures again when the stall watchdog starts during it, but not 
       writeFileSync(file.path, file.content, { mode: file.mode });
     }
     const domain = `gui/${f.deps.uid}`,
-      watchdog = label + '.stall-watchdog';
+      watchdog = label + '.stall-watchdog',
+      maintenance = label + '.maintenance';
     const uid = process.getuid!(),
       home_process = { pid: 100, parent: 1, birth: 'home', uid },
       watchdog_process = { pid: 200, parent: 1, birth: 'watchdog', uid };
     const loaded = new Set([label]),
       running = new Map([[100, home_process]]),
       pids = new Map([[label, 100]]),
-      bootouts: string[] = [];
-    let snapshots = 0;
+      bootouts: string[] = [],
+      // A booted-out job that launchd still lists until its next read.
+      tearing_down = new Set<string>();
+    let snapshots = 0,
+      watchdog_reads = 0,
+      start_watchdog_on_read = 0;
     const ok = { code: 0, stdout: '', stderr: '' };
     const overrides = {
       // The first inventory misses whatever the watchdog starts after it.
@@ -212,7 +217,12 @@ test('Mac stop captures again when the stall watchdog starts during it, but not 
           return { ...ok, stdout: readFileSync(argv.at(-1)!, 'utf8') };
         const job_label = argv[2]!.slice(domain.length + 1);
         if (argv[1] === 'print') {
-          if (!loaded.has(job_label))
+          if (job_label === watchdog && ++watchdog_reads === start_watchdog_on_read) {
+            running.set(201, { ...watchdog_process, pid: 201, birth: 'second watchdog' });
+            pids.set(watchdog, 201);
+          }
+          if (tearing_down.delete(job_label)) loaded.delete(job_label);
+          else if (!loaded.has(job_label))
             return { code: 113, stdout: '', stderr: 'Could not find service' };
           const plist = join(root, 'agents', job_label + '.plist'),
             job = JSON.parse(readFileSync(plist, 'utf8')),
@@ -237,7 +247,8 @@ test('Mac stop captures again when the stall watchdog starts during it, but not 
         }
         assert.equal(argv[1], 'bootout');
         bootouts.push(job_label);
-        loaded.delete(job_label);
+        if (job_label === maintenance) tearing_down.add(job_label);
+        else loaded.delete(job_label);
         running.delete(pids.get(job_label)!);
         pids.delete(job_label);
         return ok;
@@ -261,6 +272,18 @@ test('Mac stop captures again when the stall watchdog starts during it, but not 
     await new DarwinHomeService(root, `${domain}/${label}`, io).stop();
     assert.equal(snapshots, 2);
     assert.deepEqual(bootouts, [watchdog, label]);
+    assert.equal(loaded.size, 0);
+    // A watchdog starts between its first read and its read before bootout, after maintenance
+    // was already booted out. The next pass does not boot maintenance out a second time.
+    bootouts.length = 0;
+    snapshots = 1;
+    for (const job of [label, maintenance, watchdog]) loaded.add(job);
+    running.set(100, home_process);
+    pids.set(label, 100);
+    start_watchdog_on_read = watchdog_reads + 2;
+    await new DarwinHomeService(root, `${domain}/${label}`, io).stop();
+    assert.deepEqual(bootouts, [maintenance, watchdog, label]);
+    assert.equal(snapshots, 3);
     assert.equal(loaded.size, 0);
   } finally {
     await f.close();
