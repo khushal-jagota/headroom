@@ -143,8 +143,8 @@
             {#if editing !== machine.machine_id}
               {#if canMoveServerTo(machine, move)}<Button variant="ghost" onclick={() => void moveDialog?.openDialog(machine)} data-server-move={machine.machine_id}>Move the server here</Button>{/if}
               {#if workMoves.data?.move_everything_machine_id === machine.machine_id}
-                <WorkMoveDialog label="everything" targetMachineId={machine.machine_id} everything triggerLabel="Move everything" />
-                <WorkMoveDialog owner={{kind:"chief"}} label="the Chief" targetMachineId={machine.machine_id} triggerLabel="Move Chief here" />
+                <WorkMoveDialog targetMachineId={machine.machine_id} everything triggerLabel="Move everything" />
+                <WorkMoveDialog owner={{kind:"chief"}} targetMachineId={machine.machine_id} triggerLabel="Move Chief here" />
               {/if}
               <Button variant="ghost" onclick={() => edit(machine)} aria-label={`Edit ${machine.name}`}>Edit</Button>
             {/if}

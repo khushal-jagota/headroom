@@ -208,7 +208,7 @@
           {#snippet settleButton()}
             <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
-          {#snippet moveAction()}{#if !item.settled}<WorkMoveDialog owner={{kind:"manager",id:itemId}} label={item.title} currentMachineId={startValues.data?.machine_id} />{/if}{/snippet}
+          {#snippet moveAction()}{#if !item.settled}<WorkMoveDialog owner={{kind:"manager",id:itemId}} currentMachineId={startValues.data?.machine_id} />{/if}{/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal} textEditable={false}>
               {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
