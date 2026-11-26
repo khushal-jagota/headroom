@@ -1,4 +1,4 @@
-/** Real supervisor and APP processes: a supervisor death or hangup stops APP and frees its port. */
+/** Real supervisor and APP processes: a supervisor death or group hangup stops APP and frees its port. */
 import { spawn } from 'node:child_process';
 import {
   existsSync,
@@ -61,11 +61,11 @@ test.each(['SIGKILL', 'SIGHUP'] as const)(
     writeFileSync(
       app,
       [
-        `import { stop_when_supervisor_is_gone } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'supervisor_pipe.ts')).href)};`,
+        `import { follow_supervisor_lifetime } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'supervisor_pipe.ts')).href)};`,
         "import { createServer } from 'node:http';",
         "import { spawn } from 'node:child_process';",
         "import { readlinkSync, renameSync, writeFileSync } from 'node:fs';",
-        'stop_when_supervisor_is_gone();',
+        'follow_supervisor_lifetime();',
         "const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: true });",
         'descendant.unref();',
         "process.on('SIGTERM', () => { console.error('APP received SIGTERM'); server.close(() => process.exit(0)); });",
@@ -90,7 +90,11 @@ test.each(['SIGKILL', 'SIGHUP'] as const)(
       ].join('\n'),
     );
     let output = '';
-    const host = spawn(process.execPath, [supervisor], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Its own process group models a terminal's foreground group.
+    const host = spawn(process.execPath, [supervisor], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
     host.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
     host.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
@@ -117,7 +121,8 @@ test.each(['SIGKILL', 'SIGHUP'] as const)(
         expect(held).not.toContain(value.pipe);
       }
       expect(await port_refuses(value.port)).toBe(false);
-      process.kill(host.pid!, signal);
+      // A terminal hangup reaches the whole group. On Darwin that group includes APP.
+      process.kill(signal === 'SIGHUP' ? -host.pid! : host.pid!, signal);
       const result = await exited;
       if (signal === 'SIGKILL') expect(result.signal).toBe('SIGKILL');
       else expect(result).toEqual({ code: 0, signal: null });
