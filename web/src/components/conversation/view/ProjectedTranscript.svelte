@@ -5,6 +5,7 @@
   import ProjectedMessage from './ProjectedMessage.svelte';
   import { transcriptHistoryEdges, rowForBody } from '../../../lib/conversation/view/presentation';
   import { summarizeToolRun } from '../../../lib/conversation/toolCallPresentation';
+  import type { ToolRunCounts } from '../../../lib/conversation/toolRunKind';
   import type { ToolCallRow as ToolCallRowType } from '../../../lib/conversation/transcript';
   import ToolRunSummary from '../ToolRunSummary.svelte';
   import { getContext, untrack } from 'svelte';
@@ -57,6 +58,18 @@
       if (reader.lens === 'full' && item.kind === 'row' && item.row_kind === 'tool_call' && item.work_group_key !== null && summarized(map.get(item.work_group_key)) && !openRuns.has(item.work_group_key)) return false;
       if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  /** What the server counted of a closed run's calls, for its line before they are at hand. */
+  function countedRun(group: ConversationViewItem & { kind: 'work_group' }): ToolRunCounts | null {
+      const counted = group.call_summary;
+      return counted === undefined ? null : { kinds: counted.kinds as ToolRunCounts['kinds'], failedCount: counted.failed_count };
+  }
+  /** Open or close a run. Opening it is what asks for its calls, once. */
+  function toggleRun(groupKey: string): void {
+      if (openRuns.has(groupKey)) { openRuns.delete(groupKey); return; }
+      openRuns.add(groupKey);
+      if (!reader.pages.some(page => page.scope.kind === 'work_group' && page.scope.key === groupKey))
+          void reader.expand({ kind: 'work_group', key: groupKey }, true);
+  }
   /** Each run's calls that are at hand, as rows, for its summary line. */
   const runRows = $derived.by(() => {
       const rows = new Map<string, ToolCallRowType[]>();
@@ -214,7 +227,10 @@
       $effect(() => { reader.entryPhase; observer.unobserve(node); observer.observe(node); });
       return { destroy: () => observer.disconnect(), update: (next: typeof request) => { current = next; observer.unobserve(node); observer.observe(node); } };
   }
-  /** Ask for this head's own bounded scope, but only once it is near the reader.
+  /** Ask for this Focus head's own bounded scope, but only once it is near the reader.
+   *
+   * Full asks for nothing here: its timeline already holds every turn's messages and runs,
+   * and a run's calls load only when the person opens it.
    *
    * Every head in the retained window asking at once would be up to a hundred page
    * reads for a thread nobody has scrolled to yet. This is the only thing the
@@ -223,9 +239,9 @@
       if (item.kind !== 'turn' && item.kind !== 'work_group') return { destroy: () => { } };
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
-          if (['loading','placing','error'].includes(reader.entryPhase)) return;
+          if (reader.lens === 'full' || ['loading','placing','error'].includes(reader.entryPhase)) return;
           // Focus reaches a run through its opened turn rather than one run at a time.
-          const opened = reader.lens === 'full' || reader.isExpanded(scope) || (item.kind === 'work_group' && item.turn_key !== null && reader.isExpanded({ kind: 'turn', key: item.turn_key }));
+          const opened = reader.isExpanded(scope) || (item.kind === 'work_group' && item.turn_key !== null && reader.isExpanded({ kind: 'turn', key: item.turn_key }));
           if (!opened) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
@@ -264,7 +280,7 @@
         {@const groupKey = item.key}
         <div use:demand={item} data-conversation-work-group data-conversation-work-expanded={openRuns.has(groupKey) ? 'true' : 'false'}>
           {#if presentation.has(groupKey)}
-            <ToolRunSummary summary={summarizeToolRun(runRows.get(groupKey) ?? [], item.entry_count)} callCount={item.entry_count} open={openRuns.has(groupKey)} {activityUncertain} onToggle={() => { if (openRuns.has(groupKey)) openRuns.delete(groupKey); else openRuns.add(groupKey); }}/>
+            <ToolRunSummary summary={summarizeToolRun(runRows.get(groupKey) ?? [], item.entry_count, countedRun(item))} callCount={item.entry_count} open={openRuns.has(groupKey)} {activityUncertain} onToggle={() => toggleRun(groupKey)}/>
           {/if}
         </div>
       {:else}

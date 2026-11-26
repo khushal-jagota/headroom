@@ -139,6 +139,77 @@ test('Focus change frames carry tool calls only to an opened turn’s scopes', (
   });
 });
 
+// Full opens a settled turn whole from its first page, with no request per turn or run.
+// The live-change door must agree with that page, or a change lands where nothing is drawn.
+test('Full’s timeline holds a settled turn whole, and its change frames agree', () => {
+  const narration = (text: string): [ConversationEventKind, unknown] => [
+    'agent_message',
+    { content: [{ piece: 'text', text }] },
+  ];
+  const database = projected([
+    events[0],
+    narration('Looking'),
+    events[1],
+    events[2],
+    events[3],
+    ['tool_call_finished', { tool_call_id: 't2', tool_call_status: 'failed', detail: 'boom' }],
+    narration('One more'),
+    [
+      'tool_call_started',
+      { tool_call_id: 't3', title: 'Grep', tool_kind: 'search', detail: '{"pattern":"x"}' },
+    ],
+    ['tool_call_finished', { tool_call_id: 't3', tool_call_status: 'completed', detail: 'x' }],
+    ...events.slice(5),
+  ]);
+  database.read((sql) => {
+    const timeline = read_page(sql, 'c', 'full');
+    expect(timeline.items.map((item) => item.key)).toEqual([
+      'e1',
+      'turn:e1',
+      'e2',
+      'work:e3',
+      'e7',
+      'work:e8',
+      'e8',
+      'e10',
+      'e11',
+    ]);
+    expect(timeline.items.find((item) => item.key === 'work:e3')).toMatchObject({
+      entry_count: 2,
+      settled: true,
+      call_summary: {
+        kinds: [
+          { kind: 'read', count: 1 },
+          { kind: 'execute', count: 1 },
+        ],
+        failed_count: 1,
+      },
+    });
+    // A run of one call is drawn as its call, so it needs no summary.
+    expect(timeline.items.find((item) => item.key === 'work:e8')).not.toHaveProperty(
+      'call_summary',
+    );
+    expect(read_page(sql, 'c', 'focus').items.map((item) => item.key)).toEqual([
+      'e1',
+      'turn:e1',
+      'e10',
+    ]);
+
+    const status = { stopped_without_ending: false } as Parameters<
+      typeof conversation_view_changes
+    >[5];
+    const range = {
+      scope: { kind: 'timeline' as const, key: null },
+      first: { sequence: 0, slot: 0 },
+      last: { sequence: 11, slot: 1 },
+    };
+    const changes = conversation_view_changes(sql, 'c', 'full', 0, [range], status)!;
+    expect(new Set(changes.scope_changes[0].item_keys)).toEqual(
+      new Set(timeline.items.map((item) => item.key)),
+    );
+  });
+});
+
 test('a command reply belongs in Focus by the one shared rule', () => {
   const payload = conversation_event_payload_from_canonical_json(
     'command_reply',

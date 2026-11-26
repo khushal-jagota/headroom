@@ -290,6 +290,14 @@ export interface ConversationViewWorkGroup {
   entry_count: number;
   latest_entry_key: string;
   settled: boolean;
+  /** Full only: the run's calls counted by kind, in the order each kind first appears, and
+   *  how many failed. A closed run says what it did from this, without its calls. */
+  call_summary?: ViewWorkGroupCallSummary;
+}
+
+export interface ViewWorkGroupCallSummary {
+  kinds: Array<{ kind: string; count: number }>;
+  failed_count: number;
 }
 
 export type ConversationViewItem = ConversationViewRow | ConversationViewTurn | ConversationViewWorkGroup;

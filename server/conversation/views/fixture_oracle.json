@@ -336,6 +336,77 @@
             },
             {
               "kind": "row",
+              "key": "e2",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 2,
+                "slot": 0
+              },
+              "source_sequence": 2,
+              "sender_message_id": null,
+              "changed_through_sequence": 2,
+              "created_at": 101,
+              "turn_key": "turn:e1",
+              "work_group_key": null,
+              "fold_rule": "earlier_message",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Commentary"
+                    }
+                  ],
+                  "to_owner": false
+                }
+              }
+            },
+            {
+              "kind": "work_group",
+              "key": "work:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "changed_through_sequence": 7,
+              "turn_key": "turn:e1",
+              "entry_count": 1,
+              "latest_entry_key": "e3",
+              "settled": true
+            },
+            {
+              "kind": "row",
+              "key": "e3",
+              "row_kind": "tool_call",
+              "order": {
+                "sequence": 3,
+                "slot": 1
+              },
+              "source_sequence": 3,
+              "sender_message_id": null,
+              "changed_through_sequence": 4,
+              "created_at": 102,
+              "turn_key": "turn:e1",
+              "work_group_key": "work:e3",
+              "fold_rule": "work",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "tool_call",
+                  "tool_call_id": "tool-a",
+                  "title": "Read file",
+                  "tool_kind": "read",
+                  "detail": "File contents",
+                  "started_detail": "a.txt",
+                  "capped_detail_sequence": null,
+                  "status": "completed"
+                }
+              }
+            },
+            {
+              "kind": "row",
               "key": "e5",
               "row_kind": "agent_message",
               "order": {
@@ -418,7 +489,7 @@
               }
             }
           ],
-          "body_bytes": 421,
+          "body_bytes": 695,
           "older": null,
           "newer": null
         }
@@ -3833,6 +3904,28 @@
               "is_latest": true
             },
             {
+              "kind": "work_group",
+              "key": "work:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 0
+              },
+              "changed_through_sequence": 13,
+              "turn_key": "turn:e2",
+              "entry_count": 2,
+              "latest_entry_key": "e6",
+              "settled": true,
+              "call_summary": {
+                "kinds": [
+                  {
+                    "kind": "other",
+                    "count": 2
+                  }
+                ],
+                "failed_count": 0
+              }
+            },
+            {
               "kind": "row",
               "key": "e5",
               "row_kind": "token_usage",
@@ -3855,6 +3948,77 @@
                   "output_tokens": 5,
                   "cached_input_tokens": 2,
                   "cost_usd": 0.01
+                }
+              }
+            },
+            {
+              "kind": "row",
+              "key": "e7",
+              "row_kind": "agent_message",
+              "order": {
+                "sequence": 7,
+                "slot": 0
+              },
+              "source_sequence": 7,
+              "sender_message_id": null,
+              "changed_through_sequence": 7,
+              "created_at": 106,
+              "turn_key": "turn:e2",
+              "work_group_key": null,
+              "fold_rule": "earlier_message",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "agent_message",
+                  "content": [
+                    {
+                      "piece": "text",
+                      "text": "Commentary between calls"
+                    }
+                  ],
+                  "to_owner": false
+                }
+              }
+            },
+            {
+              "kind": "work_group",
+              "key": "work:e8",
+              "order": {
+                "sequence": 8,
+                "slot": 0
+              },
+              "changed_through_sequence": 13,
+              "turn_key": "turn:e2",
+              "entry_count": 1,
+              "latest_entry_key": "e8",
+              "settled": true
+            },
+            {
+              "kind": "row",
+              "key": "e8",
+              "row_kind": "tool_call",
+              "order": {
+                "sequence": 8,
+                "slot": 1
+              },
+              "source_sequence": 8,
+              "sender_message_id": null,
+              "changed_through_sequence": 8,
+              "created_at": 107,
+              "turn_key": "turn:e2",
+              "work_group_key": "work:e8",
+              "fold_rule": "work",
+              "body": {
+                "kind": "inline",
+                "value": {
+                  "kind": "tool_call",
+                  "tool_call_id": "three",
+                  "title": "Three",
+                  "tool_kind": "other",
+                  "detail": null,
+                  "started_detail": null,
+                  "capped_detail_sequence": null,
+                  "status": "running"
                 }
               }
             },
@@ -3959,7 +4123,7 @@
               }
             }
           ],
-          "body_bytes": 680,
+          "body_bytes": 948,
           "older": null,
           "newer": null
         }
