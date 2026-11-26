@@ -90,7 +90,7 @@ export async function node_version(root: string): Promise<string> {
     throw new Error('Mac runtime needs Node 22.18+ or Node 24.');
   return numbers.join('.');
 }
-export async function build_mac_package(options: MacPackageOptions) {
+export async function assemble_mac_runtime(options: MacPackageOptions) {
   if (!/^[0-9a-f]{40}$/.test(options.revision))
     throw new Error('An exact source revision is required.');
   const source = await realpath(options.source_root),
@@ -209,6 +209,10 @@ export async function build_mac_package(options: MacPackageOptions) {
     join(runtime, 'mac-runtime.json'),
     JSON.stringify({ ...marker, build_id }) + '\n',
   );
+  return { output, runtime, version, build_id };
+}
+export async function build_mac_package(options: MacPackageOptions) {
+  const { output, runtime, version, build_id } = await assemble_mac_runtime(options);
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
   // Every top-level entry of the assembled runtime: a driver's release files
   // may add one beside server/, and with none there is no src/ to archive.

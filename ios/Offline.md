@@ -21,9 +21,23 @@ save. A card whose detail this phone never read acts on the saved view: its Mark
 reads through the conversation's newest message when the view was built, and its ask
 comes from the view ([Review](Review.md#cards)). New responses apply
 immediately, including changes that move rows. A failed refresh keeps the content
-on screen with no note; the next stream event or pull replaces it. A read that
-cannot reach the server (no network, a timeout, a dropped connection, a failed host
-lookup) shows nothing anywhere and reads again when the connection returns. With no saved response, rough blocks appear after 300 milliseconds.
+on screen with no note; the next stream event or pull replaces it. A short interruption shows no connection notice. With no saved response, rough blocks appear after 300 milliseconds.
+
+Repeated failures that prove a sustained loss of server contact show one native
+full-screen cover above navigation and open sheets. Definite network, host, and DNS
+failures need two attempts and eight foreground seconds after the first failure.
+Timeouts and lost connections need three attempts and at least 45 foreground seconds
+from the first attempt. Existing request timeouts can extend that wait. Background
+time does not establish an outage. HTTP responses, including errors, and live
+heartbeats clear the cover. TLS and decode errors retain their ordinary handling.
+
+Try again requests a fresh connection attempt. Continue offline restores the same
+route and any open sheet, with saved Review cards, artifacts, drafts, and queued
+work intact. That choice lasts for the outage, including a background return in
+the same app session. A real server response, a new server address, or a fresh
+launch resets it. Reconnect attempts and outbox replay continue under the cover.
+Covered content earns no read credit. The TestFlight update gate takes precedence
+and offers no Continue offline action.
 
 Successful reads publish before serial background cache writes. Bounded pending
 work coalesces replacements by server and key. An identical response still refreshes
@@ -140,6 +154,23 @@ The server can hold a message, for example one that names a model, until the tur
 ends. The conversation shows held messages above the composer with the server's
 reason, Steer in and removal.
 
+## Video attachments
+
+Videos save as files beside the phone store before they enter the outbox. Their
+saved references are relative to that store, so a changed app-container path does
+not break a queued video. A launch sweep removes copies that no saved draft or
+outbox item names. Removing an attachment leaves its file until that sweep, so
+another open composer can still use it. If two views of the same note draft stay
+open, an edit from a stale view can rarely overwrite a video added to that draft
+in the background. The next launch sweep can then reclaim the unreferenced file.
+
+Clips over 250 MiB receive a system 1080p export on the phone before upload.
+An export that fails or remains too large stays on the attachment with its draft.
+
+A cancelled or timed-out upload restarts from zero. An upload still marked
+`transferring` after a lost response is sent again. The final message and decision
+keep their identities across these retries.
+
 ## Reads
 
 Mark read, from a Review card or an open conversation, moves the read point on
@@ -202,3 +233,5 @@ responses, then relaunches the app. It proves what host tests cannot: real contr
 process termination and the restored screen after relaunch. It runs on an already
 booted lane under its lock, uses a separate test bundle, and never calls the live
 Panels server.
+
+The outage cover keeps its explanation short: “Panels can’t reach the server. Check that Tailscale is connected.” Open Tailscale queries the `tailscale://` scheme and opens it only when iOS reports a handler. That scheme is undocumented by Tailscale. Otherwise the action opens Tailscale’s App Store page, which offers Open when the app is installed. Panels cannot inspect Tailscale’s connection state.

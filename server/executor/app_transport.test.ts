@@ -53,8 +53,6 @@ test('only an explicit credentialed close commits the original executor handover
     settled: () => Promise.resolve(),
     check: () => ({ schema_version: 1, target: null, prefetch: null }),
     status: () => null,
-    phase: () => null,
-    reported_at: () => null,
     archive: unexpected,
     prefetch_archive: unexpected,
     report: vi.fn((report: Parameters<MacUpdateServiceContract['report']>[0]) => ({

@@ -27,6 +27,27 @@ enum ConversationImagePreparation {
             try prepareImages(pieces, alreadyPrepared: alreadyPrepared, imageWorkStarted: imageWorkStarted)
         }.value
     }
+    /// ImageIO can downsample a Files URL without loading its original bytes into Data.
+    nonisolated static func prepareFile(_ url: URL,
+        imageWorkStarted: @escaping @Sendable () -> Void = {}) async throws -> ConversationSend.Piece {
+        try await Task.detached(priority: .userInitiated) {
+            imageWorkStarted()
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  CGImageSourceGetCount(source) > 0,
+                  thumbnail(source, side: validationDimension) != nil else { throw Failure.unreadable }
+            let piece = ConversationSend.Piece(piece: "image", fileName: url.lastPathComponent)
+            // Preserve supported small photos and animations. Unknown or larger files
+            // use the bounded ImageIO export instead of a whole-file read.
+            if let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= maximumImageBytes {
+                let data = try Data(contentsOf: url)
+                if let mediaType = supportedMediaType(data) {
+                    return ConversationSend.Piece(piece: "image", data: data.base64EncodedString(),
+                        mediaType: mediaType, fileName: url.lastPathComponent)
+                }
+            }
+            return jpegPiece(piece, data: try jpeg(source, budget: maximumImageBytes))
+        }.value
+    }
     private nonisolated static func prepareImages(_ pieces: [ConversationSend.Piece], alreadyPrepared: [ConversationSend.Piece],
                                                   imageWorkStarted: @Sendable () -> Void) throws -> [ConversationSend.Piece] {
         let indices = pieces.indices.filter { pieces[$0].piece == "image" }

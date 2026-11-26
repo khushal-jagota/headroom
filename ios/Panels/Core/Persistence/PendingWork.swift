@@ -18,6 +18,11 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var proposal: TicketProposal?
     var approval: ReviewApproval?
     var guidance: String?
+    /// A video decision keeps its captured local intent until upload references can freeze.
+    var decisionIntent: DecisionCommand?
+    var decisionConversationID: String?
+    /// Mutable upload facts are overlaid from OutgoingMetadata, never written into this payload.
+    var videoDelivery: VideoDeliveryState?
     var protectedDecisionBody: Data?
     var protectedProposalCreatedAt: Double?
     var audioFile: String?
@@ -70,4 +75,11 @@ struct RejectedPhotoDraft: Codable, Sendable {
     let originalText: String?
     let clearedTextUpdatedAt: Date?
     let clearedAttachmentsUpdatedAt: Date?
+}
+
+/// Upload checkpoints and final wire references for one immutable outgoing action.
+struct VideoDeliveryState: Codable, Sendable {
+    var uploads: [String: String] = [:]
+    var frozenContent: [ConversationSend.Piece]?
+    var frozenDecisionBody: Data?
 }

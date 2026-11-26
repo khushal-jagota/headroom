@@ -12,7 +12,7 @@ private struct GoalManualCounter: View {
     }
     var body: some View {
         if let literal = GoalChartPresentation.manualLiteral(displayBlock, value: value) {
-            Text(literal).font(.system(size: size, weight: .medium)).monospacedDigit()
+            Text(literal).textSelection(.enabled).font(.system(size: size, weight: .medium)).monospacedDigit()
         } else { GoalCounter(block: GoalChartPresentation.manualDisplayBlock(displayBlock, value: value), value: value, size: size) }
     }
 }
@@ -26,12 +26,11 @@ struct GoalManualValue: View {
     private var current: Double? { editor.state?.value(cumulative: editor.cumulative) }
     var body: some View {
         GoalManualCounter(block: block, value: current, size: size).frame(minHeight: size * 1.2)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(GoalChartPresentation.manualLiteral(block, value: current) ?? GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(block, value: current), current))
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("goal-manual-value-" + block.id)
             .overlay(alignment: .trailing) {
                 if block["manual"]["model"].text == "individual_readings", !GoalChartPresentation.suffix(block).isEmpty {
-                    Text(GoalChartPresentation.suffix(block)).font(.system(size: 20)).foregroundStyle(PanelsTheme.Goal.faint).fixedSize()
+                    Text(GoalChartPresentation.suffix(block)).textSelection(.enabled).font(.system(size: 20)).foregroundStyle(PanelsTheme.Goal.faint).fixedSize()
                         .alignmentGuide(.trailing) { $0[.leading] }.offset(y: size * 0.12)
                 }
             }
@@ -79,16 +78,16 @@ struct GoalManualChart: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { title; Spacer(); Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0)).animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded) }
-                        GoalManualCounter(block: block, value: current, size: 28, unit: true)
+                        GoalManualCounter(block: block, value: current, size: 28, unit: true).allowsHitTesting(false)
                     }.contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
+                }.buttonStyle(.plain).systemCopyText((block["title"].string ?? "Reading") + "\n" + GoalChartPresentation.format(block, current)).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
             } else { title }
             if !supporting || preference.expanded {
                 VStack(alignment: .leading, spacing: 16) {
                     if editor.cumulative {
                         GoalManualGauge(block: block, editor: editor, current: current, target: target, preview: preview)
                         HStack(spacing: 12) {
-                            Text(completion).font(.system(size: 11)).foregroundStyle(GoalManualBars.toneColor(block, current, target))
+                            Text(completion).textSelection(.enabled).font(.system(size: 11)).foregroundStyle(GoalManualBars.toneColor(block, current, target))
                             Spacer(minLength: 0)
                             increments
                         }.frame(minHeight: 40)
@@ -131,7 +130,10 @@ struct GoalManualChart: View {
         if GoalChartPresentation.direction(block) == "atmost" { return GoalChartPresentation.comparison(block, headline: .init(value: current, target: target)) }
         return GoalChartPresentation.number(current - target, decimals: 20, trim: true) + " beyond target"
     }
-    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }
+    @ViewBuilder private var title: some View {
+        let label = Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong)
+        if supporting { label } else { label.textSelection(.enabled) }
+    }
     @ViewBuilder private var increments: some View {
         if !preview {
             HStack(spacing: 4) {
@@ -169,7 +171,7 @@ struct GoalManualFailure: View {
     var body: some View {
         if let error = editor.error {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(error).foregroundStyle(PanelsTheme.error)
+                    Text(error).textSelection(.enabled).foregroundStyle(PanelsTheme.error)
                     HStack {
                         if editor.pending != nil, !editor.conflicted { Button("Retry save") { Task { await editor.retry() } } }
                         else if editor.pending == nil { Button("Retry") { Task { await editor.refresh() } } }
@@ -250,6 +252,7 @@ struct GoalManualBars: View {
                 context.draw(Text(label).font(.system(size: 11)).monospacedDigit().foregroundStyle(PanelsTheme.faint), at: CGPoint(x: width + 8, y: at), anchor: .leading)
             }
         }.frame(height: plot + 16).offset(y: -8).allowsHitTesting(false)
+            .overlay(alignment: .trailing) { Color.clear.frame(width: 32).contentShape(Rectangle()).systemCopyText(lines.map { $0.2 }.filter { !$0.isEmpty }.joined(separator: "\n")) }
     }
     private func bar(_ datum: GoalChartDatum, plot: CGFloat) -> some View {
         let value = datum.values["actual"], picked = selected == datum.id
@@ -285,7 +288,7 @@ struct GoalManualBars: View {
     private func inspection(_ datum: GoalChartDatum) -> some View {
         let value = datum.values["actual"], target = datum.values["target"]
         return VStack(alignment: .leading, spacing: 4) {
-            Text(Self.dayMonth(datum.id)).font(.system(size: 11)).foregroundStyle(PanelsTheme.text).padding(.bottom, 2)
+            Text(Self.dayMonth(datum.id)).textSelection(.enabled).font(.system(size: 11)).foregroundStyle(PanelsTheme.text).padding(.bottom, 2)
             row(title, value.map { GoalChartPresentation.format(block, $0) } ?? "No reading", Self.toneColor(block, value, target), dashed: false)
             if let target { row("Target", GoalChartPresentation.format(block, target), PanelsTheme.faint, dashed: true) }
         }
@@ -298,9 +301,9 @@ struct GoalManualBars: View {
     private func row(_ label: String, _ value: String, _ color: Color, dashed: Bool) -> some View {
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 10, height: 2.5).opacity(dashed ? 0.8 : 1)
-            Text(label).foregroundStyle(PanelsTheme.text).lineLimit(1)
+            Text(label).textSelection(.enabled).foregroundStyle(PanelsTheme.text).lineLimit(1)
             Spacer(minLength: 8)
-            Text(value).fontWeight(.medium).foregroundStyle(PanelsTheme.strong).monospacedDigit()
+            Text(value).textSelection(.enabled).fontWeight(.medium).foregroundStyle(PanelsTheme.strong).monospacedDigit()
         }.font(.system(size: 13))
     }
 }
@@ -333,7 +336,7 @@ private struct GoalManualGauge: View {
                         if preview { GoalManualCounter(block: block, value: current, size: 40) }
                         else { GoalManualValue(editor: editor, block: block) }
                     }.frame(maxWidth: geometry.size.width * 0.65)
-                    if let target { Text("of " + GoalChartPresentation.number(target, decimals: 20, trim: true)).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
+                    if let target { Text("of " + GoalChartPresentation.number(target, decimals: 20, trim: true)).textSelection(.enabled).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
                 }.frame(width: geometry.size.width, height: geometry.size.width)
             }
         }

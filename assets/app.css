@@ -3831,7 +3831,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .chat-qrow-act:disabled { color: var(--cv-t3); cursor: default; }
 
 /* --- The transcript: layout and rhythm ---------------------------------------------------
- * The transcript grid (tokens.css, THE TRANSCRIPT GRID) sets every gap and the mark gutter. */
+ * The transcript grid (tokens.css, THE TRANSCRIPT GRID) sets every gap and keeps each line inside the column. */
 .chat-thread-shell {
   position: relative;
   flex: 1;
@@ -3852,10 +3852,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  /* The scroll box reaches one mark gutter left of the text, so a hung mark is not clipped and
-     the text stays on the column's edge. Its edge fades are ConversationViewport's. */
-  margin-inline-start: calc(-1 * var(--cv-mark-hang));
-  padding: var(--cv-transcript-pad-top) 0 var(--cv-transcript-pad-bottom) var(--cv-mark-hang);
+  /* Edge fades belong to ConversationViewport. */
+  padding: var(--cv-transcript-pad-top) 0 var(--cv-transcript-pad-bottom);
 }
 /* The measured content box. It cannot shrink when delayed media or Markdown grows, and
  * answer room stays outside it. */
@@ -3971,10 +3969,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * for its section does while it streams. */
 .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):last-child { margin-block-end: var(--cv-gap-heading-below); }
 
-/* Lists. In the agent's prose a top-level list's text starts at x = 0 and its markers hang in
- * the mark gutter; nested lists and the person's lists keep their indent. */
+/* Lists keep their markers and words inside the column, including top-level agent lists. */
 .chat-thread .markdown :is(ul, ol) { padding-inline-start: var(--cv-s5); }
-.chat-thread .chat-a .markdown > :is(ul, ol) { padding-inline-start: 0; }
 .chat-thread .markdown li + li { margin-block-start: var(--cv-gap-list-item); }
 .chat-thread .markdown li > :is(ul, ol) { margin-block-start: var(--cv-gap-list-item); }
 .chat-thread .markdown li > p + :is(p, ul, ol) { margin-block-start: var(--cv-gap-paragraph); }
@@ -4847,14 +4843,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
   width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
-}
-/* Narrow: the opened column starts 36px in, so a turn's spinner hanging in the gutter keeps
- * clear of the screen edge (x >= 12px). The header, thread and composer move together. */
-@media (max-width: 480px) {
-  [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
-    width: calc(100% - 36px - var(--space-5));
-    margin-inline: 36px var(--space-5);
-  }
 }
 .conversation-layer [data-conversation-pane] { max-height: 100%; }
 /* Large questions and held prompts scroll inside the card; the whole composer remains one

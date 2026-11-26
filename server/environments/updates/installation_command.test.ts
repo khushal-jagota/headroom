@@ -4,9 +4,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import {
-  installer_transient_command,
+  installer_unit,
   selected_installer_environment,
+  supervised_installer,
 } from './installation_command.ts';
 
 it('keeps literal paths and production variables without forwarding test-runner markers', () => {
@@ -27,22 +30,25 @@ it('keeps literal paths and production variables without forwarding test-runner 
       LD_LIBRARY_PATH: 'must not travel',
     };
     const command = ['/external/node', join(root, 'copy/main.ts'), join(root, 'request.json')];
-    const argv = installer_transient_command('attempt-1', command, environment);
-    assert.deepEqual(argv.slice(0, 7), [
-      'systemd-run',
-      '--user',
-      '--collect',
-      '--quiet',
-      '--unit=panels-update-attempt-1',
-      '--expand-environment=no',
-      '--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
-    ]);
-    assert(argv.includes('--setenv=HOME=' + environment.HOME));
-    assert(argv.includes('--setenv=PLAN_DB_PATH=' + environment.PLAN_DB_PATH));
-    assert(!argv.some((part) => part.startsWith('--setenv=VITEST=')));
-    assert(!argv.some((part) => part.startsWith('--setenv=PYTEST_CURRENT_TEST=')));
-    assert.deepEqual(argv.slice(-4), ['--', ...command]);
-    assert(!argv.some((part) => part.includes('must not travel')));
+    const text = installer_unit(command, join(root, 'marker'), environment);
+    assert(text.includes('WantedBy=default.target'));
+    assert(text.includes('Restart=on-abnormal'));
+    assert(text.includes('ConditionPathExists=' + join(root, 'marker')));
+    assert(text.includes('Environment=' + JSON.stringify('HOME=' + environment.HOME)));
+    assert(
+      text.includes('Environment=' + JSON.stringify('PLAN_DB_PATH=' + environment.PLAN_DB_PATH)),
+    );
+    assert(
+      text.includes(
+        'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH VITEST PYTEST_CURRENT_TEST',
+      ),
+    );
+    assert(!text.includes('must not travel'));
+    assert(text.includes('ExecStart="/bin/sh" "-c"'));
+    assert(text.includes(command.map((v) => JSON.stringify(v)).join(' ')));
+    assert(
+      installer_unit(['/path/$foo/%t'], join(root, 'marker'), {}).includes('"/path/$$foo/%%t"'),
+    );
     assert.deepEqual(Object.keys(selected_installer_environment(environment)).sort(), [
       'DBUS_SESSION_BUS_ADDRESS',
       'HOME',
@@ -52,9 +58,29 @@ it('keeps literal paths and production variables without forwarding test-runner 
       'PLAN_TEST_MODE',
     ]);
     assert.throws(
-      () => installer_transient_command('attempt\n', command, environment),
-      /invalid installer attempt/,
+      () => installer_unit(['line\nbreak'], join(root, 'marker'), {}),
+      /control character/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('runs the exact retained command a second time only after failure and honors a second failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-coordinator-retry-'));
+  try {
+    for (const [initial, final, count] of [
+      [0, 1, 1],
+      [2, 1, 1],
+      [1, 0, 2],
+      [1, 1, 2],
+    ] as const) {
+      const path = join(root, `argument with $ and spaces ${initial} ${final}`);
+      const child = `const fs=require('node:fs'), path=process.argv[1]; const first=!fs.existsSync(path); fs.appendFileSync(path,'x'); process.exit(first?${initial}:${final})`;
+      const [shell, ...args] = supervised_installer([process.execPath, '-e', child, path]);
+      assert.equal(spawnSync(shell!, args).status, count === 1 ? initial : final);
+      assert.equal(readFileSync(path, 'utf8'), 'x'.repeat(count));
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

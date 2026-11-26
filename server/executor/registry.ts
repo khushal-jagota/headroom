@@ -238,14 +238,6 @@ export class VpsExecutorRegistry {
     return this.completion.promise;
   }
 
-  configured(): boolean {
-    return this.get(ORIGINAL_MAC_MACHINE_ID) !== null;
-  }
-
-  health_payload(): Record<string, unknown> | null {
-    return this.get(ORIGINAL_MAC_MACHINE_ID)?.health_payload() ?? null;
-  }
-
   is_present(machine_id: string): boolean {
     return this.get(machine_id)?.presence.is_present() ?? false;
   }

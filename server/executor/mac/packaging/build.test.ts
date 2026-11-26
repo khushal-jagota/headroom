@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { ArchiveMembers } from '../../../environments/release/logic/archive_members.ts';
-import { build_mac_package } from './build.ts';
+import { assemble_mac_runtime, build_mac_package } from './build.ts';
 import { extract_publication_archive } from './publication_main.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 import { MAC_REQUIRED_FILES } from './configuration.ts';
@@ -124,8 +124,13 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
     }
     await put(join(modules, 'better-sqlite3/build/Makefile'), '/scratch/repeated/native');
     await put(join(modules, 'better-sqlite3/build/config.gypi'), '{"prefix":"/scratch/repeated"}');
-    const repeated = await build_mac_package({ ...options, output: join(root, 'repeated') });
+    const repeated = await assemble_mac_runtime({ ...options, output: join(root, 'repeated') });
     expect(repeated.build_id).toBe(built.build_id);
+    await expect(
+      readFile(join(repeated.output, 'panels-mac-runtime.tar.gz')),
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
     // The account appears only in the files a join writes on the machine.
     const account = mac_installation_assets({
       home: '/Users/Owner & Test',

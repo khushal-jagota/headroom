@@ -82,6 +82,6 @@ export const claude_manifest: DriverManifest = {
     native_path_marker: null,
     native_update_command: null,
     manual_only_detail:
-      'Panels only updates `claude` from the configured vps-owned user-local npm prefix; update this installation manually.',
+      "Panels only updates `claude` from this machine's user-local npm prefix; update this installation on the machine itself.",
   },
 };

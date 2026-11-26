@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AgentRecap: View {
     let recap: String
@@ -13,15 +14,15 @@ struct AgentRecap: View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             if !recap.isEmpty {
                 if typeSize.isAccessibilitySize || voiceOverEnabled {
-                    recapText.fixedSize(horizontal: false, vertical: true)
+                    recapText().fixedSize(horizontal: false, vertical: true)
                 } else {
                     // Keep each text layout stable while only the clipping frame animates.
                     // Animating lineLimit makes SwiftUI interpolate glyphs between lines.
-                    recapText.lineLimit(8)
+                    recapText(lineLimit: 8)
                         .background { GeometryReader { geometry in Color.clear.onChange(of: geometry.size.height, initial: true) { _, height in clampedHeight = height } } }
                         .hidden().accessibilityHidden(true)
                         .overlay(alignment: .topLeading) {
-                            recapText.fixedSize(horizontal: false, vertical: true)
+                            recapText().fixedSize(horizontal: false, vertical: true)
                                 .background { GeometryReader { geometry in Color.clear.onChange(of: geometry.size.height, initial: true) { _, height in fullHeight = height } } }
                         }
                         .frame(height: fullHeight > 0 ? (expanded ? fullHeight : clampedHeight) : nil, alignment: .top)
@@ -37,10 +38,9 @@ struct AgentRecap: View {
         }.clipped()
     }
 
-    private var recapText: some View {
-        Text((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap))
-            .font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.muted)
-            .lineSpacing(PanelsTheme.Space.xs).frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+    private func recapText(lineLimit: Int? = nil) -> some View {
+        PanelsSelectableText((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap),
+                             font: .preferredFont(forTextStyle: .body), color: UIColor(PanelsTheme.muted), lineSpacing: PanelsTheme.Space.xs, lineLimit: lineLimit)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
-  import ReviewOutgoingReplies from './ReviewOutgoingReplies.svelte';
   import ErrorLine from './ErrorLine.svelte';
   import { reviewReplyComposer } from '../lib/review/replyComposer.svelte';
   import { ReviewSendOutcome } from '../lib/review/sendOutcome.svelte';
@@ -31,7 +30,6 @@
 </script>
 
 <div data-review-chief-composer>
-  <ReviewOutgoingReplies {composer} busy={voiceActive} quiet onEdit={() => reply?.focus()} />
   <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
     bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}

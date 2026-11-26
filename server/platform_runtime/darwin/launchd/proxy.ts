@@ -11,6 +11,7 @@ import { copy_environment } from '../../../core/environment.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import { START_SECONDS, STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import * as records from '../../../worker_supervision/records.ts';
+import { MACHINE_WORKER_APP_ENV } from '../../../executor/mac/configuration.ts';
 import { mac_installation_paths } from '../../../executor/mac/platform.ts';
 import { start_worker_job, usable_worker_launcher } from './launcher.ts';
 import { WORKER_APP_START_SECONDS } from './configuration.ts';
@@ -20,7 +21,8 @@ import { channels, type Channel, job_plist, cleanup_transport } from './transpor
 export async function run_proxy(
   record_path: string,
   command: readonly string[],
-  launcher_path = mac_installation_paths(userInfo().homedir).app_executable,
+  launcher_path = process.env[MACHINE_WORKER_APP_ENV] ??
+    mac_installation_paths(userInfo().homedir).app_executable,
 ): Promise<number> {
   const children = new ChildProcesses();
   const probes = new OneShotChildren(children);

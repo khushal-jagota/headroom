@@ -62,8 +62,7 @@ export function create_server_move(input: {
       credential_key_path: config.credential_key_path,
       apns_key_path: config.apns?.key_path ?? null,
       // An update token that is configured but absent is not state.
-      update_token_path:
-        update_token !== undefined && existsSync(update_token) ? update_token : null,
+      update_token_path: update_token && existsSync(update_token) ? update_token : null,
     }),
     revision: config.app_sha,
     canonical_origin: config.trusted_ingress_canonical_origin,

@@ -9,7 +9,7 @@ import type {
   ViewHistoryScope
 } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
-import { executorAnswerSentence } from "../src/lib/conversation/executorEvidence";
+import { executorAnswerSentence, executorAskUncertain } from "../src/lib/conversation/executorEvidence";
 import { presentTense, toolCallSentence } from "../src/lib/conversation/whatHappened";
 
 const turn = (settled: boolean): ConversationViewItem => ({
@@ -135,7 +135,8 @@ describe("Full keeps each run of tool calls behind one summary", () => {
 describe("an answer that reached the machine", () => {
   it("leaves no line of its own; only pending or unconfirmed answers say anything", () => {
     expect(executorAnswerSentence("applied")).toBeNull();
-    expect(executorAnswerSentence("saved")).not.toBeNull();
+    expect(executorAnswerSentence("saved", "Mac 1")).toBe("Answer saved at home; delivery to Mac 1 is pending.");
+    expect(executorAskUncertain("Studio")).toBe("This request is still pending. Its current availability on Studio is unknown.");
     expect(executorAnswerSentence("unconfirmed")).not.toBeNull();
   });
 });

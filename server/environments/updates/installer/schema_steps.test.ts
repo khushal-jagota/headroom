@@ -34,7 +34,6 @@ import { restore_database_snapshot } from '../../backup/restore.ts';
 import { create_installer_effects } from './commands.ts';
 import { install } from './install.ts';
 import { InstallationRecord } from './record.ts';
-import { structural_app } from './testing/structural_app.ts';
 import type { InstallerEffects, InstallerRequest } from './contracts.ts';
 
 const FROM = 'a'.repeat(40),
@@ -317,8 +316,7 @@ it('step applied, health fails, old app runs on the restored database', async ()
 });
 
 it('node-v2 launches the child with the lock fd; no-backup plus pending steps refuses before writing', async () => {
-  // A step must never run without a backup. The real classifier
-  // and the real schema_step_main.ts in a structural app.
+  // A step must never run without a backup. Use the packaged schema entry on SQLite.
   const { root, request } = installation('panels-schema-step-child-', null);
   const owner = new ChildProcesses(),
     controller = new AbortController();
@@ -335,10 +333,9 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
   const lock = openSync(join(root, 'lifetime.lock'), 'w');
   let unregister = () => {};
   try {
-    rmSync(join(root, 'app'), { recursive: true });
-    structural_app(join(root, 'app'), FROM);
     const main = join(root, 'app/server/environments/updates/schema_step_main.ts'),
       real_main = fileURLToPath(new URL('../schema_step_main.ts', import.meta.url));
+    mkdirSync(dirname(main), { recursive: true });
     symlinkSync(real_main, main);
     // The installer's test path guard follows the link. Admit only the entry's own folder,
     // a source folder: nothing opens or writes a database there, and finally unregisters it.

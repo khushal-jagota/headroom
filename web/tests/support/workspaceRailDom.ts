@@ -1,4 +1,4 @@
-import { MACHINE_ACTIVITY_UNKNOWN } from "../../src/lib/machines/config";
+import { unknownActivityText } from "../../src/lib/ticketMachines";
 import { type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from '../../src/lib/workspaceRail';
 import type { WorkItemTicketFacts } from '../../src/lib/workItemPresentation';
 import type { ConversationSignal } from '../../src/lib/conversationSignal';
@@ -44,7 +44,7 @@ export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:Workspa
 export function hoverDomMatches(root:HTMLElement,title:string,recap:string,stage:string,signal:Partial<ConversationSignal> | undefined,
   conversationId:string | null | undefined,kicker:string):boolean {
   return root.querySelector('.kicker')?.textContent===kicker && root.getAttribute('aria-hidden')==='false' && root.querySelector('.title > span')?.textContent===title
-    && (root.querySelector('[data-recap-text]')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===(root.querySelector('[data-machine-stage-unknown="true"]') ? MACHINE_ACTIVITY_UNKNOWN : stage)
+    && (root.querySelector('[data-recap-text]')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===(root.querySelector('[data-machine-stage-unknown="true"]') ? `${unknownActivityText(root.querySelector('.machine-identity.with-name > span')?.textContent ?? undefined)} Last progress remains available.` : stage)
     && JSON.stringify(actualMark(root))===JSON.stringify(expectedMark(signal,conversationId,root));
 }
 

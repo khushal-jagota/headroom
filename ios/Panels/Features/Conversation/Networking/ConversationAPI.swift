@@ -16,14 +16,14 @@ extension APIClient: ConversationServing {
             request.httpBody = Data(#"{"mode":"steer"}"#.utf8)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(ConversationHeldChange.self, from: data)
     }
     func interruptConversation(_ id: String) async throws {
         var request = try self.request(try url("/api/conversation/conversations/\(id)/interrupt"))
         request.httpMethod = "POST"
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
     }
     func conversationConfiguration(_ owner: ConversationOwner, id: String?) async throws -> ConversationConfiguration {
@@ -44,6 +44,19 @@ extension APIClient: ConversationServing {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let encoded = String(decoding: try encoder.encode(cursor), as: UTF8.self)
         return try await get("/api/conversation/conversations/\(id)/view/pages", query: [.init(name: "lens", value: cursor.lens), .init(name: "cursor", value: encoded), .init(name: "direction", value: "older")])
+    }
+    func conversationScope(_ id: String, lens: ConversationLens, scope: ConversationCursor.Scope) async throws -> ConversationPage {
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        let encoded = String(decoding: try encoder.encode(scope), as: UTF8.self)
+        return try await get("/api/conversation/conversations/\(id)/view/pages", query: [.init(name: "lens", value: lens.rawValue), .init(name: "scope", value: encoded)])
+    }
+    func conversationToolDetail(_ id: String, sequence: Int) async throws -> String? {
+        struct Detail: Decodable { let detail: String? }
+        let result: Detail = try await get("/api/conversation/conversations/\(id)/events/\(sequence)/detail")
+        guard (result.detail?.utf8.count ?? 0) <= ConversationRetention.oversizedBodyLimit else {
+            throw APIError(status: 0, message: "Tool output is too large. Open it on the web.")
+        }
+        return result.detail
     }
     func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody {
         let text = try await conversationLiveText(id, reference: reference)
@@ -71,7 +84,7 @@ extension APIClient: ConversationServing {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(message)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         do { try Self.validate(response, data: data) }
         catch let error as APIError where error.status == 422 && message.content.contains(where: { $0.piece == "image" }) {
             // FastAPI admission errors use `detail`; other requests keep ordinary error handling.
@@ -88,18 +101,31 @@ extension APIClient {
     // carry the window and its changes, decoded here off the main actor; nothing is
     // dropped, because a missing change frame is a gap. Cancelling the view task also
     // cancels this socket.
-    func conversationTail(_ id: String, lens: ConversationLens, transcript: Bool = true) -> AsyncThrowingStream<ConversationTailFrame, Error> {
+    /// Supplying retained ranges requires an admitted cursor. Without `after`, the
+    /// server intentionally starts with a new timeline-only snapshot.
+    func conversationTailRequest(_ id: String, lens: ConversationLens, transcript: Bool, ranges: [ConversationRetainedRange], after: Int?) throws -> URLRequest {
+        var query: [URLQueryItem] = [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))]
+        if let after { query.append(.init(name: "after", value: String(after))) }
+        if !ranges.isEmpty {
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            query.append(.init(name: "ranges", value: String(decoding: try encoder.encode(ranges), as: UTF8.self)))
+        }
+        var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: query))
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 120
+        return request
+    }
+    func conversationTail(_ id: String, lens: ConversationLens, transcript: Bool = true, ranges: [ConversationRetainedRange] = [], after: Int? = nil) -> AsyncThrowingStream<ConversationTailFrame, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))]))
-                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    request.timeoutInterval = 120
-                    let (bytes, response) = try await session.bytes(for: request)
+                    let request = try conversationTailRequest(id, lens: lens, transcript: transcript, ranges: ranges, after: after)
+                    let (bytes, response, contact) = try await self.bytes(for: request)
                     try Self.validate(response)
                     var parser = ConversationTailParser()
                     for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
+                        await serverConnection?.answered(contact)
                         if let frame = try parser.consume(line) { continuation.yield(frame) }
                     }
                     continuation.finish()
@@ -128,7 +154,7 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.data(for: request)
         try Self.validate(response, data: data)
         struct Response: Decodable { let fate: String }
         return try Self.decoder().decode(Response.self, from: data).fate

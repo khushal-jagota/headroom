@@ -1,7 +1,8 @@
-/** Native-only fixture payloads use real sealed archives and copied installer bytes. */
+import { supervised_installer } from '../../environments/updates/installation_command.ts';
+/** Native-only fixture payloads use real sealed archives and the retained installer. */
 import assert from 'node:assert/strict';
 import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,9 +13,13 @@ import { MAC_HOME } from '../../environments/release/contracts.ts';
 import type { ReleaseExecution } from '../../environments/release/contracts.ts';
 import { run_release_command } from '../../environments/release/process.ts';
 import { admit_runtime } from '../../environments/release/admission.ts';
+import { release_path } from '../../environments/updates/installer/selection.ts';
 import { create_darwin_home_io } from '../../environments/updates/darwin/service.ts';
 import { read_home_job } from '../../environments/updates/darwin/jobs.ts';
-import { authenticate_loaded_job } from '../../environments/updates/darwin/logic/launchd.ts';
+import {
+  authenticate_loaded_job,
+  launchd_field,
+} from '../../environments/updates/darwin/logic/launchd.ts';
 import { healthy } from '../../environments/updates/installer/health.ts';
 import { DarwinProcessInspector } from '../../previews/darwin.ts';
 import type { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
@@ -62,21 +67,24 @@ const server=createServer(async(req,res)=>{
    const input=JSON.parse(readFileSync(join(data,'probe-request.json'),'utf8'));
    const scope={child_processes:children,signal:controller.signal,deadline:performance.now()/1000+120};
    const home=await current_darwin_home(application,scope,process.env);
-   const ops=create_installer_operations({application_root:application,node_executable:process.execPath,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
+   const ops=create_installer_operations({application_root:application,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
    if(ops.requires_snapshot!==true)throw Error('Mac home updater requires its snapshot');
    await ops.node_schema_steps_pending(database,join(root,'.app-next-'+input.manifest.app_sha));
    const now=utc_now();
    const release={publication_run_id:1,artifact_id:1,proof_artifact_id:2,manifest:input.manifest,archive_sha256:input.archive_sha256,schema_floor:seed.alembicRevision,expires_at:'2099-01-01T00:00:00+00:00',mac:null};
    new FileUpdateAttemptStore(join(data,'update-attempt.json'),()=>{}).create({attempt_id:input.attempt_id,from_sha:revision,to_sha:input.manifest.app_sha,mode:'now',confirm_activity:false,state:'installing',created_at:now,updated_at:now,release,detail:null,deadline_at:null,backup:null,snapshot_required:true,steps:{},mac_attempt_id:null,extra:{}});
    new UpdateBarrier(join(data,'update-barrier.json')).freeze(input.attempt_id);
-   const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:8});
+   const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:input.attempt_id==='native-rollback'?30:8});
    writeFileSync(join(data,'probe-launch-'+input.attempt_id+'.json'),JSON.stringify({command,app_pid:process.pid,supervisor_pid:process.ppid}));
    res.end(JSON.stringify({prepared:true}));
-   void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(data,'probe-launch-error-'+input.attempt_id+'.json'),String(error.stack||error)));
+   void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(root,'logs/probe-launch-error-'+input.attempt_id+'.log'),String(error.stack||error)));
   }else{
    const current=policy(),ready=current.fail_sha!==revision&&current.hold_sha!==revision;
    res.statusCode=ready?200:503;res.setHeader('content-type','application/json');
-   res.end(JSON.stringify({app_sha:revision,ready,project_name:db.read(sql=>sql.get("SELECT name FROM projects WHERE id='native-proof'").name)}));
+   // The live-upgrade gate checks the real local machine. This fixture controls
+   // that observation to fault the independent native installer on demand.
+   const marker=join(data,'update-barrier.json'),prepared_attempt_id=ready&&existsSync(marker)?readFileSync(marker,'utf8').trim():null;
+   res.end(JSON.stringify({app_sha:revision,ready,prepared_attempt_id,project_name:db.read(sql=>sql.get("SELECT name FROM projects WHERE id='native-proof'").name)}));
   }
  }catch(error){res.statusCode=500;res.end(String(error.stack||error));}
 });
@@ -90,7 +98,7 @@ async function wait<T>(read: () => Promise<T | undefined>, seconds = 30): Promis
     if (value !== undefined) return value;
     await delay(25);
   }
-  throw new Error('Native copied installer observation timed out');
+  throw new Error('Native retained installer observation timed out');
 }
 export async function build_native_mini_homes(base: string, execution: ReleaseExecution) {
   const inputs = process.env.MAC_HOME_PRODUCTION_INPUTS,
@@ -184,7 +192,7 @@ export async function build_native_mini_homes(base: string, execution: ReleaseEx
   await chmod(join(base, 'retired-mini-source'), 0);
   return { a: builds[0]!, b: builds[1]!, phases, production_revision: production.manifest.app_sha };
 }
-export async function native_copied_updates(options: {
+export async function native_retained_updates(options: {
   root: string;
   account: string;
   label: string;
@@ -196,8 +204,7 @@ export async function native_copied_updates(options: {
   births: WorkerProcess[];
   record: Record<string, unknown>;
 }) {
-  const { root, account, label, port, base, builds, execution, primitives, births, record } =
-    options;
+  const { root, account, label, port, builds, execution, primitives, births, record } = options;
   // This IO spans both archive admissions and updates. Each command needs a fresh scope.
   const domain = `gui/${process.getuid!()}`,
     io = create_darwin_home_io(execution(), { HOME: account });
@@ -228,7 +235,7 @@ export async function native_copied_updates(options: {
     const path = join(root, 'data/update-agent/installer.plist'),
       job = await read_home_job(path, io, execution());
     assert.equal(job.Label, item.target.slice(domain.length + 1));
-    assert.deepEqual(job.ProgramArguments, item.command);
+    assert.deepEqual(job.ProgramArguments, supervised_installer(item.command!));
     authenticate_loaded_job(observed.stdout, path, job, ['HOME', 'PATH'], realpathSync);
     await control(['bootout', item.target]);
     const after = await control(['print', item.target], true);
@@ -250,13 +257,17 @@ export async function native_copied_updates(options: {
       const started = performance.now(),
         old = await identity(),
         attempt = 'native-' + name;
-      const copy = join(root, 'data', 'update-installer-' + attempt);
+      const request_dir = join(root, 'data', 'update-installer-' + attempt);
+      const retained = release_path(
+        root,
+        name === 'success' ? builds.a.manifest.app_sha : builds.b.manifest.app_sha,
+      );
       const item: { target: string; command?: string[]; birth?: WorkerProcess } = {
         target: `${domain}/${label}.update-${attempt}`,
         command: [
-          join(copy, 'runtime/node/bin/node'),
-          join(copy, 'runtime/server/environments/updates/installer/main.ts'),
-          join(copy, 'request.json'),
+          join(retained, 'node/bin/node'),
+          join(retained, 'server/environments/updates/installer/main.ts'),
+          join(request_dir, 'request.json'),
         ],
       };
       planned.push(item);
@@ -299,8 +310,19 @@ export async function native_copied_updates(options: {
       assert.deepEqual(launch.command, item.command);
       assert.equal(launch.app_pid, old.app.pid);
       assert.equal(launch.supervisor_pid, old.supervisor.pid);
+      const check_launch = async () => {
+        const failure = await readFile(
+          join(root, 'logs/probe-launch-error-' + attempt + '.log'),
+          'utf8',
+        ).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return null;
+        });
+        if (failure) throw new Error(failure);
+      };
       record.update_observation = 'updater process';
       item.birth = await wait(async () => {
+        await check_launch();
         const value = await control(['print', item.target], true);
         if (value.code !== 0) {
           if (value.stderr.includes('Could not find service')) return undefined;
@@ -308,7 +330,7 @@ export async function native_copied_updates(options: {
         }
         const path = join(root, 'data/update-agent/installer.plist'),
           job = await read_home_job(path, io, execution());
-        assert.deepEqual(job.ProgramArguments, item.command);
+        assert.deepEqual(job.ProgramArguments, supervised_installer(item.command!));
         const pid = authenticate_loaded_job(
           value.stdout,
           path,
@@ -328,19 +350,16 @@ export async function native_copied_updates(options: {
       });
       record.update_observation = 'app swap';
       await wait(async () => {
-        const error = await readFile(
-          join(root, 'data/probe-launch-error-' + attempt + '.json'),
-          'utf8',
-        ).catch(() => null);
-        if (error) throw new Error(error);
+        await check_launch();
         const state = await json(attempt_path);
         return state.steps?.app_swapped ? true : undefined;
       });
       if (name === 'success') {
-        const previous = join(root, '.app-previous-' + builds.a.manifest.app_sha),
-          retired = join(base, 'retired-installed-source');
-        await rename(previous, retired);
-        await chmod(retired, 0);
+        assert.equal(
+          realpathSync(join(root, 'app')),
+          release_path(root, candidate.manifest.app_sha),
+        );
+        assert((await lstat(retained)).isDirectory());
         await writeFile(policy, '{}');
       } else {
         record.update_observation = 'failed candidate health';
@@ -361,7 +380,29 @@ export async function native_copied_updates(options: {
         });
       }
       record.update_observation = 'candidate process';
-      if (name === 'rollback') trial_birth = (await identity()).app;
+      if (name === 'rollback') {
+        trial_birth = (await identity()).app;
+        const target = `${domain}/${label}`,
+          path = join(root, 'agents', label + '.plist');
+        const job = await read_home_job(path, io, execution());
+        assert.deepEqual(job.KeepAlive, { SuccessfulExit: false });
+        await control(['kill', 'SIGTERM', target]);
+        // launchd keeps this idle job registered. Only the installer can remove it.
+        await wait(async () => {
+          const observed = await control(['print', target]);
+          const pid = authenticate_loaded_job(
+            observed.stdout,
+            path,
+            job,
+            ['PLAN_DB_PATH', 'PLAN_CONFIG_PATH'],
+            realpathSync,
+          );
+          return pid === null && launchd_field(observed.stdout, 'last exit code') === '0'
+            ? true
+            : undefined;
+        });
+        record.failed_candidate_job = 'registered without a PID after clean supervisor exit';
+      }
       record.update_observation = 'terminal attempt';
       const state = await wait(async () => {
         const value = await json(attempt_path);
@@ -369,16 +410,19 @@ export async function native_copied_updates(options: {
       }, 90);
       record.update_observation = 'restoration assertions';
       assert.equal(state.state, name === 'success' ? 'done' : 'failed');
-      assert(
-        await lstat(join(root, 'data/update-barrier.json')).then(
-          () => false,
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return true;
-            throw error;
-          },
-        ),
+      // The installer persists the outcome before releasing the write barrier.
+      await wait(async () =>
+        lstatSync(join(root, 'data/update-barrier.json'), { throwIfNoEntry: false })
+          ? undefined
+          : true,
       );
-      assert(name === 'success' ? state.steps.healthy : state.steps.rollback_database_restored);
+      if (name === 'success') assert(state.steps.healthy);
+      else
+        assert(
+          state.steps.rollback_service_stopped &&
+            state.steps.rollback_database_restored &&
+            state.steps.rollback_healthy,
+        );
       await wait(async () =>
         (await primitives.is_absent(old.app, performance.now() / 1000 + 5)) ? true : undefined,
       );
@@ -416,8 +460,7 @@ export async function native_copied_updates(options: {
         old_app: old.app,
         candidate_app: trial_birth,
         new_app: current.app,
-        copy_command: item.command,
-        source_retired: name === 'success',
+        retained_command: item.command,
       });
     }
   } finally {

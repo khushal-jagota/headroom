@@ -11,7 +11,8 @@
     "start": "electron .",
     "build:mac": "npm run build && electron-builder --mac --publish never",
     "test:updates": "node scripts/test_updates.mjs",
-    "test:screens": "node scripts/test_updates.mjs screens/screens.test.cjs"
+    "test:screens": "node scripts/test_updates.mjs screens/screens.test.cjs",
+    "test:installation": "node scripts/test_updates.mjs application_location.test.cjs"
   },
   "devDependencies": {
     "@types/node": "22.19.3",

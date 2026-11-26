@@ -68,7 +68,7 @@
 </button>
 
 <style>
-  /* A run of calls, folded: one status line, the glyph hanging in the mark gutter, the
+  /* A run of calls, folded: one status line, the glyph inside the column, the
      sentence ("Ran 2 commands") and its chevron right after it, as wide as what it says, as the
      turn's own fold line is. Live, the row stays one line: "Running" in the ink, its command a
      step quieter and ellipsized before the chevron. Only the Working line has a spinner. */
@@ -78,11 +78,11 @@
     column-gap: var(--cv-s2);
     justify-self: start;
     width: fit-content;
-    max-width: calc(100% + var(--cv-mark-hang) + var(--cv-s2) * 2);
+    max-width: 100%;
     min-width: 0;
     height: 32px;
-    margin-inline: calc(-1 * (var(--cv-mark-hang) + var(--cv-s2))) calc(var(--cv-s2) * -1);
-    padding: 0 var(--cv-s2);
+    margin-inline: 0;
+    padding: 0;
     border: 0;
     border-radius: var(--cv-r-pill);
     background: transparent;

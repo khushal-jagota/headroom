@@ -31,10 +31,11 @@ async function refresh(mirror: string, repository_url: string, options: Workspac
     for (const args of [
       ['init', '--bare', '--', partial],
       ['-C', partial, 'remote', 'add', 'origin', repository_url],
-      ['-C', partial, 'fetch', '--no-tags', 'origin', ...REFSPEC],
     ]) {
       if ((await git(dirname(mirror), args, options)).returncode) return false;
     }
+    if ((await git(partial, ['fetch', '--no-tags', 'origin', ...REFSPEC], options)).returncode)
+      return false;
     await rename(partial, mirror);
     return true;
   } finally {

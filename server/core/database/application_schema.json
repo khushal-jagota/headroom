@@ -1,6 +1,8 @@
 {
   "statements": [
     "CREATE TABLE agent_launch_tokens (token_hash TEXT PRIMARY KEY, conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(conversation_id) ON DELETE CASCADE)",
+    "CREATE TABLE agent_message_acceptances (\n      submission_id TEXT PRIMARY KEY,\n      machine_id TEXT NOT NULL,\n      sender_id TEXT NOT NULL,\n      source_conversation_id TEXT NOT NULL,\n      recipient_kind TEXT NOT NULL,\n      recipient_id TEXT NOT NULL,\n      recipient_order INTEGER NOT NULL,\n      pending INTEGER NOT NULL CHECK(pending IN (0,1)),\n      retained_bytes INTEGER NOT NULL,\n      record_json TEXT NOT NULL\n    )",
+    "CREATE TABLE agent_message_files (\n      submission_id TEXT NOT NULL REFERENCES agent_message_acceptances(submission_id),\n      file_index INTEGER NOT NULL,\n      manifest_json TEXT NOT NULL,\n      bytes BLOB NOT NULL,\n      PRIMARY KEY(submission_id,file_index)\n    )",
     "CREATE TABLE agents (\n  agent_key       TEXT PRIMARY KEY,\n  conversation_id TEXT\n, machine_id TEXT REFERENCES machines(machine_id))",
     "CREATE TABLE alembic_version (\n\tversion_num VARCHAR(32) NOT NULL, \n\tCONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)\n)",
     "CREATE TABLE attention_approval_events (id INTEGER PRIMARY KEY AUTOINCREMENT,ticket_id TEXT NOT NULL,field TEXT NOT NULL,actor_kind TEXT NOT NULL,actor_id TEXT NOT NULL,method TEXT NOT NULL,occurred_at INTEGER NOT NULL,destination_json TEXT NOT NULL)",
@@ -123,6 +125,7 @@
     "CREATE TABLE work_move_operations (operation_id TEXT PRIMARY KEY, started_at_ms INTEGER NOT NULL, finished_at_ms INTEGER, operation_json TEXT NOT NULL)",
     "CREATE TABLE worker_step_dispatch_intents (ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,claim_revision INTEGER NOT NULL,sender_message_id TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('prepared','dispatch_started')),PRIMARY KEY(ticket_id,claim_revision))",
     "CREATE TABLE worker_types (worker_type TEXT PRIMARY KEY, position INTEGER NOT NULL, definition_json TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE INDEX agent_message_pending ON agent_message_acceptances(recipient_kind,recipient_id,pending,recipient_order)",
     "CREATE INDEX attention_approval_events_time ON attention_approval_events(occurred_at)",
     "CREATE UNIQUE INDEX attention_gate_intervals_open ON attention_gate_intervals(ticket_id) WHERE closed_at IS NULL",
     "CREATE INDEX automatic_start_bindings_turn ON automatic_start_bindings(conversation_id,turn_number)",
@@ -376,5 +379,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0015_owner_time_zone"
+  "alembicRevision": "ts_0016_agent_message_acceptances"
 }

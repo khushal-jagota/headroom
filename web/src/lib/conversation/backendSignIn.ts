@@ -26,6 +26,32 @@ export function backendCanBeSignedIn(snapshot: BackendSnapshot): boolean {
 }
 
 /**
+ * Whether a signed-in-looking login should offer a re-sign-in. `unknown` is a saved login
+ * that Panels cannot confirm, such as an expired token that no turn has refreshed. The CLI
+ * often refreshes it alone, so the button is secondary and the caveat is shown with it.
+ * An `unknown` card with no detail is another problem (an old CLI, a failed read), where a
+ * new sign-in would not help, so it needs the detail the server wrote about the login.
+ */
+export function backendCanBeReSignedIn(snapshot: BackendSnapshot): boolean {
+  return backendCanBeSignedIn(snapshot) && snapshot.identity?.status === "unknown"
+    && Boolean(snapshot.identity.detail);
+}
+
+/**
+ * Whether a signed-out backend gets a guided sign-in. Panels cannot drive the sign-in of
+ * such a backend (Claude), so the owner runs its login command in their own terminal on
+ * that machine and Panels reads the result.
+ */
+export function backendNeedsGuidedSignIn(snapshot: BackendSnapshot): boolean {
+  return (
+    snapshot.installed &&
+    !snapshot.can_sign_in &&
+    snapshot.identity?.status === "unauthenticated" &&
+    Boolean(snapshot.identity.login_command)
+  );
+}
+
+/**
  * Whether a turn is running on this backend.
  *
  * `"unknown"` is a real answer and the reason this is not a boolean. Whether a turn is

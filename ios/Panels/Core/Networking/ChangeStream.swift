@@ -11,7 +11,7 @@ extension APIClient {
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.timeoutInterval = 120
-                    let (bytes, response) = try await session.bytes(for: request)
+                    let (bytes, response, contact) = try await self.bytes(for: request)
                     try Self.validate(response)
                     // Resync after the connection is established, including reconnects.
                     // This closes the gap between the initial GET and opening the stream.
@@ -19,6 +19,7 @@ extension APIClient {
                     var parser = ChangeStreamParser()
                     for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
+                        await serverConnection?.answered(contact)
                         if parser.consume(line) { continuation.yield(()) }
                     }
                     continuation.finish()

@@ -36,3 +36,14 @@ export function assert_installer_health_url(url: string, environment?: NodeJS.Pr
   )
     throw new Error('Installer health URLs must use a loopback host in tests');
 }
+
+export const INSTALLER_ENTRY = 'server/environments/updates/installer/main.ts';
+export function installer_attempt_id(value: string): string {
+  if (
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.exec(value)?.[0] !== value ||
+    value === '.' ||
+    value === '..'
+  )
+    throw new Error('invalid installer attempt identity');
+  return value;
+}

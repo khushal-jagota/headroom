@@ -407,7 +407,7 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
   await expect(chief.locator('.chat-att')).toHaveCount(0);
   // The empty Review page does not keep a delivered message or its "Sent" status.
   await expect(chief.locator('[data-review-outgoing]').filter({ hasText: chiefText })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Open Chief' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Chief' })).toHaveAttribute('href', '#/workspace/chief-of-staff');
   await page.close();
   console.log(`Review reply attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing signal host`);
 });
@@ -499,6 +499,6 @@ test('the empty Review page shows how a send ended on its button and keeps its i
   const ticket = await createTicketConversation(signalServer, { conversationId: 'review-waiting-agent', title: 'Waiting agent' });
   await post(signalServer, '/api/test/signals/review-waiting-agent/finish');
   await connectedMessage(signalServer, 'review-waiting-agent', ticketPrincipal(ticket), 'A question for you.');
-  await expect(page.locator('[data-review-final-status]')).toHaveText('1 thing awaits review.');
+  await expect(page.locator('[data-review-final-status]')).toHaveText('1 new. Ready to review.');
   await expect(input).toBeVisible();
 });

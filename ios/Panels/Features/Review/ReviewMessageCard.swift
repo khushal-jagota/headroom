@@ -25,23 +25,24 @@ struct ReviewMessageCard: View {
                 }
                 if decision.loaded {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Message").panelsScaledFont(size: 13, weight: .semibold).foregroundStyle(PanelsTheme.Web.secondary)
+                        Text("Message").textSelection(.enabled).panelsScaledFont(size: 13, weight: .semibold).foregroundStyle(PanelsTheme.Web.secondary)
                         ForEach(decision.events) { event in
                             if event.id != decision.events.first?.id { Rectangle().fill(Color.white.opacity(0.14)).frame(width: 32, height: 1) }
                             ReviewMessageContent(pieces: event.payload.pieces, conversationID: item.conversationId ?? "", dock: .reviewMessage(itemID: item.id))
                                 .accessibilityIdentifier("review.message.\(event.sequence)")
                         }
-                        if decision.events.isEmpty { Text("These messages have been read.").foregroundStyle(PanelsTheme.Web.tertiary) }
+                        if decision.events.isEmpty { Text("These messages have been read.").textSelection(.enabled).foregroundStyle(PanelsTheme.Web.tertiary) }
                         if !live.addressCurrent {
-                            Text("Historical conversation · read only").panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.tertiary)
+                            Text("Historical conversation · read only").textSelection(.enabled).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.tertiary)
                         }
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .modifier(DecisionForegroundFade())
                     .background(PanelsTheme.Web.surface2, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
                 } else if decision.error == nil, decision.windowBound == nil { ScreenLoadingView(title: "messages") }
                 if let error = decision.error {
-                    Text(error).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
+                    Text(error).textSelection(.enabled).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.Web.error)
                     if !decision.loaded { Button("Try again") { Task { await decision.load(item: live, api: store.client) } }.panelsScaledFont(size: 13) }
                 }
             }
@@ -186,7 +187,7 @@ private struct ReviewMessageContent: View {
                     if piece.piece == "image" {
                         AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { RingSpinner() }
                             .accessibilityLabel(piece.fileName ?? "Message image")
-                    } else { Link(piece.fileName ?? "File", destination: url) }
+                    } else { Link(piece.fileName ?? "File", destination: url).systemCopyText(piece.fileName ?? url.lastPathComponent) }
                 }
             }
         }

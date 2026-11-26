@@ -83,6 +83,21 @@ export const create_production_environment_operations: ProductionEnvironmentFact
   return {
     app_root: application_root,
     service_unit,
+    async ensure_home_machine(root, unit, revision) {
+      const { ensure_upgrade_machine } = await import('../installation/upgrade_machine.ts');
+      const { production_home_dependencies } = await import('../installation/production.ts');
+      await ensure_upgrade_machine(
+        root,
+        unit,
+        context.config.port,
+        revision,
+        context.database,
+        await production_home_dependencies(
+          { child_processes: context.child_processes, signal, deadline: null },
+          environment,
+        ),
+      );
+    },
     // Runtime invokes this only after installed_update_root accepts the actual paths/unit.
     provider: () =>
       repository === null
@@ -104,13 +119,12 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     ),
     installer: create_installer_operations({
       application_root,
-      node_executable: dependencies.node_executable,
       child_processes: context.child_processes,
       signal,
       environment,
       ...(darwin_home ? { darwin_home } : {}),
     }),
-    create_mac: (mac_context) => create_mac_update_composition(mac_context, dependencies.executor),
+    create_mac: create_mac_update_composition,
     collector: {
       module_url: new URL('./vps_metrics/collectors/index.ts', import.meta.url).href,
       export_name: 'build_home_collector',

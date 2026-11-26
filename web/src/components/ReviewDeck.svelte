@@ -34,5 +34,5 @@
 
 <style>
   /* The final screen is a narrower column than a card. */
-  .deck-item--final { width:100%; max-width:calc(var(--measure-index) + var(--page-gutter)*2); margin-inline:auto; }
+  .deck-item--final { flex:1; min-height:0; display:flex; flex-direction:column; width:100%; max-width:calc(var(--measure-index) + var(--page-gutter)*2); margin-inline:auto; }
 </style>

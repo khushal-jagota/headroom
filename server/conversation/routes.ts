@@ -187,6 +187,13 @@ async function state_json(
   );
   return {
     conversation_id: record.conversation_id,
+    machine_id: runtime.record.database.read(
+      (sql) =>
+        sql.get<{ machine_id: string }>(
+          'SELECT machine_id FROM conversations WHERE conversation_id=?',
+          [conversation_id],
+        )?.machine_id,
+    ),
     backend_key: record.backend_key,
     supports_steer: runtime.core.supports_active_steering(record.backend_key),
     model: record.model,

@@ -1,65 +1,29 @@
-/**
- * Before admission: settle an install whose installer stopped after the app swap.
- * The database's schema revision decides, because the attempt file cannot say whether
- * the last step committed.
- */
-import { renameSync, statSync } from 'node:fs';
+/** Startup fallback when the detached installer died and the OS restarted the home first. */
+import { readFileSync, renameSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { application_schema_seed, read_schema_revisions } from '../../core/database/admission.ts';
-import { PYTHON_BASELINE_SEED } from '../../core/database/schema_steps/baseline.ts';
-import { SCHEMA_STEPS, type SchemaStep } from '../../core/database/schema_steps/contracts.ts';
 import { restore_database_snapshot } from '../backup/restore.ts';
 import { resolved_path } from '../paths.ts';
 import { release_installer_barrier, with_installer_lock } from '../update_barrier.ts';
-import { missing } from './attempts.ts';
+import { missing, read_record_json } from './attempts.ts';
 import { is_object } from './codec.ts';
 import { PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { assert_installer_path } from './installer/configuration.ts';
+import { release_path, select_release, selected_release } from './installer/selection.ts';
 import { InstallationRecord } from './installer/record.ts';
 
-/** The revisions this app's steps start from, and the one it admits. */
-export interface SchemaChain {
-  readonly head_revision: string;
-  readonly earlier_revisions: ReadonlySet<string>;
-}
-export function schema_chain(
-  steps: readonly SchemaStep[],
-  baseline_revision: string,
-  head_revision: string,
-): SchemaChain {
-  const earlier = new Set([baseline_revision, ...steps.map((step) => step.previous_revision)]);
-  earlier.delete(head_revision);
-  return { head_revision, earlier_revisions: earlier };
-}
-const APPLICATION_CHAIN = schema_chain(
-  SCHEMA_STEPS,
-  PYTHON_BASELINE_SEED.alembicRevision,
-  application_schema_seed.alembicRevision,
-);
-
-/**
- * The one rule. At this app's head the steps committed, so the new app stays. Earlier on
- * its chain they did not all commit, so the previous app and the backup come back. Any
- * other revision is left for admission to refuse.
- */
-export function interrupted_install_decision(
-  revisions: readonly string[] | null,
-  chain: SchemaChain,
-): 'keep_new_app' | 'roll_back' | 'leave' {
-  if (revisions?.length !== 1) return 'leave';
-  const revision = revisions[0]!;
-  if (revision === chain.head_revision) return 'keep_new_app';
-  return chain.earlier_revisions.has(revision) ? 'roll_back' : 'leave';
-}
-
-interface SwappedAttempt {
+interface InterruptedAttempt {
   readonly attempt_id: string;
   readonly from_sha: string;
   readonly to_sha: string;
   readonly backup: string | null;
+  readonly registered: boolean;
+  readonly restored: boolean;
+  readonly swapped: boolean;
+  readonly data_restored: boolean;
+  readonly snapshot_required: boolean;
 }
 /** An attempt still installing this app, with the swap recorded and no terminal state. */
-function swapped_attempt(data_directory: string, app_sha: string): SwappedAttempt | null {
+function interrupted_attempt(data_directory: string, app_sha: string): InterruptedAttempt | null {
   let value: Record<string, unknown>;
   try {
     // The installer's own strict reader. Reading needs no attempt id.
@@ -70,9 +34,12 @@ function swapped_attempt(data_directory: string, app_sha: string): SwappedAttemp
   }
   if (
     value.state !== 'installing' ||
-    value.to_sha !== app_sha ||
+    (value.to_sha !== app_sha && value.from_sha !== app_sha) ||
+    typeof value.to_sha !== 'string' ||
     !is_object(value.steps) ||
-    !Object.hasOwn(value.steps, 'app_swapped') ||
+    !(
+      Object.hasOwn(value.steps, 'installer_started') || Object.hasOwn(value.steps, 'app_swapped')
+    ) ||
     typeof value.attempt_id !== 'string' ||
     typeof value.from_sha !== 'string' ||
     !(value.backup === null || value.backup === undefined || typeof value.backup === 'string')
@@ -81,8 +48,13 @@ function swapped_attempt(data_directory: string, app_sha: string): SwappedAttemp
   return {
     attempt_id: value.attempt_id,
     from_sha: value.from_sha,
-    to_sha: app_sha,
+    to_sha: value.to_sha,
     backup: value.backup ?? null,
+    registered: Object.hasOwn(value.steps, 'coordinator_registered'),
+    restored: Object.hasOwn(value.steps, 'rollback_app_restored'),
+    swapped: Object.hasOwn(value.steps, 'app_swapped'),
+    data_restored: Object.hasOwn(value.steps, 'rollback_database_restored'),
+    snapshot_required: value.snapshot_required === true,
   };
 }
 
@@ -91,72 +63,95 @@ export interface InterruptedInstallInputs {
   /** The app this process runs from. Recovery acts only when it is the installed `app`. */
   readonly app_root: string;
   readonly app_sha: string | null;
-  readonly chain?: SchemaChain;
 }
-/**
- * Runs in the new app before admission, the one place every start of it passes. Holds the
- * installer lock, so it never races a live installer. A rollback repeats safely: the
- * restore comes first, then the two renames, then the terminal record. Keeping the new
- * app settles the attempt as done, as the deadline would.
- */
+/** Recovery never promotes a trial. A live installer retains its lock and decides. */
 export async function recover_interrupted_install(
   inputs: InterruptedInstallInputs,
-): Promise<'none' | 'kept_new_app' | 'rolled_back'> {
+): Promise<'none' | 'rolled_back'> {
   const app_sha = inputs.app_sha;
   if (!app_sha) return 'none';
   const database = await resolved_path(inputs.database);
   const data_directory = dirname(database),
     current_root = dirname(data_directory),
     app = join(current_root, 'app');
-  if ((await resolved_path(inputs.app_root)) !== app) return 'none';
-  const seen = swapped_attempt(data_directory, app_sha);
+  if ((await resolved_path(inputs.app_root)) !== selected_release(current_root)) return 'none';
+  const seen = interrupted_attempt(data_directory, app_sha);
   if (seen === null) return 'none';
   const owned = await with_installer_lock(data_directory, seen.attempt_id, async () => {
-    const attempt = swapped_attempt(data_directory, app_sha);
+    const attempt = interrupted_attempt(data_directory, app_sha);
     if (attempt?.attempt_id !== seen.attempt_id) return 'none';
-    let revisions: string[] | null | undefined;
-    try {
-      revisions = read_schema_revisions(database);
-    } catch {
-      revisions = undefined; // Admission reports an unreadable database.
-    }
-    const decision =
-      revisions === undefined
-        ? 'leave'
-        : interrupted_install_decision(revisions, inputs.chain ?? APPLICATION_CHAIN);
-    // The journal's record of why this start kept, undid, or left an update.
-    console.warn(
-      `Interrupted update ${attempt.attempt_id}: database revision ${revisions === undefined ? '<unreadable>' : JSON.stringify(revisions)}; decision ${decision}`,
-    );
-    if (decision === 'leave') return 'none';
+    // A schema step can commit before the trial starts. Only the installer's
+    // durable terminal record admits new work, so an uncommitted candidate is undone.
     const record = new InstallationRecord({ data_directory, attempt_id: attempt.attempt_id });
-    if (decision === 'keep_new_app') {
-      // As settle() would at the deadline: this version is the one installed.
+    if (attempt.registered) {
+      // A registered installer can resume late. Bind this fallback to its actual marker and selection.
+      if (
+        readFileSync(join(data_directory, 'update-barrier.json'), 'utf8').trim() !==
+        attempt.attempt_id
+      )
+        throw new Error('Interrupted update marker belongs to a different attempt');
+      if (selected_release(current_root) !== release_path(current_root, app_sha))
+        throw new Error('Interrupted update cannot verify the selected home');
+      const manifest = read_record_json(join(app, 'manifest.json'));
+      if (!is_object(manifest) || manifest.app_sha !== app_sha)
+        throw new Error('Interrupted update cannot verify the running release');
+    }
+    if (attempt.from_sha === app_sha) {
+      // A snapshot never mutates the original database. On the return path, the
+      // installer restores data before selecting this release.
+      if (attempt.registered) {
+        // The retained home must boot and pass its machine trial before ordinary writes resume.
+        if (
+          attempt.swapped &&
+          (attempt.backup !== null || attempt.snapshot_required) &&
+          !attempt.data_restored
+        )
+          throw new Error('The previous release is selected without its recorded database restore');
+        if (!attempt.restored) record.record('rollback_app_restored');
+        return 'none';
+      }
       record.record(
-        'done',
-        'done',
-        'The installer stopped after the new version was in place; Panels kept it.',
+        'failed',
+        'failed',
+        'The installer stopped before it committed the update. Panels retained the previous version.',
       );
       release_installer_barrier(data_directory, attempt.attempt_id);
-      return 'kept_new_app';
+      return 'none';
     }
-    const previous = join(current_root, PREVIOUS_APP_PREFIX + attempt.from_sha),
-      staged = join(current_root, STAGED_APP_PREFIX + attempt.to_sha);
+    const pinned = selected_release(current_root) === release_path(current_root, app_sha);
+    const previous = pinned
+      ? release_path(current_root, attempt.from_sha)
+      : join(current_root, PREVIOUS_APP_PREFIX + attempt.from_sha);
+    const staged = join(current_root, STAGED_APP_PREFIX + attempt.to_sha);
     for (const path of [app, previous, staged]) assert_installer_path(path);
     if (
-      statSync(previous, { throwIfNoEntry: false })?.isDirectory() !== true ||
+      !statSync(previous, { throwIfNoEntry: false })?.isDirectory() ||
       statSync(staged, { throwIfNoEntry: false }) !== undefined
     )
-      throw new Error(
-        `An interrupted update left the database behind this version, but ${previous} is missing or ${staged} is in the way`,
-      );
+      throw new Error('Interrupted update cannot restore its retained previous release');
+    if (attempt.registered) {
+      const manifest = read_record_json(join(previous, 'manifest.json'));
+      if (
+        !is_object(manifest) ||
+        manifest.app_sha !== attempt.from_sha ||
+        (attempt.snapshot_required && !attempt.backup)
+      )
+        throw new Error('Interrupted update cannot verify its retained release and snapshot');
+    }
     if (attempt.backup !== null) {
       await restore_database_snapshot(attempt.backup, database, { live_stopped: true });
       record.record('rollback_database_restored');
     }
-    renameSync(app, staged);
-    renameSync(previous, app);
+    if (pinned) {
+      select_release(current_root, attempt.from_sha);
+      renameSync(release_path(current_root, app_sha), staged);
+    } else {
+      // Pre-bridge attempts used physical directories.
+      renameSync(app, staged);
+      renameSync(previous, app);
+    }
     record.record('rollback_app_restored');
+    if (attempt.registered) return 'rolled_back';
     record.record(
       'failed',
       'failed',

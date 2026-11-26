@@ -43,7 +43,7 @@ export async function start_conversation(
 ): Promise<void> {
   return host.workspace_admission.operation(
     async (admitted) => {
-      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+      if (!admitted) throw host.workspace_admission.refusal();
       host.require_runtime_ownership();
       const refusal = host.execution_refusal(request.conversation_id);
       if (refusal !== null) throw refusal;

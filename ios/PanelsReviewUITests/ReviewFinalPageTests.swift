@@ -104,8 +104,8 @@ final class ReviewFinalPageTests: XCTestCase {
         let photo = app.descendants(matching: .any).matching(identifier: "inline-artifact-image").firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: 8), "The photo exception must display a loaded image")
         XCTAssertEqual(photo.label, "Review photo")
-        XCTAssertFalse(app.staticTexts["migration-verification.txt"].exists, "Review must not append a filename disclosure")
-        let content = app.staticTexts["Migration verification body must appear only after a tap."]
+        XCTAssertFalse(app.readableText("migration-verification.txt").exists, "Review must not append a filename disclosure")
+        let content = app.readableText("Migration verification body must appear only after a tap.")
         XCTAssertFalse(content.exists)
         let initialReads = try await artifactReads(base)
         XCTAssertEqual(initialReads["text"], 0, "A proposal must not fetch a linked text file automatically")
@@ -158,7 +158,7 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         app.openReviewCards()
-        let originalMessage = app.staticTexts["First unread message"]
+        let originalMessage = app.readableText("First unread message")
         XCTAssertTrue(originalMessage.waitForExistence(timeout: 8))
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 8))
@@ -166,11 +166,11 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "review-card-before-replacement")
         try await proof(base, "new-message")
         try await proof(base, "replacement/new")
-        let historical = app.staticTexts["Historical conversation · read only"]
+        let historical = app.readableText("Historical conversation · read only")
         XCTAssertTrue(historical.waitForExistence(timeout: 8))
         XCTAssertTrue(input.waitForNonExistence(timeout: 3))
         XCTAssertTrue(originalMessage.exists, "Replacement must retain the displayed unread run")
-        XCTAssertFalse(app.staticTexts["Arrived after display"].exists, "Replacement must not expand the displayed read boundary")
+        XCTAssertFalse(app.readableText("Arrived after display").exists, "Replacement must not expand the displayed read boundary")
         XCTAssertTrue(app.sidebarButton.exists, "Historical status must update without navigation")
         capture(app, "review-card-after-replacement")
         let writes = try await recordedWrites(base)
@@ -178,7 +178,7 @@ final class ReviewFinalPageTests: XCTestCase {
         try await proof(base, "replacement/old")
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         XCTAssertEqual(input.value as? String, "Keep this Review draft")
-        XCTAssertFalse(app.staticTexts["Arrived after display"].exists)
+        XCTAssertFalse(app.readableText("Arrived after display").exists)
         capture(app, "review-card-draft-retained")
     }
 
@@ -225,7 +225,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertFalse(app.buttons["Cancel"].isEnabled, "Cancel waits for the answer")
         capture(app, "settings-backlog-waiting")
         XCTAssertTrue(backlog.waitForNonExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Backlogged. Automatic work is paused."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.readableText("Backlogged. Automatic work is paused.").waitForExistence(timeout: 8))
         capture(app, "settings-backlogged")
 
         // Ask for a recap succeeds and closes the sheet.
@@ -238,14 +238,14 @@ final class ReviewFinalPageTests: XCTestCase {
         try await proof(base, "design-state/refuse-recap")
         app.buttons["ticket-actions"].tap()
         XCTAssertTrue(recap.waitForExistence(timeout: 5)); recap.tap()
-        let error = app.staticTexts["sheet-error"]
+        let error = app.readableText("sheet-error")
         XCTAssertTrue(error.waitForExistence(timeout: 8))
-        XCTAssertTrue(error.label.hasPrefix("Not delivered"), error.label)
+        XCTAssertTrue(error.readableContent.hasPrefix("Not delivered"), error.readableContent)
         XCTAssertTrue(recap.exists, "A failure keeps the sheet open")
         capture(app, "settings-recap-refused-inline")
         app.buttons["Cancel"].tap()
         XCTAssertTrue(recap.waitForNonExistence(timeout: 5))
-        let banner = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Not delivered")).firstMatch
+        let banner = app.readableTexts.containing(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Not delivered", "Not delivered")).firstMatch
         XCTAssertFalse(banner.exists, "The failure shows only inside the sheet")
         capture(app, "settings-after-refusal-no-banner")
 
@@ -363,7 +363,7 @@ final class ReviewFinalPageTests: XCTestCase {
         approve.tap()
         XCTAssertTrue(waitForDecisionStage(stage)); stage.tap()
         app.buttons["sheet-confirm"].tap()
-        let next = app.staticTexts["Match the iPhone app to the web"]
+        let next = app.readableText("Match the iPhone app to the web")
         XCTAssertTrue(next.waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
@@ -398,14 +398,14 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(chief.waitForNonExistence(timeout: 3), "The sheet closes once the change is saved, while the refresh still stalls")
         capture(app, "reviewer-sheet-closed-while-refresh-stalls")
         let skip = app.buttons["review.skip"]
-        let headline = app.staticTexts["review.summary.headline"]
+        let headline = app.readableText("review.summary.headline")
         for _ in 0..<3 where !headline.exists {
             XCTAssertTrue(skip.waitForExistence(timeout: 8))
             skip.tap()
             _ = headline.waitForExistence(timeout: 3)
         }
         XCTAssertTrue(headline.waitForExistence(timeout: 5))
-        XCTAssertEqual(headline.label, "2 skipped.", "The handed-off card left, so only the other two were skipped")
+        XCTAssertEqual(headline.readableContent, "2 skipped.", "The handed-off card left, so only the other two were skipped")
         try await proof(base, "unstall-refresh")
     }
 
@@ -429,7 +429,7 @@ final class ReviewFinalPageTests: XCTestCase {
         let ticketActions = app.buttons["ticket-actions"]
         func noCover(_ screen: String) {
             for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
-                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                XCTAssertFalse(app.readableTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch.exists,
                                "\(screen) shows \"\(text)\"")
             }
         }
@@ -470,6 +470,71 @@ final class ReviewFinalPageTests: XCTestCase {
         app.backButton.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 8), "Back returns to the card offline")
         try await proof(base, "online")
+    }
+
+    /// One-off fade evidence. Reuses the artifact host and changes no server decisions.
+    /// Run the same walk before and after the source change, under each system appearance.
+    @MainActor func testNoteDockFadeBoundary() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "review-owner/ticket-split")
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        func launch(large: Bool) {
+            app.launchArguments = ["--conversation-stub", base]
+            if large {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            app.openReviewCards()
+            XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 12))
+        }
+        func scroll(_ view: XCUIElement) {
+            view.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+                .press(forDuration: 0.05, thenDragTo: view.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.3)))
+        }
+        func shot(_ name: String) async throws {
+            capture(app, name)
+            try await proof(base, "screenshot/" + name)
+        }
+        func keyboardShot(_ name: String) async throws {
+            let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
+            XCTAssertTrue(note.waitForExistence(timeout: 5))
+            note.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let tip = app.buttons["Continue"]
+            if tip.exists { tip.tap() }
+            try await shot(name)
+        }
+        launch(large: false)
+        // The artifact link starts above the long body, so open it before the scroll.
+        let link = app.links["dock evidence"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 8)); link.tap()
+        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-artifact-normal")
+        app.backButton.tap()
+        XCTAssertTrue(app.buttons["review.openTicket"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews["review-content"])
+        try await shot("fade-review-normal")
+        try await keyboardShot("fade-review-keyboard")
+        // Navigation ends keyboard focus through the app's actual Open ticket action.
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-ticket-normal")
+        try await keyboardShot("fade-ticket-keyboard")
+        app.terminate()
+        launch(large: true)
+        scroll(app.scrollViews["review-content"])
+        try await shot("fade-review-largest")
+        try await keyboardShot("fade-review-largest-keyboard")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        scroll(app.scrollViews.firstMatch)
+        try await shot("fade-ticket-largest")
+        try await keyboardShot("fade-ticket-largest-keyboard")
     }
 
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {

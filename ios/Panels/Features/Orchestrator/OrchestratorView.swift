@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct OrchestratorView: View {
     let managerID: String
@@ -61,7 +62,7 @@ struct AgentPageTitle: View {
     var signal: ConversationSignal? = nil
     var body: some View {
         HStack(alignment: .center) {
-            Text(title).font(PanelsTheme.TypeScale.detailTitle).foregroundStyle(PanelsTheme.strong)
+            PanelsSelectableText(title, font: .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .title1).pointSize, weight: .semibold), color: UIColor(PanelsTheme.strong))
                 .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
             Spacer(minLength: PanelsTheme.Space.sm)
             ConversationSignalMark(signal: signal)
