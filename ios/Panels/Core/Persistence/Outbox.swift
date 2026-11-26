@@ -186,7 +186,7 @@ import Observation
 
     /// A refused message gets a new identity in its old place. A failed recording is transcribed again.
     @discardableResult
-    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil,
+    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil, reconcilesSequence: Int? = nil,
                imageWorkStarted: @escaping @Sendable () -> Void = {}) async -> String? {
         let server = LocalStore.server(api.baseURL)
         guard let work = work(server, id: id) else { return nil }
@@ -214,7 +214,8 @@ import Observation
             let nextID = UUID().uuidString
             let next = ConversationSend(conversationId: message.conversationId, content: replacementContent, mode: message.mode,
                 backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort, reasoningEffortIsSet: message.reasoningEffortIsSet,
-                senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: message.ownerReadThroughSequence)
+                senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: message.ownerReadThroughSequence,
+                reconcilesSequence: reconcilesSequence)
             let replacement = PendingWork(id: nextID, created: .now, kind: .message, owner: work.owner, message: next, draftID: work.draftID,
                 priorMessageIDs: (work.priorMessageIDs ?? []) + [id])
             var capturedDraft: OutgoingStore.DraftCapture?
@@ -374,7 +375,7 @@ import Observation
                     senderLabel: message.senderLabel, mode: message.mode, backendKey: message.backendKey,
                     model: message.model, reasoningEffort: message.reasoningEffort, reasoningEffortIsSet: message.reasoningEffortIsSet,
                     senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
-                    ownerReadThroughSequence: message.ownerReadThroughSequence)
+                    ownerReadThroughSequence: message.ownerReadThroughSequence, reconcilesSequence: message.reconcilesSequence)
             }
             try store.outgoing.beginAttempt(server: server, id: work.id)
             let result = try await api.sendConversation(owner, message: message)
@@ -387,9 +388,13 @@ import Observation
             case "suppressed":
                 try store.outgoing.settle(server: server, id: work.id, state: .failed,
                     note: "Not delivered · " + (result.reason ?? "no longer applicable"), conversationID: message.conversationId)
-            default:
-                // Started, injected, queued or recorded by the server: the message is there.
+            case "accepted", "recorded", "started", "injected", "queued":
+                // Home holds the message. A later refusal arrives with its transcript row and receipt.
                 try store.outgoing.settle(server: server, id: work.id, state: .sent, conversationID: result.conversationId)
+            default:
+                // Uncertain, or a fate this build does not know: settled, never resent, never shown as delivered.
+                try store.outgoing.settle(server: server, id: work.id, state: .sent, note: ConversationDelivery.unconfirmedNote,
+                    conversationID: result.conversationId)
             }
         } catch {
             settleFailure(Self.classify(error), id: work.id, server: server,

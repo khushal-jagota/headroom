@@ -33,7 +33,7 @@ import UniformTypeIdentifiers
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         composerConfigurationGeneration += 1
         preparingPhotos = [:]; preparingVideos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
-        outgoing = []; retryAliases = [:]; supersededIDs = []; clearedPhotoDrafts = [:]
+        outgoing = []; retryAliases = [:]; supersededIDs = []; clearedPhotoDrafts = [:]; refusedSequences = [:]
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
         items = []; expandedBodies = [:]; status = nil; older = nil
@@ -274,7 +274,7 @@ import UniformTypeIdentifiers
         defer {
             if outgoingPreparationID == identity { outgoingPreparationID = nil; preparingOutgoingID = nil }
         }
-        guard let next = await Outbox.shared.retry(id, api: api, imageWorkStarted: imageWorkStarted),
+        guard let next = await Outbox.shared.retry(id, api: api, reconcilesSequence: refusedSequences[id], imageWorkStarted: imageWorkStarted),
               generation == composerConfigurationGeneration,
               let work = Outbox.shared.work(LocalStore.server(api.baseURL), id: next),
               work.rejectedPhotoDraft?.id == draftKey else { return }
@@ -294,11 +294,13 @@ import UniformTypeIdentifiers
             return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
                 attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
         }
-        // Only a refusal shows on the row: a red mark that retries on tap.
+        // A refusal shows a mark that retries on tap. A settled message whose delivery
+        // home could not confirm keeps its note without a retry.
         func marked(_ row: Outgoing, state: String, note: String) -> Outgoing {
             var row = row
-            row.note = state == PendingWork.State.failed.rawValue ? note : nil
-            row.retryable = state == PendingWork.State.failed.rawValue
+            let failed = state == PendingWork.State.failed.rawValue
+            row.note = failed || (state == PendingWork.State.sent.rawValue && !note.isEmpty) ? note : nil
+            row.retryable = failed
             return row
         }
         if let savedWork {
@@ -566,6 +568,8 @@ import UniformTypeIdentifiers
     private var refreshAgain = false
     private var requestedTranscript = false
     private var retryAliases: [String: String] = [:] { didSet { if oldValue != retryAliases { projectionRevision += 1 } } }
+    /// Each refused message's row, which its resend names so the view folds it away.
+    private var refusedSequences: [String: Int] = [:]
 
     private var projectionRevision = 0
     @ObservationIgnored private var projectedRevision = -1
@@ -623,7 +627,7 @@ import UniformTypeIdentifiers
             let note: String?
             switch body.kind {
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
-            case "prompt_uncertain": note = "Delivery unconfirmed"
+            case "prompt_uncertain": note = ConversationDelivery.unconfirmedNote
             case "prompt_discarded": note = "Not delivered · no longer applicable"
             case "permission_ask": note = [body.answeredOptionLabel, body.answerSentence, body.state == "live" ? "Respond on the web" : body.state?.capitalized].compactMap { $0 }.joined(separator: " · ")
             case "user_input": note = [body.answers?.flatMap(\.answers).joined(separator: ", "), body.failureDetail, body.answerSentence, body.state == "live" ? "Respond on the web" : body.state?.capitalized].compactMap { $0 }.joined(separator: " · ")
@@ -925,6 +929,8 @@ import UniformTypeIdentifiers
                 let heldElsewhere = scopeKeys.filter { $0.key != timelineScope }.values.reduce(into: Set<String>()) { $0.formUnion($1) }
                 let held = scopeKeys.values.reduce(into: Set<String>()) { $0.formUnion($1) }
                 let scopedDepartures = Set(changes.scopeChanges.filter { $0.scope.kind != "timeline" }.flatMap(\.removedKeys)).subtracting(held)
+                // Home removes a refused row only when a resend folds it away.
+                let folded = items.filter { removed.contains($0.key) && $0.body?.value?.kind == "prompt_refused" }.compactMap(\.senderMessageId)
                 var next = items.filter { !removed.contains($0.key) && !scopedDepartures.contains($0.key) && !(leftWindow.contains($0.key) && inWindow($0) && !heldElsewhere.contains($0.key)) }
                 let upserts = Dictionary(changes.upserts.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
                 let admittedKeys = changes.scopeChanges.filter { $0.scope == timelineScope || scopeKeys[$0.scope] != nil }.flatMap(\.itemKeys)
@@ -949,6 +955,7 @@ import UniformTypeIdentifiers
                 currentRemoteKeys.subtract(removed)
                 currentRemoteKeys.formUnion(changes.upserts.map(\.key))
                 retainDisplay()
+                refusalsFolded(folded)
                 reconcileItems()
                 applyLive(changes.status.liveOutput, text: liveText, id: id)
                 applyReceipts(receipts)
@@ -1057,7 +1064,11 @@ import UniformTypeIdentifiers
         for item in items {
             guard let senderID = item.senderMessageId else { continue }
             switch item.body?.value?.kind {
-            case "prompt_refused": setNote(senderID, "Not delivered", retryable: true)
+            case "prompt_refused":
+                let body = item.body?.value
+                refusedLater(senderID, note: "Not delivered · " + (body?.refusalDetail ?? ConversationDelivery.refusalText(body?.reason)),
+                    sequence: item.sourceSequence)
+                setNote(senderID, "Not delivered", retryable: true)
             case "prompt_discarded": setNote(senderID, "Not delivered · no longer applicable")
             default: break
             }
@@ -1079,12 +1090,31 @@ import UniformTypeIdentifiers
     private func applyReceipts(_ receipts: [ConversationReceipt]) {
         for receipt in receipts {
             switch receipt.fate {
-            case "prompt", "prompt_uncertain": setNote(receipt.senderMessageId, nil)
-            case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
+            case "prompt": setNote(receipt.senderMessageId, nil)
+            case "prompt_uncertain": setNote(receipt.senderMessageId, ConversationDelivery.unconfirmedNote)
+            case "prompt_refused":
+                refusedLater(receipt.senderMessageId, note: "Not delivered", sequence: receipt.sourceSequence)
+                setNote(receipt.senderMessageId, "Not delivered", retryable: true)
             case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
             default: break
             }
         }
+    }
+    private func refusalsFolded(_ senderIDs: [String]) {
+        guard let api = persistenceAPI, !senderIDs.isEmpty else { return }
+        let server = LocalStore.server(api.baseURL)
+        let dropped = senderIDs.filter { (try? outgoingStore.outgoing.dropFoldedRefusal(server: server, id: $0)) == true }
+        guard !dropped.isEmpty else { return }
+        supersededIDs.formUnion(dropped)
+        syncOutbox()
+    }
+    /// Home answers at acceptance, so a refusal usually arrives after the outbox settled the
+    /// message as sent. It fails again with the refusal, which keeps Try Again working.
+    private func refusedLater(_ senderID: String, note: String, sequence: Int?) {
+        if let sequence { refusedSequences[senderID] = sequence }
+        guard let api = persistenceAPI,
+              (try? outgoingStore.outgoing.reopenRefused(server: LocalStore.server(api.baseURL), id: senderID, note: note)) == true else { return }
+        syncOutbox()
     }
     func scopeHasOlder(_ item: ConversationItem) -> Bool {
         item.historyScope.flatMap { scopeOlder[$0] } != nil
@@ -1290,10 +1320,11 @@ import UniformTypeIdentifiers
     }
     private func applyDelivery(_ result: ConversationDelivery, id: String) -> Bool {
             switch result.fate {
-            case "started", "injected", "queued": setNote(id, nil); return true
+            case "accepted", "recorded", "started", "injected", "queued": setNote(id, nil); return true
             case "suppressed": setNote(id, "Not delivered · \(result.reason ?? "no longer applicable")")
             case "refused": setNote(id, "Not delivered · \(ConversationDelivery.refusalText(result.refusalReason))", retryable: true)
-            default: setNote(id, nil)
+            // Uncertain, or a fate this build does not know: never resent, never shown as delivered.
+            default: setNote(id, ConversationDelivery.unconfirmedNote)
             }
         return false
     }

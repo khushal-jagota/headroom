@@ -248,7 +248,7 @@ import SwiftData
                 reasoningEffort: metadata.omitEffort ? nil : message.reasoningEffort,
                 reasoningEffortIsSet: !metadata.omitEffort && message.reasoningEffortIsSet,
                 senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
-                ownerReadThroughSequence: message.ownerReadThroughSequence)
+                ownerReadThroughSequence: message.ownerReadThroughSequence, reconcilesSequence: message.reconcilesSequence)
         }
         return work
     }
@@ -456,6 +456,28 @@ import SwiftData
             row.state = PendingWork.State.failed.rawValue; row.note = note
             if row.completed == nil { row.completed = now }
             row.expiresAt = Self.expiry(kind: row.kind, state: .failed, completed: row.completed ?? now)
+            return true
+        }
+    }
+    /// Home accepted a message and refused it later: it fails with the refusal, so Try Again
+    /// sends it again. Returns whether it changed.
+    func reopenRefused(server: String, id: String, note: String, now: Date = .now) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.kind == PendingWork.Kind.message.rawValue,
+                  row.state == PendingWork.State.sent.rawValue else { return false }
+            row.state = PendingWork.State.failed.rawValue; row.note = note; row.completed = now
+            row.expiresAt = Self.expiry(kind: row.kind, state: .failed, completed: now)
+            return true
+        }
+    }
+    /// Another device sent a refused message again and its refused row folded away: the
+    /// refusal is settled, so this copy leaves instead of offering a second resend.
+    func dropFoldedRefusal(server: String, id: String) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.kind == PendingWork.Kind.message.rawValue,
+                  row.state == PendingWork.State.failed.rawValue else { return false }
+            context.delete(row)
+            if let payload = try raw(server, "outbox", id) { context.delete(payload) }
             return true
         }
     }

@@ -238,6 +238,8 @@ struct ConversationSend: Codable, Sendable {
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
     var ownerReadThroughSequence: Int? = nil
+    /// A resend names the refused row it sends again, so the view folds that row away.
+    var reconcilesSequence: Int? = nil
     struct Piece: Codable, Equatable, Sendable {
         var piece = "text"
         var text: String? = nil
@@ -252,7 +254,7 @@ struct ConversationSend: Codable, Sendable {
 extension ConversationSend {
     enum CodingKeys: String, CodingKey {
         case conversationId, content, senderLabel, mode, backendKey, model, reasoningEffort
-        case senderMessageId, sentAtUnixMilliseconds, ownerReadThroughSequence
+        case senderMessageId, sentAtUnixMilliseconds, ownerReadThroughSequence, reconcilesSequence
     }
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -267,6 +269,7 @@ extension ConversationSend {
         senderMessageId = try c.decode(String.self, forKey: .senderMessageId)
         sentAtUnixMilliseconds = try c.decode(Int64.self, forKey: .sentAtUnixMilliseconds)
         ownerReadThroughSequence = try c.decodeIfPresent(Int.self, forKey: .ownerReadThroughSequence)
+        reconcilesSequence = try c.decodeIfPresent(Int.self, forKey: .reconcilesSequence)
     }
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -279,6 +282,7 @@ extension ConversationSend {
         try c.encode(senderMessageId, forKey: .senderMessageId)
         try c.encode(sentAtUnixMilliseconds, forKey: .sentAtUnixMilliseconds)
         try c.encodeIfPresent(ownerReadThroughSequence, forKey: .ownerReadThroughSequence)
+        try c.encodeIfPresent(reconcilesSequence, forKey: .reconcilesSequence)
     }
 }
 
@@ -287,6 +291,7 @@ struct ConversationDelivery: Decodable, Sendable {
     let fate: String
     let refusalReason: String?
     var reason: String? = nil
+    static let unconfirmedNote = "Delivery unconfirmed"
     static func refusalText(_ reason: String?) -> String {
         switch reason {
         case "backend_did_not_start": "agent could not start"
@@ -382,6 +387,7 @@ struct ConversationRow: Identifiable, Equatable {
 struct ConversationReceipt: Decodable, Sendable {
     let senderMessageId: String
     let fate: String
+    var sourceSequence: Int? = nil
 }
 struct ConversationRetainedRange: Encodable, Sendable {
     let scope: ConversationCursor.Scope
