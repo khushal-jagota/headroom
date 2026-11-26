@@ -163,10 +163,12 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
   const field = page.locator('[data-conversation-input]');
   const send = page.locator('[data-conversation-send]');
   const transcript = page.locator('[data-conversation-content]');
-  for (const [mode, words, fate] of [
-    ['steer', 'Add this to the running turn.', 'injected'],
-    ['send_now', 'Start this in a new turn now.', 'started'],
-    ['queue', 'Send this to the idle agent.', 'started'],
+  // A send answers at acceptance. The record then says how it was delivered: a steer
+  // joins the running turn, and the other two start a turn.
+  for (const [mode, words, steered] of [
+    ['steer', 'Add this to the running turn.', true],
+    ['send_now', 'Start this in a new turn now.', false],
+    ['queue', 'Send this to the idle agent.', false],
   ] as const) {
     await field.fill(words);
     if (mode === 'queue') {
@@ -193,7 +195,14 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     } finally {
       release.resolve();
     }
-    expect((await (await response).json()).fate).toBe(fate);
+    const answered = await response;
+    const messageId = answered.request().postDataJSON().sender_message_id;
+    expect(await answered.json()).toMatchObject({ conversation_id: conversationId, fate: 'accepted', message_id: messageId });
+    await expect.poll(async () => {
+      const recorded: JsonObject[] = (await getJson(server, path + '/events')).events;
+      const prompt = recorded.find((event) => event.kind === 'prompt' && event.payload.sender_message_id === messageId);
+      return prompt === undefined ? null : prompt.payload.mode === 'steer';
+    }, { timeout: WAIT_MS }).toBe(steered);
   }
 
   const failed = 'This message receives a confirmed refusal.';

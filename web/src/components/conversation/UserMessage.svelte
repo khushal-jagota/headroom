@@ -9,7 +9,7 @@
   import { displayedOutgoingContent, editableHeldWords, TRANSCRIPT_SEND_ACTIONS, type TranscriptSendActions } from '../../lib/conversation/transcriptOutgoing';
   import { promptLabelFor, promptOutcomeStatus, messageNotDelivered, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
   import { openComposerModelPicker } from '../../lib/conversation/modelPicker';
-  import { outgoingMessageIsSending, outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
+  import { homeHasTheSend, outgoingMessageIsSending, outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
   import { conversationHeight } from '../../lib/conversation/surfaceMotion';
   import { refusalOffersResend } from '../../lib/conversation/transcript';
@@ -205,7 +205,7 @@
   {#each pendingNames as name}<div class="c2-outgoing-attachment">{name}</div>{/each}
   {@render undeliveredFooter()}
 {/snippet}
-<article bind:this={root} class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-sending={local && !local.restored && outgoingMessageIsSending(local) ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}
+<article bind:this={root} class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || (local && homeHasTheSend(local)) ? "true" : undefined} data-conversation-sending={local && !local.restored && outgoingMessageIsSending(local) ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}
   data-conversation-held-row={held?.row.key} data-local-video-send={upload ? local?.messageId : undefined}>
   {#if label !== null}
     <!-- Someone other than the person wrote this (Panels, another agent): one system line,

@@ -344,7 +344,8 @@ export function askChoiceForDigit(
 
 /** What a delivery's fate says, in the words a person reads under the composer.
  *
- * A started fate says nothing: the turn is already visible as itself — the prompt row,
+ * An accepted fate says nothing: the message itself says it is waiting for delivery. A
+ * started fate says nothing: the turn is already visible as itself — the prompt row,
  * the working header, the stop button — and a note repeating it would outlive the turn
  * and go stale. A refusal is a fate like any other and is reported as one — the text
  * did not get anywhere, and the sentence says why. It is never dressed up as a failed
@@ -352,6 +353,7 @@ export function askChoiceForDigit(
  */
 export function fateSentence(fate: PromptDeliveryFate): string | null {
   switch (fate.fate) {
+    case "accepted":
     case "started":
       return null;
     case "queued":

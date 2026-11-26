@@ -6,8 +6,9 @@ const OUTCOME_SHOWN_MS = 2000;
 
 /**
  * How a Review send ends, for the send button. It spins while the send goes, then shows a green
- * tick when it arrived, a red cross when it was refused, an amber question mark when it may not
- * have arrived. A refused or uncertain message returns to the field. Each result leaves after a
+ * tick when the conversation recorded it, a red cross when it was refused, an amber question mark
+ * when it may not have arrived. A reply home accepted and still holds shows none of them until
+ * its outcome comes. A refused or uncertain message returns to the field. Each result leaves after a
  * moment, or sooner when the words change or the next send starts. The Chief box on the empty page
  * and the reply on a message card both use it. Create it while a component starts.
  */
@@ -21,11 +22,11 @@ export class ReviewSendOutcome {
   constructor(composer: ReviewReplyComposer) {
     this.#composer = composer;
     // A composer shared with another view already holds the send that view saw. Only a newer one counts.
-    let seen = composer.accepted;
+    let seen = composer.delivered;
     $effect(() => {
-      const accepted = composer.accepted;
-      if (accepted && accepted !== seen) untrack(() => this.#show('sent'));
-      seen = accepted;
+      const delivered = composer.delivered;
+      if (delivered && delivered !== seen) untrack(() => this.#show('sent'));
+      seen = delivered;
     });
     $effect(() => {
       const ended = composer.attempts.find(attempt => attempt.status === 'failed' || attempt.status === 'upload-failed'

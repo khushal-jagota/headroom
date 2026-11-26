@@ -384,16 +384,25 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   await card.locator('[data-review-send]').click();
   const sent = await sentResponse;
   await expectResponse(sent.ok(), true, sent);
-  expect((await sent.json()).fate).toBe('queued');
+  expect(await sent.json()).toMatchObject({
+    conversation_id: conversation,
+    fate: 'accepted',
+    message_id: submitted[0].sender_message_id,
+  });
   expect(submitted[0].conversation_id).toBe(conversation);
   expect(submitted[0].owner_read_through_sequence).toBe(bound);
   let snapshot = await api.get(server, `/api/conversation/conversations/${conversation}`);
   expect(snapshot.owner_read_through_sequence).toBe(bound);
-  expect(
-    snapshot.held_prompts.some(
-      (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
-    ),
-  ).toBe(true);
+  // Acceptance answers before the busy agent's queue holds the reply.
+  await expect
+    .poll(
+      async () =>
+        (await api.get(server, `/api/conversation/conversations/${conversation}`)).held_prompts.some(
+          (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
+        ),
+      { timeout: WAIT_MS },
+    )
+    .toBe(true);
   // Review clears the editor without a held row or a second copy of the reply.
   await expect(card.locator('[data-conversation-held-row]')).toHaveCount(0);
   await expect(card.locator('[data-review-outgoing]')).toHaveCount(0);
