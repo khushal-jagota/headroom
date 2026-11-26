@@ -7,15 +7,23 @@ import { AntigravityUsageAdapter, type UsageHttpPost } from './allowance_usage.t
 
 const NOW = new Date('2026-11-18T01:35:00Z');
 const RESET = '2026-11-25T00:44:37Z';
-const bucket = (bucketId: string, window: string, remainingFraction: number) => ({
+const bucket = (
+  bucketId: string,
+  window: string,
+  remainingFraction: number,
+  resetTime: string | null = RESET,
+) => ({
   bucketId,
   displayName: 'Limit Remaining',
   window,
-  resetTime: RESET,
+  ...(resetTime === null ? {} : { resetTime }),
   remainingFraction,
 });
-/** The groups `retrieveUserQuotaSummary` returned on the VPS on 18 November 2026. */
-const summary = (gemini_weekly_remaining: number) => ({
+/**
+ * The groups `retrieveUserQuotaSummary` returned on the VPS on 18 November 2026. The daily host
+ * names no reset for an untouched bucket, as it did on 26 November; the prod host names one.
+ */
+const summary = (gemini_weekly_remaining: number, untouched_reset: string | null = RESET) => ({
   groups: [
     {
       displayName: 'Gemini Models',
@@ -26,7 +34,10 @@ const summary = (gemini_weekly_remaining: number) => ({
     },
     {
       displayName: 'Claude and GPT models',
-      buckets: [bucket('3p-weekly', 'weekly', 1), bucket('3p-5h', '5h', 1)],
+      buckets: [
+        bucket('3p-weekly', 'weekly', 1, untouched_reset),
+        bucket('3p-5h', '5h', 1, untouched_reset),
+      ],
     },
     {
       displayName: 'Gemini 4 Argon',
@@ -70,29 +81,37 @@ function adapter(
   });
 }
 
-// Risk: the real quota groups map to the wrong windows or labels, the prod host's untouched
-// reading replaces the daily host's, or the request lacks the user agent the API requires.
+// Risk: the real quota groups map to the wrong windows, ids or labels, the prod host's reading
+// replaces the daily host's (an untouched bucket without a reset took the prod host's reset
+// time), or the request lacks the user agent the API requires.
 test('the quota summary maps to Gemini, Claude and GPT, and Gemini 4 Argon windows', async () => {
   const requests: { url: string; headers: Readonly<Record<string, string>>; body: string }[] = [];
   const result = await adapter(login_file('cli-token').path, async (url, headers, body) => {
     requests.push({ url, headers, body });
-    return { status_code: 200, body: summary(url.includes('daily') ? 0.5 : 1) };
+    const daily = url.includes('daily');
+    return { status_code: 200, body: daily ? summary(0.5, null) : summary(1) };
   }).refresh();
   expect(result.outcome).toBe('succeeded');
-  const resets_at = new Date(RESET);
-  const window = (kind: string, used_percent: number, scope_label: string) => ({
-    kind,
+  const window = (
+    id: string,
+    used_percent: number,
+    label: string,
+    resets_at: Date | null = new Date(RESET),
+  ) => ({
+    id,
+    kind: id.endsWith('5h') ? 'five_hour' : 'seven_day',
+    label,
     used_percent,
     resets_at,
-    model_scope: null,
-    scope_label,
+    window_duration_mins: id.endsWith('5h') ? 300 : 10080,
+    model_scope: label.split(' · ')[1],
   });
   expect(result.windows).toEqual([
-    window('seven_day', 50, 'Gemini'),
-    window('five_hour', 25, 'Gemini'),
-    window('seven_day', 0, 'Claude and GPT'),
-    window('five_hour', 0, 'Claude and GPT'),
-    window('seven_day', 75, 'Gemini 4 Argon'),
+    window('gemini-weekly', 50, '7 days · Gemini'),
+    window('gemini-5h', 25, '5 hours · Gemini'),
+    window('3p-weekly', 0, '7 days · Claude and GPT', null),
+    window('3p-5h', 0, '5 hours · Claude and GPT', null),
+    window('gemini-argon-wtu-weekly', 75, '7 days · Gemini 4 Argon'),
   ]);
   expect(requests.map((request) => request.url)).toEqual([
     'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',

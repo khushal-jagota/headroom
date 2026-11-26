@@ -3,6 +3,7 @@ import type { ProviderOptionDescriptor } from '../../../web/src/lib/usage/contra
 import type { BackendModel, BackendSnapshot, CardDriver } from './contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendUsageWindow } from '../backend_usage/contracts.ts';
+import { usage_window_model_ids } from '../backend_usage/logic/scopes.ts';
 import type { SignInSession } from '../../drivers/core/sign_in.ts';
 export function datetime_json(value: Date): string {
   const iso = value.toISOString();
@@ -10,13 +11,28 @@ export function datetime_json(value: Date): string {
     ? iso.slice(0, -5) + 'Z'
     : iso.replace(/\.(\d{3})Z$/, (_match, fraction: string) => '.' + fraction + '000Z');
 }
-export function usage_window_json(window: BackendUsageWindow) {
-  return {
-    kind: window.kind,
-    used_percent: window.used_percent,
-    resets_at: datetime_json(window.resets_at),
-    model_id: window.model_scope,
-  };
+/**
+ * A card window in the shape cards have always had: `model_id` is the provider's scope, and
+ * `model_ids` the catalog models it covers. A window without a reset time stays off cards,
+ * whose readers require one. The Limits page shows it.
+ */
+function card_usage_windows(
+  windows: readonly BackendUsageWindow[],
+  models: BackendSnapshot['available_models'],
+) {
+  return windows.flatMap((window) =>
+    window.resets_at === null
+      ? []
+      : [
+          {
+            kind: window.kind,
+            used_percent: window.used_percent,
+            resets_at: datetime_json(window.resets_at),
+            model_id: window.model_scope,
+            model_ids: usage_window_model_ids(window, models),
+          },
+        ],
+  );
 }
 /** What a card says beyond its probe. Another machine's card: its driver, and false for both. */
 export interface CardFacts {
@@ -124,7 +140,7 @@ export function snapshot_json(
         ? null
         : {
             observed_at: datetime_json(cached_usage.observed_at),
-            windows: cached_usage.windows.map(usage_window_json),
+            windows: card_usage_windows(cached_usage.windows, snapshot.available_models),
           },
     can_sign_in: facts.can_sign_in,
     reports_allowance_usage: facts.reports_allowance_usage,

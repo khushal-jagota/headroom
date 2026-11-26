@@ -18,7 +18,6 @@ import { AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME } from './configuratio
 import { create_antigravity_flavor } from './flavor.ts';
 import { AntigravitySignIn } from './sign_in.ts';
 import { create_antigravity_status } from './status.ts';
-import { antigravity_transcript_usage } from './transcript_usage.ts';
 
 export async function create_antigravity_instance(
   input: DriverCreateInput<null>,
@@ -54,7 +53,7 @@ export async function create_antigravity_instance(
       ),
       { child_processes: host.child_processes, worker_supervision: host.worker_supervision },
     ),
-    transcript_usage: antigravity_transcript_usage(configured_home),
+    transcript_usage: antigravity_driver.transcript_usage!(host.environment),
   };
   // A test instance starts no catalog and reads no account. Its card says agy did not answer.
   if (host.test_mode || backend_io_is_test())

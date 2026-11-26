@@ -6,6 +6,9 @@ import type { AgentDriver } from '../core/driver.ts';
 import { parse_driver_kind } from '../core/identity.ts';
 import { antigravity_client } from './client.ts';
 import { antigravity_manifest } from './manifest.ts';
+import { antigravity_transcript_usage } from './runtime/transcript_usage.ts';
+import { home_path } from '../core/paths.ts';
+import { homedir } from 'node:os';
 import { antigravity_models } from './models.ts';
 
 export const antigravity_driver: AgentDriver<null> = {
@@ -22,6 +25,13 @@ export const antigravity_driver: AgentDriver<null> = {
   plan_selection_transition: acp_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: antigravity_models,
+  transcript_usage: (environment) =>
+    antigravity_transcript_usage(
+      home_path(antigravity_manifest.home!, environment, homedir(), {
+        unset: '||',
+        expand_configured: false,
+      }),
+    ),
   async create(input, host) {
     const { create_antigravity_instance } = await import('./runtime/instance.ts');
     return create_antigravity_instance(input, host);

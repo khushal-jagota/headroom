@@ -17,7 +17,7 @@ import { read_ticket } from '../../tickets/data/index.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
-import { resolve_usage_model_scopes } from '../backend_usage/logic/scopes.ts';
+import type { BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { BackendHttpRuntime, BackendSnapshot } from './contracts.ts';
 import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
 import {
@@ -109,6 +109,39 @@ async function remote_action(
   const result = await controls.request(request, { signal });
   await refresh_changed_provider(runtime, machine_id, request, result, signal);
   return result;
+}
+/** A machine that cannot answer for one backend fails that backend's refresh, not the request. */
+async function machine_usage_refresh(
+  runtime: BackendHttpRuntime,
+  machine_id: string,
+  backend_key: BackendInstanceId,
+  signal?: AbortSignal,
+): Promise<BackendUsageResult> {
+  try {
+    const value = await remote_action(
+      runtime,
+      machine_id,
+      { backend_key, operation: 'refresh_usage' },
+      signal,
+    );
+    return decode_machine_usage(backend_key, value);
+  } catch (error) {
+    signal?.throwIfAborted();
+    console.error(
+      `machine usage refresh failed machine=${machine_id} backend=${backend_key}`,
+      error,
+    );
+    return {
+      backend_key,
+      outcome: 'failed',
+      detail:
+        error instanceof HttpError
+          ? error.message
+          : "This backend's usage could not be refreshed. Try again.",
+      observed_at: null,
+      windows: [],
+    };
+  }
 }
 async function refresh_changed_provider(
   runtime: BackendHttpRuntime,
@@ -326,13 +359,12 @@ export function createBackendRoutes(
         );
         const results = await Promise.all(
           runtime.backend_ids.map(async (backend_key) => {
-            const value = await remote_action(
+            const result = await machine_usage_refresh(
               runtime,
               machine_id,
-              { backend_key, operation: 'refresh_usage' },
+              backend_key,
               signal_of(request),
             );
-            const result = decode_machine_usage(backend_key, value);
             if (result.outcome === 'succeeded' && result.observed_at !== null)
               runtime.backend_state?.keep_successful_usage(result, machine_id);
             return { backend_key, outcome: result.outcome, detail: result.detail };
@@ -358,19 +390,15 @@ export function createBackendRoutes(
         controller.abort();
         await usage_refresh.catch(() => {});
       }
-      const by_backend = new Map(snapshots.map((snapshot) => [snapshot.backend_key, snapshot]));
-      const resolved = refreshed.map((result) =>
-        resolve_usage_model_scopes(result, by_backend.get(result.backend_key)!),
-      );
       if (runtime.backend_state !== null) {
-        for (const result of resolved) {
+        for (const result of refreshed) {
           if (result.outcome === 'succeeded' && result.observed_at !== null)
             runtime.backend_state.keep_successful_usage(result);
         }
       }
       return {
         backends: snapshots.map((snapshot) => home_card(runtime, snapshot)),
-        usage_outcomes: resolved.map((result) => ({
+        usage_outcomes: refreshed.map((result) => ({
           backend_key: result.backend_key,
           outcome: result.outcome,
           detail: result.detail,

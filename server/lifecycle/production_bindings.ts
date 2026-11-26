@@ -116,14 +116,20 @@ export function compose_production_backends(
   return {
     registry,
     http,
-    /** Each live instance's own transcripts, for the recorded usage service. */
-    transcript_sources: registry
-      .list()
-      .flatMap((entry): UsageTranscriptSource[] =>
-        entry.kind === 'live' && entry.instance.transcript_usage !== undefined
-          ? [{ provider: entry.instance.instance_id, source: entry.instance.transcript_usage }]
-          : [],
-      ),
+    /**
+     * Each driver's transcripts on this server, for the recorded usage service. They come from the
+     * drivers, as T3 Code's built-in usage drivers do: the server's instances run nothing.
+     */
+    transcript_sources: [...default_instance_configs(bindings.drivers)].flatMap(
+      ([instance_id, config]): UsageTranscriptSource[] => {
+        const driver = bindings.drivers.find(
+          (candidate) => candidate.driver_kind === config.driver,
+        );
+        return driver?.transcript_usage === undefined
+          ? []
+          : [{ provider: instance_id, source: driver.transcript_usage(process.env) }];
+      },
+    ),
     execution_refusal,
     stall_sources: () => [
       ...bindings.stall_sources(shared),

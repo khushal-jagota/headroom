@@ -14,7 +14,7 @@ import type {
 } from '../../../conversation/backend_usage/contracts.ts';
 import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
 import { is_record as object } from '../../../core/records.ts';
-import { parse_datetime } from '../../../conversation/backend_usage/logic/windows.ts';
+import { parse_datetime, usage_window } from '../../../conversation/backend_usage/logic/windows.ts';
 
 const DAILY_HOST = 'https://daily-cloudcode-pa.googleapis.com';
 const PROD_HOST = 'https://cloudcode-pa.googleapis.com';
@@ -228,10 +228,15 @@ function parse_summary_windows(body: unknown): Keyed[] {
       const kind: BackendUsageWindowKind | null =
         bucket.window === '5h' ? 'five_hour' : bucket.window === 'weekly' ? 'seven_day' : null;
       const used_percent = used_percent_of(bucket);
+      if (kind === null || used_percent === null) continue;
+      // An untouched bucket names no reset. It stays, so the other host's reading of it
+      // cannot replace it with a reset time this host does not report.
       const resets_at = parse_datetime(bucket.resetTime);
-      if (kind === null || used_percent === null || resets_at === null) continue;
-      const scope_label = group.name ?? family_of_bucket(bucket_id);
-      windows.push([bucket_id, { kind, used_percent, resets_at, model_scope: null, scope_label }]);
+      const model_scope = group.name ?? family_of_bucket(bucket_id);
+      windows.push([
+        bucket_id,
+        usage_window({ id: bucket_id, kind, used_percent, resets_at, model_scope }),
+      ]);
     }
   return windows;
 }
@@ -256,13 +261,16 @@ function parse_model_windows(body: unknown): Keyed[] {
     if (scope_label === null || used_percent === null || resets_at === null) continue;
     const previous = windows.get(scope_label);
     if (previous === undefined || used_percent > previous.used_percent)
-      windows.set(scope_label, {
-        kind: 'seven_day',
-        used_percent,
-        resets_at,
-        model_scope: null,
+      windows.set(
         scope_label,
-      });
+        usage_window({
+          id: `${scope_label.toLowerCase()}-weekly`,
+          kind: 'seven_day',
+          used_percent,
+          resets_at,
+          model_scope: scope_label,
+        }),
+      );
   }
   return [...windows.entries()];
 }

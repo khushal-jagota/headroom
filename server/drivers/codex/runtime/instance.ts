@@ -1,13 +1,10 @@
 /** One Codex instance: its launch and child factory, card, sign-in, allowance usage and transcripts. */
-import { homedir } from 'node:os';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
-import { home_path } from '../../core/paths.ts';
 import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
 import { create_durable_codex_login_rejection } from './login_rejection.ts';
 import { create_codex_providers } from './providers.ts';
 import { create_codex_status } from './status.ts';
-import { codex_transcript_usage } from './transcript_usage.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import { codex_driver } from '../driver.ts';
 import { codex_manifest } from '../manifest.ts';
@@ -43,12 +40,7 @@ export async function create_codex_instance(
       // Separate instances share this database's durable rejection row.
       remembered_login_rejection: create_durable_codex_login_rejection(host.database, host.now),
     }),
-    transcript_usage: codex_transcript_usage(
-      home_path(codex_manifest.home!, host.environment, homedir(), {
-        unset: '||',
-        expand_configured: false,
-      }),
-    ),
+    transcript_usage: codex_driver.transcript_usage!(host.environment),
   };
   // A test instance reads no catalog, login or account, and cannot sign in.
   if (host.test_mode || backend_io_is_test())

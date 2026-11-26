@@ -44,6 +44,11 @@ export interface AgentDriver<Config> {
   launch_model_refusal?(model: string): string | null;
   /** Readable form of a stored tool-call detail, or null when it holds nothing readable. Absent: as stored. */
   readable_tool_call_detail?(detail: string): string | null;
+  /**
+   * Where this driver's transcripts live under `environment`, for recorded usage. On the driver,
+   * so the server reads transcripts without a live instance. Absent: the driver keeps none.
+   */
+  transcript_usage?(environment: DriverHost['environment']): TranscriptUsageSource;
 }
 export interface DriverModelRules {
   /** The model family a card shows as selected_variant, or null. */

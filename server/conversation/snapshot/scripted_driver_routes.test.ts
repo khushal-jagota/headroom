@@ -22,6 +22,7 @@ import {
 } from '../../drivers/core/sign_in.ts';
 import { scripted_manifest, scripted_status } from '../../drivers/testing/registry.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
+import { usage_window } from '../backend_usage/logic/windows.ts';
 import { turn_scoped_selection_transition } from '../../drivers/core/selection.ts';
 
 const scripted_icon = new URL('../../drivers/testing/icon.svg', import.meta.url);
@@ -127,13 +128,13 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
         detail: null,
         observed_at: new Date('2026-11-17T10:00:00Z'),
         windows: [
-          {
+          usage_window({
+            id: 'frontier-weekly',
             kind: 'seven_day',
             used_percent: 40,
             resets_at: new Date('2026-11-20T00:00:00Z'),
-            model_scope: null,
-            scope_label: 'Frontier models',
-          },
+            model_scope: 'Frontier models',
+          }),
         ],
       };
     },
@@ -302,6 +303,7 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
           used_percent: 40,
           resets_at: '2026-11-20T00:00:00Z',
           model_id: 'Frontier models',
+          model_ids: [],
         },
       ],
     });

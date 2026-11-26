@@ -11,8 +11,14 @@ export function usageWindow(
   modelId: string | null = null
 ): BackendUsageWindow | null {
   return windows.find((window) => (
-    window.kind === kind && (window.model_id ?? null) === modelId
+    window.kind === kind && windowCoversModel(window, modelId)
   )) ?? null;
+}
+
+/** Null asks for the account-wide window. A model id asks for a window that covers that model. */
+export function windowCoversModel(window: BackendUsageWindow, modelId: string | null): boolean {
+  if (modelId === null) return (window.model_id ?? null) === null;
+  return window.model_ids.includes(modelId);
 }
 
 export function usageIsNearlySpent(percent: number): boolean {

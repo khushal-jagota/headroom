@@ -26,8 +26,16 @@ import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { run_backend_request } from '../executor/backend_controls.ts';
 import { decode_machine_usage } from '../conversation/backend_usage/machine.ts';
+import type { BackendUsageAdapter } from '../conversation/backend_usage/contracts.ts';
+import { usage_window } from '../conversation/backend_usage/logic/windows.ts';
 import { VpsBackendControlRelay } from '../executor/backend_control_relay.ts';
 import { Deferred } from '../core/deferred.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createUsageRoutes } from '../conversation/usage/routes.ts';
+import { AntigravityUsageAdapter } from '../drivers/antigravity/runtime/allowance_usage.ts';
+import { ClaudeUsageAdapter } from '../drivers/claude/runtime/allowance_usage.ts';
 const key = parse_backend_instance_id('codex');
 const snapshot: BackendSnapshot = {
   backend_key: key,
@@ -64,13 +72,13 @@ const usage = (percent: number) => ({
   detail: null,
   observed_at: new Date('2026-11-22T10:00:00Z'),
   windows: [
-    {
-      kind: 'five_hour' as const,
+    usage_window({
+      id: 'five_hour',
+      kind: 'five_hour',
       model_scope: null,
-      scope_label: null,
       used_percent: percent,
       resets_at: new Date('2026-11-22T15:00:00Z'),
-    },
+    }),
   ],
 });
 
@@ -571,3 +579,219 @@ test('capability facts distinguish missing and false and reject stale machine re
   expect(state.read_machine_capabilities(HOME_MACHINE_ID, key)).toEqual(value);
   expect(state.capabilities_current(HOME_MACHINE_ID, key, reconnected)).toBe(false);
 });
+
+// Risk: the 22 Nov regression. Antigravity's family buckets collided on one stored key (HTTP 500
+// on VPS 1, duplicate ids on Mac 1), an untouched bucket without a reset was dropped, the Claude
+// Fable window was dropped against three Fable catalog models, and one backend a machine could
+// not answer for failed the whole refresh. The adapters run for real, behind the executor's own
+// serialization, so the proof covers adapter, wire, store, Limits and cards on both machines.
+test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
+  'machine %s refresh keeps every Antigravity bucket and the Fable window when Codex fails',
+  async (machine_id) => {
+    const claude_key = parse_backend_instance_id('claude');
+    const antigravity_key = parse_backend_instance_id('antigravity');
+    const folder = mkdtempSync(join(tmpdir(), 'machine-usage-'));
+    const reset = '2026-11-30T21:02:00Z';
+    try {
+      const claude_login = join(folder, '.credentials.json');
+      writeFileSync(claude_login, JSON.stringify({ claudeAiOauth: { accessToken: 'claude' } }));
+      const antigravity_login = join(folder, 'antigravity-oauth-token');
+      writeFileSync(
+        antigravity_login,
+        JSON.stringify({ token: { access_token: 'agy', expiry: '2026-12-01T00:00:00Z' } }),
+      );
+      const bucket = (bucketId: string, window: string, remaining: number, at?: string) => ({
+        bucketId,
+        window,
+        remainingFraction: remaining,
+        ...(at === undefined ? {} : { resetTime: at }),
+      });
+      // As on 26 Nov: the daily host names no reset for the untouched Claude and GPT buckets.
+      const quota = (daily: boolean) => ({
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              bucket('gemini-weekly', 'weekly', 0.62, reset),
+              bucket('gemini-5h', '5h', 0.65, reset),
+            ],
+          },
+          {
+            displayName: 'Claude and GPT models',
+            buckets: [
+              bucket('3p-weekly', 'weekly', 1, daily ? undefined : reset),
+              bucket('3p-5h', '5h', 1, daily ? undefined : reset),
+            ],
+          },
+        ],
+      });
+      const sources = new Map<string, BackendUsageAdapter>([
+        [
+          antigravity_key,
+          new AntigravityUsageAdapter({
+            login_path: antigravity_login,
+            http_post: async (url) => ({ status_code: 200, body: quota(url.includes('daily')) }),
+            refresh_login: async () => {},
+            now: () => new Date('2026-11-26T00:30:00Z'),
+          }),
+        ],
+        [
+          claude_key,
+          new ClaudeUsageAdapter({
+            credential_path: claude_login,
+            http_get: async () => ({
+              status_code: 200,
+              body: {
+                limits: [
+                  { group: 'weekly', utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
+                  {
+                    scope: { model: { display_name: 'Fable' } },
+                    utilization: 23,
+                    resets_at: '2026-11-28T15:00:00Z',
+                  },
+                ],
+              },
+            }),
+            now: () => new Date('2026-11-26T00:30:00Z'),
+          }),
+        ],
+      ]);
+      const model = (model_id: string, display_name: string) => ({
+        ...snapshot.available_models[0]!,
+        model_id,
+        display_name,
+      });
+      const cards = new Map<string, BackendSnapshot>([
+        [key, snapshot],
+        [
+          claude_key,
+          {
+            ...snapshot,
+            backend_key: claude_key,
+            available_models: [
+              model('claude-fable-5', 'Fable 5'),
+              model('claude-fable-5-1', 'Fable 5.1'),
+              model('claude-fable-5-2', 'Fable 5.2'),
+              model('claude-opus-5-5', 'Opus 5.5'),
+            ],
+          },
+        ],
+        [antigravity_key, { ...snapshot, backend_key: antigravity_key }],
+      ]);
+      const database = fixture();
+      database.write((tx) => seed_machine_lease(tx, machine_id));
+      const state = new BackendStateStore(database);
+      const backend_ids = [key, claude_key, antigravity_key];
+      const runtime: BackendHttpRuntime = {
+        database,
+        backend_state: state,
+        backend_ids,
+        drivers: [],
+        driver_of: () => null,
+        reports_allowance_usage: () => true,
+        backend_snapshots: {
+          retained: () => snapshot,
+          snapshot: async () => snapshot,
+          snapshots: async () => [snapshot],
+          update_backend: vi.fn(),
+        },
+        backend_usage: { refresh: vi.fn() },
+        sign_in: () => null,
+        settled: async () => {},
+        machine_catalog: () => ({
+          retained: (backend_key) => cards.get(backend_key)!,
+          snapshot: async (backend_key) => cards.get(backend_key)!,
+          identity: null,
+          ready: true,
+          owns_conversation: () => false,
+        }),
+        machine_backends: () => ({
+          available: true,
+          async request(request) {
+            if (request.operation === 'capabilities')
+              return { can_sign_in: false, reports_allowance_usage: true };
+            if (request.operation !== 'refresh_usage') return {};
+            if (request.backend_key === key) throw new Error('Codex did not answer');
+            const allowance_usage = sources.get(request.backend_key)!;
+            return run_backend_request(request, { allowance_usage, status: {} as never });
+          },
+        }),
+      };
+      const app = await createApp(
+        loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
+        {
+          database,
+          areas: [
+            {
+              prefix: '/api/conversation',
+              routes: createBackendRoutes(runtime, {
+                available: true,
+                writes: new ConversationHttpWriteScope(),
+              }),
+            },
+            {
+              prefix: '/api/conversation/usage',
+              routes: createUsageRoutes({
+                conversation_runtime_available: true,
+                backend_ids,
+                backend_state: state,
+                recorded_usage: {} as never,
+              }),
+            },
+          ],
+        },
+      );
+      try {
+        const refreshed = await app.inject({
+          method: 'POST',
+          url: `/api/conversation/backends/refresh?machine_id=${machine_id}`,
+        });
+        expect(refreshed.statusCode).toBe(200);
+        expect(refreshed.json().usage_outcomes).toEqual([
+          { backend_key: 'codex', outcome: 'failed', detail: expect.any(String) },
+          { backend_key: 'claude', outcome: 'succeeded', detail: null },
+          { backend_key: 'antigravity', outcome: 'succeeded', detail: null },
+        ]);
+        const limits = (
+          await app.inject({
+            method: 'GET',
+            url: `/api/conversation/usage/limits?machine_id=${machine_id}`,
+          })
+        ).json();
+        expect(Object.keys(limits)).toEqual(['claude', 'antigravity']);
+        const rows = (backend: string) =>
+          limits[backend].windows.map((window: Record<string, unknown>) => [
+            window.id,
+            window.label,
+            window.usedPercent,
+            window.resetsAt ?? null,
+          ]);
+        expect(rows('antigravity')).toEqual([
+          ['gemini-weekly', '7 days · Gemini', 38, '2026-11-30T21:02:00Z'],
+          ['gemini-5h', '5 hours · Gemini', 35, '2026-11-30T21:02:00Z'],
+          ['3p-weekly', '7 days · Claude and GPT', 0, null],
+          ['3p-5h', '5 hours · Claude and GPT', 0, null],
+        ]);
+        expect(rows('claude')).toEqual([
+          ['seven_day', '7 days', 79, '2026-11-28T15:00:00Z'],
+          ['seven_day_fable', '7 days · Fable', 23, '2026-11-28T15:00:00Z'],
+        ]);
+        const card = (
+          await app.inject({
+            method: 'GET',
+            url: `/api/conversation/backends?machine_id=${machine_id}`,
+          })
+        )
+          .json()
+          .backends.find((value: { backend_key: string }) => value.backend_key === 'claude');
+        expect(
+          card.cached_usage.windows.map((window: { model_ids: string[] }) => window.model_ids),
+        ).toEqual([[], ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2']]);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  },
+);

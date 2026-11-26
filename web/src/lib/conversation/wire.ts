@@ -464,7 +464,10 @@ export type BackendUsageWindow = {
   kind: "five_hour" | "seven_day";
   used_percent: number;
   resets_at: string;
+  /** The model or family the provider names for this window. Null: the whole account. */
   model_id: string | null;
+  /** The catalog models this window covers. */
+  model_ids: string[];
 };
 
 export type BackendCachedUsage = {
