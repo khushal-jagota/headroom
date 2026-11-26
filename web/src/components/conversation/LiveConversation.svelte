@@ -415,11 +415,9 @@
   });
 
   onMount(() => watchOwnerReadAttention(document, window, (attention) => {
-    // Returning to this tab restores its last visible line, even if it was latest.
-    // Freeze the existing anchor before the visibility effects replace its reader.
-    if (documentIsVisible && !attention.documentIsVisible && viewAnchor !== null) {
-      viewAnchor = { ...viewAnchor, following: false };
-    }
+    // The saved anchor goes through hiding unchanged. A reader scrolled up comes back
+    // to that line, and a reader at the newest line comes back to the newest line,
+    // including anything that arrived while the tab was hidden.
     documentIsVisible = attention.documentIsVisible;
     windowIsFocused = attention.windowIsFocused;
     attentionPulse += 1;
