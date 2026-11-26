@@ -21,6 +21,7 @@
  * test covers the ways back: a tab return at the bottom and scrolled up, a dock reopen, a lens
  * switch, and a return whose saved line cannot be restored. Each case attaches its frames.
  */
+import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import type { BrowserContext, BrowserContextOptions, Page, TestInfo } from '@playwright/test';
 import { api, bindConversation, cli, expect, test, WAIT_MS, type ServerHandle } from './support/fixtures.ts';
@@ -230,8 +231,11 @@ async function returnToTab(page: Page, options: Partial<ProbeOptions> = {}): Pro
   return await measure(page, null);
 }
 
+/** Frames are written into the test's output folder, which the browser job keeps. */
 async function attachFrames(testInfo: TestInfo, name: string, state: ProbeState): Promise<void> {
-  await testInfo.attach(`${name}.frames.json`, { body: JSON.stringify(state, null, 1), contentType: 'application/json' });
+  const path = testInfo.outputPath(`${name}.frames.json`);
+  writeFileSync(path, JSON.stringify(state, null, 1));
+  await testInfo.attach(`${name}.frames.json`, { path, contentType: 'application/json' });
 }
 
 /** A screenshot only for a case that has just failed, before its page closes. */
