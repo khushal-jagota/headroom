@@ -32,6 +32,20 @@ export class BackendStateStore {
     return this.database.read((sql) => backend_card_state(sql).read_usage(backend_key, machine_id));
   }
 
+  /** The account the machine's saved card names for the backend. Null before any card is saved. */
+  read_saved_identity(
+    machine_id: string,
+    backend_key: BackendInstanceId,
+  ): BackendSnapshot['identity'] {
+    const row = this.database.read((sql) =>
+      sql.get<{ snapshot_json: string }>(
+        'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
+        [snapshot_machine_id(machine_id), backend_key],
+      ),
+    );
+    return row ? ((JSON.parse(row.snapshot_json) as BackendSnapshot).identity ?? null) : null;
+  }
+
   read_machine_capabilities(
     machine_id: string,
     backend_key: BackendInstanceId,

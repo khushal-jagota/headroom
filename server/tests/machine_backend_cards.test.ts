@@ -792,6 +792,24 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
           ['seven_day', '7 days', 79, '2026-11-28T15:00:00Z'],
           ['seven_day_fable', '7 days · Fable', 23, '2026-11-28T15:00:00Z'],
         ]);
+        // Without a machine, Limits reads every machine's observation with the account its saved
+        // card names, so the browser can merge one account signed in on several machines.
+        database.write((tx) => save_machine_model_list(tx, machine_id, cards.get(claude_key)!));
+        const every = (
+          await app.inject({ method: 'GET', url: '/api/conversation/usage/limits' })
+        ).json();
+        expect(
+          every.readings.map((reading: Record<string, unknown>) => [
+            reading.machine_id,
+            reading.backend_key,
+            reading.account_label,
+          ]),
+        ).toEqual([
+          [machine_id, 'claude', 'Machine account'],
+          [machine_id, 'antigravity', null],
+        ]);
+        expect(every.readings[0].machine_name).toEqual(expect.any(String));
+        expect(every.readings[0].limits).toEqual(limits.claude);
         // A family window covers each model of its family that no window names exactly, and
         // cards leave out a window with no reset time.
         const backends = (
