@@ -5,11 +5,16 @@
   import { enumerateDays, enumerateHourStarts, formatUsd, formatTokens, formatPercent, formatCount, formatDayShort, formatHourShort, formatDateTimeShort } from "../../lib/usage/usageFormat";
   import { usageSourceColor, usageSourceLabel } from "../../lib/usage/usageProviders";
   import type { DriverPresentation } from "../../lib/drivers/contracts";
+  import type { MachineUsageSource } from "../../lib/usage/usageMerge";
   import UsageChart from "./UsageChart.svelte";
-  let { summary, input, providers, metric, drivers }: {
+  let { summary, sources, input, providers, metric, drivers }: {
     summary: UsageSummary; input: UsageSummaryInput; providers: readonly UsageProviderKind[]; metric: "tokens" | "cost";
     drivers: readonly DriverPresentation[] | undefined;
+    /** The summary's sources with the machine that read each, when it combines machines. */
+    sources?: readonly MachineUsageSource[];
   } = $props();
+  const sourceRows = $derived(sources ?? summary.sources.map(source => ({ machineId: "", machineName: "", source })));
+  const namesMachines = $derived(new Set(sourceRows.map(row => row.machineId)).size > 1);
   const selected = $derived({ ...summary,
     buckets: summary.buckets.filter(bucket => providers.includes(bucket.provider)),
     sources: summary.sources.filter(source => providers.includes(source.fingerprint.provider)),
@@ -70,8 +75,8 @@
   </section>{/if}
   <details class="sources"><summary>Sources · {summary.scanDurationMs} ms</summary>
     <p>Observed {formatDateTimeShort(summary.readAt, input.timeZone)}</p>
-    {#each summary.sources as source (`${source.fingerprint.provider}:${source.fingerprint.resolvedHomePath}`)}
-      <p>{usageSourceLabel(source.fingerprint.provider, drivers)} · {source.status} · {source.scannedFiles} files · {source.distinctSessions} sessions{source.message ? ` · ${source.message}` : ""}</p>
+    {#each sourceRows as { machineId, machineName, source } (`${machineId}:${source.fingerprint.provider}:${source.fingerprint.resolvedHomePath}`)}
+      <p>{namesMachines ? `${machineName} · ` : ""}{usageSourceLabel(source.fingerprint.provider, drivers)} · {source.status} · {source.scannedFiles} files · {source.distinctSessions} sessions{source.message ? ` · ${source.message}` : ""}</p>
     {/each}
     <p>Model prices: {summary.pricing.status} · {summary.pricing.knownModels} models{summary.pricing.fetchedAt ? ` · ${formatDateTimeShort(summary.pricing.fetchedAt, input.timeZone)}` : ""}</p>
   </details>

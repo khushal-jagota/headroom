@@ -490,7 +490,8 @@ export class MacPresenceService {
     const record = this.get_record();
     return (
       record?.lease?.backend_controls === true &&
-      (operation !== 'update_backend' || (record.identity?.protocol_version ?? 0) >= 27)
+      (operation !== 'update_backend' || (record.identity?.protocol_version ?? 0) >= 27) &&
+      (operation !== 'read_usage_summary' || record.lease.recorded_usage === true)
     );
   }
   current_identity(): ExecutorIdentity | null {
