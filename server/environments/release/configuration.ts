@@ -51,6 +51,7 @@ export const NODE_RUNTIME_FILES = [
 export const HOME_WEB_SOURCE_FILES = [
   'web/src/lib/conversation/view/contracts.ts',
   'web/src/lib/conversation/attachmentPolicy.ts',
+  'web/src/lib/conversation/toolRunKind.ts',
 ] as const;
 export const SHARED_RUNTIME_FILES = [
   ...HOME_WEB_SOURCE_FILES,
