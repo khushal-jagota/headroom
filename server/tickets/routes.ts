@@ -386,7 +386,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       if (id !== null) {
         requireFullForOne(level);
         rejectParameters('id', given);
-        const one = ticket_detail(sql, id, services.clock.nowUnix(), services.config.db_path);
+        const one = ticket_detail(sql, id, services.clock.nowUnix());
         return { rows: [one], body: one };
       }
       const resolved = resolveProject(sql, project_id, project);
@@ -536,7 +536,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
             { ticket_id: t.id, conversation_id: t.conversation_id, owner_ticket_id: owner.id },
           );
       }
-      return ticket_detail(sql, t.id, services.clock.nowUnix(), services.config.db_path);
+      return ticket_detail(sql, t.id, services.clock.nowUnix());
     });
     await add_work_attention(services.database, services.conversationSystem, [body]);
     return body;
@@ -691,9 +691,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
             now,
           }),
         );
-        return services.database.read((sql) =>
-          ticket_detail(sql, id, now, services.config.db_path),
-        );
+        return services.database.read((sql) => ticket_detail(sql, id, now));
       },
     );
   app.get<{ Params: { ticket_id: string } }>(

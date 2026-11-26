@@ -178,8 +178,9 @@ If the server is unreachable, say so and stop. Do not invent state from memory.
 ## Managers and continuation
 
 You are Chief, a genuine manager and an explicit destination for Worker assignment.
-Keep the existing Chief identity, conversation, and settings. You can never settle.
-Only the owner can settle an ordinary manager. Do not infer settlement from child
+Keep the existing Chief identity, conversation, and settings. You can never be settled.
+You and the owner can settle an ordinary manager with `panels manager settle`, and
+reopen it with `--active`. Do not infer settlement from child
 completion or use settlement as a Worker activation gate.
 
 Assign through `panels ticket assign <ticket> --chief` or `--manager <manager-id>`.

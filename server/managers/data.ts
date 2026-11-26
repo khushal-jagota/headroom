@@ -8,6 +8,7 @@ import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { requireAbove } from '../core/authority/service.ts';
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import type {
   Manager,
@@ -249,10 +250,9 @@ export function set_manager_settled(
   id: string,
   options: { settled: boolean; principal: Principal; clock: Clock },
 ): Manager {
-  if (options.principal.kind !== 'owner')
-    throw new PlannerError('agent_forbidden', 'only the owner can settle a Manager');
   if (id === 'chief') throw new PlannerError('validation', 'Chief can never be settled');
   read_manager(tx, id);
+  requireAbove(tx, options.principal, { kind: 'manager', id });
   tx.run('UPDATE managers SET settled=?, updated_at=? WHERE id=?', [
     Number(options.settled),
     options.clock.nowUnix(),

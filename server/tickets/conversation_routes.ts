@@ -111,9 +111,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
     const ticket = services.database.write((tx) =>
       data.write_employee_configuration(tx, request.params.ticket_id, { ...resolved, now }),
     );
-    return services.database.read((sql) =>
-      ticket_detail(sql, ticket.id, now, services.config.db_path),
-    );
+    return services.database.read((sql) => ticket_detail(sql, ticket.id, now));
   });
   app.post<{
     Params: {
