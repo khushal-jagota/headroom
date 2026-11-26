@@ -494,6 +494,9 @@ test('a refusal recorded by earlier home code is prepared once more by this home
   published_mac(f);
   expect(f.service.machine_states()[0]).toMatchObject({ state: 'failed', can_retry: true });
   expect(f.service.check().target).toBeNull();
+  // Until it has an outcome, the old refusal stays saved, so an interrupted retry runs again.
+  expect(f.service.machine_states()[0]?.state).toBe('failed');
+  expect(f.service.check().target).toBeNull();
   await f.service.settled();
   expect(f.service.check().target?.activate).toBe(true);
   expect(f.context.provider.download_artifact).toHaveBeenCalledTimes(1);

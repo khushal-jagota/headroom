@@ -208,6 +208,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private linux_preparing = false;
   private last_preparation: { digest: string; at: number } | undefined;
   private readonly ready_archives = new Set<string>();
+  private readonly prepared_again = new Set<string>();
   private rejected_archive_digest: string | undefined;
   constructor(context: MacUpdateCompositionContext) {
     this.context = context;
@@ -330,8 +331,8 @@ export class MacUpdateService implements MacUpdateServiceContract {
     );
     return is_object(value) && value.home_revision !== this.current_app_sha;
   }
+  // The saved record changes only with an outcome. An interrupted retry stays stale for the next start.
   private prepare_again(release: PublishedUpdate): void {
-    this.save_preparation(release, null);
     const owner = this.archive_owner ?? this;
     void owner.queue_preparation(async () => {
       try {
@@ -339,6 +340,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         this.signal.throwIfAborted();
         if (this.platform === 'linux' && release.linux_executor)
           this.linux_owner().ready_archives.add(release.linux_executor.archive_sha256);
+        this.save_preparation(release, null);
       } catch (error) {
         if (this.signal.aborted) return;
         this.save_preparation(release, error instanceof Error ? error.message : String(error));
@@ -362,6 +364,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       attempt_id,
       request_id: randomUUID().replaceAll('-', ''),
     });
+    service.save_preparation(attempt.release, null);
     service.prepare_again(attempt.release);
   }
   machine_states(release: PublishedUpdate | null = null): MachineUpdateState[] {
@@ -816,9 +819,13 @@ export class MacUpdateService implements MacUpdateServiceContract {
       selected !== null &&
       !this.unchanged(selected.release) &&
       this.stale_preparation(selected.release)
-    )
-      this.prepare_again(selected.release);
-    else if (
+    ) {
+      const digest = this.artifact(selected.release)!.archive_sha256;
+      if (!this.prepared_again.has(digest)) {
+        this.prepared_again.add(digest);
+        this.prepare_again(selected.release);
+      }
+    } else if (
       this.platform === 'linux' &&
       release !== null &&
       !this.unchanged(release) &&
