@@ -11,11 +11,11 @@ import { antigravity_catalog_reader } from './status_readers.ts';
 export function create_antigravity_status(sources: {
   /** Null: the card lists no models and says agy did not answer. */
   readonly catalog: AntigravityCatalogSource | null;
-  /** agy's CLI login file, which names the signed-in account. */
-  readonly login_path: string;
+  /** agy's log folder, whose newest ACP server log names the signed-in account. */
+  readonly log_directory: string;
 }): DriverStatus {
   const read_catalog = antigravity_catalog_reader(sources.catalog, () =>
-    read_antigravity_account_email(sources.login_path),
+    read_antigravity_account_email(sources.log_directory),
   );
   return {
     version_detects_upgrade: true,

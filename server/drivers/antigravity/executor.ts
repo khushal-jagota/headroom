@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { AntigravitySignIn } from './runtime/sign_in.ts';
-import { AntigravityUsageAdapter, http_post_usage } from './runtime/allowance_usage.ts';
-import { AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME } from './runtime/configuration.ts';
+import { AntigravityUsageAdapter, antigravity_usage_runner } from './runtime/allowance_usage.ts';
+import { AGY_APP_DATA_DIRECTORY_NAME, AGY_LOG_DIRECTORY_NAME } from './runtime/configuration.ts';
 /** Antigravity on an executor machine: its ACP child factory and throwaway model list probe. */
 import type { ExecutorDriver } from '../core/executor.ts';
 import { create_acp_child_factory } from '../acp/child.ts';
@@ -45,10 +45,10 @@ export const antigravity_executor: ExecutorDriver = {
         stop_options: () => custody.stop_options(),
       },
     );
-    const login_path = join(
+    const log_directory = join(
       required_home(host.home),
       AGY_APP_DATA_DIRECTORY_NAME,
-      CLI_LOGIN_FILE_NAME,
+      AGY_LOG_DIRECTORY_NAME,
     );
     const sign_in = new AntigravitySignIn(
       {
@@ -67,16 +67,20 @@ export const antigravity_executor: ExecutorDriver = {
     return {
       sign_in,
       allowance_usage: new AntigravityUsageAdapter({
-        login_path,
-        http_post: http_post_usage,
-        refresh_login: async (signal) => {
-          await catalog.read(host.executable, signal);
-        },
+        run_usage: antigravity_usage_runner(
+          {
+            home: required_home(host.home),
+            panels_server_url: host.panels_server_url,
+            environment: host.environment,
+          },
+          () => host.executable,
+          host.one_shot_children,
+        ),
         now: () => new Date(),
       }),
       status: create_antigravity_status({
         catalog: (executable) => custody.probe((signal) => catalog.read(executable, signal)),
-        login_path,
+        log_directory,
       }),
       shutdown: async () => {
         await Promise.all([

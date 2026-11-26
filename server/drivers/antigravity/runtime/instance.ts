@@ -12,9 +12,9 @@ import {
 import { create_acp_child_factory } from '../../acp/child.ts';
 import { antigravity_driver } from '../driver.ts';
 import { antigravity_manifest } from '../manifest.ts';
-import { AntigravityUsageAdapter, http_post_usage } from './allowance_usage.ts';
+import { AntigravityUsageAdapter, antigravity_usage_runner } from './allowance_usage.ts';
 import { AntigravityModelCatalog } from './catalog.ts';
-import { AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME } from './configuration.ts';
+import { AGY_APP_DATA_DIRECTORY_NAME, AGY_LOG_DIRECTORY_NAME } from './configuration.ts';
 import { create_antigravity_flavor } from './flavor.ts';
 import { AntigravitySignIn } from './sign_in.ts';
 import { create_antigravity_status } from './status.ts';
@@ -37,7 +37,11 @@ export async function create_antigravity_instance(
     worker_process_root: host.worker_process_root,
     panels_server_url: host.panels_server_url,
   };
-  const login_path = join(launch_options.home, AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME);
+  const log_directory = join(
+    launch_options.home,
+    AGY_APP_DATA_DIRECTORY_NAME,
+    AGY_LOG_DIRECTORY_NAME,
+  );
   const base = {
     instance_id: input.instance_id,
     driver_kind: antigravity_driver.driver_kind,
@@ -59,7 +63,7 @@ export async function create_antigravity_instance(
   if (host.test_mode || backend_io_is_test())
     return {
       ...base,
-      status: create_antigravity_status({ catalog: null, login_path }),
+      status: create_antigravity_status({ catalog: null, log_directory }),
       dispose: async () => {},
     };
   const catalog = new AntigravityModelCatalog(launch_options, {
@@ -80,16 +84,11 @@ export async function create_antigravity_instance(
     ...base,
     status: create_antigravity_status({
       catalog: (executable) => catalog.read(executable),
-      login_path,
+      log_directory,
     }),
     sign_in,
     allowance_usage: new AntigravityUsageAdapter({
-      login_path,
-      http_post: http_post_usage,
-      // A throwaway session makes agy renew its expired access token.
-      refresh_login: async (signal) => {
-        await catalog.read(executable(), signal);
-      },
+      run_usage: antigravity_usage_runner(launch_options, executable, host.one_shot_children),
       now: () => new Date(),
     }),
     dispose: async (options) => {
