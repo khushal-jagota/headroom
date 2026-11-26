@@ -1,5 +1,6 @@
 import { setup as core_setup } from './conversation_core_fixture.ts';
 import { send_message } from '../message_delivery/service.ts';
+import { accepted_unplaced_messages } from '../message_delivery/data/recipient_deliveries.ts';
 import { MessageRecordedToOwner } from '../message_delivery/contracts.ts';
 import { delivery_outcome_kind } from '../manager_wakes/data.ts';
 /** Gaps: autonomous orchestration and delivery fates are absent from Ticket route proofs.
@@ -1167,9 +1168,12 @@ test.each(['cleaned', 'failed', 'active'] as const)(
       }
       await killing.promise;
       expect(journal()).toEqual(held('awaiting_lifecycle'));
+      // The retired conversation's reader lists it as accepted, with no queue place.
       expect(
-        await f.core.owner_send_progress(fresh, 'correction', { kind: 'ticket', id: ended.id }),
-      ).toEqual({ state: 'queued', position: 1 });
+        db
+          .read((sql) => accepted_unplaced_messages(sql, old_id, new Set()))
+          .map((row) => [row.sender_message_id, 'queue_position' in row]),
+      ).toEqual([['correction', false]]);
       await expect(
         send_message(f.core, db, clock, as_sender, OWNER, 'owner reply'),
       ).resolves.toMatchObject({ fate: { constructor: MessageRecordedToOwner } });

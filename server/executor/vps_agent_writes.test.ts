@@ -532,3 +532,58 @@ test('an interrupted recipient lifecycle refuses one inbox item and admits the n
     await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
 });
+
+// Risk: a dispatch reservation written before recipient journals holds no message, so it reads
+// as uncertain forever although its recipient recorded the prompt or refused it. Gap: nothing
+// read these rows. Reuse the real inbox store and a real conversation for the event.
+test('an old message dispatch reservation reconciles from its recorded event', async () => {
+  const w = world({ kind: 'manager', id: 'm_old' });
+  w.database.write((tx) =>
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES(1,?)', ['test-runtime']),
+  );
+  const f = core_setup({ restart_of: w.database });
+  await f.start();
+  const target = { kind: 'chief', id: 'chief' };
+  const first = w.envelope(1, 'message.send', { body: { target, message: 'old correction' } });
+  const reservation = {
+    sender_id: first.sender_id,
+    submission_id: first.submission_id,
+    disposition: 'uncertain' as const,
+    accepted_at_vps_ms: 1,
+    result: { target, conversation_id: null, fate: 'uncertain' },
+  };
+  w.database.write((tx) =>
+    w.writes.store.write_position(tx, first, reservation, { dispatching: true }),
+  );
+  const event = (sequence: number, kind: string, payload: JsonObject = {}) =>
+    w.database.write((tx) =>
+      tx.run('INSERT INTO conversation_events VALUES(?,?,?,?,0)', [
+        'core',
+        sequence,
+        kind,
+        JSON.stringify({ sender_message_id: first.submission_id, ...payload }),
+      ]),
+    );
+  try {
+    expect(await w.send(first)).toEqual(reservation);
+    event(1, 'prompt_delivery_refused', { refusal_reason: 'no_such_conversation' });
+    expect(await w.send(first)).toEqual({
+      ...reservation,
+      disposition: 'accepted',
+      result: {
+        target,
+        conversation_id: 'core',
+        fate: 'refused',
+        refusal_reason: 'no_such_conversation',
+      },
+    });
+    event(2, 'prompt');
+    expect(await w.send(first)).toEqual({
+      ...reservation,
+      disposition: 'accepted',
+      result: { target, conversation_id: 'core', fate: 'accepted', submission_id: 'submission-1' },
+    });
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});

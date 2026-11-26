@@ -33,6 +33,11 @@ interface LiveConversation {
   spool_bytes: number;
   output_generation: number;
   latest_tool_id: string | null;
+  /**
+   * Changes when a message waiting for this conversation is admitted, held or settled, so a
+   * reader knows to read the held prompts and pending messages again.
+   */
+  waiting_messages_revision: number;
 }
 export class ViewSubscription {
   readonly owner: ConversationViewLiveOutput;
@@ -157,6 +162,7 @@ export class ConversationViewLiveOutput {
         spool_bytes: 0,
         output_generation: 0,
         latest_tool_id: null,
+        waiting_messages_revision: 0,
       };
       this.#conversations.set(conversation_id, state);
     }
@@ -262,6 +268,14 @@ export class ConversationViewLiveOutput {
           state.latest_tool_id = null;
         }
       }
+      if (
+        (payload.kind === 'prompt' ||
+          payload.kind === 'prompt_delivery_refused' ||
+          payload.kind === 'prompt_delivery_uncertain' ||
+          payload.kind === 'prompt_discarded') &&
+        payload.sender_message_id
+      )
+        state.waiting_messages_revision++;
       state.revision++;
     }
     for (const watcher of [...(this.#subscriptions.get(conversation_id) ?? [])]) {
@@ -275,6 +289,7 @@ export class ConversationViewLiveOutput {
     }
     state.activity_at = Date.now();
     state.revision++;
+    if (frame instanceof event.HeldPromptsChangedFrame) state.waiting_messages_revision++;
     if (state.spool !== null) {
       if (frame instanceof event.AgentMessageDeltaFrame) {
         const encoded = Buffer.from(frame.text_delta);
@@ -304,9 +319,11 @@ export class ConversationViewLiveOutput {
       watcher.notify({ durable: false });
     }
   }
-  status(conversation_id: string): readonly [number, number | null] {
+  status(conversation_id: string): readonly [number, number | null, number] {
     const state = this.#conversations.get(conversation_id);
-    return state ? [state.revision, state.activity_at] : [0, null];
+    return state
+      ? [state.revision, state.activity_at, state.waiting_messages_revision]
+      : [0, null, 0];
   }
   output(conversation_id: string): ViewLiveOutput | null {
     const state = this.#conversations.get(conversation_id);

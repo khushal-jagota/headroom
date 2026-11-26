@@ -294,6 +294,18 @@ async function owned_server(
         sender_label: 'Owner',
         sender_message_id: text,
       });
+    // A send answers at acceptance. Its stored outcome reports the delivery.
+    const outcome = async (text: string) =>
+      (
+        await (
+          await fetch(
+            server.address +
+              `/api/conversation/owner-sends/${encodeURIComponent(text)}?owner_kind=chief&owner_id=chief`,
+          )
+        ).json()
+      ).outcome;
+    const delivered = (text: string) =>
+      vi.waitFor(async () => expect(await outcome(text)).toMatchObject({ outcome: 'delivered' }));
     const status = async () => {
       const response = await fetch(server.address + '/api/updates');
       expect(response.status).toBe(200);
@@ -312,6 +324,8 @@ async function owned_server(
       server,
       post,
       send,
+      outcome,
+      delivered,
       status,
       async close() {
         try {
@@ -355,7 +369,8 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     const sent = await owned.send('native work before update');
     expect(sent.status).toBe(200);
     const delivery = await sent.json();
-    expect(delivery.fate).toBe('started');
+    expect(delivery.fate).toBe('accepted');
+    await owned.delivered('native work before update');
     const child = owned.registry.child(delivery.conversation_id);
     expect(owned.context.core!.workspace_activity()).toBe('busy');
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
@@ -413,7 +428,8 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     const resumed = await owned.send('native work after failed update');
     expect(resumed.status).toBe(200);
     const resumed_delivery = await resumed.json();
-    expect(resumed_delivery.fate).toBe('started');
+    expect(resumed_delivery.fate).toBe('accepted');
+    await owned.delivered('native work after failed update');
     await owned.registry.child(resumed_delivery.conversation_id).finish();
   } finally {
     launch.reject(new Error('test cleanup'));
@@ -436,6 +452,7 @@ test('ordinary shutdown retains ownership beyond grace while a provider return i
     const first = await owned.send('create native child');
     expect(first.status).toBe(200);
     const { conversation_id } = await first.json();
+    await owned.delivered('create native child');
     child = owned.registry.child(conversation_id);
     await child.finish();
     await owned.context.core!.wait_until_quiescent();
@@ -897,9 +914,11 @@ test('an accepted queued send drains even when worker readiness polling is disab
   try {
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
     const first = await (await owned.send('first queued-update turn')).json();
-    expect(first.fate).toBe('started');
+    expect(first.fate).toBe('accepted');
+    await owned.delivered('first queued-update turn');
     const second = await (await owned.send('second queued-update turn')).json();
-    expect(second.fate).toBe('queued');
+    expect(second.fate).toBe('accepted');
+    expect(await owned.outcome('second queued-update turn')).toMatchObject({ outcome: 'pending' });
     const pending = deferred<void>();
     const core = owned.context.core!;
     const hasPending = core.has_pending_update_sends.bind(core);
@@ -932,9 +951,11 @@ test('a stuck queued send times out, the installer starts, and the next home del
   try {
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
     const first = await (await owned.send('running before update')).json();
-    expect(first.fate).toBe('started');
+    expect(first.fate).toBe('accepted');
+    await owned.delivered('running before update');
     const queued = await (await owned.send(message)).json();
-    expect(queued.fate).toBe('queued');
+    expect(queued.fate).toBe('accepted');
+    expect(await owned.outcome(message)).toMatchObject({ outcome: 'pending' });
     const pressed = performance.now();
     expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
       200,
@@ -965,7 +986,7 @@ test('a stuck queued send times out, the installer starts, and the next home del
       );
       expect(lookup.status).toBe(200);
       expect(await lookup.json()).toMatchObject({
-        delivery: { conversation_id: first.conversation_id, fate: 'started' },
+        outcome: { conversation_id: first.conversation_id, outcome: 'delivered' },
       });
       expect(await restarted.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);
     } finally {

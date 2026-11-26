@@ -1,4 +1,5 @@
-import { owner_send_status } from '../message_delivery/owner_sends.ts';
+import { owner_send_outcome } from '../message_delivery/owner_sends.ts';
+import { accepted_unplaced_messages } from '../message_delivery/data/recipient_deliveries.ts';
 /** Product conversation HTTP surface, sharing the record and process runtime. */
 import { read_machine } from '../machines/data.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
@@ -205,6 +206,13 @@ async function state_json(
     latest_sequence: record.latest_sequence,
     owner_read_through_sequence: record.owner_read_through_sequence,
     is_running,
+    pending_messages: runtime.record.database.read((sql) =>
+      accepted_unplaced_messages(
+        sql,
+        conversation_id,
+        new Set(held_prompts.flatMap((held) => held.sender_message_id ?? [])),
+      ),
+    ),
     held_prompts: held_prompts.map((held) => ({
       held_prompt_id: held.held_prompt_id,
       requested_mode: held.requested_mode,
@@ -340,9 +348,8 @@ export function createConversationRoutes(
       )
         throw new HttpError(422, 'Invalid owner send address');
       return {
-        delivery: await owner_send_status(
+        outcome: owner_send_outcome(
           runtime.record.database,
-          runtime.core,
           { kind: owner_kind, id: owner_id },
           message_id,
         ),

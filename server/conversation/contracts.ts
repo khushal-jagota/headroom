@@ -337,8 +337,6 @@ export interface RecordMessageToOwnerOptions {
   sent_at_unix_milliseconds?: number | null;
   recording_receipt?: NativeMessageOperation | null;
 }
-export type OwnerSendProgress =
-  { state: 'queued'; position: number } | { state: 'pending' } | { state: 'uncertain' };
 
 export interface ConversationSystem {
   configure_worker_cleanup_recheck?(
@@ -378,11 +376,6 @@ export interface ConversationSystem {
   ): Promise<void>;
   interrupt(conversation_id: string): Promise<void>;
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]>;
-  owner_send_progress(
-    conversation_id: string,
-    sender_message_id: string,
-    recipient: Principal,
-  ): Promise<OwnerSendProgress | null>;
 
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>>;
   promote_held_prompt(

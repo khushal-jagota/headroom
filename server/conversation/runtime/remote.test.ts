@@ -588,6 +588,8 @@ test('remote transient frames publish once after their durable receipt without t
   try {
     await f.start();
     await f.send();
+    // Admission announces the accepted message; count only the transient frames below.
+    publish_frame.mockClear();
     const token = f.core.runtime_turn('core')!.token;
     const inbox = new InboxStore(f.database, new FileStaging(f.database_path));
     const before = f.database.read((sql) => sql.all('SELECT * FROM conversation_events'));

@@ -116,6 +116,38 @@ export function admit_recipient_delivery(
   return result;
 }
 /**
+ * Accepted messages the conversation has not placed yet: no held prompt and no prompt row.
+ * A message held for workspace cleanup belongs to the retired conversation's reader too.
+ * Read from the journal alone, so no conversation lock is taken.
+ */
+export function accepted_unplaced_messages(
+  sql: ReadSql,
+  conversation_id: string,
+  held_sender_message_ids: ReadonlySet<string>,
+): Record<string, unknown>[] {
+  return sql
+    .all<{ payload: string }>(
+      "SELECT payload FROM recipient_deliveries WHERE state IN ('pending','dispatching','awaiting_lifecycle') AND (conversation_id=? OR (state='awaiting_lifecycle' AND json_extract(generation,'$.retired_conversation_id')=?)) ORDER BY delivery_order",
+      [conversation_id, conversation_id],
+    )
+    .flatMap(({ payload }) => {
+      const stored = JSON.parse(payload) as Record<string, unknown>;
+      const id = stored.sender_message_id;
+      if (typeof id !== 'string' || held_sender_message_ids.has(id)) return [];
+      return [
+        {
+          sender_message_id: id,
+          requested_mode: stored.requested_mode,
+          sender_label: stored.sender_label,
+          sender: stored.sender ?? null,
+          recipient: stored.recipient ?? null,
+          sent_at_unix_milliseconds: stored.sent_at_unix_milliseconds ?? null,
+          ...('text' in stored ? { text: stored.text } : { content: stored.content }),
+        },
+      ];
+    });
+}
+/**
  * A held message refused before its fresh conversation started has no event there.
  * Its journal row carries that outcome for status readers that follow the fresh id.
  */

@@ -1,5 +1,5 @@
 import { read_held_prompts } from './record/held_prompts.ts';
-import { PlannerError, type Principal } from '../core/contracts.ts';
+import { PlannerError } from '../core/contracts.ts';
 import type {
   WorkspaceIdentity,
   RetirementTarget,
@@ -18,7 +18,6 @@ import type {
   ConversationStartRequest,
   ConversationSystem,
   HeldPromptPromotionMode,
-  OwnerSendProgress,
   PromptDeliveryFate,
   RecordMessageToOwnerOptions,
   SendOptions,
@@ -677,13 +676,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]> {
     return queries.held_prompts(this, conversation_id);
-  }
-  owner_send_progress(
-    conversation_id: string,
-    sender_message_id: string,
-    recipient: Principal,
-  ): Promise<OwnerSendProgress | null> {
-    return queries.owner_send_progress(this, conversation_id, sender_message_id, recipient);
   }
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
     return queries.sender_message_ids_awaiting_outcome(this, conversation_id);

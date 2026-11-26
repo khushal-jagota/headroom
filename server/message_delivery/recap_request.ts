@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Deferred } from '../core/deferred.ts';
+import { answer_at_acceptance } from './acceptance.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { MessageAcceptedForDelivery } from './contracts.ts';
 /** Clear the spent recap through its canonical writer, then request its replacement. */
@@ -70,34 +70,28 @@ export async function request_recap(
         ? 'Chief'
         : `Manager ${database.read((sql) => read_manager(sql, context.principal.id).item.title)}`;
   const submission_id = `recap_${randomUUID()}`;
-  const accepted = new Deferred<MessageDeliveryResult>();
-  let conversation_id: string | null = null;
-  const delivery = send_message(
-    conversations,
-    database,
-    clock,
-    context,
-    recipient,
-    `${RECAP_REQUEST_MESSAGE}\nRequested by ${requester}.`,
-    'steer',
+  return answer_at_acceptance(
+    (recording_receipt) =>
+      send_message(
+        conversations,
+        database,
+        clock,
+        context,
+        recipient,
+        `${RECAP_REQUEST_MESSAGE}\nRequested by ${requester}.`,
+        'steer',
+        { system_message: true, sender_message_id: submission_id, recording_receipt },
+      ),
     {
-      system_message: true,
-      sender_message_id: submission_id,
-      recording_receipt: {
-        sender_id: '',
-        submission_id,
-        in_admission: (tx, id) => {
-          clear_recap(tx);
-          conversation_id = id;
-        },
-        admitted: () =>
-          accepted.resolve({ recipient, conversation_id, fate: new MessageAcceptedForDelivery() }),
-      },
+      submission_id,
+      in_admission: (tx) => clear_recap(tx),
+      accepted: (conversation_id): MessageDeliveryResult => ({
+        recipient,
+        conversation_id,
+        fate: new MessageAcceptedForDelivery(),
+      }),
+      before_acceptance: (delivered) => delivered,
+      failure_label: 'accepted recap delivery failed',
     },
   );
-  void delivery.catch((error) => {
-    if (!accepted.settled) accepted.reject(error);
-    else console.error('accepted recap delivery failed', error);
-  });
-  return Promise.race([accepted.promise, delivery]);
 }

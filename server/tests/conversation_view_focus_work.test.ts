@@ -298,7 +298,7 @@ test('an agent-started turn owns its work and keeps background task history', ()
       {
         runtime_epoch: 'test',
         output: () => null,
-        status: () => [0, null],
+        status: () => [0, null, 0],
         latest_tool_id: () => null,
         progress: () => null,
         read_chunk: () => {

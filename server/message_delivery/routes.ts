@@ -8,7 +8,8 @@ import { delivery_fate_json } from '../conversation/http.ts';
 import type { PromptDeliveryMode } from '../conversation/contracts.ts';
 import { MessageAcceptedForDelivery, MessageRecordedToOwner } from './contracts.ts';
 import type { MessageDeliveryResult } from './contracts.ts';
-import { send_message } from './service.ts';
+import { send_message, type SendMessageOptions } from './service.ts';
+import { answer_at_acceptance } from './acceptance.ts';
 import { request_recap } from './recap_request.ts';
 
 export function principal(raw: unknown): Principal {
@@ -68,16 +69,38 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const mode =
       'mode' in request.body ? message_delivery_mode(request.body.mode) : message_delivery_mode();
     if (!services.conversationSystem) throw new Error('conversation system is unavailable');
-    return result_json(
-      await send_message(
-        services.conversationSystem,
+    const send = (options?: SendMessageOptions) =>
+      send_message(
+        services.conversationSystem!,
         services.database,
         services.clock,
         services.identity(request),
         recipient,
         message,
         mode as PromptDeliveryMode,
-      ),
+        options,
+      );
+    if (!('message_id' in request.body)) return result_json(await send());
+    const message_id = request.body.message_id;
+    if (typeof message_id !== 'string' || !message_id.trim())
+      throw new PlannerError('validation', 'message_id must be text');
+    // A message to the owner is recorded at once, so its answer is already final.
+    if (recipient.kind === 'owner')
+      return result_json(await send({ sender_message_id: message_id }));
+    // The sender minted the ID. The answer comes at acceptance, before native delivery.
+    return answer_at_acceptance(
+      (recording_receipt) => send({ sender_message_id: message_id, recording_receipt }),
+      {
+        submission_id: message_id,
+        accepted: (conversation_id): Record<string, unknown> => ({
+          target: recipient,
+          conversation_id,
+          fate: 'accepted',
+          message_id,
+        }),
+        before_acceptance: result_json,
+        failure_label: 'accepted message delivery failed',
+      },
     );
   });
   app.post('/recap-requests', async (request, reply) => {
