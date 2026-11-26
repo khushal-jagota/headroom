@@ -43,8 +43,11 @@ export interface InstallerEffects {
     lifetime_lock_fd: number,
     staged_copy?: string,
   ): Promise<void>;
-  /** After the new home passes health: the full check that a caught-up snapshot skipped. */
-  verify_snapshot(snapshot: string): Promise<void>;
+  /**
+   * After the new home passes health: the previous release's full check of a caught-up
+   * snapshot, then retention. Its child records the outcome.
+   */
+  verify_snapshot(snapshot: string, deployed_revision: string): Promise<void>;
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   /** After the swap and before start: the new app brings the stopped database to its head. */
   schema_steps(lifetime_lock_fd: number, backup_taken: boolean): Promise<void>;

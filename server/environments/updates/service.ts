@@ -1,5 +1,6 @@
 import { has_home_credential } from '../../machines/executor_credentials.ts';
 import { require_snapshot_space } from './installer/snapshot_space.ts';
+import { remove_staged_copies } from '../backup/capture.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
 import { with_installer_lock } from '../update_barrier.ts';
 import { release_path, selected_release } from './installer/selection.ts';
@@ -596,6 +597,22 @@ export class UpdateService {
         this.options.installer.requires_snapshot === true ||
         !this.options.runtime.database.read(has_home_credential);
       if (snapshot_required) {
+        // The previous installer checks its snapshot after its home serves again. Its unit
+        // and its lock must be free before another installer can launch.
+        const previous_installer_done = await with_installer_lock(
+          dirname(this.options.database),
+          null,
+          async () => true,
+        );
+        if (!previous_installer_done.acquired) {
+          this.fail(
+            attempt_id,
+            states('preparing'),
+            'The previous update is still checking its snapshot, so nothing changed. Try again in a minute.',
+          );
+          return;
+        }
+        await remove_staged_copies(this.options.backup_directory);
         await require_snapshot_space(this.options.database, this.options.backup_directory);
         if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
         const started = performance.now();

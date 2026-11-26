@@ -314,13 +314,10 @@ export function create_installer_effects(
         { check: true, output: 'inherit', lifetime_lock_fd },
       );
     },
-    async verify_snapshot(snapshot) {
+    async verify_snapshot(snapshot, deployed_revision) {
       const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
-      // The installer's own release took the snapshot, so it also checks it.
-      const app = release_path(
-          request.current_root,
-          String(new InstallationRecord(request).read().from_sha),
-        ),
+      // The release that took the snapshot also checks it.
+      const app = release_path(request.current_root, deployed_revision),
         main = join(app, 'server/environments/updates/snapshot_verify_main.ts');
       for (const path of [snapshot, request.backup_directory, request.data_directory, app, main])
         assert_installer_path(path, execution.environment);

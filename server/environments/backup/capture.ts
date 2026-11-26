@@ -3,8 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import {
-  checkpointStoppedDatabase,
   onlineBackup,
+  readStoppedDatabaseFile,
   verifyDatabaseIntegrity,
 } from '../../core/database/index.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
@@ -103,10 +103,6 @@ export async function stage_database_copy(
   const root = await resolved_path(backupDirectory);
   if (!(await is_file(source))) throw new Error(source);
   await fs.mkdir(root, { recursive: true });
-  // One update prepares at a time. A staged copy left here belongs to an earlier attempt
-  // that ended with its process.
-  for (const name of await fs.readdir(root))
-    if (name.startsWith(STAGED_PREFIX)) await remove_temporary(join(root, name));
   const temporary = await fs.mkdtemp(join(root, STAGED_PREFIX));
   try {
     const image = join(temporary, 'database.sqlite');
@@ -120,17 +116,38 @@ export async function stage_database_copy(
 }
 
 /**
+ * One update prepares at a time, so a staged copy that is already here belongs to an earlier
+ * attempt that ended without its installer. The update removes it before it measures space.
+ */
+export async function remove_staged_copies(backupDirectory: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.readdir(backupDirectory);
+  } catch (error) {
+    if (missing(error)) return;
+    throw error;
+  }
+  for (const name of names)
+    if (name.startsWith(STAGED_PREFIX)) await remove_temporary(join(backupDirectory, name));
+}
+
+/** A staged copy is a temporary folder of the backup directory, under its own prefix. */
+export async function is_staged_copy(path: string, backupDirectory: string): Promise<boolean> {
+  const resolved = await resolved_path(path);
+  return (
+    dirname(resolved) === (await resolved_path(backupDirectory)) &&
+    basename(resolved).startsWith(STAGED_PREFIX)
+  );
+}
+
+/**
  * Make the staged image byte-identical to the stopped database. Only blocks that differ are
  * written. Returns the sha256 of the stopped database's bytes, read in the same pass.
  */
 async function catch_up_staged_image(source: string, image: string): Promise<string> {
-  checkpointStoppedDatabase(source);
-  try {
-    if ((await fs.stat(source + '-wal')).size !== 0)
-      throw new Error('the stopped database kept frames in its WAL');
-  } catch (error) {
-    if (!missing(error)) throw error;
-  }
+  return readStoppedDatabaseFile(source, () => copy_differing_blocks(source, image));
+}
+async function copy_differing_blocks(source: string, image: string): Promise<string> {
   const digest = createHash('sha256');
   const stopped = await fs.open(source, 'r');
   try {
@@ -186,9 +203,9 @@ export async function create_database_backup(
   let temporary: string;
   if (stagedCopy === undefined) temporary = await fs.mkdtemp(join(root, TEMPORARY_PREFIX));
   else {
-    temporary = await resolved_path(stagedCopy);
-    if (dirname(temporary) !== root || !basename(temporary).startsWith(STAGED_PREFIX))
+    if (!(await is_staged_copy(stagedCopy, root)))
       throw new Error('the staged copy is not a temporary folder of the backup directory');
+    temporary = await resolved_path(stagedCopy);
   }
   try {
     const image = join(temporary, 'database.sqlite');
@@ -234,6 +251,14 @@ export async function create_database_backup(
   }
 }
 
+/** The update snapshot's image failed its late check. */
+export class UpdateSnapshotCheckFailure extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'UpdateSnapshotCheckFailure';
+  }
+}
+
 /**
  * After an update's home serves again: the full integrity check that the stopped window
  * skipped, then the retention that it deferred. A damaged image loses its verified mark, so
@@ -246,28 +271,31 @@ export async function verify_update_snapshot(
 ): Promise<void> {
   const started = performance.now();
   const path = await resolved_path(snapshot);
-  if (!(await is_verified_snapshot(path)))
-    throw new Error('the update snapshot no longer matches its recorded sha256');
+  const root = await resolved_path(backupDirectory);
   try {
-    verifyDatabaseIntegrity(join(path, 'database.sqlite'));
-  } catch (error) {
-    const metadata_path = join(path, 'metadata.json');
-    const metadata = JSON.parse(await fs.readFile(metadata_path, 'utf8')) as SnapshotMetadata;
-    const replacement = metadata_path + '.unverified';
-    await fs.writeFile(
-      replacement,
-      JSON.stringify({ ...metadata, verified: false }, null, 2) + '\n',
-    );
-    await fs.rename(replacement, metadata_path);
-    throw error;
+    if (!(await is_verified_snapshot(path)))
+      throw new UpdateSnapshotCheckFailure('the update snapshot no longer matches its sha256');
+    try {
+      verifyDatabaseIntegrity(join(path, 'database.sqlite'));
+    } catch (error) {
+      const metadata_path = join(path, 'metadata.json');
+      const metadata = JSON.parse(await fs.readFile(metadata_path, 'utf8')) as SnapshotMetadata;
+      const replacement = metadata_path + '.unverified';
+      await fs.writeFile(
+        replacement,
+        JSON.stringify({ ...metadata, verified: false }, null, 2) + '\n',
+      );
+      await fs.rename(replacement, metadata_path);
+      throw new UpdateSnapshotCheckFailure(
+        `the update snapshot failed SQLite's integrity check: ${String(error)}`,
+        { cause: error },
+      );
+    }
   } finally {
     timed('late_check', (performance.now() - started) / 1000);
   }
   const retention = performance.now();
-  await apply_verified_snapshot_retention(
-    backupDirectory,
-    await verified_snapshot_retention_plan(backupDirectory),
-  );
+  await apply_verified_snapshot_retention(root, await verified_snapshot_retention_plan(root));
   timed('retention', (performance.now() - retention) / 1000);
 }
 

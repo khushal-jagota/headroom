@@ -160,9 +160,9 @@ it('a staged copy is caught up in the window and fully checked only after health
           events.push(['snapshot', deployed_revision, staged_copy]);
           new InstallationRecord(request).snapshot_taken('/scripted/snapshot');
         },
-        async verify_snapshot(snapshot) {
-          events.push(['verify_snapshot', snapshot, record(root).state]);
-          throw new Error('SQLite integrity check failed');
+        async verify_snapshot(snapshot, deployed_revision) {
+          events.push(['verify_snapshot', snapshot, deployed_revision, record(root).state]);
+          throw new Error('the late check child did not finish');
         },
         async schema_steps() {
           events.push('schema_steps');
@@ -185,10 +185,10 @@ it('a staged copy is caught up in the window and fully checked only after health
       'schema_steps',
       'start',
       ['healthy', TO],
-      ['verify_snapshot', '/scripted/snapshot', 'done'],
+      ['verify_snapshot', '/scripted/snapshot', FROM, 'done'],
     ]);
     assert.equal(record(root).state, 'done');
-    assert.equal(typeof record(root).steps.snapshot_check_failed, 'string');
+    assert.equal(typeof record(root).steps.snapshot_late_work_failed, 'string');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -466,7 +466,8 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
       fileURLToPath(new URL('../snapshot_verify_main.ts', import.meta.url)),
       join(release, 'snapshot_verify_main.ts'),
     );
-    await effects.verify_snapshot(caught_up);
+    await effects.verify_snapshot(caught_up, FROM);
+    assert.equal(typeof record(root).steps.snapshot_verified, 'string');
     // Retention, deferred from the window, keeps both verified snapshots.
     assert.equal(
       readdirSync(request.backup_directory).filter((name) => name.startsWith('snapshot-')).length,

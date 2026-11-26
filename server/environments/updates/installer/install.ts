@@ -343,26 +343,28 @@ async function install_locked(
   }
   rmtree(join(request.current_root, 'app-previous'), true);
   if (staged_copy !== undefined && typeof attempt.backup === 'string')
-    await verify_caught_up_snapshot(effects, record, attempt.backup, signal);
+    await verify_caught_up_snapshot(effects, record, attempt.backup, from_sha, signal);
   return 0;
 }
 /**
  * The window skipped SQLite's check of the pages written after the staged check. The home
- * serves again, so a failure cannot undo the update: it is reported, and the snapshot loses
- * its verified mark. Restore checks every image again before use.
+ * serves again, so nothing here can undo the update. The check's child records its result.
+ * Restore checks every image again before use.
  */
 async function verify_caught_up_snapshot(
   effects: InstallerEffects,
   record: InstallationRecord,
   snapshot: string,
+  from_sha: string,
   signal: AbortSignal,
 ): Promise<void> {
   try {
-    await effects.verify_snapshot(snapshot);
-    record.record('snapshot_verified');
+    await effects.verify_snapshot(snapshot, from_sha);
   } catch (error) {
     signal.throwIfAborted();
-    console.error(`The update snapshot failed its full check: ${problem(error)}`);
-    record.record('snapshot_check_failed');
+    console.error(
+      `The update snapshot's late check or retention did not finish: ${problem(error)}`,
+    );
+    record.record('snapshot_late_work_failed');
   }
 }

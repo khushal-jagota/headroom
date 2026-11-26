@@ -18,6 +18,7 @@ import {
 import { AppValidationError } from '../release/contracts.ts';
 import { INSTALLER_LAUNCH_TIMEOUT_SECONDS } from './configuration.ts';
 import { DATABASE_SNAPSHOT_TIMEOUT_SECONDS } from './installer/configuration.ts';
+import { is_staged_copy } from '../backup/capture.ts';
 import { installer_unit, selected_installer_environment } from './installation_command.ts';
 
 export function create_installer_operations(inputs: {
@@ -45,7 +46,10 @@ export function create_installer_operations(inputs: {
         { timeout_seconds: DATABASE_SNAPSHOT_TIMEOUT_SECONDS, environment: { ...environment } },
         { child_processes: inputs.child_processes, signal: inputs.signal, deadline: null },
       );
-      return result.stdout.trim();
+      const staged = result.stdout.trim();
+      if (!(await is_staged_copy(staged, backup_directory)))
+        throw new AppValidationError('The staged snapshot is outside the backup directory');
+      return staged;
     },
     prepare(options) {
       inputs.signal.throwIfAborted();

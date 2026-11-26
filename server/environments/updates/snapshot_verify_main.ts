@@ -1,5 +1,5 @@
 /** Installer-only entry, run after the new home passes health: the snapshot's full check. */
-import { verify_update_snapshot } from '../backup/capture.ts';
+import { UpdateSnapshotCheckFailure, verify_update_snapshot } from '../backup/capture.ts';
 import { assert_test_database_path } from '../../core/test_paths.ts';
 import { expand_path } from '../paths.ts';
 import { InstallationRecord } from './installer/record.ts';
@@ -19,7 +19,15 @@ if (args.length !== 4) {
     assert_test_database_path(expand_path(path));
   }
   const record = new InstallationRecord({ data_directory, attempt_id });
-  await verify_update_snapshot(snapshot, backup_directory, (part, seconds) =>
-    record.snapshot_timed({ [part]: seconds }),
-  );
+  try {
+    await verify_update_snapshot(snapshot, backup_directory, (part, seconds) =>
+      record.snapshot_timed({ [part]: seconds }),
+    );
+    record.record('snapshot_verified');
+  } catch (error) {
+    // The home already serves on top of the stepped database, so nothing is undone.
+    if (!(error instanceof UpdateSnapshotCheckFailure)) throw error;
+    console.error(error);
+    record.record('snapshot_check_failed');
+  }
 }

@@ -21,7 +21,7 @@ The update snapshot is the restore point if the update fails before the new home
 
 1. While the home still serves, the update takes the online copy and runs the full integrity check on it. If that check fails, the update stops there and the home keeps running.
 2. After the stop, the installer brings the copy up to the stopped database. It compares the two files block by block, writes only the blocks that differ, and computes the checksum in the same pass. The snapshot is then byte-identical to the stopped database, in the same format as every other snapshot.
-3. After the new home passes health, the installer runs the full integrity check on the published snapshot, and then retention. If that check fails, the installer logs the failure, and the snapshot loses its verified mark.
+3. After the new home passes health, the installer runs the full integrity check on the published snapshot, and then retention. If that check fails, the installer logs the failure, and the snapshot loses its verified mark. A new update is refused until this step ends. The update record keeps the seconds of each step, so the real stopped window shows in it.
 
 The pages that the home wrote between steps 1 and 2 get no integrity check before the schema steps run. Step 3 checks them, and restore checks every image again before it replaces the database. If the update fails in step 2, the live app is not replaced.
 
