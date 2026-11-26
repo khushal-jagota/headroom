@@ -160,6 +160,7 @@ export class AgentGateway {
             deadline,
           );
         } catch (error) {
+          if (error instanceof ExecutorValidationError) throw error;
           if (error instanceof ExecutorHttpError) {
             if (error.status === 400 && error.message === 'unsupported executor read')
               throw new ExecutorValidationError(

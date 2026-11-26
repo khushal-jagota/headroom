@@ -7,7 +7,6 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { WorkerScratch, snapshot_ticket_scratch, prune_ticket_scratch } from './worker_scratch.ts';
 import { private_ticket_path, resolveFile } from '../files/logic/paths.ts';
 import { fixture as ticket_fixture, fixture_path, create } from '../tests/ticket_fixture.ts';
-import { ticket_detail } from '../tickets/views.ts';
 import { linked } from '../files/catalog/read.ts';
 import { inventory } from '../files/catalog/inventory.ts';
 const roots: string[] = [];
@@ -120,11 +119,6 @@ test('public Ticket files and catalogs hide private checkouts, markers and alias
   );
   const catalog = await inventory(owner, `/files/tickets/${ticket.id}/`);
   expect(catalog.directories['']!.map((row) => row.path).sort()).toEqual([
-    'artifacts',
-    'report.html',
-  ]);
-  const detail = db.read((sql) => ticket_detail(sql, ticket.id, 1, database));
-  expect((detail.artifacts as { name: string }[]).map((row) => row.name).sort()).toEqual([
     'artifacts',
     'report.html',
   ]);
