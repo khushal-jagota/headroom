@@ -576,6 +576,21 @@ import XCTest
         XCTAssertNil(Outbox.shared.work(shared, id: "elsewhere"), "The folded refusal is settled")
         XCTAssertFalse(model.rows.contains { $0.id == "elsewhere" })
         XCTAssertEqual(OfflineProtocol.state.writes.count, 3, "Nothing sends it a second time")
+
+        // A first message's start can be refused after acceptance, which retires the conversation
+        // it was accepted into. Its Try Again joins or starts the current conversation instead.
+        OfflineProtocol.state.createdConversation = "C1"
+        try LocalStore.shared.outgoing.enqueue(message("first", conversation: nil, at: 3), server: shared)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(Outbox.shared.work(shared, id: "first")?.message?.conversationId, "C1", "Acceptance names the new conversation")
+        XCTAssertEqual(try LocalStore.shared.outgoing.reopenRefused(server: shared, id: "first", note: "Not delivered · agent could not start"), true)
+        let retried = await Outbox.shared.retry("first", api: api)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes.count, 5)
+        XCTAssertEqual(OfflineProtocol.state.writes.last, try XCTUnwrap(retried))
+        let restart = try json(XCTUnwrap(OfflineProtocol.state.messageBodies.last?.1))
+        XCTAssertNil(restart["conversation_id"], "The retry does not target the retired conversation")
+        XCTAssertEqual(restart["backend_key"] as? String, "codex", "It keeps the settings it was composed with")
     }
     func testPhoto422RestoresDraftAndRetryClearsOnlyThatDraft() async throws {
         store.saveDraft("  Original words  ", server: server, id: "photo-draft")

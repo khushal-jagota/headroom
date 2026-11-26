@@ -252,6 +252,11 @@ import SwiftData
         }
         return work
     }
+    /// The message as it was saved, before it took the conversation a first message created.
+    func composedMessage(server: String, id: String) throws -> ConversationSend? {
+        guard let row = try raw(server, "outbox", id) else { return nil }
+        return try JSONDecoder().decode(PendingWork.self, from: row.payload).message
+    }
     func audioIsUnowned(_ file: String) throws -> Bool {
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.audioFile == file })
         query.fetchLimit = 1
@@ -508,8 +513,12 @@ import SwiftData
         try transaction(server) {
             guard let original = try metadata(server, id), original.state == "failed", replacement.state == .waiting else { throw StoreError.invalidTransition }
             let next = try insert(try capturePhotoDraft(replacement, server: server, capturedDraft: capturedDraft), server: server, sequence: original.sequence)
-            next.lane = original.lane; next.conversationID = original.conversationID
-            next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
+            next.lane = original.lane
+            // A replacement saved without a conversation joins or starts the current one.
+            if replacement.message?.conversationId != nil {
+                next.conversationID = original.conversationID
+                next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
+            }
             if let payload = try raw(server, "outbox", id) { context.delete(payload) }
             context.delete(original)
         }

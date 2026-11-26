@@ -152,7 +152,9 @@ ID, the server starts the conversation once, and a server test proves that for
 Chief, Ticket and Manager. If that conversation is reset between attempts, the
 repeat lands in the new one. Later messages that were never sent join the
 conversation the first message created. A refused first message leaves no
-conversation, so later messages start their own.
+conversation, so later messages start their own. Its start can also be refused after
+home accepted it, so Try Again of a message saved without a conversation sends it
+without one: it joins or starts the current conversation.
 
 The server can hold a message, for example one that names a model, until the turn
 ends. The conversation shows held messages above the composer with the server's

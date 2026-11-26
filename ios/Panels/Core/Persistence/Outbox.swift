@@ -204,7 +204,10 @@ import Observation
                 Task { await drain(api: api) }
                 return id
             }
-            guard work.state == .failed, let message = work.message else { return nil }
+            guard work.state == .failed, var message = work.message else { return nil }
+            // A message saved without a conversation only borrowed the one its first message
+            // created, which a later refusal of that start can retire. It goes out without one.
+            if let composed = try store.outgoing.composedMessage(server: server, id: id), composed.conversationId == nil { message = composed }
             let replacementContent: [ConversationSend.Piece]
             if let content { replacementContent = content }
             else {
