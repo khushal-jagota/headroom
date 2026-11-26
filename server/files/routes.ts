@@ -19,8 +19,8 @@ import { body_str } from '../tickets/routes.ts';
 import type { OwnerKind } from './contracts.ts';
 import { resolveFile, unsafeEncoded, safeId, safeRelative, filesRoot } from './logic/paths.ts';
 import { ownerRoot, writeText, deleteFile } from './managed_files.ts';
-import { inventory } from './catalog/inventory.ts';
-import { linked } from './catalog/read.ts';
+import { list_folder, listed_targets } from './catalog/folder.ts';
+import { linked, link_targets } from './catalog/read.ts';
 import { PAGE_SIZE, PAGE_MAX_BYTES } from './catalog/config.ts';
 const REUSE_MEMORY_BOUND_BYTES = 2 * 1024 * 1024;
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
@@ -191,11 +191,19 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       });
     const configured = services.config.db_path,
       db = join(realpathSync(dirname(configured)), basename(configured));
-    const kept = await inventory(
-      join(filesRoot(db, kind), owner),
-      `/files/${kind === 'manager' ? 'managers' : kind + 's'}/${owner}/`,
-    );
-    const rows = Object.hasOwn(kept.directories, directory) ? kept.directories[directory]! : [];
+    const root = join(filesRoot(db, kind), owner),
+      prefix = `/files/${kind === 'manager' ? 'managers' : kind + 's'}/${owner}/`;
+    const listing = await list_folder(root, prefix, directory),
+      rows = listing.rows;
+    // Only the Ticket root merges linked files, and it hides those that a folder already lists.
+    const listed =
+      !directory && kind === 'ticket'
+        ? await listed_targets(
+            root,
+            prefix,
+            services.database.read((sql) => link_targets(sql, owner)),
+          )
+        : new Set<string>();
     return services.database.read((sql) => {
       let total = rows.length,
         window = rows.slice(offset, offset + limit),
@@ -205,7 +213,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           sql,
           owner,
           requestOrigin(request),
-          kept.seen,
+          listed,
           Math.max(0, offset - rows.length),
           Math.max(0, limit - window.length),
           filesRoot(db, 'ticket'),
@@ -231,7 +239,13 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         used += size;
         entries.push(row);
       }
-      return { revision: kept.revision + ':' + revision, directory, offset, total, entries };
+      // The hidden links enter the revision, so a client restarts its pages when they change.
+      const listed_revision = listed.size
+        ? createHash('sha256')
+            .update(listing.revision + JSON.stringify([...listed].sort()))
+            .digest('hex')
+        : listing.revision;
+      return { revision: listed_revision + ':' + revision, directory, offset, total, entries };
     });
   });
 };

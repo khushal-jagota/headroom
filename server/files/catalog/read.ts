@@ -6,11 +6,20 @@ import { PlannerError } from '../../core/contracts.ts';
 import { workflow_from_row } from '../../worker_types/store.ts';
 import type { CatalogEntry } from '../contracts.ts';
 import { canonical_origin } from './links.ts';
+/** Every link target the Ticket's fields hold. */
+export function link_targets(sql: ReadSql, ticket: string): string[] {
+  return sql
+    .all<{ target: string }>(
+      'SELECT DISTINCT target FROM ticket_artifact_links WHERE ticket_id=?',
+      [ticket],
+    )
+    .map((row) => row.target);
+}
 export function linked(
   sql: ReadSql,
   ticket: string,
   origin: string,
-  seen: Set<string>,
+  listed: Set<string>,
   offset: number,
   limit: number,
   ticket_files_root: string,
@@ -38,7 +47,7 @@ export function linked(
     fields.includes(String(field)) ? fields.indexOf(String(field)) : fields.length,
   );
   registerReadFunction(sql, 'artifact_visible', (target) =>
-    Number(!seen.has(String(target)) && !private_link(String(target))),
+    Number(!listed.has(String(target)) && !private_link(String(target))),
   );
   registerReadFunction(sql, 'artifact_known_field', (field) =>
     Number(fields.includes(String(field))),
