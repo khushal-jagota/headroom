@@ -20,9 +20,13 @@ The full MIT copyright and permission notice is retained in [T3-LICENSE](T3-LICE
   names the homes it reads. `grokTranscriptParser.ts` reads the owner's own Grok
   CLI transcripts: Grok is a usage source, not a driver.
 - A source is `lines` or `files`. A line parser carries state from line to line
-  and across scans. A whole-file parser is read again only when its fingerprint
-  changes. The usage worker cannot receive functions, so each directory names its
-  parser module, which the worker imports.
+  and across scans. A whole-file parser lists its own files with a fingerprint
+  each, and a file is read again only when its fingerprint changes. The parser
+  then finishes every listed file's records together, cached or fresh, because
+  one file's records can depend on another's. Antigravity lists only `.db`
+  conversations, keeps a database whose `-wal` log changed in the window, and
+  names a model id from any listed database. The usage worker cannot receive
+  functions, so each directory names its parser module, which the worker imports.
 - `usagePricing.ts` prices those records from public rates and explicit overrides,
   by a record's `pricing_model` when it has one and by its model otherwise.
 - `usageAggregation.ts` groups records by day or exact hourly anchors and applies
