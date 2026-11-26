@@ -8,6 +8,7 @@ import { default_production_dependencies } from './production_bindings.ts';
 import type { ApplicationEntrypoint } from './contracts.ts';
 import { writeSync } from 'node:fs';
 import { setFlagsFromString } from 'node:v8';
+import { stop_when_supervisor_is_gone } from './supervisor_pipe.ts';
 
 /** Only an actual process entry supplies its terminal exit capability. */
 export async function run_application_process(
@@ -45,6 +46,7 @@ export async function run_application_process(
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
+    stop_when_supervisor_is_gone();
     process.chdir(await resolved_path(fileURLToPath(new URL('../../', import.meta.url))));
     await run_application_process(
       {
