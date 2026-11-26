@@ -23,6 +23,8 @@ permissions:
 jobs:
   first-install:
     if: github.event_name == 'workflow_dispatch' && inputs.prove_first_install
+    # The called workflow reads earlier runs, and a caller must grant every permission it asks for.
+    permissions: {contents: read, actions: read}
     uses: ./.github/workflows/typescript-first-install.yml
 
   linux-executor:
@@ -218,7 +220,7 @@ jobs:
           scripts/dev npm --prefix server ci
           # Reuse this host for native process/socket and provider directory/lock evidence.
           scripts/dev npm --prefix server run test -- \
-            platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts \
+            platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts lifecycle/supervisor_pipe.test.ts \
             previews/darwin.native.test.ts skills/account.test.ts \
             tests/preview_transport.test.ts tests/machine_backend_cards.test.ts \
             previews/machine.test.ts tests/remote_preview_retention.test.ts \
