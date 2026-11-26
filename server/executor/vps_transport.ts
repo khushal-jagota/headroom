@@ -391,12 +391,15 @@ export class VpsExecutor {
             this.machine_id,
           );
           this.require_ticket_owner(tx, state.ticket_id);
+          // Both checks name the Ticket's folder by its Ticket and physical data tree, not by
+          // its workspace id. Clearing the checkout gives the folder a new id that no
+          // conversation registered, and the rest of the folder still goes seven days later.
           const proof = tx.get(
             'SELECT 1 FROM ticket_workspace_conversations w ' +
               'JOIN executor_child_assignments a ON a.conversation_id=w.conversation_id ' +
               'JOIN executor_incarnations i ON i.executor_incarnation=a.executor_incarnation ' +
-              'WHERE w.ticket_id=? AND w.machine_id=? AND w.workspace_id=? AND i.machine_id=? LIMIT 1',
-            [state.ticket_id, workspace.machine_id, workspace.workspace_id, this.machine_id],
+              'WHERE w.ticket_id=? AND w.machine_id=? AND i.machine_id=? LIMIT 1',
+            [state.ticket_id, workspace.machine_id, this.machine_id],
           );
           // The Ticket is this machine's. A workspace that the server registered before
           // the switch to machine code stays with the server's own cleanup.
@@ -406,8 +409,8 @@ export class VpsExecutor {
           if (
             !options.replay &&
             tx.get(
-              "SELECT 1 FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
-              [workspace.machine_id, workspace.workspace_id],
+              "SELECT 1 FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=? AND w.machine_id=? AND c.state!='retired' LIMIT 1",
+              [state.ticket_id, workspace.machine_id],
             ) !== undefined
           )
             return { authorized: false };

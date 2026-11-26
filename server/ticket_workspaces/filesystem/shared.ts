@@ -155,6 +155,10 @@ export function workspace_identity(
     closeSync(descriptor);
   }
 }
+// Build caches hold copies of other repositories, not work. Xcode's DerivedData keeps package
+// clones whose objects and origin are absolute paths to a sibling copy, so Git cannot read them
+// once their folder moves.
+const BUILD_CACHE_DIRECTORIES = ['.venv', 'node_modules', 'DerivedData'];
 export async function checkouts(root: string): Promise<string[]> {
   const found: string[] = [];
   async function visit(path: string): Promise<void> {
@@ -162,7 +166,11 @@ export async function checkouts(root: string): Promise<string[]> {
     const entries = await readdir(path, { withFileTypes: true });
     if (entries.some((entry) => entry.name === '.git')) found.push(path);
     for (const entry of entries)
-      if (entry.isDirectory() && !['.git', '.venv', 'node_modules'].includes(entry.name))
+      if (
+        entry.isDirectory() &&
+        entry.name !== '.git' &&
+        !BUILD_CACHE_DIRECTORIES.includes(entry.name)
+      )
         await visit(join(path, entry.name));
   }
   await visit(root);

@@ -345,6 +345,55 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   },
 );
 
+// Risk: Xcode keeps package clones in DerivedData that borrow objects and origin from a sibling
+// copy by absolute path, so after the checkout moves Git cannot read them and the retired
+// checkout is kept forever. Gap: no fixture nests a shared clone in a checkout. Reuses the
+// real-Git clone fixture of the test above.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a package clone in DerivedData does not hold back the retired checkout',
+  async () => {
+    const remote = join(root, 'origin.git'),
+      project = join(root, 'project');
+    mkdirSync(remote);
+    mkdirSync(project);
+    await command(remote, ['init', '--bare']);
+    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await command(project, ['init', '-b', 'main']);
+    await command(project, ['config', 'user.email', 'proof@example.test']);
+    await command(project, ['config', 'user.name', 'Synthetic proof']);
+    writeFileSync(join(project, '.gitignore'), '.artifacts/\n');
+    await command(project, ['add', '.']);
+    await command(project, ['commit', '-m', 'published']);
+    await command(project, ['remote', 'add', 'origin', remote]);
+    await command(project, ['push', 'origin', 'main']);
+    const path = folder(),
+      checkout = await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      );
+    const packages = join(checkout, '.artifacts', 'DerivedData', 'SourcePackages');
+    mkdirSync(join(packages, 'checkouts'), { recursive: true });
+    await command(root, ['clone', '--mirror', project, join(packages, 'repositories', 'Package')]);
+    await command(root, [
+      'clone',
+      '--shared',
+      join(packages, 'repositories', 'Package'),
+      join(packages, 'checkouts', 'Package'),
+    ]);
+    const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]);
+    const retired = await cleanup_local_workspaces(dirname(path), states, 1, options);
+    expect(retired.skipped).toEqual([]);
+    expect(retired.removed).toContain(checkout);
+    expect(
+      readdirSync(join(dirname(dirname(path)), '.ticket-retired')).filter(
+        (name) => !name.endsWith('.json'),
+      ),
+    ).toEqual([]);
+  },
+);
+
 // Gap: no test proves a second Ticket clone reads the local mirror yet stays an independent, current checkout.
 test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'a second Ticket clone reuses the Project mirror, sees new commits and shares no objects',
