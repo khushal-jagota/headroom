@@ -136,7 +136,7 @@ export function conversationThreadItemsForLens(
 
 /** Held prompts are messages too, but only owner-authored ones belong in Focus. */
 export function heldPromptIsInLens(
-  prompt: HeldPrompt,
+  prompt: Pick<HeldPrompt, "sender" | "recipient" | "sender_label">,
   lens: ConversationLens,
   ownerSenderLabel: string
 ): boolean {

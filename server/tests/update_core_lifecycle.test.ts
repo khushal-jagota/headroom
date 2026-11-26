@@ -262,6 +262,11 @@ async function owned_server(
           },
           installer: {
             node_schema_steps_pending: () => false,
+            stage_snapshot: async (_database: string, backup_directory: string) => {
+              const staged = join(backup_directory, '.backup-staged-scripted');
+              mkdirSync(staged, { recursive: true });
+              return staged;
+            },
             prepare: () => ['scripted-installer'],
             launch: async () => {
               throw new Error('no actual installer');
@@ -294,6 +299,18 @@ async function owned_server(
         sender_label: 'Owner',
         sender_message_id: text,
       });
+    // A send answers at acceptance. Its stored outcome reports the delivery.
+    const outcome = async (text: string) =>
+      (
+        await (
+          await fetch(
+            server.address +
+              `/api/conversation/owner-sends/${encodeURIComponent(text)}?owner_kind=chief&owner_id=chief`,
+          )
+        ).json()
+      ).outcome;
+    const delivered = (text: string) =>
+      vi.waitFor(async () => expect(await outcome(text)).toMatchObject({ outcome: 'delivered' }));
     const status = async () => {
       const response = await fetch(server.address + '/api/updates');
       expect(response.status).toBe(200);
@@ -312,6 +329,8 @@ async function owned_server(
       server,
       post,
       send,
+      outcome,
+      delivered,
       status,
       async close() {
         try {
@@ -340,9 +359,20 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
   });
   const launch = deferred<void>(),
     launch_entered = deferred<void>();
+  const staged_copies: string[] = [];
+  const launches = vi.fn();
   const owned = await owned_server({
     node_schema_steps_pending: () => true,
+    // The first press stages its copy. The second meets a failed integrity check.
+    stage_snapshot: async (_database, backup_directory) => {
+      if (staged_copies.length) throw new Error('SQLite integrity check failed for the copy');
+      const staged = join(backup_directory, '.backup-staged-scripted');
+      mkdirSync(staged, { recursive: true });
+      staged_copies.push(staged);
+      return staged;
+    },
     launch: () => {
+      launches();
       launch_entered.resolve();
       return launch.promise;
     },
@@ -355,7 +385,8 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     const sent = await owned.send('native work before update');
     expect(sent.status).toBe(200);
     const delivery = await sent.json();
-    expect(delivery.fate).toBe('started');
+    expect(delivery.fate).toBe('accepted');
+    await owned.delivered('native work before update');
     const child = owned.registry.child(delivery.conversation_id);
     expect(owned.context.core!.workspace_activity()).toBe('busy');
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
@@ -388,7 +419,13 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     // The turn still runs. The update did not stop it or wait for it.
     expect(owned.context.core!.runtime_turn(delivery.conversation_id)).not.toBeNull();
     const launched = attempt();
-    expect(launched).toMatchObject({ state: 'installing', backup: null, snapshot_required: true });
+    expect(launched).toMatchObject({
+      state: 'installing',
+      backup: null,
+      snapshot_required: true,
+      staged_snapshot: staged_copies[0],
+      snapshot_seconds: { staged_copy: expect.any(Number) },
+    });
     // The installer snapshots after the stop, so its deadline covers the copy, the
     // steps and a rollback restore. The fixture database gets the 120 s floor per copy.
     expect(seconds_left(launched.deadline_at)).toBeGreaterThan(900 + 120 + 900 + 120 - 30);
@@ -404,6 +441,8 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     launch.reject(new Error('scripted installer did not start'));
     await vi.waitFor(async () => expect((await owned.status()).attempt.state).toBe('failed'));
     expect(attempt().steps.failure_reported).toBeTypeOf('string');
+    // The installer never claimed the attempt, so its staged copy is gone.
+    expect(existsSync(staged_copies[0]!)).toBe(false);
     const created = await owned.post('/api/projects', {
       name: 'work after failed update',
       summary: 'proof',
@@ -413,8 +452,26 @@ test('a press installs at once while work runs, refuses HTTP writes behind the t
     const resumed = await owned.send('native work after failed update');
     expect(resumed.status).toBe(200);
     const resumed_delivery = await resumed.json();
-    expect(resumed_delivery.fate).toBe('started');
+    expect(resumed_delivery.fate).toBe('accepted');
+    await owned.delivered('native work after failed update');
     await owned.registry.child(resumed_delivery.conversation_id).finish();
+    // A staged copy that fails its check refuses the update while the home still serves.
+    const refused_attempt = attempt().attempt_id;
+    expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
+      200,
+    );
+    await vi.waitFor(() =>
+      expect(attempt()).toMatchObject({
+        state: 'failed',
+        attempt_id: expect.not.stringMatching(refused_attempt),
+      }),
+    );
+    expect(attempt().detail).toContain('failed its check before Panels stopped');
+    expect(launches).toHaveBeenCalledTimes(1);
+    expect(
+      (await owned.post('/api/projects', { name: 'after refused snapshot', summary: 'proof' }))
+        .status,
+    ).toBe(200);
   } finally {
     launch.reject(new Error('test cleanup'));
     await owned.close();
@@ -436,6 +493,7 @@ test('ordinary shutdown retains ownership beyond grace while a provider return i
     const first = await owned.send('create native child');
     expect(first.status).toBe(200);
     const { conversation_id } = await first.json();
+    await owned.delivered('create native child');
     child = owned.registry.child(conversation_id);
     await child.finish();
     await owned.context.core!.wait_until_quiescent();
@@ -897,9 +955,11 @@ test('an accepted queued send drains even when worker readiness polling is disab
   try {
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
     const first = await (await owned.send('first queued-update turn')).json();
-    expect(first.fate).toBe('started');
+    expect(first.fate).toBe('accepted');
+    await owned.delivered('first queued-update turn');
     const second = await (await owned.send('second queued-update turn')).json();
-    expect(second.fate).toBe('queued');
+    expect(second.fate).toBe('accepted');
+    expect(await owned.outcome('second queued-update turn')).toMatchObject({ outcome: 'pending' });
     const pending = deferred<void>();
     const core = owned.context.core!;
     const hasPending = core.has_pending_update_sends.bind(core);
@@ -925,16 +985,18 @@ test('an accepted queued send drains even when worker readiness polling is disab
   }
 });
 
-test('a stuck queued send times out, the installer starts, and the next home reports it undelivered', async () => {
+test('a stuck queued send times out, the installer starts, and the next home delivers it', async () => {
   const launch = vi.fn(async () => {});
   const owned = await owned_server({ launch }, { worker_readiness: false });
   const message = 'stuck-accepted-message';
   try {
     await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
     const first = await (await owned.send('running before update')).json();
-    expect(first.fate).toBe('started');
+    expect(first.fate).toBe('accepted');
+    await owned.delivered('running before update');
     const queued = await (await owned.send(message)).json();
-    expect(queued.fate).toBe('queued');
+    expect(queued.fate).toBe('accepted');
+    expect(await owned.outcome(message)).toMatchObject({ outcome: 'pending' });
     const pressed = performance.now();
     expect((await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) })).status).toBe(
       200,
@@ -949,7 +1011,7 @@ test('a stuck queued send times out, the installer starts, and the next home rep
     await owned.server.close({ deadline: performance.now() / 1000 + 5 });
 
     // Boot another home from the database left by the stop. Pending owner receipts
-    // settle in ordinary conversation startup on either side of an upgrade or rollback.
+    // resume from durable recipient custody during ordinary conversation startup.
     const restarted = await owned_server(undefined, {
       worker_readiness: false,
       before_start(root) {
@@ -965,7 +1027,7 @@ test('a stuck queued send times out, the installer starts, and the next home rep
       );
       expect(lookup.status).toBe(200);
       expect(await lookup.json()).toMatchObject({
-        delivery: { conversation_id: first.conversation_id, fate: 'refused' },
+        outcome: { conversation_id: first.conversation_id, outcome: 'delivered' },
       });
       expect(await restarted.context.core!.held_prompts(first.conversation_id)).toHaveLength(0);
     } finally {

@@ -199,6 +199,17 @@ export type HeldPrompt = StoredMessageContent & {
   delivery_uncertain?: boolean;
 };
 
+/** A message home accepted that this conversation has not placed yet. It has no queue
+ *  place and no held-prompt actions; its prompt row replaces it when it lands. */
+export type PendingMessage = StoredMessageContent & {
+  sender_message_id: string;
+  requested_mode: PromptDeliveryMode;
+  sender_label: string;
+  sender: Principal | null;
+  recipient: Principal | null;
+  sent_at_unix_milliseconds: number | null;
+};
+
 /** What a conversation is, what it is doing, and what it is waiting on. */
 export type ConversationView = {
   machine_id?: string;
@@ -214,6 +225,7 @@ export type ConversationView = {
   owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
+  pending_messages: PendingMessage[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
   /** The newest key request still waiting on the owner. */
@@ -376,7 +388,11 @@ export type ConversationLiveFrame =
   | { frame: "model_thinking" }
   | { frame: "held_prompts_changed" };
 
+/** A send answers at acceptance with ``accepted``: home holds the message, and its outcome
+ * comes later under the same message ID. An owner send route names that ID; a recap request
+ * names none. A repeat of a settled send, and an older home, answer with the other fates. */
 export type PromptDeliveryFate =
+  | { fate: "accepted"; message_id?: string }
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
@@ -464,7 +480,10 @@ export type BackendUsageWindow = {
   kind: "five_hour" | "seven_day";
   used_percent: number;
   resets_at: string;
+  /** The model or family the provider names for this window. Null: the whole account. */
   model_id: string | null;
+  /** The catalog models this window covers. */
+  model_ids: string[];
 };
 
 export type BackendCachedUsage = {
@@ -561,6 +580,16 @@ export type ConversationStartValues = {
  * conversation then, so there is nothing to open and nothing to hold on to.
  */
 export type DeliveredMessage = PromptDeliveryFate & { conversation_id: string | null };
+
+/** What later happened to an accepted owner message, read by its message ID. ``pending`` is
+ * accepted and not settled yet, which includes a message the recipient is holding. */
+export type OwnerSendOutcome = {
+  message_id: string;
+  conversation_id: string | null;
+  outcome: "pending" | "delivered" | "refused" | "discarded" | "uncertain";
+  refusal_reason: PromptDeliveryRefusalReason | null;
+  reason: string | null;
+};
 
 /** A request the server answered with a refusal of the request itself.
  *

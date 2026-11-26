@@ -1,3 +1,5 @@
+import { settle_recipient_event } from '../../../message_delivery/data/recipient_deliveries.ts';
+import { settle_held_prompt } from '../held_prompts.ts';
 import { clear_owner_send_payload } from '../owner_send_receipts.ts';
 import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
@@ -942,6 +944,8 @@ export class ConversationStore
         ],
       );
       clear_owner_send_payload(tx, conversation_id, payload);
+      settle_held_prompt(tx, conversation_id, payload);
+      settle_recipient_event(tx, conversation_id, payload);
       for (const operation of operations) {
         if (
           'sender_message_id' in payload &&

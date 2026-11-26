@@ -1,7 +1,6 @@
 /** Deterministic reference system. Its observations are not durable event records. */
 import { isDeepStrictEqual } from 'node:util';
 import type { Principal } from '../core/contracts.ts';
-import { matches_owner_sender_message } from './runtime/messages.ts';
 import {
   ConversationAlreadyStarted,
   HeldPrompt,
@@ -20,7 +19,6 @@ import type {
   DeploymentRecoveryReference,
   HeldPromptPromotionFate,
   HeldPromptPromotionMode,
-  OwnerSendProgress,
   PromptDeliveryFate,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
@@ -436,19 +434,6 @@ export class InMemoryConversationSystem implements ConversationSystem {
         }),
     );
   }
-  async owner_send_progress(
-    conversation_id: string,
-    sender_message_id: string,
-    recipient: Principal,
-  ): Promise<OwnerSendProgress | null> {
-    const position =
-      this._conversations
-        .get(conversation_id)
-        ?.held_prompts.findIndex((message) =>
-          matches_owner_sender_message(message, sender_message_id, recipient),
-        ) ?? -1;
-    return position >= 0 ? { state: 'queued', position: position + 1 } : null;
-  }
   async sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
     const state = this._conversations.get(conversation_id);
     return new Set(
@@ -540,6 +525,8 @@ export class InMemoryConversationSystem implements ConversationSystem {
     await this.kill(conversation_id);
     await finish(null);
   }
+  /** The in-memory system keeps no recipient delivery journal. */
+  async refuse_lifecycle_held_delivery(): Promise<void> {}
   async is_running(conversation_id: string): Promise<boolean> {
     return this._conversations.get(conversation_id)?.running_turn != null;
   }

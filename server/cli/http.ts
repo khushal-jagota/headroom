@@ -470,11 +470,12 @@ export async function executor_request(
   inv: Invocation,
   operation: 'read' | 'write' | 'retry' | 'preview',
   payload: Record<string, any>,
+  request_id?: string,
 ): Promise<any> {
   const { request } = await import('../executor/mac/ipc_client.ts');
   let response: IpcResponse;
   try {
-    response = await request(operation, payload, inv.environment);
+    response = await request(operation, payload, inv.environment, undefined, request_id);
   } catch (error) {
     if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);
     return fail_connection(inv, error);
@@ -485,7 +486,7 @@ async function executor_send(
   inv: Invocation,
   method: string,
   path: string,
-  options: { json_body?: unknown; params?: Record<string, any> },
+  options: { json_body?: unknown; params?: Record<string, any>; request_id?: string },
 ): Promise<any> {
   if (method.toUpperCase() === 'GET')
     return executor_request(inv, 'read', { path, params: options.params ?? {} });
@@ -521,7 +522,12 @@ async function executor_send(
     if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);
     throw error;
   }
-  return executor_request(inv, 'write', { operation: translated[0], arguments: translated[1] });
+  return executor_request(
+    inv,
+    'write',
+    { operation: translated[0], arguments: translated[1] },
+    options.request_id,
+  );
 }
 export async function send(
   inv: Invocation,
@@ -531,6 +537,8 @@ export async function send(
     json_body?: unknown;
     params?: Record<string, any>;
     transport_limits?: Readonly<TransportLimits>;
+    /** The machine path names its write with this ID. Plain HTTP sends it in the body. */
+    request_id?: string;
   } = {},
 ): Promise<any> {
   if (executor_client_settings(inv.environment).root)

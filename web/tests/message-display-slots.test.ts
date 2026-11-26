@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { belongsInHeldQueue, transcriptOutgoing } from '../src/lib/conversation/transcriptOutgoing';
+import { acceptedPendingMessages, belongsInHeldQueue, transcriptOutgoing } from '../src/lib/conversation/transcriptOutgoing';
 import { reconcileDisplaySlots } from '../src/lib/conversation/displaySlots';
-import { outgoingReceiptBatches, retainOutgoingPresentations, type OutgoingMessage } from '../src/lib/conversation/outgoing';
+import { homeHasTheSend, outgoingMessageNote, outgoingReceiptBatches, retainOutgoingPresentations, type OutgoingMessage } from '../src/lib/conversation/outgoing';
 import type { ConversationViewRow } from '../src/lib/conversation/view/contracts';
 const local: OutgoingMessage = {messageId:'send',content:[{piece:'text',text:'words'}],senderLabel:'owner',mode:'steer',sentAtUnixMilliseconds:1,knownFate:'nothing_yet',accepted:true};
 const row = (key: string, sequence: number, sender: string|null = null): ConversationViewRow => ({kind:'row',key,row_kind:sender?'prompt':'agent_message',sender_message_id:sender,source_sequence:sequence,order:{sequence,slot:0},changed_through_sequence:sequence,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',content:[{piece:'text',text:key}],to_owner:true}}});
@@ -71,6 +71,22 @@ describe('mounted message presentation',()=>{
    expect(transcriptOutgoing([unconfirmed], [], [held], 'owner', new Set())).toEqual([unconfirmed]);
    expect(transcriptOutgoing([], [], [held], 'owner', new Set(['send']))).toEqual([]);
  });
+ // Acceptance is not delivery and not a place in a queue. Only home's held row gives a
+ // position, and an agent's held prompt joins its record row by the same sender ID.
+ it('shows an accepted send without a queue position until home holds it',()=>{
+   const accepted={...local,accepted:false,mode:'queue' as const,queueWhilePending:true,knownFate:'accepted_for_delivery' as const};
+   const [pending]=transcriptOutgoing([accepted],[],[],'owner',new Set());
+   expect(pending?.presentation).toBeUndefined();
+   expect(outgoingMessageNote(pending!)).toBe('accepted for delivery');
+   expect(belongsInHeldQueue(pending!)).toBe(true);
+   expect(homeHasTheSend(pending!)).toBe(true);
+   const held = {key:'held:1',heldPromptId:'1',senderMessageId:'send',senderLabel:'owner',
+     content:accepted.content,sentAtUnixMilliseconds:1,state:'held' as const,queueReason:null,mode:'queue' as const};
+   const agentHeld = {...held,key:'held:2',heldPromptId:'2',senderMessageId:'agent-request',senderLabel:'chief',sentAtUnixMilliseconds:2};
+   const queued=transcriptOutgoing([accepted],[],[held,agentHeld],'owner',new Set());
+   expect(queued.map(message=>[message.messageId,message.knownFate,message.presentation?.kind==='held'&&[message.presentation.position,message.presentation.count]]))
+     .toEqual([['send','waiting_for_the_agent',[1,2]],['agent-request','waiting_for_the_agent',[2,2]]]);
+ });
  it('commits one slot in either transport/record order and retains record chronology on record-first admission',()=>{
    const before=row('before',1), received=row('received',2,'send'), after=row('after',3);
    const unresolved={...local,accepted:false};
@@ -119,4 +135,28 @@ describe('mounted message presentation',()=>{
    expect(accepted[0]?.local?.messageId).toBe('retry');
  });
 
+});
+
+// Risk: an accepted message the conversation has not placed shows twice, beside its own row or
+// this tab's copy, or never shows at all. Gap: no client code read pending_messages.
+describe('an accepted message the conversation has not placed', () => {
+  const pending = {sender_message_id: 'steer', requested_mode: 'steer' as const, sender_label: 'Chief',
+    sender: {kind: 'chief' as const, id: 'chief'}, recipient: null, sent_at_unix_milliseconds: 5, text: 'Steer words'};
+  it('shows as accepted for delivery until its prompt row or this tab\'s copy answers for it', () => {
+    const [row] = acceptedPendingMessages([pending], new Set(), []);
+    expect(row).toMatchObject({messageId: 'steer', mode: 'steer', senderLabel: 'Chief',
+      content: [{piece: 'text', text: 'Steer words'}], knownFate: 'accepted_for_delivery'});
+    expect(outgoingMessageNote(row)).toBe('accepted for delivery');
+    expect(belongsInHeldQueue(transcriptOutgoing([row], [], [], 'owner', new Set())[0])).toBe(false);
+    expect(acceptedPendingMessages([pending], new Set(['steer']), [])).toEqual([]);
+    expect(acceptedPendingMessages([pending], new Set(), [{...row, senderLabel: 'owner'}])).toEqual([]);
+  });
+  it('names a pending message\'s pictures and keeps one without an instant after earlier sends', () => {
+    const picture = {...pending, sender_message_id: 'picture', sent_at_unix_milliseconds: null,
+      text: undefined, content: [{piece: 'image' as const, stored_file_id: 'f', media_type: 'image/png'}]};
+    const own = {...local, messageId: 'own', sentAtUnixMilliseconds: 9};
+    const [row] = acceptedPendingMessages([picture], new Set(), [own]);
+    expect(row).toMatchObject({content: [], attachmentNames: ['Image message'], sentAtUnixMilliseconds: 9});
+    expect(transcriptOutgoing([own, row!], [], [], 'owner', new Set()).map(message => message.messageId)).toEqual(['own', 'picture']);
+  });
 });

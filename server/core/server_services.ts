@@ -1,3 +1,4 @@
+import { resume_recipient_deliveries } from '../message_delivery/recovery.ts';
 import { read_home_trial } from '../environments/updates/home_trial.ts';
 import Fastify from 'fastify';
 import { install_request_lifetime } from './http/lifetime.ts';
@@ -437,6 +438,7 @@ export class ServerServices {
             },
             backend_state: backendServices.backend_state,
             backend_ids: backendServices.backend_ids,
+            machine_backends: backendServices.machine_backends,
           }),
         },
         {
@@ -526,6 +528,7 @@ export class ServerServices {
         { starts: true },
       );
       await run_automatic_recovery(core, context.database);
+      resume_recipient_deliveries(core);
     });
     this.recovery = recovery;
     void recovery.then(

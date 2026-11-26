@@ -202,10 +202,17 @@ extension APIClient {
         do { content = try await composer.preparedContent() }
         catch is CancellationError { return false }
         catch { self.error = error.localizedDescription; return false }
+        // A resend names the refused row, so the view folds it away.
+        let refusedID = attempt?.state == .failed ? attempt?.id : nil
+        var refusedRow: Int?
+        if let refusedID {
+            refusedRow = (try? await api.conversationReceipts(id, messageIDs: [refusedID]))?
+                .first { $0.senderMessageId == refusedID && $0.fate == "prompt_refused" }?.sourceSequence
+        }
         guard !historical, self.item?.conversationId == id, self.item?.owner == owner else { return false }
         if let attempt, attempt.state == .failed {
             // Replace a refusal with the current draft under a new ID, retaining its read boundary.
-            guard let replacement = await Outbox.shared.retry(attempt.id, api: api, content: content) else {
+            guard let replacement = await Outbox.shared.retry(attempt.id, api: api, content: content, reconcilesSequence: attempt.id == refusedID ? refusedRow : nil) else {
                 error = Outbox.shared.store.saveError
                 return false
             }

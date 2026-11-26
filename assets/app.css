@@ -4766,8 +4766,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
   right: var(--conversation-visible-right, 0px);
   bottom: var(--conversation-visible-bottom, 0px);
 }
+/* The opened inset applies from the first frame of opening, so the transcript keeps its
+ * height when the motion ends and does not shift under the reader. */
 [data-conversation-dock-state="opened"] > .conversation-layer {
   height: var(--conversation-visible-height, 100%);
+  padding-top: var(--space-2);
   --conversation-dock-line: 0;
 }
 /* Settled open, the layer is held by both visible edges rather than a measured height, so a
@@ -4776,7 +4779,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer {
   top: var(--conversation-visible-top, 0px);
   height: auto;
-  padding-top: var(--space-2);
 }
 /* While the dock moves, its content stands at the dock's foot. On return the pane is already
  * at rest (status line and composer) while the dock is still shrinking from full height, so

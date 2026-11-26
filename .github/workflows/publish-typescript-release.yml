@@ -545,6 +545,9 @@ jobs:
           set -euo pipefail
           python3 server/environments/release/prepare_promoted_receipt.py
           node server/environments/release/publication_receipt_main.ts "$RUNNER_TEMP/panels-publication/receipt-request.json"
+      # Signed bytes first exist on main. PR qualification only feeds the home unsigned packages.
+      - name: Require the home to prepare the exact signed Mac ZIP before publication
+        run: node server/environments/release/published_mac_main.ts "$RUNNER_TEMP/panels-publication"
       - name: Upload the complete publication receipt and audit
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

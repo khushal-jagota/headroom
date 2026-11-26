@@ -20,6 +20,7 @@
   import PickerRail from "./PickerRail.svelte";
   import PickerRailRow from "./PickerRailRow.svelte";
   import UsageRings from "./UsageRings.svelte";
+  import { windowCoversModel } from "../../lib/conversation/usagePresentation";
 
   let {
     readError = null,
@@ -111,7 +112,7 @@
     const snapshot = view.backendKey === null ? null : snapshotFor(view.backendKey);
     if (snapshot?.identity?.status === "unauthenticated") return false;
     return snapshot?.cached_usage?.windows.some(
-      (window) => window.model_id === modelId
+      (window) => windowCoversModel(window, modelId)
     ) ?? false;
   }
 

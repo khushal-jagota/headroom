@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { answer_at_acceptance } from './acceptance.ts';
+import type { TransactionSql } from '../core/database/contracts.ts';
+import { MessageAcceptedForDelivery } from './contracts.ts';
 /** Clear the spent recap through its canonical writer, then request its replacement. */
 import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
@@ -31,19 +35,13 @@ export async function request_recap(
       },
     );
   }
-  const message = database.write((tx) => {
+  const clear_recap = (tx: TransactionSql) => {
     if (recipient.kind === 'chief') requireOwner(context);
     else
       requireAbove(tx, context.principal, {
         kind: recipient.kind as 'ticket' | 'manager',
         id: recipient.id,
       });
-    const requester =
-      context.principal.kind === 'owner'
-        ? 'the owner'
-        : context.principal.kind === 'chief'
-          ? 'Chief'
-          : `Manager ${read_manager(tx, context.principal.id).item.title}`;
     if (recipient.kind === 'ticket') {
       edit_ticket(tx, recipient.id, {
         edit: { recap: '' },
@@ -56,9 +54,44 @@ export async function request_recap(
     } else {
       update_chief_recap_in_transaction(tx, { recap: '' });
     }
-    return `${RECAP_REQUEST_MESSAGE}\nRequested by ${requester}.`;
+  };
+  database.read((sql) => {
+    if (recipient.kind === 'chief') requireOwner(context);
+    else
+      requireAbove(sql, context.principal, {
+        kind: recipient.kind as 'ticket' | 'manager',
+        id: recipient.id,
+      });
   });
-  return send_message(conversations, database, clock, context, recipient, message, 'steer', {
-    system_message: true,
-  });
+  const requester =
+    context.principal.kind === 'owner'
+      ? 'the owner'
+      : context.principal.kind === 'chief'
+        ? 'Chief'
+        : `Manager ${database.read((sql) => read_manager(sql, context.principal.id).item.title)}`;
+  const submission_id = `recap_${randomUUID()}`;
+  return answer_at_acceptance(
+    (recording_receipt) =>
+      send_message(
+        conversations,
+        database,
+        clock,
+        context,
+        recipient,
+        `${RECAP_REQUEST_MESSAGE}\nRequested by ${requester}.`,
+        'steer',
+        { system_message: true, sender_message_id: submission_id, recording_receipt },
+      ),
+    {
+      submission_id,
+      in_admission: (tx) => clear_recap(tx),
+      accepted: (conversation_id): MessageDeliveryResult => ({
+        recipient,
+        conversation_id,
+        fate: new MessageAcceptedForDelivery(),
+      }),
+      before_acceptance: (delivered) => delivered,
+      failure_label: 'accepted recap delivery failed',
+    },
+  );
 }

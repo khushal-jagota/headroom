@@ -372,21 +372,25 @@ import UniformTypeIdentifiers
         let continued = await model.applyTail(try changes(from: 5), using: service)
         XCTAssertTrue(continued)
     }
-    func testUncertainSendShowsNoStatusAndDoesNotRetry() async {
-        let model = ConversationModel()
-        let service = ConversationStub(fate: "uncertain")
-        model.draft = " \n "
-        let blank = await model.send(to: .chief, using: service)
+    /// Uncertain, and a fate this build does not know, show "Delivery unconfirmed" and never retry.
+    func testUncertainOrUnknownSendShowsUnconfirmedAndDoesNotRetry() async {
+        let blankModel = ConversationModel()
+        blankModel.draft = " \n "
+        let blank = await blankModel.send(to: .chief, using: ConversationStub(fate: "uncertain"))
         XCTAssertFalse(blank)
-        model.draft = "Keep my words"
-        let result = await model.send(to: .chief, using: service)
-        XCTAssertFalse(result)
-        XCTAssertEqual(model.outgoing.first?.text, "Keep my words")
-        XCTAssertNil(model.outgoing.first?.note)
-        XCTAssertFalse(model.outgoing.first?.retryable ?? true)
-        XCTAssertEqual(model.draft, "")
-        let calls = await service.calls
-        XCTAssertEqual(calls, 1)
+        for fate in ["uncertain", "handed_to_a_future_relay"] {
+            let model = ConversationModel()
+            let service = ConversationStub(fate: fate)
+            model.draft = "Keep my words"
+            let result = await model.send(to: .chief, using: service)
+            XCTAssertFalse(result, fate)
+            XCTAssertEqual(model.outgoing.first?.text, "Keep my words")
+            XCTAssertEqual(model.outgoing.first?.note, "Delivery unconfirmed", fate)
+            XCTAssertFalse(model.outgoing.first?.retryable ?? true, fate)
+            XCTAssertEqual(model.draft, "")
+            let calls = await service.calls
+            XCTAssertEqual(calls, 1, fate)
+        }
     }
     func testSuppressedDeliveryIsExplicitAndDoesNotRetry() async {
         let model = ConversationModel()
@@ -400,7 +404,7 @@ import UniformTypeIdentifiers
     }
     func testAcceptedMessageReconcilesBySenderIDWithoutDuplicate() async throws {
         let model = ConversationModel()
-        let service = ConversationStub(fate: "started")
+        let service = ConversationStub(fate: "accepted")
         model.draft = "Hello"
         let sent = await model.send(to: .ticket("t_1"), using: service)
         XCTAssertTrue(sent)
@@ -785,16 +789,25 @@ import UniformTypeIdentifiers
         XCTAssertEqual(model.latestLine, "A new reply")
     }
 
-    func testReceiptSettlesQueueEvenOutsideLoadedWindow() async throws {
+    /// A send answers at acceptance; its later outcome arrives as a receipt, even outside the loaded window.
+    func testReceiptSettlesAcceptedMessageEvenOutsideLoadedWindow() async throws {
         let model = ConversationModel()
-        let service = ConversationStub(fate: "queued")
+        let service = ConversationStub(fate: "accepted")
         model.draft = "Hello"
-        _ = await model.send(to: .chief, using: service)
+        let sent = await model.send(to: .chief, using: service)
+        XCTAssertTrue(sent)
+        XCTAssertNil(model.rows.first?.note, "Acceptance shows no status")
+        let id = try XCTUnwrap(model.outgoing.first?.id)
         await service.setSnapshot(Self.snapshot([]))
-        await service.setReceipt("prompt_discarded")
-        await model.refresh(using: service, transcript: true)
-        XCTAssertEqual(model.rows.first?.note, "Not delivered · no longer applicable")
-        XCTAssertNil(model.rows.first?.retryID)
+        for (receipt, note, retry) in [("prompt_uncertain", "Delivery unconfirmed", nil), ("prompt_refused", "Not delivered", id),
+                                       ("prompt_discarded", "Not delivered · no longer applicable", nil)] as [(String, String, String?)] {
+            await service.setReceipt(receipt)
+            await model.refresh(using: service, transcript: true)
+            XCTAssertEqual(model.rows.first?.note, note, receipt)
+            XCTAssertEqual(model.rows.first?.retryID, retry, receipt)
+        }
+        let calls = await service.calls
+        XCTAssertEqual(calls, 1, "A receipt never resends by itself")
     }
 
     func testLiveBodyBecomesRecordedReplyWithoutChangingIdentity() async throws {

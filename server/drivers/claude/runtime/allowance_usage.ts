@@ -1,53 +1,27 @@
-/** Credential reads and an explicitly injected HTTP adapter are the only external doors. */
+/** Plan-limit policy over an injected read of the Claude CLI's own `get_usage` answer. */
 import { parse_backend_instance_id } from '../../core/identity.ts';
-import { readFileSync } from 'node:fs';
 import type {
   BackendUsageAdapter,
   BackendUsageResult,
   BackendUsageWindow,
   BackendUsageWindowKind,
-  UsageHttpGet,
 } from '../../../conversation/backend_usage/contracts.ts';
 import { is_record as object } from '../../../core/records.ts';
-import { parse_datetime, percentage } from '../../../conversation/backend_usage/logic/windows.ts';
-const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
-const CLAUDE_USAGE_TIMEOUT_SECONDS = 20;
-const CLAUDE_USAGE_BETA = 'oauth-2025-04-20';
-export function read_claude_access_token(
-  path: string,
-  now: Date,
-): readonly [string | null, boolean] {
-  let document: unknown;
-  try {
-    document = JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return [null, false];
-  }
-  if (document === null || typeof document !== 'object' || Array.isArray(document))
-    return [null, false];
-  const oauth = (document as Record<string, unknown>).claudeAiOauth;
-  if (oauth === null || typeof oauth !== 'object' || Array.isArray(oauth)) return [null, false];
-  const values = oauth as Record<string, unknown>;
-  const token = values.accessToken;
-  if (typeof token !== 'string' || !token) return [null, false];
-  const expiry = typeof values.expiresAt === 'number' ? new Date(values.expiresAt) : null;
-  if (
-    expiry !== null &&
-    Number.isFinite(expiry.getTime()) &&
-    expiry.getUTCFullYear() >= 1 &&
-    expiry.getUTCFullYear() <= 9999 &&
-    expiry <= now
-  )
-    return [null, true];
-  return [token, false];
+import {
+  parse_datetime,
+  percentage,
+  usage_window,
+} from '../../../conversation/backend_usage/logic/windows.ts';
+
+/** The CLI's raw `get_usage` answer. The source owns the short-lived SDK session. */
+export interface ClaudeUsageSource {
+  (options: { signal?: AbortSignal }): Promise<unknown>;
 }
 export class ClaudeUsageAdapter implements BackendUsageAdapter {
-  private readonly credential_path: string;
-  private readonly http_get: UsageHttpGet;
+  private readonly read_usage: ClaudeUsageSource;
   private readonly now: () => Date;
-  constructor(options: { credential_path: string; http_get: UsageHttpGet; now: () => Date }) {
-    this.credential_path = options.credential_path;
-    this.http_get = options.http_get;
+  constructor(options: { read_usage: ClaudeUsageSource; now: () => Date }) {
+    this.read_usage = options.read_usage;
     this.now = options.now;
   }
   async refresh(options: { signal?: AbortSignal } = {}): Promise<BackendUsageResult> {
@@ -62,40 +36,28 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
       observed_at: null,
       windows: [],
     });
-    const [access_token, token_expired] = read_claude_access_token(
-      this.credential_path,
-      this.now(),
-    );
-    if (access_token === null)
-      return result(
-        'unauthenticated',
-        token_expired
-          ? "Claude's login has expired. Run `claude auth login` and try again."
-          : 'Claude is not logged in. Run `claude auth login` and try again.',
-      );
-    let response;
+    let answer: unknown;
     try {
-      response = await this.http_get(
-        CLAUDE_USAGE_URL,
-        { authorization: `Bearer ${access_token}`, 'anthropic-beta': CLAUDE_USAGE_BETA },
-        CLAUDE_USAGE_TIMEOUT_SECONDS,
-        options,
-      );
-    } catch {
+      answer = await this.read_usage(options);
+    } catch (error) {
       options.signal?.throwIfAborted();
-      return result('failed', 'Claude usage could not be reached. Try again.');
+      console.error('claude usage read failed', error);
+      return result('failed', 'Claude could not be asked for its usage. Try again.');
     }
-    if (response.status_code === 401 || response.status_code === 403)
+    if (!object(answer) || typeof answer.rate_limits_available !== 'boolean')
+      return result('failed', 'Claude returned usage in a format Panels does not understand.');
+    // The CLI reports no plan limits without a claude.ai login: none at all, an API key, a cloud
+    // provider, or a login that predates the profile scope. `claude auth login` fixes each.
+    if (!answer.rate_limits_available)
       return result(
         'unauthenticated',
-        "Claude's login is no longer valid. Run `claude auth login` and try again.",
+        'Claude is not logged in to a Claude plan. Run `claude auth login` and try again.',
       );
-    if (response.status_code === 429)
-      return result('failed', 'Claude usage is rate-limited. Try again later.');
-    if (response.status_code < 200 || response.status_code >= 300)
-      return result('failed', 'Claude usage could not be refreshed. Try again.');
-    const windows = parse_claude_windows(response.body);
-    if (windows === null)
+    // Available but null: the CLI could not reach its usage endpoint this time.
+    if (!object(answer.rate_limits))
+      return result('failed', 'Claude could not refresh its usage. Try again.');
+    const windows = claude_usage_windows(answer.rate_limits);
+    if (!windows.length)
       return result('failed', 'Claude returned usage in a format Panels does not understand.');
     return {
       backend_key: parse_backend_instance_id('claude'),
@@ -107,68 +69,68 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
   }
 }
 
-function claude_reset_time(value: Record<string, unknown>): Date | null {
-  for (const key of ['resets_at', 'reset_at']) {
-    const parsed = parse_datetime(value[key]);
-    if (parsed !== null) return parsed;
-  }
-  return null;
-}
+/** One entry of the usage endpoint's `limits` list: a session or weekly window, or a weekly
+ * window scoped to the model it names. */
 function claude_limit_entry(value: unknown): BackendUsageWindow | null {
   if (!object(value)) return null;
   const used_percent = percentage(value.percent) ?? percentage(value.utilization);
-  const resets_at = claude_reset_time(value);
+  const resets_at = parse_datetime(value.resets_at) ?? parse_datetime(value.reset_at);
   if (used_percent === null || resets_at === null) return null;
   const scope = object(value.scope) ? value.scope : null;
   const model = object(scope?.model) ? scope.model : null;
   let model_name = model?.display_name;
   if (typeof model_name !== 'string' || !model_name) model_name = model?.displayName;
-  let kind: BackendUsageWindowKind;
-  let model_scope: string | null;
-  if (typeof model_name === 'string' && model_name) {
-    kind = 'seven_day';
-    model_scope = model_name;
-  } else {
-    if (value.group === 'session') kind = 'five_hour';
-    else if (
-      typeof value.group === 'string' &&
-      ['weekly', 'week', 'seven_day'].includes(value.group)
-    )
-      kind = 'seven_day';
-    else return null;
-    model_scope = null;
-  }
-  return { kind, used_percent, resets_at, model_scope, scope_label: null };
-}
-
-export function parse_claude_windows(body: unknown): readonly BackendUsageWindow[] | null {
-  if (!object(body)) return null;
-  const scoped = Array.isArray(body.limits)
-    ? body.limits
-        .map(claude_limit_entry)
-        .filter((value): value is BackendUsageWindow => value !== null)
-    : [];
-  if (scoped.length) return scoped;
-  const windows: BackendUsageWindow[] = [];
-  for (const [key, value] of Object.entries(body)) {
-    if (!object(value)) continue;
-    const used_percent = percentage(value.utilization);
-    const resets_at = claude_reset_time(value);
-    if (used_percent === null || resets_at === null) continue;
-    const suffix = key.startsWith('seven_day_') ? key.slice('seven_day_'.length) : key;
-    const title = suffix
-      .replaceAll('_', ' ')
-      .replace(
-        /\p{L}[\p{L}\p{M}]*/gu,
-        (word) => word[0].toUpperCase() + word.slice(1).toLowerCase(),
-      );
-    windows.push({
-      kind: key === 'five_hour' ? 'five_hour' : 'seven_day',
+  if (typeof model_name === 'string' && model_name)
+    return usage_window({
+      id: `seven_day_${model_name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+      kind: 'seven_day',
       used_percent,
       resets_at,
-      model_scope: key === 'five_hour' || key === 'seven_day' ? null : title,
-      scope_label: null,
+      model_scope: model_name,
     });
-  }
-  return windows.length ? windows : null;
+  let kind: BackendUsageWindowKind;
+  if (value.group === 'session') kind = 'five_hour';
+  else if (typeof value.group === 'string' && ['weekly', 'week', 'seven_day'].includes(value.group))
+    kind = 'seven_day';
+  else return null;
+  return usage_window({ id: kind, kind, used_percent, resets_at, model_scope: null });
+}
+
+/**
+ * The CLI passes the usage endpoint's unfiltered `limits` list through, and that list is read
+ * first. Without it, `five_hour` and `seven_day` are the account windows, and each
+ * `model_scoped` entry is a weekly window for the model it names: `{ display_name: 'Fable' }` is
+ * `seven_day_fable`, scoped to Fable. The CLI filters `model_scoped` and leaves it out of a
+ * cached answer, so it is the fallback. Windows without a usage percentage or reset time are
+ * left out. Ids are unique within an observation: the first window with an id wins.
+ */
+function claude_usage_windows(rate_limits: Record<string, unknown>): readonly BackendUsageWindow[] {
+  const windows = new Map<string, BackendUsageWindow>();
+  const keep = (window: BackendUsageWindow | null) => {
+    if (window !== null && !windows.has(window.id)) windows.set(window.id, window);
+  };
+  if (Array.isArray(rate_limits.limits))
+    for (const entry of rate_limits.limits) keep(claude_limit_entry(entry));
+  if (windows.size) return [...windows.values()];
+  const add = (
+    id: string,
+    kind: BackendUsageWindowKind,
+    value: unknown,
+    model_scope: string | null,
+  ) => {
+    if (!object(value)) return;
+    const used_percent = percentage(value.utilization);
+    const resets_at = parse_datetime(value.resets_at);
+    if (used_percent === null || resets_at === null) return;
+    keep(usage_window({ id, kind, used_percent, resets_at, model_scope }));
+  };
+  add('five_hour', 'five_hour', rate_limits.five_hour, null);
+  add('seven_day', 'seven_day', rate_limits.seven_day, null);
+  if (Array.isArray(rate_limits.model_scoped))
+    for (const entry of rate_limits.model_scoped) {
+      if (!object(entry) || typeof entry.display_name !== 'string' || !entry.display_name) continue;
+      const token = entry.display_name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      add(`seven_day_${token}`, 'seven_day', entry, entry.display_name);
+    }
+  return [...windows.values()];
 }

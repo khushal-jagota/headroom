@@ -1,3 +1,8 @@
+import { setup as core_setup } from './conversation_core_fixture.ts';
+import { send_message } from '../message_delivery/service.ts';
+import { accepted_unplaced_messages } from '../message_delivery/data/recipient_deliveries.ts';
+import { MessageRecordedToOwner } from '../message_delivery/contracts.ts';
+import { delivery_outcome_kind } from '../manager_wakes/data.ts';
 /** Gaps: autonomous orchestration and delivery fates are absent from Ticket route proofs.
  * Reuses Ticket SQLite fixtures and the existing in-memory contract. No provider adapter.
  */
@@ -24,6 +29,7 @@ import { OWNER, PlannerError } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import {
+  PromptDeliveryQueued,
   PromptDeliveryRefused,
   PromptDeliverySuppressed,
   PromptDeliveryUncertain,
@@ -65,6 +71,14 @@ function setup() {
     workspace_root: dirname(fixture_path(db)),
   });
   const system = new InMemoryConversationSystem();
+  const send = system.send.bind(system);
+  vi.spyOn(system, 'send').mockImplementation(async (id, content, options) => {
+    if (options.recording_receipt?.in_admission) {
+      db.write((tx) => options.recording_receipt!.in_admission!(tx, id));
+      options.recording_receipt.admitted?.();
+    }
+    return send(id, content, options);
+  });
   const options = {
     connect_database: () => db,
     conversation_system: system,
@@ -154,7 +168,7 @@ test('restart releases the current errored claim generation after kill', async (
   expect(restarted.conversation_id).not.toBe(claimed.conversation_id);
 });
 
-test('the next opener waits for restart and only one starts a fresh conversation', async () => {
+test('restart defers the next opener and only one starts a fresh conversation', async () => {
   const { db, system, options } = setup();
   const ticket = edit(db, create(db), { ceiling: 'needs_implementation' });
   await start_ready_worker_step(ticket.id, options);
@@ -182,7 +196,18 @@ test('the next opener waits for restart and only one starts a fresh conversation
       return result;
     });
     await new Promise((resolve) => setImmediate(resolve));
-    expect(next_settled).toBe(false);
+    expect(next_settled).toBe(true);
+    await expect(
+      send_message(
+        system,
+        db,
+        new TestClock(new Date(now * 1000).toISOString()),
+        { principal: OWNER, conversationId: null },
+        { kind: 'ticket', id: ticket.id },
+        'stale correction',
+        'steer',
+      ),
+    ).rejects.toMatchObject({ code: 'validation' });
     expect(system.backend_prompt_writes(old_id)).toHaveLength(1);
     release_kill();
     const [restarted, next] = await Promise.all([restarting, next_step]);
@@ -244,6 +269,10 @@ test.each([
   const { db, system, options } = setup();
   const ticket = create(db);
   vi.spyOn(system, 'send').mockImplementation(async (_id, _content, sent) => {
+    if (sent.recording_receipt?.in_admission) {
+      db.write((tx) => sent.recording_receipt!.in_admission!(tx, _id));
+      sent.recording_receipt.admitted?.();
+    }
     const claimed = read(db, ticket.id);
     expect(sent.sender_message_id).toBe(
       `worker_step_message_${ticket.id}:${claimed.worker_step_claim_revision}`,
@@ -938,3 +967,235 @@ test('an accepted decision retains streamed files through refusal, TTL, and a fr
   }
   for (const ref of refs) expect(uploads.status(ref.upload_id).state).toBe('linked');
 });
+
+// Gap: the reference system proves claim rules but cannot hold a native receipt.
+// Reuse the real-record/scripted-process fixture to race kickoff with a correction.
+test('a kickoff racing a steer shares admission order without releasing its claim at acceptance', async () => {
+  const f = core_setup({ behavior: { barrier: 'kickoff' } });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: dirname(f.database_path),
+  });
+  const ticket = create(f.database);
+  const options = {
+    connect_database: () => f.database,
+    conversation_system: f.core,
+    worker_type_registry: configured_worker_type_registry(),
+    now: () => now,
+  };
+  let finished = false;
+  const kickoff = start_ready_worker_step(ticket.id, options).then((result) => {
+    finished = true;
+    return result;
+  });
+  const child = await f.child;
+  await child.wait_for_barrier('kickoff');
+  const accepted = new Deferred<void>();
+  const correction = send_message(
+    f.core,
+    f.database,
+    new TestClock(new Date(now * 1000).toISOString()),
+    { principal: OWNER, conversationId: null },
+    { kind: 'ticket', id: ticket.id },
+    'correction',
+    'steer',
+    {
+      sender_message_id: 'correction',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'correction',
+        admitted: () => accepted.resolve(),
+      },
+    },
+  );
+  try {
+    await accepted.promise;
+    expect(finished).toBe(false);
+    expect(read(f.database, ticket.id).worker_step_claim).toBe('out');
+    expect(
+      f.database
+        .read((sql) =>
+          sql.all<{ payload: string }>(
+            'SELECT payload FROM recipient_deliveries ORDER BY delivery_order',
+          ),
+        )
+        .map((row) => JSON.parse(row.payload).sender_message_id),
+    ).toEqual([expect.stringMatching(/^worker_step_message_/), 'correction']);
+    expect((await start_ready_worker_step(ticket.id, options)).started).toBe(false);
+    await child.release('kickoff');
+    expect((await kickoff).started).toBe(true);
+    await correction;
+    expect((await child.inspect()).calls.filter((call) => call.command === 'steer')).toMatchObject([
+      { arguments: { sender_content: [{ piece: 'text', text: 'correction' }] } },
+    ]);
+  } finally {
+    await child.release('kickoff');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Gap: no case held a retired workspace's cleanup while the same sender kept writing.
+// Reuse the real core: the triggering message takes durable custody before cleanup, and the
+// sender's owner reply proceeds while a hung kill waits. Failure or an active turn refuses once.
+test.each(['cleaned', 'failed', 'active'] as const)(
+  'a message to a retired workspace is accepted before cleanup when cleanup is %s',
+  async (cleanup) => {
+    const f = core_setup();
+    configure_conversation_start(f.database, {
+      db_path: f.database_path,
+      workspace_root: dirname(f.database_path),
+    });
+    const db = f.database;
+    const options = {
+      connect_database: () => db,
+      conversation_system: f.core,
+      worker_type_registry: configured_worker_type_registry(),
+      now: () => now,
+    };
+    const ended = create(db);
+    await start_ready_worker_step(ended.id, options);
+    // The Chief stands in for any agent sender: its later reply goes to the owner.
+    await f.start();
+    db.write((tx) =>
+      tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', [
+        'chief_of_staff',
+        'core',
+      ]),
+    );
+    const old_id = read(db, ended.id).conversation_id!;
+    await (await f.child).finish();
+    await vi.waitFor(async () => expect(await f.core.is_running(old_id)).toBe(false));
+    db.write((tx) => {
+      tx.run("UPDATE tickets SET stage='done' WHERE id=?", [ended.id]);
+      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [now, ended.id]);
+      tx.run('INSERT INTO ticket_workspace_conversations VALUES(?,?,?,?)', [
+        old_id,
+        ended.id,
+        HOME_MACHINE_ID,
+        'retired-workspace',
+      ]);
+      tx.run('INSERT INTO ticket_workspace_retirements VALUES(?,?,?,?)', [
+        ended.id,
+        HOME_MACHINE_ID,
+        'retired-workspace',
+        now,
+      ]);
+    });
+    const release = new Deferred<void>();
+    const killing = new Deferred<void>();
+    const is_running = f.core.is_running.bind(f.core);
+    vi.spyOn(f.core, 'is_running').mockImplementation(async (id) =>
+      id === old_id && cleanup === 'active' ? true : is_running(id),
+    );
+    const kill = f.core.kill.bind(f.core);
+    const killed = vi.spyOn(f.core, 'kill').mockImplementation(async (id) => {
+      if (id === old_id) {
+        killing.resolve();
+        await release.promise;
+        if (cleanup === 'failed') throw new Error('cleanup proof unavailable');
+      }
+      await kill(id);
+    });
+    const clock = new TestClock(new Date(now * 1000).toISOString());
+    const as_sender = { principal: { kind: 'chief' as const, id: 'chief' }, conversationId: null };
+    const custody: { conversation_id: string; delivery_order?: number }[] = [];
+    const accepted = await send_message(
+      f.core,
+      db,
+      clock,
+      as_sender,
+      { kind: 'ticket', id: ended.id },
+      'correction',
+      'queue',
+      {
+        sender_message_id: 'correction',
+        recording_receipt: {
+          sender_id: 'sender',
+          submission_id: 'correction',
+          in_admission: (tx, id) =>
+            custody.push({
+              conversation_id: id,
+              delivery_order: tx.get<{ delivery_order: number }>(
+                'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
+                [`${id}:correction`],
+              )?.delivery_order,
+            }),
+        },
+      },
+    );
+    const journal = () =>
+      db.read((sql) =>
+        sql.all<{ delivery_order: number; conversation_id: string; state: string }>(
+          "SELECT delivery_order,conversation_id,state FROM recipient_deliveries WHERE json_extract(payload,'$.sender_message_id')='correction'",
+        ),
+      );
+    const lifecycle = () =>
+      db.read(
+        (sql) =>
+          sql.get<{ retiring: number }>(
+            "SELECT retiring FROM recipient_lifecycles WHERE recipient_kind='ticket' AND recipient_id=?",
+            [ended.id],
+          )?.retiring,
+      );
+    const refusals = () =>
+      f.store
+        .read_events_after(old_id, 0)
+        .filter(
+          (row) =>
+            row.kind === 'prompt_delivery_refused' &&
+            (row.payload as { sender_message_id?: string }).sender_message_id === 'correction',
+        );
+    try {
+      expect(accepted.fate).toBeInstanceOf(PromptDeliveryQueued);
+      // Receipts and owner status name the fresh conversation that will receive the message.
+      const fresh = accepted.conversation_id!;
+      expect(fresh).not.toBe(old_id);
+      expect(custody).toEqual([{ conversation_id: fresh, delivery_order: expect.any(Number) }]);
+      // Readers that follow the fresh id, such as Manager wakes, see the refusal too.
+      const outcome = () => db.read((sql) => delivery_outcome_kind(sql, fresh, 'correction'));
+      const held = (state: string) => [
+        { delivery_order: custody[0].delivery_order, conversation_id: fresh, state },
+      ];
+      if (cleanup === 'active') {
+        // A running turn is never interrupted, and nothing was cleaned, so the fence lifts.
+        await vi.waitFor(() => expect(refusals()).toHaveLength(1));
+        expect(killed).not.toHaveBeenCalledWith(old_id);
+        expect(journal()).toEqual(held('refused'));
+        expect(outcome()).toBe('prompt_delivery_refused');
+        expect(lifecycle()).toBe(0);
+        expect(read(db, ended.id).conversation_id).toBe(old_id);
+        return;
+      }
+      await killing.promise;
+      expect(journal()).toEqual(held('awaiting_lifecycle'));
+      // The retired conversation's reader lists it as accepted, with no queue place.
+      expect(
+        db
+          .read((sql) => accepted_unplaced_messages(sql, old_id, new Set()))
+          .map((row) => [row.sender_message_id, 'queue_position' in row]),
+      ).toEqual([['correction', false]]);
+      await expect(
+        send_message(f.core, db, clock, as_sender, OWNER, 'owner reply'),
+      ).resolves.toMatchObject({ fate: { constructor: MessageRecordedToOwner } });
+      expect(read(db, ended.id).conversation_id).toBe(old_id);
+      release.resolve();
+      if (cleanup === 'failed') {
+        await vi.waitFor(() => expect(refusals()).toHaveLength(1));
+        expect(journal()).toEqual(held('refused'));
+        expect(outcome()).toBe('prompt_delivery_refused');
+        expect(lifecycle()).toBe(1);
+        expect(read(db, ended.id).conversation_id).toBe(old_id);
+        return;
+      }
+      await vi.waitFor(() => expect(journal()).toEqual(held('delivered')));
+      expect(read(db, ended.id).conversation_id).toBe(fresh);
+      expect(lifecycle()).toBe(0);
+      const first_prompt = f.store.read_events_after(fresh, 0).find((row) => row.kind === 'prompt');
+      expect(first_prompt?.payload).toMatchObject({ sender_message_id: 'correction' });
+      expect(refusals()).toEqual([]);
+    } finally {
+      release.resolve();
+      await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+    }
+  },
+);

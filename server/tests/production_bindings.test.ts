@@ -1,7 +1,7 @@
 /** The server composes pure driver rules and machine services. */
 import { afterEach, expect, test, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import type { StartedServer } from '../core/start.ts';
@@ -111,6 +111,31 @@ test('default production startup binds the real installer and environment runtim
     const updates = await fetch(server.address + '/api/updates');
     expect(updates.status).toBe(200);
     expect(await updates.json()).not.toHaveProperty('mac_details');
+    // Risk: since 22 Nov the server's stub instances supplied no transcripts, so Tokens and
+    // Cost read nothing. Test mode reads each driver's transcripts from a synthetic home.
+    const projects = join(dirname(path), 'usage-synthetic-homes', 'claude', 'projects', 'p');
+    mkdirSync(projects, { recursive: true });
+    writeFileSync(
+      join(projects, 'session.jsonl'),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-08-01T10:00:00Z',
+        sessionId: 'session',
+        requestId: 'request',
+        message: {
+          id: 'message',
+          model: 'test-model',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      }) + '\n',
+    );
+    const summary = await fetch(
+      server.address + '/api/conversation/usage/summary?sinceDay=2026-08-01&untilDay=2026-08-02',
+    );
+    expect(summary.status).toBe(200);
+    const recorded = await summary.json();
+    expect(recorded.sources).toHaveLength(3);
+    expect(recorded.buckets).not.toEqual([]);
     const machine_health = await fetch(server.address + '/api/executor/health');
     expect(machine_health.status).toBe(200);
     expect(await machine_health.json()).toMatchObject({ connection_state: 'disconnected' });

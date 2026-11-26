@@ -1,4 +1,4 @@
-/** Claude's production model catalog: owned probes, sealed at dispose with a native-close retry. */
+/** Claude's production catalog and usage reads: owned probes, sealed at dispose with a native-close retry. */
 import type { OwnedOneShotChildren, StopOptions } from '../../../lifecycle/contracts.ts';
 import type { ClaudeModelCatalogSource } from './contracts.ts';
 import { ClaudeModelCatalogUnavailable } from './contracts.ts';
@@ -11,9 +11,12 @@ import {
   probe_claude_model_catalog,
   ClaudeModelCatalogUnavailable as ProviderUnavailable,
 } from './model_catalog.ts';
+import { read_claude_usage } from './usage.ts';
 
 export interface ClaudeCatalogSource {
   readonly source: ClaudeModelCatalogSource;
+  /** The CLI's `get_usage` answer, owned and drained like a catalog probe. */
+  read_usage(executable: string, options: { signal?: AbortSignal }): Promise<unknown>;
   /** Seals the source, drains its probes and retries a failed native close. May be called again. */
   dispose(options?: StopOptions): Promise<void>;
 }
@@ -23,6 +26,17 @@ export function create_claude_catalog_source(children: OwnedOneShotChildren): Cl
   const probes = new Set<Promise<unknown>>();
   let closed = false;
   let stop_options: StopOptions | undefined;
+  const owned = async <T>(operation: Promise<T>): Promise<T> => {
+    probes.add(operation);
+    try {
+      return await operation;
+    } catch (error) {
+      if (error instanceof ModelCatalogCleanupFailed) failed_cleanup.add(error);
+      throw error;
+    } finally {
+      probes.delete(operation);
+    }
+  };
   return {
     async source(executable) {
       if (closed) throw new ClaudeModelCatalogUnavailable('Claude model discovery is shut down.');
@@ -30,21 +44,30 @@ export function create_claude_catalog_source(children: OwnedOneShotChildren): Cl
         throw new ClaudeModelCatalogUnavailable(
           'Production catalog reads are unavailable in tests.',
         );
-      const operation = probe_claude_model_catalog(executable, children, {
-        signal: children.signal,
-        stop_options: () => stop_options,
-      });
-      probes.add(operation);
       try {
-        return await operation;
+        return await owned(
+          probe_claude_model_catalog(executable, children, {
+            signal: children.signal,
+            stop_options: () => stop_options,
+          }),
+        );
       } catch (error) {
-        if (error instanceof ModelCatalogCleanupFailed) failed_cleanup.add(error);
         if (error instanceof ProviderUnavailable)
           throw new ClaudeModelCatalogUnavailable(error.message, { cause: error });
         throw error;
-      } finally {
-        probes.delete(operation);
       }
+    },
+    async read_usage(executable, options) {
+      if (closed) throw new Error('Claude usage is shut down.');
+      if (backend_io_is_test()) throw new Error('Production usage reads are unavailable in tests.');
+      return owned(
+        read_claude_usage(executable, children, {
+          signal: options.signal
+            ? AbortSignal.any([children.signal, options.signal])
+            : children.signal,
+          stop_options: () => stop_options,
+        }),
+      );
     },
     async dispose(options) {
       stop_options ??= options;

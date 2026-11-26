@@ -18,6 +18,11 @@ export const claude_driver: AgentDriver<null> = {
   config: NO_DRIVER_CONFIG,
   models: claude_models,
   readable_tool_call_detail: claude_readable_tool_call_detail,
+  async transcript_usage(environment) {
+    return (await import('./runtime/transcript_usage.ts')).claude_configured_transcript_usage(
+      environment,
+    );
+  },
   async create(input, host) {
     const { create_claude_instance } = await import('./runtime/instance.ts');
     return create_claude_instance(input, host);

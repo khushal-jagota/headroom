@@ -138,6 +138,12 @@
     "ts_0016_agent_message_acceptances": [
       "ts_0015_owner_time_zone"
     ],
+    "ts_0017_recipient_deliveries": [
+      "ts_0016_agent_message_acceptances"
+    ],
+    "ts_0018_backup_failed_preference": [
+      "ts_0017_recipient_deliveries"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

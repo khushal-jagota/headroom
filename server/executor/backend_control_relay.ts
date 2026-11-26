@@ -3,7 +3,7 @@ import type { SqliteCommandMailbox } from './vps_mailbox.ts';
 import type { MacPresenceService } from './vps_presence.ts';
 import type { BackendRequest, JsonObject } from './wire.generated.ts';
 import { BackendControlSecrets } from './backend_control_secrets.ts';
-import { BACKEND_CONTROL_LIMIT_SECONDS } from './configuration.ts';
+import { BACKEND_CONTROL_LIMIT_SECONDS, USAGE_SUMMARY_LIMIT_SECONDS } from './configuration.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
@@ -49,7 +49,12 @@ export class VpsBackendControlRelay implements MachineBackendControls {
       return Promise.reject(new HttpError(503, 'The selected machine is unavailable.'));
     if (!this.presence.supports_backend_controls(request.operation))
       return Promise.reject(
-        new HttpError(503, 'Update machine code before you update a provider CLI.'),
+        new HttpError(
+          503,
+          request.operation === 'read_usage_summary'
+            ? 'Update machine code before you read its recorded usage.'
+            : 'Update machine code before you update a provider CLI.',
+        ),
       );
     const signal =
       options.signal === undefined
@@ -90,7 +95,11 @@ export class VpsBackendControlRelay implements MachineBackendControls {
       signal.throwIfAborted();
       const result = await this.mailbox.wait_result(
         command.command_id,
-        request.operation === 'update_backend' ? null : BACKEND_CONTROL_LIMIT_SECONDS,
+        request.operation === 'update_backend'
+          ? null
+          : request.operation === 'read_usage_summary'
+            ? USAGE_SUMMARY_LIMIT_SECONDS
+            : BACKEND_CONTROL_LIMIT_SECONDS,
         { signal },
       );
       if (result?.backend_result == null)

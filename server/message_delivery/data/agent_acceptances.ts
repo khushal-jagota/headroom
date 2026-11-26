@@ -110,6 +110,7 @@ export function write_agent_message_acceptance(
   tx: TransactionSql,
   message: Omit<AcceptedAgentMessage, 'recipient_order'>,
   files: readonly RetainedMessageFile[],
+  delivery_order?: number,
 ): AcceptedAgentMessage {
   const prior = replay_agent_message(tx, message.envelope, message.machine_id, message.source);
   if (prior !== null) return prior;
@@ -126,10 +127,12 @@ export function write_agent_message_acceptance(
     throw new PlannerError('retry_later', 'Message files are not retained');
   for (const file of files) verify_file(file);
   const retained_bytes = files.reduce((sum, file) => sum + file.bytes.length, 0);
-  const recipient_order = tx.get<{ next: number }>(
-    'SELECT COALESCE(MAX(recipient_order),0)+1 AS next FROM agent_message_acceptances WHERE recipient_kind=? AND recipient_id=?',
-    [message.recipient.kind, message.recipient.id],
-  )!.next;
+  const recipient_order =
+    delivery_order ??
+    tx.get<{ next: number }>(
+      'SELECT COALESCE(MAX(recipient_order),0)+1 AS next FROM agent_message_acceptances WHERE recipient_kind=? AND recipient_id=?',
+      [message.recipient.kind, message.recipient.id],
+    )!.next;
   const accepted = { ...message, recipient_order };
   const record_json = JSON.stringify({
     ...accepted,
@@ -138,14 +141,18 @@ export function write_agent_message_acceptance(
   });
   if (message.pending) {
     const pending = tx.get<{ count: number; bytes: number }>(
-      'SELECT COUNT(*) AS count,COALESCE(SUM(retained_bytes+length(CAST(record_json AS BLOB))),0) AS bytes FROM agent_message_acceptances WHERE pending=1',
+      'SELECT COUNT(*) AS count,COALESCE(SUM(retained_bytes+length(CAST(record_json AS BLOB))),0) AS bytes FROM agent_message_acceptances WHERE recipient_kind=? AND recipient_id=? AND pending=1',
+      [message.recipient.kind, message.recipient.id],
     )!;
     if (
       pending.count >= MAX_PENDING_AGENT_MESSAGES ||
       pending.bytes + retained_bytes + Buffer.byteLength(record_json, 'utf8') >
         MAX_PENDING_AGENT_MESSAGE_BYTES
     )
-      throw new PlannerError('retry_later', 'Home cannot retain more pending messages');
+      throw new PlannerError(
+        'validation',
+        'Home cannot retain more pending messages for this recipient',
+      );
   }
   tx.run('INSERT INTO agent_message_acceptances VALUES(?,?,?,?,?,?,?,?,?,?)', [
     message.submission_id,

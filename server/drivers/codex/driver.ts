@@ -20,6 +20,11 @@ export const codex_driver: AgentDriver<null> = {
   config: NO_DRIVER_CONFIG,
   models: codex_models,
   launch_model_refusal: codex_launch_model_refusal,
+  async transcript_usage(environment) {
+    return (await import('./runtime/transcript_usage.ts')).codex_configured_transcript_usage(
+      environment,
+    );
+  },
   async create(input, host) {
     const { create_codex_instance } = await import('./runtime/instance.ts');
     return create_codex_instance(input, host);

@@ -62,10 +62,10 @@
   });
   $effect(() => {
     if (!loaded) return;
-    const acceptedThrough = composer.accepted?.through;
+    const deliveredThrough = composer.delivered?.through;
     // A replacement card can share the receipt while showing a newer unread message.
-    const settled = acceptedThrough !== undefined && acceptedThrough >= through
-      ? acceptedThrough
+    const settled = deliveredThrough !== undefined && deliveredThrough >= through
+      ? deliveredThrough
       : events.length === 0 ? ownerReadThrough : null;
     if (settled !== null && composer.ready && !busy && !intakeBusy && !voiceActive && !composer.hasDraft && !composer.hasUnsettled && !composer.hasHeldReply) resolve(settled);
   });

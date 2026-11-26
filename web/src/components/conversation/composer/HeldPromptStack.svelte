@@ -77,7 +77,7 @@
             onclick={() => void act(message.messageId, () => actions.discard(row))}
           ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7" /></svg></button>
         {:else}
-          <span class="chat-qrow-state" role="status">{upload?.note ?? "Sending…"}</span>
+          <span class="chat-qrow-state" role="status">{upload?.note ?? (message.knownFate === "accepted_for_delivery" ? "Accepted for delivery" : "Sending…")}</span>
         {/if}
       </li>
     {/each}

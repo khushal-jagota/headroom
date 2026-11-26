@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../core/config.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
+import type { APNsAdapter, WebPushAdapter } from '../notifications/contracts.ts';
 import { message_chief } from './alarms.ts';
 import { run_watchdog, watchdog_summary } from './watchdog.ts';
 
@@ -30,6 +31,38 @@ export async function watchdog_command(
   if (!state_dir) throw new Error('Missing option --state-dir');
   return watchdog_handler({ db: db_path, state_dir }, env);
 }
+/** The provider transport of a Panels alarm. Its Chief message goes to the local server. */
+export interface AlarmTransport {
+  readonly web_push: WebPushAdapter;
+  readonly apns: APNsAdapter | null;
+  readonly push_origin: string | null;
+  message_chief(text: string): Promise<boolean>;
+  close(): Promise<void>;
+}
+/** The watchdog and the backup alarm share this. A test-mode home never gets a transport. */
+export async function open_alarm_transport(
+  env: NodeJS.ProcessEnv,
+  admit_path: (path: string) => string,
+  home?: string,
+): Promise<AlarmTransport> {
+  const config = loadConfig(undefined, env, { home, admit_path });
+  // A test-mode command must never instantiate a provider transport.
+  if (config.test_mode || backend_io_is_test())
+    throw new Error('Panels alarm provider transport is unavailable in test mode');
+  const { StandardsWebPushAdapter } = await import('../notifications/web_push.ts');
+  const { TokenAPNsAdapter, canonical_server_origin } = await import('../notifications/apns.ts');
+  const origin = canonical_server_origin(config.trusted_ingress_canonical_origin);
+  const apns = config.apns && origin ? new TokenAPNsAdapter(config.apns) : null;
+  return {
+    web_push: new StandardsWebPushAdapter(),
+    apns,
+    push_origin: origin,
+    message_chief: (text) => message_chief(text, `http://127.0.0.1:${config.port}`),
+    close: async () => {
+      await apns?.close();
+    },
+  };
+}
 export async function watchdog_handler(
   args: WatchdogArguments,
   env: NodeJS.ProcessEnv,
@@ -39,26 +72,18 @@ export async function watchdog_handler(
   const db_path = admit_path(args.db),
     state_dir = admit_path(args.state_dir);
   if (!statSync(db_path).isFile()) throw new Error('--db must name an existing database file');
-  const config = loadConfig(undefined, env, { home, admit_path });
-  // A test-mode command must never instantiate a provider transport.
-  if (config.test_mode || backend_io_is_test())
-    throw new Error('watchdog provider command is unavailable in test mode');
-  const { StandardsWebPushAdapter } = await import('../notifications/web_push.ts');
-  const { TokenAPNsAdapter, canonical_server_origin } = await import('../notifications/apns.ts');
-  const origin = canonical_server_origin(config.trusted_ingress_canonical_origin);
-  const apns_config = config.apns;
-  const apns = apns_config && origin ? new TokenAPNsAdapter(apns_config) : null;
+  const transport = await open_alarm_transport(env, admit_path, home);
   try {
     const run = await run_watchdog(db_path, state_dir, {
       now_ms: Date.now(),
-      web_push: new StandardsWebPushAdapter(),
-      apns,
-      push_origin: origin,
-      message_chief: (text) => message_chief(text, `http://127.0.0.1:${config.port}`),
+      web_push: transport.web_push,
+      apns: transport.apns,
+      push_origin: transport.push_origin,
+      message_chief: transport.message_chief,
     });
     return watchdog_summary(run);
   } finally {
-    await apns?.close();
+    await transport.close();
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

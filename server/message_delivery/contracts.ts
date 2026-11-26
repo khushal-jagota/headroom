@@ -2,10 +2,19 @@ import type { Principal } from '../core/contracts.ts';
 import type { PromptDeliveryFate, PromptDeliveryMode } from '../conversation/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
 export class MessageRecordedToOwner {}
+export class MessageAcceptedForDelivery {}
 export interface MessageDeliveryResult {
   recipient: Principal;
   conversation_id: string | null;
-  fate: PromptDeliveryFate | MessageRecordedToOwner;
+  fate: PromptDeliveryFate | MessageRecordedToOwner | MessageAcceptedForDelivery;
+}
+/** What later happened to an owner message that home accepted, read from stored rows only. */
+export interface OwnerSendOutcome {
+  readonly message_id: string;
+  readonly conversation_id: string | null;
+  readonly outcome: 'pending' | 'delivered' | 'refused' | 'discarded' | 'uncertain';
+  readonly refusal_reason: string | null;
+  readonly reason: string | null;
 }
 /** An upload admission writes only through its owning area's write door. */
 export interface MessageAdmission {
@@ -35,4 +44,11 @@ export interface AcceptedAgentMessage {
 export interface RetainedMessageFile {
   readonly manifest: WireValue<'FileManifest'>;
   readonly bytes: Buffer;
+}
+
+export class RecipientDeliveryStale extends Error {}
+
+export interface RecipientAttempt {
+  readonly submission_id: string;
+  readonly attempt_id: string;
 }

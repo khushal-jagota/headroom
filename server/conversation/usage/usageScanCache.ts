@@ -31,8 +31,8 @@ import type { UsageRecord } from './usageTranscripts.ts';
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
 // v5: one-hour cache writes and resumable compaction identities.
-// Whole-file sources add `f` and records may add `pricing_model`. Line sources
-// write neither, so their entries keep the v5 bytes.
+// Whole-file sources add `f` and keep their parser's state in `cs`, and records may
+// add `pricing_model`. Line sources write neither, so their entries keep the v5 bytes.
 const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {

@@ -1,4 +1,5 @@
-import { PlannerError, type Principal } from '../core/contracts.ts';
+import { read_held_prompts } from './record/held_prompts.ts';
+import { PlannerError } from '../core/contracts.ts';
 import type {
   WorkspaceIdentity,
   RetirementTarget,
@@ -17,7 +18,6 @@ import type {
   ConversationStartRequest,
   ConversationSystem,
   HeldPromptPromotionMode,
-  OwnerSendProgress,
   PromptDeliveryFate,
   RecordMessageToOwnerOptions,
   SendOptions,
@@ -157,6 +157,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     const record = this.options.store.read_conversation(conversation_id);
     if (!record) return null;
     const state = new ConversationState(record);
+    state.held_prompts.push(
+      ...read_held_prompts(this.options.store.start_admission_database, conversation_id),
+    );
     remote.restore_retained_run(this, state);
     if (this.options.store.blocked_local_conversations.has(conversation_id))
       state.child_is_quarantined = true;
@@ -290,6 +293,19 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         .filter((row) => row.sequence <= through);
     }
     if (rows.length === 0) return;
+    const terminal_senders = new Set(
+      rows.flatMap((row) =>
+        ['prompt', 'prompt_discarded', 'prompt_delivery_refused'].includes(row.kind) &&
+        'sender_message_id' in row.payload &&
+        row.payload.sender_message_id
+          ? [row.payload.sender_message_id]
+          : [],
+      ),
+    );
+    for (let index = state.held_prompts.length - 1; index >= 0; index -= 1) {
+      if (terminal_senders.has(state.held_prompts[index].sender_message_id!))
+        state.held_prompts.splice(index, 1);
+    }
     let values = { ...state.record, latest_sequence: rows[rows.length - 1].sequence };
     for (const row of rows) {
       if (row.payload instanceof ModelChangedEventPayload) {
@@ -327,11 +343,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   queue(state: ConversationState, message: Message): Promise<PromptDeliveryFate> {
     return send.queue(this, state, message);
   }
-  hold_prompt(
-    state: ConversationState,
-    message: Message,
-    position = state.held_prompts.length,
-  ): PromptDeliveryQueued {
+  hold_prompt(state: ConversationState, message: Message, position?: number): PromptDeliveryQueued {
     return send.hold_prompt(this, state, message, position);
   }
   reserve_turn(
@@ -543,6 +555,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async sweep_idle_children(): Promise<void> {
     return import('./runtime/maintenance.ts').then((module) => module.sweep_idle_children(this));
   }
+  async refuse_lifecycle_held_delivery(submission_id: string, detail: string): Promise<void> {
+    const { refuse_lifecycle_held_delivery } = await import('../message_delivery/recovery.ts');
+    await refuse_lifecycle_held_delivery(this, submission_id, detail);
+  }
   async interrupt(conversation_id: string): Promise<void> {
     const state = this.conversation_state(conversation_id);
     if (state) await own_settlement(state, controls.interrupt(this, state));
@@ -660,13 +676,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]> {
     return queries.held_prompts(this, conversation_id);
-  }
-  owner_send_progress(
-    conversation_id: string,
-    sender_message_id: string,
-    recipient: Principal,
-  ): Promise<OwnerSendProgress | null> {
-    return queries.owner_send_progress(this, conversation_id, sender_message_id, recipient);
   }
   sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
     return queries.sender_message_ids_awaiting_outcome(this, conversation_id);

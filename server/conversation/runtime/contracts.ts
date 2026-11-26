@@ -43,6 +43,7 @@ export interface Message {
   readonly reconciles_sequence?: number | null;
 }
 export interface SenderAdmission {
+  readonly admitted?: Deferred<void>;
   readonly message: Message;
   readonly settled: Deferred<void>;
 }

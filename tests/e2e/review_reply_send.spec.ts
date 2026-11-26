@@ -69,6 +69,13 @@ test('test_review_reply_keeps_one_steady_result_while_a_slow_send_arrives', asyn
   await expect(page.locator('[data-review-reply]')).toHaveValue('');
   await expect(page.locator('[data-review-send]')).toHaveAttribute('aria-busy', 'true');
   await expect(page.locator('[data-review-final-status]')).toHaveText('All clear. Nothing to review.');
+  // The send answers at acceptance. The card leaves only once the conversation recorded the reply.
+  // A text-only prompt is stored as `text`; one with several pieces as `content`.
+  const events: { kind: string; payload: { text?: string; content?: { text?: string }[] } }[] =
+    (await api.get(server, '/api/conversation/conversations/reply-proof/events')).events;
+  expect(events.filter((event) => event.kind === 'prompt'
+    && (event.payload.text === 'Use Postgres, please.'
+      || (event.payload.content ?? []).some((piece) => piece.text === 'Use Postgres, please.')))).toHaveLength(1);
   await page.waitForTimeout(600);
   const seen = await page.evaluate(() => {
     const value = (window as unknown as { __seen: { outgoing: number; finalTexts: Set<string>; finals: Set<Element>; busy: boolean } }).__seen;

@@ -31,6 +31,8 @@ export const DRAIN_RETRY_INITIAL_SECONDS = 1;
 export const DRAIN_RETRY_MAX_SECONDS = 60;
 export const MODEL_LIST_LIMIT_SECONDS = 35;
 export const BACKEND_CONTROL_LIMIT_SECONDS = 60;
+/** A machine's first transcript scan builds its cache. It stays within the browser's 120 s scan limit. */
+export const USAGE_SUMMARY_LIMIT_SECONDS = 110;
 export const CATALOG_CLEANUP_SECONDS = 2;
 export const MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS = 10;
 export const MAC_AGENT_PROCESS_POLL_MS = 100;

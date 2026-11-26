@@ -22,6 +22,11 @@ export const antigravity_driver: AgentDriver<null> = {
   plan_selection_transition: acp_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: antigravity_models,
+  async transcript_usage(environment) {
+    return (await import('./runtime/transcript_usage.ts')).antigravity_configured_transcript_usage(
+      environment,
+    );
+  },
   async create(input, host) {
     const { create_antigravity_instance } = await import('./runtime/instance.ts');
     return create_antigravity_instance(input, host);

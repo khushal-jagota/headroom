@@ -101,6 +101,69 @@ it('a failing step rolls back only itself; a drifted baseline runs no step', () 
   assert.deepEqual(state(drifted), before);
 });
 
+// Gap: the step checks read only what the step touched. They must still find writes made
+// through a trigger, a changed schema, and an untouched child of a changed parent, and must
+// not re-read an untouched table. Real SQLite with one deliberately damaged index.
+it('the step checks cover the tables a step touched and nothing else', () => {
+  const steps = {
+    trigger_write: "INSERT INTO trigger_source VALUES ('a')",
+    new_index: 'CREATE INDEX damaged_y ON damaged(y)',
+    parent_delete: 'DELETE FROM parent',
+    parent_drop: 'DROP TABLE parent',
+    unrelated_table: 'CREATE TABLE unrelated (unrelated_id TEXT PRIMARY KEY)',
+  };
+  for (const [name, statement] of Object.entries(steps)) {
+    const root = mkdtempSync(join(tmpdir(), 'panels-schema-steps-'));
+    roots.push(root);
+    const path = join(root, 'planner.db');
+    const setup = new BetterSqlite3(path);
+    // Real homes use incremental auto_vacuum, which moves root pages on CREATE and DROP.
+    setup.pragma('auto_vacuum = INCREMENTAL');
+    setup.exec(`
+      CREATE TABLE alembic_version (version_num TEXT NOT NULL PRIMARY KEY);
+      INSERT INTO alembic_version VALUES ('start');
+      CREATE TABLE damaged (id INTEGER PRIMARY KEY, x TEXT, y TEXT);
+      CREATE INDEX damaged_x ON damaged(x);
+      INSERT INTO damaged (x, y) VALUES ('x1', 'y1'), ('x2', 'y2');
+      CREATE TABLE trigger_source (value TEXT);
+      CREATE TRIGGER trigger_source_copy AFTER INSERT ON trigger_source
+        BEGIN INSERT INTO damaged (x, y) VALUES (NEW.value, NEW.value); END;
+      CREATE TABLE parent (parent_id TEXT PRIMARY KEY);
+      CREATE TABLE child (parent_id TEXT REFERENCES parent(parent_id));
+      INSERT INTO parent VALUES ('p'); INSERT INTO child VALUES ('p');`);
+    // The index's stored definition no longer matches its entries.
+    setup.unsafeMode(true);
+    setup.pragma('writable_schema = ON');
+    setup
+      .prepare(
+        "UPDATE sqlite_schema SET sql = 'CREATE INDEX damaged_x ON damaged(y)' WHERE name = 'damaged_x'",
+      )
+      .run();
+    setup.close();
+    const step = {
+      revision: name,
+      previous_revision: 'start',
+      apply: (tx: { run(sql: string): void }) => tx.run(statement),
+    };
+    const run = () =>
+      applySchemaSteps(path, [step], {
+        head_revision: name,
+        expected_statements: null,
+        refuse_pending: false,
+        baseline: null,
+      });
+    if (name === 'unrelated_table') assert.deepEqual(run().applied, [name]);
+    else
+      assert.throws(
+        run,
+        name.startsWith('parent_')
+          ? /left 1 foreign key violation/
+          : /integrity check failed after schema step/,
+        name,
+      );
+  }
+});
+
 it('migrated database equals the generated seed; a one-character difference refuses and rolls back the last step', async () => {
   // Fresh and migrated databases must not drift apart. The generator builds the expected seed.
   const repository = resolve(import.meta.dirname, '../../..');
@@ -184,6 +247,7 @@ const keyed_rows = (kind: string) => [
   `INSERT INTO native_usage_sources (provider, source_key, snapshot) VALUES ('${kind}', 'source', '{}')`,
 ];
 const REBUILT_AND_REFERENCING = [
+  'notification_preferences',
   'backend_model_enablement',
   'backend_usage_snapshots',
   'backend_usage_windows',
@@ -252,6 +316,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
       ...keyed_rows('codex'),
       "INSERT INTO backend_usage_windows (backend_key, window_kind, model_id, used_percent, resets_at) VALUES ('codex', 'five_hour', '', 40, 2)",
       "INSERT INTO measure_sources (id, name, project_id, account, responsible_kind, responsible_goal_id, responsibility_revision, source_revision, created_at, updated_at) VALUES ('source', 'Source', 'project', 'account', 'goal', 'goal_codex', 1, 1, 0, 0)",
+      "INSERT INTO notification_preferences VALUES ('panels', 'stall_alarm', 0, 5)",
     ]);
     // The baseline refuses a new backend key in every one of these columns.
     for (const statement of keyed_rows('acme'))
@@ -263,7 +328,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0016_agent_message_acceptances',
+      to_revision: 'ts_0018_backup_failed_preference',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -281,10 +346,12 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0014_work_move_operations',
         'ts_0015_owner_time_zone',
         'ts_0016_agent_message_acceptances',
+        'ts_0017_recipient_deliveries',
+        'ts_0018_backup_failed_preference',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0016_agent_message_acceptances'],
+      revision: ['ts_0018_backup_failed_preference'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
@@ -328,6 +395,8 @@ it('step 1 brings a baseline database, with either trigger text and with or with
     assert.deepEqual(foreign_key_violations(path), []);
     // Every formerly checked column now stores a new backend key.
     write(path, keyed_rows('acme'));
+    // The Panels subject now accepts its Backup failed switch.
+    write(path, ["INSERT INTO notification_preferences VALUES ('panels', 'backup_failed', 1, 6)"]);
   }
 });
 

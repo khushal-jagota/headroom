@@ -1,4 +1,5 @@
 import { selected_machine } from '../snapshot/routes.ts';
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 /** Thin HTTP transport for local recorded usage and persisted provider allowances. */
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -8,7 +9,9 @@ import { calendar_date } from '../../measures/logic/dates.ts';
 import { timezone } from './timeZone.ts';
 import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type { UsageHttpRuntime, UsageSummaryInput } from './contracts.ts';
-import { presentProviderLimits } from './providerLimits.ts';
+import { presentProviderLimits, type MachineUsageLimits } from './providerLimits.ts';
+import { list_machines } from '../../machines/data.ts';
+import { is_record as object } from '../../core/records.ts';
 
 interface QueryIssue {
   type: string;
@@ -98,6 +101,17 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
   return async (app, services) => {
     app.get('/summary', async (request) => {
       const input = summary_input(request.query as Record<string, unknown>);
+      const machine_id = selected_machine({ database: services.database }, request.query);
+      if (machine_id !== HOME_MACHINE_ID) {
+        // A joined machine scans its own transcripts and returns only its aggregated buckets.
+        const controls = runtime.machine_backends?.(machine_id) ?? null;
+        if (controls === null) throw new HttpError(503, 'The selected machine is unavailable.');
+        return await controls.request({
+          backend_key: '',
+          operation: 'read_usage_summary',
+          usage_summary_input: { ...input },
+        });
+      }
       try {
         return await runtime.recorded_usage.readSummary(input);
       } catch (error) {
@@ -108,9 +122,31 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       }
     });
     app.get('/limits', async (request) => {
-      const machine_id = selected_machine({ database: services.database }, request.query);
+      const every_machine =
+        scalarQueries(object(request.query) ? request.query : {}).machine_id === undefined;
       if (!runtime.conversation_runtime_available)
         throw new HttpError(503, 'the conversation system is unavailable');
+      if (every_machine) {
+        // Every machine's last observation, an unavailable machine's included.
+        const readings: MachineUsageLimits[] = [];
+        const state = runtime.backend_state;
+        if (state === null) return { readings };
+        for (const machine of services.database.read((sql) => list_machines(sql)))
+          for (const backend_key of runtime.backend_ids) {
+            const observation = state.read_usage(backend_key, machine.machine_id);
+            if (observation === null) continue;
+            readings.push({
+              machine_id: machine.machine_id,
+              machine_name: machine.name,
+              backend_key,
+              account_label: observation.account_label,
+              account_detail: observation.account_detail,
+              limits: presentProviderLimits(observation),
+            });
+          }
+        return { readings };
+      }
+      const machine_id = selected_machine({ database: services.database }, request.query);
       if (runtime.backend_state === null) return {};
       const result: Record<string, ReturnType<typeof presentProviderLimits>> = {};
       for (const backend of runtime.backend_ids) {

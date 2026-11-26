@@ -5,7 +5,6 @@ import type {
   RetainedBackendChildFactory,
 } from '../conversation/backends/contracts.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
-import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
 import {
@@ -116,14 +115,6 @@ export function compose_production_backends(
   return {
     registry,
     http,
-    /** Each live instance's own transcripts, for the recorded usage service. */
-    transcript_sources: registry
-      .list()
-      .flatMap((entry): UsageTranscriptSource[] =>
-        entry.kind === 'live' && entry.instance.transcript_usage !== undefined
-          ? [{ provider: entry.instance.instance_id, source: entry.instance.transcript_usage }]
-          : [],
-      ),
     execution_refusal,
     stall_sources: () => [
       ...bindings.stall_sources(shared),

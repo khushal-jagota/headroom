@@ -9,6 +9,15 @@ import { is_object } from '../codec.ts';
 import { assert_installer_path } from './configuration.ts';
 import type { InstallerRequest } from './contracts.ts';
 
+/**
+ * Seconds for each part of an update snapshot: `staged_copy` and `late_check` and
+ * `retention` while the home serves, `catch_up` or `stopped_copy` in the stopped window.
+ */
+export type SnapshotSeconds = Readonly<Record<string, number>>;
+function snapshot_seconds(current: Record<string, unknown>): Record<string, unknown> {
+  return is_object(current.snapshot_seconds) ? current.snapshot_seconds : {};
+}
+
 /** Keep unknown cross-version fields outside the typed store. */
 export class InstallationRecord {
   readonly path: string;
@@ -51,14 +60,27 @@ export class InstallationRecord {
     });
   }
   /** The rollback restores this snapshot, so the record names it before the swap. */
-  snapshot_taken(snapshot: string): void {
+  snapshot_taken(snapshot: string, seconds: SnapshotSeconds = {}): void {
     assert_installer_path(this.lock_path);
     exclusive_existing_lock(this.lock_path, () => {
       const current = this.read();
       if (current.attempt_id !== this.request.attempt_id)
         throw new Error('The update attempt changed before its snapshot was recorded');
       current.backup = snapshot;
+      current.snapshot_seconds = { ...snapshot_seconds(current), ...seconds };
       this.write_step(current, 'backup');
+    });
+  }
+  /** Each part of the snapshot's work, so the record shows the real stopped window. */
+  snapshot_timed(seconds: SnapshotSeconds): void {
+    assert_installer_path(this.lock_path);
+    exclusive_existing_lock(this.lock_path, () => {
+      const current = this.read();
+      if (current.attempt_id !== this.request.attempt_id) return;
+      replace_existing_json(this.path, {
+        ...current,
+        snapshot_seconds: { ...snapshot_seconds(current), ...seconds },
+      });
     });
   }
   claim(): Record<string, unknown> | null {

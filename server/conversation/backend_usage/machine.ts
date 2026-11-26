@@ -13,36 +13,13 @@ export function decode_machine_usage(
     !is_record(value) ||
     value.backend_key !== backend_key ||
     !['succeeded', 'unavailable', 'unauthenticated', 'failed'].includes(String(value.outcome)) ||
-    !Array.isArray(value.windows) ||
     (value.detail !== null && typeof value.detail !== 'string')
   )
     throw invalid();
-  const date = (raw: unknown): Date => {
-    if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw))) throw invalid();
-    return new Date(raw);
-  };
-  const observed_at = value.observed_at === null ? null : date(value.observed_at);
+  const observed_at = value.observed_at === null ? null : iso_date(value.observed_at);
+  const windows = decode_usage_windows(value.windows);
+  if (observed_at === undefined || windows === null) throw invalid();
   if (value.outcome === 'succeeded' && observed_at === null) throw invalid();
-  const windows: BackendUsageWindow[] = value.windows.map((window) => {
-    if (
-      !is_record(window) ||
-      !['five_hour', 'seven_day'].includes(String(window.kind)) ||
-      typeof window.used_percent !== 'number' ||
-      !Number.isFinite(window.used_percent) ||
-      window.used_percent < 0 ||
-      window.used_percent > 100 ||
-      (window.model_scope !== null && typeof window.model_scope !== 'string') ||
-      (window.scope_label !== null && typeof window.scope_label !== 'string')
-    )
-      throw invalid();
-    return {
-      kind: window.kind as BackendUsageWindow['kind'],
-      used_percent: window.used_percent,
-      resets_at: date(window.resets_at),
-      model_scope: window.model_scope,
-      scope_label: window.scope_label,
-    };
-  });
   return {
     backend_key,
     outcome: value.outcome as BackendUsageResult['outcome'],
@@ -50,4 +27,49 @@ export function decode_machine_usage(
     observed_at,
     windows,
   };
+}
+/**
+ * Windows as JSON carries them, from a machine or from a stored observation. Null when any window
+ * is not in the current shape, such as an observation saved before windows carried an id.
+ */
+export function decode_usage_windows(value: unknown): BackendUsageWindow[] | null {
+  if (!Array.isArray(value)) return null;
+  const windows: BackendUsageWindow[] = [];
+  for (const window of value) {
+    if (
+      !is_record(window) ||
+      typeof window.id !== 'string' ||
+      !window.id ||
+      !['five_hour', 'seven_day'].includes(String(window.kind)) ||
+      typeof window.label !== 'string' ||
+      !window.label ||
+      typeof window.used_percent !== 'number' ||
+      !Number.isFinite(window.used_percent) ||
+      window.used_percent < 0 ||
+      window.used_percent > 100 ||
+      (window.window_duration_mins !== null &&
+        !(
+          Number.isInteger(window.window_duration_mins) && Number(window.window_duration_mins) > 0
+        )) ||
+      (window.model_scope !== null && typeof window.model_scope !== 'string')
+    )
+      return null;
+    const resets_at = window.resets_at === null ? null : iso_date(window.resets_at);
+    if (resets_at === undefined) return null;
+    windows.push({
+      id: window.id,
+      kind: window.kind as BackendUsageWindow['kind'],
+      label: window.label,
+      used_percent: window.used_percent,
+      resets_at,
+      window_duration_mins: window.window_duration_mins as number | null,
+      model_scope: window.model_scope as string | null,
+    });
+  }
+  return windows;
+}
+/** Undefined when the value is not a date string. */
+function iso_date(raw: unknown): Date | undefined {
+  if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw))) return undefined;
+  return new Date(raw);
 }
