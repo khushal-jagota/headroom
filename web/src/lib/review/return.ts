@@ -9,15 +9,18 @@ export function sameReviewHistory(left:readonly ReviewHistoryKey[],right:readonl
   return keys.size===right.length && right.every(key=>keys.has(JSON.stringify([key.kind,key.id])));
 }
 export const SKIPPED_RETURN_LABEL='Review skipped';
+/** What the final page knows of the queue. Pending is a view that is one request behind and on its way. Unavailable is a queue that cannot load. */
+export type ReviewSummaryState={kind:'known';summary:ReviewSummary}|{kind:'pending'}|{kind:'unavailable'};
 /** A retained current publication can belong to the previous demand while a new scope loads. */
-export function currentReviewSummary(view:EffectiveNavigationView|null,request:ViewRequest,history:readonly ReviewHistoryKey[],answeredTotal=0):ReviewSummary|null {
+export function currentReviewSummary(view:EffectiveNavigationView|null,request:ViewRequest,history:readonly ReviewHistoryKey[],answeredTotal=0,readFailed=false):ReviewSummaryState {
   const publication=view?.publication.view;
+  if(!view?.runtimeCurrent || !publication)return {kind:'unavailable'};
   // The global total does not depend on the demanded conversation context or skip history.
   // It can prove the queue is clear while a replacement scope catches up after a reply.
-  if(view?.runtimeCurrent && publication && Math.max(0,publication.counts.review-answeredTotal)===0)return {new:0,skipped:0};
-  const summary=publication?.reviewSummary;
-  return view?.runtimeCurrent && view.publication.view?.scopeGeneration===request.scope_generation
-    && sameReviewHistory(request.review_skipped_keys,history) && summary ? summary : null;
+  if(Math.max(0,publication.counts.review-answeredTotal)===0)return {kind:'known',summary:{new:0,skipped:0}};
+  // A replacement view that the owner is retrying after a failed read is not coming soon: the queue cannot load.
+  if(publication.scopeGeneration!==request.scope_generation || !sameReviewHistory(request.review_skipped_keys,history))return readFailed ? {kind:'unavailable'} : {kind:'pending'};
+  return publication.reviewSummary ? {kind:'known',summary:publication.reviewSummary} : {kind:'unavailable'};
 }
 
 /** Remove locally completed cards before the publication catches up. */

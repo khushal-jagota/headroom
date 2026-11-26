@@ -23,7 +23,7 @@
   data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <!-- The shared system line: the words start at the column's edge with the preview and the composer pill, the mark after them. -->
+    <!-- The shared system line, unchanged: the mark and words start at the column's edge, exactly as the working line does in the opened conversation. -->
     <SystemLine mark={live ? "spinner" : "dot"} data-conversation-rest-line="">{LABELS[status.kind]}{#if status.clock !== null}{status.kind === "working" ? " for " : " · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</SystemLine>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open</span>
@@ -54,12 +54,6 @@
   .c2-rest:has(> .c2-rest-preview) .c2-rest-status { min-height:36px; }
   /* The line and "Open" share one centre: the line drops its start alignment here. */
   .c2-rest-status > :global(.cv-system-line) { align-self:center; }
-  /* The mark stays inline, its 16 px slot centred over the composer's "+" (26 px in from the
-     column edge), and the words start where the composer's text does (50 px in): 18 + 16 + 16. */
-  .c2-rest-status > :global(.cv-system-line) { padding-inline-start:18px; }
-  .c2-rest-status :global(.cv-system-line-row) { column-gap:16px; }
-  /* The ask card's own 1 px edge puts its "+" 1 px further out, so the mark follows it. */
-  .c2-rest[data-conversation-rest-ask-below] .c2-rest-status > :global(.cv-system-line) { padding-inline-start:17px; }
   /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
   .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px;
     border:0; border-radius:999px; background:transparent; color:#d0d0d0; font-weight:var(--cv-weight-label);

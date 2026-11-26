@@ -258,6 +258,26 @@ test('machine driver capabilities and allowance failures retain distinct outcome
   ).toThrow();
 });
 
+test.each(['unavailable', 'unauthenticated', 'failed'] as const)(
+  'a %s refresh is kept beside the last good figures until the next success',
+  (outcome) => {
+    const state = new BackendStateStore(fixture());
+    const failure = { backend_key: key, outcome, detail: 'Why', observed_at: null, windows: [] };
+    // A provider that never succeeded still records its failure.
+    state.keep_usage_result(failure, ORIGINAL_MAC_MACHINE_ID);
+    expect(state.read_usage(key, ORIGINAL_MAC_MACHINE_ID)).toBeNull();
+    expect(state.read_failed_usage(key, ORIGINAL_MAC_MACHINE_ID)).toMatchObject({
+      outcome,
+      detail: 'Why',
+    });
+    state.keep_usage_result(usage(17), ORIGINAL_MAC_MACHINE_ID);
+    expect(state.read_failed_usage(key, ORIGINAL_MAC_MACHINE_ID)).toBeNull();
+    state.keep_usage_result(failure, ORIGINAL_MAC_MACHINE_ID);
+    expect(state.read_failed_usage(key, ORIGINAL_MAC_MACHINE_ID)?.outcome).toBe(outcome);
+    expect(state.read_usage(key, ORIGINAL_MAC_MACHINE_ID)?.windows[0]?.used_percent).toBe(17);
+  },
+);
+
 test('relay stop retains a committed control until its mailbox withdrawal settles', async () => {
   const put = new Deferred<void>(),
     entered = new Deferred<void>(),
@@ -799,6 +819,17 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
         [machine_id, 'antigravity', 'Machine account'],
       ]);
       expect(every.readings[0].machine_name).toEqual(expect.any(String));
+      // The failed codex refresh is served beside the readings, with its time.
+      expect(every.failures).toEqual([
+        {
+          machine_id,
+          machine_name: expect.any(String),
+          backend_key: 'codex',
+          outcome: 'failed',
+          detail: expect.any(String),
+          failed_at: expect.any(String),
+        },
+      ]);
       expect(every.readings[0].limits).toEqual(limits.claude);
       // A family window covers each model of its family that no window names exactly, and
       // cards leave out a window with no reset time.

@@ -11,6 +11,7 @@ import {
 } from "./contracts";
 import type { BackendUsageRefreshOutcome } from "../conversation/wire";
 import type { BackendUsageRefreshAttempt } from "../conversation/backendRefresh";
+import { formatDuration } from "./usageLimits";
 import type { Machine } from "../machines/contracts";
 
 /** `GET /api/conversation/usage/limits`: one entry per machine and backend with a saved observation. */
@@ -24,8 +25,47 @@ export interface MachineUsageLimits {
   readonly account_detail: string | null;
   readonly limits: ServerProviderUsageLimits;
 }
+/** The latest refresh of one backend on one machine that did not succeed. */
+export interface MachineUsageFailure {
+  readonly machine_id: string;
+  readonly machine_name: string;
+  readonly backend_key: string;
+  readonly outcome: "unavailable" | "unauthenticated" | "failed";
+  readonly detail: string | null;
+  readonly failed_at: string;
+}
 export interface MachineUsageLimitsResponse {
   readonly readings: readonly MachineUsageLimits[];
+  readonly failures: readonly MachineUsageFailure[];
+}
+
+const FAILURE_WORDS = {
+  unauthenticated: "not signed in",
+  failed: "could not reach the provider",
+  unavailable: "limits are not available",
+} as const;
+/**
+ * One plain line per failure, such as "Antigravity on Mac 1: not signed in". The last good figures
+ * stay on the page, so the line names their age, or says that there are none.
+ */
+export function failureLines(
+  failures: readonly MachineUsageFailure[],
+  readings: readonly MachineUsageLimits[],
+  now: number,
+  providerName: (backendKey: string) => string,
+): { readonly key: string; readonly outcome: MachineUsageFailure["outcome"]; readonly text: string }[] {
+  return failures.map(failure => {
+    const good = readings.find(reading => reading.machine_id === failure.machine_id && reading.backend_key === failure.backend_key);
+    const checked = good ? Date.parse(good.limits.checkedAt) : Number.NaN;
+    const figures = !good ? "No figures yet."
+      : Number.isNaN(checked) ? "Showing its last figures."
+      : `Showing figures from ${formatDuration(Math.max(0, now - checked))} ago.`;
+    return {
+      key: `${failure.machine_id}:${failure.backend_key}`,
+      outcome: failure.outcome,
+      text: `${providerName(failure.backend_key)} on ${failure.machine_name}: ${FAILURE_WORDS[failure.outcome]}. ${figures}`,
+    };
+  });
 }
 /** One backend's refresh outcome on one machine. */
 export type MachineUsageRefreshOutcome = BackendUsageRefreshOutcome & { readonly machine_id: string; readonly machine_name: string };
