@@ -86,6 +86,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         });
         stopped(root, point);
       },
+      async verify_snapshot() {
+        throw new Error('this attempt staged no copy');
+      },
       async restore() {
         throw new Error('a killed installer restores nothing');
       },

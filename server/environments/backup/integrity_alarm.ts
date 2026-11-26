@@ -28,6 +28,21 @@ export const BACKUP_ALARM_INTENT: NotificationIntent = {
   tag: BACKUP_ALARM_PUSH_TAG,
   reply: null,
 };
+/** After an update the home serves on the stepped database, so the owner must act. */
+export function update_snapshot_alarm_text(restore_point: string | null): string {
+  return (
+    'An update finished, but the snapshot it took of the Panels database then failed its ' +
+    'integrity check. The live database may be damaged. ' +
+    (restore_point === null
+      ? 'No earlier verified snapshot remains to restore. '
+      : `The restore point is now the previous verified snapshot, ${restore_point}. `) +
+    'Next: run the nightly backup command now. If its check fails too, stop Panels' +
+    (restore_point === null ? ' and ask for help.' : ` and restore ${restore_point}`) +
+    (restore_point === null
+      ? ''
+      : ' as the backup and restore runbook describes. Data written after that snapshot is lost.')
+  );
+}
 export interface BackupAlarmOutcome {
   pushes_delivered: number;
   chief_accepted: boolean;
@@ -37,7 +52,9 @@ export async function raise_backup_integrity_alarm(
   database: string,
   transport: Omit<AlarmTransport, 'close'>,
   now_ms: number,
+  text: string = BACKUP_ALARM_TEXT,
 ): Promise<BackupAlarmOutcome> {
+  const intent: NotificationIntent = { ...BACKUP_ALARM_INTENT, body: text };
   let reading: { enabled: boolean; targets: PushTargets } | null = null;
   try {
     const reader = createReadAccess(database);
@@ -57,7 +74,7 @@ export async function raise_backup_integrity_alarm(
   let pushes_delivered = 0;
   if (reading?.enabled)
     try {
-      pushes_delivered = await send_push(BACKUP_ALARM_INTENT, reading.targets, {
+      pushes_delivered = await send_push(intent, reading.targets, {
         web_push: transport.web_push,
         apns: transport.apns,
         origin: transport.push_origin,
@@ -73,7 +90,7 @@ export async function raise_backup_integrity_alarm(
     }
   let chief_accepted = false;
   try {
-    chief_accepted = await transport.message_chief(`[Panels backup] ${BACKUP_ALARM_TEXT}`);
+    chief_accepted = await transport.message_chief(`[Panels backup] ${text}`);
   } catch (error) {
     console.error('backup alarm Chief message failed', error);
   }
@@ -84,6 +101,7 @@ export async function raise_backup_integrity_alarm(
 export async function alarm_backup_integrity_failure(
   database: string,
   env: NodeJS.ProcessEnv = process.env,
+  text: string = BACKUP_ALARM_TEXT,
 ): Promise<void> {
   let transport: AlarmTransport;
   try {
@@ -93,7 +111,7 @@ export async function alarm_backup_integrity_failure(
     return;
   }
   try {
-    const outcome = await raise_backup_integrity_alarm(database, transport, Date.now());
+    const outcome = await raise_backup_integrity_alarm(database, transport, Date.now(), text);
     console.error(
       `Backup alarm: ${outcome.pushes_delivered} pushes delivered, Chief ${outcome.chief_accepted ? 'accepted' : 'not reached'}`,
     );
@@ -102,4 +120,13 @@ export async function alarm_backup_integrity_failure(
       console.warn('backup alarm transport did not close', error);
     });
   }
+}
+
+/** The late check of an update snapshot found damage, after the home already serves. */
+export function alarm_update_snapshot_failure(
+  database: string,
+  restore_point: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  return alarm_backup_integrity_failure(database, env, update_snapshot_alarm_text(restore_point));
 }

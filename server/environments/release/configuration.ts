@@ -39,6 +39,8 @@ export const NODE_RUNTIME_FILES = [
   'server/environments/updates/restore_main.ts',
   'server/environments/updates/schema_step_main.ts',
   'server/environments/updates/snapshot_main.ts',
+  'server/environments/updates/snapshot_stage_main.ts',
+  'server/environments/updates/snapshot_verify_main.ts',
   'server/environments/updates/installer/main.ts',
   'server/package.json',
   'server/package-lock.json',

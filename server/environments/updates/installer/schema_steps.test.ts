@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import BetterSqlite3 from 'better-sqlite3';
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -29,9 +33,8 @@ import {
 } from '../../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { register_test_root } from '../../../core/test_paths.ts';
-import { create_database_backup } from '../../backup/capture.ts';
+import { create_database_backup, stage_database_copy } from '../../backup/capture.ts';
 import { restore_database_snapshot } from '../../backup/restore.ts';
-import BetterSqlite3 from 'better-sqlite3';
 import { BACKUP_ALARM_INTENT, raise_backup_integrity_alarm } from '../../backup/integrity_alarm.ts';
 import type { NotificationIntent } from '../../../notifications/contracts.ts';
 import { resolve } from '../logic/experience.ts';
@@ -134,6 +137,9 @@ it('steps run after the swap and before start', async () => {
           async schema_steps(descriptor, backup_taken) {
             events.push(['schema_steps', installed_sha(root), typeof descriptor, backup_taken]);
           },
+          async verify_snapshot() {
+            throw new Error('this attempt staged no copy');
+          },
           async restore() {
             assert.fail('a healthy install restores nothing');
           },
@@ -159,6 +165,64 @@ it('steps run after the swap and before start', async () => {
   }
 });
 
+it('a staged copy is caught up in the window and fully checked only after health', async () => {
+  // The late check must not delay the start or turn a healthy update into a failure.
+  const { root, request } = installation('panels-schema-step-staged-', null);
+  const staged = join(request.backup_directory, '.backup-staged-scripted');
+  const raw = JSON.parse(readFileSync(join(root, 'data/update-attempt.json'), 'utf8'));
+  writeFileSync(
+    join(root, 'data/update-attempt.json'),
+    JSON.stringify({ ...raw, snapshot_required: true, staged_snapshot: staged }),
+  );
+  const events: unknown[] = [];
+  try {
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async snapshot(deployed_revision, _descriptor, staged_copy) {
+          events.push(['snapshot', deployed_revision, staged_copy]);
+          new InstallationRecord(request).snapshot_taken('/scripted/snapshot');
+        },
+        async verify_snapshot(snapshot, deployed_revision) {
+          events.push(['verify_snapshot', snapshot, deployed_revision, record(root).state]);
+          throw new Error('the late check child did not finish');
+        },
+        async schema_steps() {
+          events.push('schema_steps');
+        },
+        async restore() {
+          assert.fail('a healthy install restores nothing');
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 0);
+    assert.deepEqual(events, [
+      'stop',
+      ['snapshot', FROM, staged],
+      'schema_steps',
+      'start',
+      ['healthy', TO],
+      ['verify_snapshot', '/scripted/snapshot', FROM, 'done'],
+    ]);
+    assert.equal(record(root).state, 'done');
+    assert.equal(typeof record(root).steps.snapshot_late_work_failed, 'string');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('a failing step restores the backup before the previous app starts', async () => {
   // A step failure must reach roll_back with no start of either app before the restore.
   const { root, request } = installation('panels-schema-step-failure-', '/scripted/snapshot');
@@ -179,6 +243,9 @@ it('a failing step restores the backup before the previous app starts', async ()
         async schema_steps() {
           events.push('schema_steps');
           throw new Error('scripted schema step failure');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
         },
         async restore(snapshot) {
           events.push(['restore', snapshot, installed_sha(root)]);
@@ -229,6 +296,9 @@ it('a failed snapshot leaves the app unchanged and starts it again', async () =>
         },
         async schema_steps() {
           assert.fail('no step runs without its snapshot');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
         },
         async restore() {
           assert.fail('nothing changed, so nothing is restored');
@@ -285,6 +355,9 @@ it('step applied, health fails, old app runs on the restored database', async ()
           refuse_pending: !backup_taken,
           baseline: BASELINE_SEED,
         });
+      },
+      async verify_snapshot() {
+        throw new Error('this attempt staged no copy');
       },
       async restore(snapshot, descriptor) {
         assert.equal(typeof descriptor, 'number');
@@ -396,6 +469,44 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
       live_stopped: true,
     });
 
+    // The staged route through the same children: rows written after the staged check reach
+    // the snapshot, which equals the stopped file byte for byte and passes the late check.
+    const staged = await stage_database_copy(request.database, request.backup_directory);
+    const writer = new BetterSqlite3(request.database);
+    writer.exec('CREATE TABLE after_staging (id INTEGER PRIMARY KEY, body BLOB)');
+    writer
+      .prepare(
+        'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50) ' +
+          'INSERT INTO after_staging (body) SELECT randomblob(3000) FROM n',
+      )
+      .run();
+    writer.prepare('INSERT INTO after_staging (body) VALUES (randomblob(200000))').run();
+    // An open idle connection keeps those frames in the WAL until the capture checkpoints.
+    assert.ok(statSync(request.database + '-wal').size > 0);
+    await effects.snapshot(FROM, lock, staged);
+    writer.close();
+    const caught_up = record(root).backup as string;
+    const bytes = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+    assert.equal(bytes(join(caught_up, 'database.sqlite')), bytes(request.database));
+    assert.equal(existsSync(staged), false);
+    const release = join(root, '.release-' + FROM, 'server/environments/updates');
+    mkdirSync(release, { recursive: true });
+    symlinkSync(
+      fileURLToPath(new URL('../snapshot_verify_main.ts', import.meta.url)),
+      join(release, 'snapshot_verify_main.ts'),
+    );
+    await effects.verify_snapshot(caught_up, FROM);
+    assert.equal(typeof record(root).steps.snapshot_verified, 'string');
+    // Retention, deferred from the window, keeps both verified snapshots.
+    assert.equal(
+      readdirSync(request.backup_directory).filter((name) => name.startsWith('snapshot-')).length,
+      2,
+    );
+    // The record shows the cost of each part, for the real window of later updates.
+    const seconds = record(root).snapshot_seconds;
+    for (const part of ['stopped_copy', 'catch_up', 'late_check', 'retention'])
+      assert.equal(typeof seconds[part], 'number', part);
+
     // A damaged database: the child alarms, exits with its own code, and the installer
     // names the integrity failure. A test home has no push transport, which must not matter.
     damage_with_push_device(request.database);
@@ -496,6 +607,9 @@ it('a snapshot that fails its integrity check alerts the owner, names it on the 
         },
         async schema_steps() {
           assert.fail('no step runs after a failed snapshot');
+        },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
         },
         async restore() {
           assert.fail('nothing changed, so nothing is restored');

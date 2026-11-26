@@ -95,6 +95,9 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
           async schema_steps() {
             assert.fail('schema steps after warning abort');
           },
+          async verify_snapshot() {
+            throw new Error('this attempt staged no copy');
+          },
           async restore() {
             assert.fail('restore after warning abort');
           },
@@ -221,6 +224,9 @@ it('stores the install decision before opening writes', async () => {
               throw new Error('this attempt requires no snapshot');
             },
             async schema_steps() {},
+            async verify_snapshot() {
+              throw new Error('this attempt staged no copy');
+            },
             async restore() {
               assert.fail('this scenario does not restore a snapshot');
             },

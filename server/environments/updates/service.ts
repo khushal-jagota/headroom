@@ -1,5 +1,6 @@
 import { has_home_credential } from '../../machines/executor_credentials.ts';
 import { require_snapshot_space } from './installer/snapshot_space.ts';
+import { remove_staged_copies } from '../backup/capture.ts';
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
 import { with_installer_lock } from '../update_barrier.ts';
 import { release_path, selected_release } from './installer/selection.ts';
@@ -8,6 +9,7 @@ import { assert_installer_path } from './installer/configuration.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { resolved_path } from '../paths.ts';
@@ -549,6 +551,8 @@ export class UpdateService {
     const conversation = this.options.runtime.conversation();
     let owns_send_admission = false;
     let barrier_closed = false;
+    let staged_snapshot: string | null = null,
+      staged_copy_seconds: number | null = null;
     try {
       this.options.runtime.assert_database_owned();
       try {
@@ -586,13 +590,49 @@ export class UpdateService {
       );
       if (!this.active(incarnation)) return;
       // Pending steps need a snapshot. A Mac home takes one on every trial.
-      // The installer takes it after it stops the service, when no writer remains.
+      // The home copies and fully checks it here, while it still serves. After the stop the
+      // installer only catches the copy up to the quiet database.
       const snapshot_required =
         steps_pending ||
         this.options.installer.requires_snapshot === true ||
         !this.options.runtime.database.read(has_home_credential);
-      if (snapshot_required)
+      if (snapshot_required) {
+        // The previous installer checks its snapshot after its home serves again. Its unit
+        // and its lock must be free before another installer can launch.
+        const previous_installer_done = await with_installer_lock(
+          dirname(this.options.database),
+          null,
+          async () => true,
+        );
+        if (!previous_installer_done.acquired) {
+          this.fail(
+            attempt_id,
+            states('preparing'),
+            'The previous update is still checking its snapshot, so nothing changed. Try again in a minute.',
+          );
+          return;
+        }
+        await remove_staged_copies(this.options.backup_directory);
         await require_snapshot_space(this.options.database, this.options.backup_directory);
+        if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
+        const started = performance.now();
+        try {
+          staged_snapshot = await this.options.installer.stage_snapshot(
+            this.options.database,
+            this.options.backup_directory,
+          );
+        } catch (error) {
+          if (!this.active(incarnation)) return;
+          this.fail(
+            attempt_id,
+            states('preparing'),
+            'The database snapshot failed its check before Panels stopped, so nothing changed: ' +
+              String(error instanceof Error ? error.message : error),
+          );
+          return;
+        }
+        staged_copy_seconds = (performance.now() - started) / 1000;
+      }
       if (!this.active(incarnation) || !this.owns_attempt(attempt_id, 'preparing')) return;
       if (conversation) {
         owns_send_admission = conversation.workspace_admission.close_starts();
@@ -628,6 +668,12 @@ export class UpdateService {
         state: 'installing',
         detail: null,
         snapshot_required,
+        staged_snapshot,
+        // The installer adds the other parts of the snapshot's work (installer/record.ts).
+        extra:
+          staged_copy_seconds === null
+            ? current.extra
+            : { ...current.extra, snapshot_seconds: { staged_copy: staged_copy_seconds } },
         deadline_at: this.deadline(
           install_deadline_seconds({
             backup: snapshot_required,
@@ -663,6 +709,19 @@ export class UpdateService {
         );
       else fail_before_start();
     } finally {
+      // Only an attempt that its installer owns keeps the staged copy.
+      if (staged_snapshot !== null) {
+        const copy = staged_snapshot;
+        await Promise.resolve()
+          .then(() =>
+            this.attempts.read()?.state === 'installing'
+              ? undefined
+              : rm(copy, { recursive: true, force: true }),
+          )
+          .catch((error: unknown) =>
+            console.error('The staged update snapshot could not be removed', error),
+          );
+      }
       if (
         owns_send_admission &&
         this.active(incarnation) &&

@@ -227,6 +227,9 @@ it('the independent coordinator recovers a stopped installation after restart ev
         async service(action) {
           events.push(action);
         },
+        async verify_snapshot() {
+          throw new Error('this attempt staged no copy');
+        },
         async restore(snapshot) {
           events.push('restore');
           await restore_database_snapshot(snapshot, killed.database, { live_stopped: true });
