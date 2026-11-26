@@ -383,3 +383,118 @@ test('a missing platform payload is unavailable and cannot be retried as an arch
   expect(f.service.machine_states()[0]).toMatchObject({ state: 'unavailable', can_retry: false });
   expect(() => f.service.retry_machine(ORIGINAL_MAC_MACHINE_ID, f.attempt.attempt_id)).toThrow();
 });
+
+// Main-branch signing adds a proof to the published ZIP. Qualification never fed one to the home.
+import { existsSync } from 'node:fs';
+import { crc32 } from 'node:zlib';
+function stored_zip(entries: Record<string, Buffer | string>): Buffer {
+  const files: Buffer[] = [],
+    central: Buffer[] = [];
+  let offset = 0;
+  for (const [name, value] of Object.entries(entries)) {
+    const data = Buffer.from(value),
+      file_name = Buffer.from(name),
+      checksum = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(file_name.length, 26);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt32LE(checksum, 16);
+    header.writeUInt32LE(data.length, 20);
+    header.writeUInt32LE(data.length, 24);
+    header.writeUInt16LE(file_name.length, 28);
+    header.writeUInt32LE(offset, 42);
+    files.push(local, file_name, data);
+    central.push(header, file_name);
+    offset += local.length + file_name.length + data.length;
+  }
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(central.length / 2, 8);
+  end.writeUInt16LE(central.length / 2, 10);
+  end.writeUInt32LE(
+    central.reduce((total, part) => total + part.length, 0),
+    12,
+  );
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...files, ...central, end]);
+}
+function published_mac(
+  f: ReturnType<typeof machine_fixture>,
+  proof: Record<string, unknown> = {},
+  extra: Record<string, string> = {},
+) {
+  const bytes = stored_zip({
+    'mac-runtime-publication.json': '{}',
+    'panels-mac-runtime.tar.gz': f.archive.bytes,
+    'signing-proof.json': JSON.stringify({
+      signed_archive_sha256: f.archive.sha,
+      signed_build_id: 'd'.repeat(64),
+      team: 'FB99BBDJBA',
+      notarization_id: 'b88f755e-27c9-4ad6-a904-a4a02ffa85e1',
+      ...proof,
+    }),
+    ...extra,
+  });
+  (f.context.provider.download_artifact as ReturnType<typeof vi.fn>).mockImplementation(
+    async (_id: number, destination: string) => writeFileSync(destination, bytes),
+  );
+}
+
+test.each([
+  ['the published signed package', {}, {}, null],
+  [
+    'a proof for another package',
+    { signed_archive_sha256: '0'.repeat(64) },
+    {},
+    'The Mac signing proof does not match this publication.',
+  ],
+  [
+    'a proof for another build',
+    { signed_build_id: '0'.repeat(64) },
+    {},
+    'The Mac signing proof does not match this publication.',
+  ],
+  [
+    'an unknown extra entry',
+    {},
+    { 'notes.txt': 'unexpected' },
+    'The Mac runtime artifact is invalid.',
+  ],
+])('the home accepts or refuses %s', async (_name, proof, extra, detail) => {
+  const f = machine_fixture();
+  delete f.identity.build_id;
+  published_mac(f, proof, extra);
+  await f.service.prepare(f.release);
+  const archive = join(f.root, 'archives', f.archive.sha + '.tar.gz');
+  expect(f.service.machine_states(f.release)[0]?.detail ?? null).toBe(detail);
+  expect(existsSync(archive)).toBe(detail === null);
+});
+
+test('a refusal recorded by earlier home code is prepared once more by this home', async () => {
+  const f = machine_fixture();
+  delete f.identity.build_id;
+  f.attempts.create(f.attempt);
+  // The previous release's home writes no revision. It refused the signed package.
+  mkdirSync(join(f.root, 'preparation'), { recursive: true });
+  writeFileSync(
+    join(f.root, 'preparation', f.archive.sha + '.json'),
+    JSON.stringify({
+      archive_sha256: f.archive.sha,
+      detail: 'The Mac runtime artifact is invalid.',
+    }),
+  );
+  published_mac(f);
+  expect(f.service.machine_states()[0]).toMatchObject({ state: 'failed', can_retry: true });
+  expect(f.service.check().target).toBeNull();
+  await f.service.settled();
+  expect(f.service.check().target?.activate).toBe(true);
+  expect(f.context.provider.download_artifact).toHaveBeenCalledTimes(1);
+});
