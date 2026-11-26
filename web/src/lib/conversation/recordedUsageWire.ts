@@ -6,11 +6,13 @@ import type { MachineUsageLimitsResponse } from "../usage/machineLimits";
 export type { UsageSummaryInput, UsageSummary, UsageProviderKind as UsageProvider } from "../usage/contracts";
 export type UsageDays = 1 | 7 | 30 | 90;
 
-export function usageSummaryPath(input: UsageSummaryInput): string {
+/** The home machine's summary omits `machineId`; a joined machine's names it. */
+export function usageSummaryPath(input: UsageSummaryInput, machineId?: string): string {
   const query = new URLSearchParams({ sinceDay: input.sinceDay, untilDay: input.untilDay, timeZone: input.timeZone });
   if (input.resolution !== undefined) query.set("resolution", input.resolution);
   if (input.sinceTime !== undefined) query.set("sinceTime", input.sinceTime);
   if (input.untilTime !== undefined) query.set("untilTime", input.untilTime);
+  if (machineId !== undefined) query.set("machine_id", machineId);
   return `/api/conversation/usage/summary?${query}`;
 }
 export function readUsageSummary(input: UsageSummaryInput): Promise<UsageSummary> {

@@ -3,6 +3,7 @@ export const TICKET_NOTIFICATION_SUBJECT_KEY = 'tickets';
 export const MANAGER_NOTIFICATION_SUBJECT_KEY = 'managers';
 export const PANELS_NOTIFICATION_SUBJECT_KEY = 'panels';
 export const STALL_ALARM_NOTIFICATION_TYPE = 'stall_alarm';
+export const BACKUP_FAILED_NOTIFICATION_TYPE = 'backup_failed';
 export interface NotificationType {
   id: string;
   label: string;
@@ -52,6 +53,12 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
     description: 'Panels work stopped moving and needs a look.',
     default_enabled: true,
   },
+  {
+    id: 'backup_failed',
+    label: 'Backup failed',
+    description: 'A backup found damage in the database and needs a look.',
+    default_enabled: true,
+  },
 ];
 export const NOTIFICATION_TYPE_BY_ID = new Map(NOTIFICATION_TYPES.map((item) => [item.id, item]));
 export const NOTIFICATION_SUBJECTS: readonly NotificationSubject[] = [
@@ -79,7 +86,12 @@ export const NOTIFICATION_SUBJECTS: readonly NotificationSubject[] = [
     principal_kind: 'manager',
     notification_type_ids: ['awaiting_reply', 'awaiting_answer', 'errored'],
   },
-  { key: 'panels', label: 'Panels', principal_kind: null, notification_type_ids: ['stall_alarm'] },
+  {
+    key: 'panels',
+    label: 'Panels',
+    principal_kind: null,
+    notification_type_ids: ['stall_alarm', 'backup_failed'],
+  },
 ];
 export function notification_preference_is_valid(
   subject_key: string,

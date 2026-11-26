@@ -260,7 +260,7 @@ async function operator_probe(root: string): Promise<unknown> {
   });
   await assert.rejects(
     operator_commands.watchdog.handler(watchdog_args, watchdog),
-    /watchdog provider command is unavailable in test mode/,
+    /alarm provider transport is unavailable in test mode/,
   );
   return {
     composed_callbacks,

@@ -474,13 +474,10 @@ test('provider update crosses the backend relay and executes in the machine acco
           command_id: 'update',
           child_outcome: null,
           model_list: null,
-          backend_result: await run_backend_request(
-            admitted,
-            undefined,
-            options?.signal,
-            undefined,
+          backend_result: await run_backend_request(admitted, undefined, {
+            signal: options?.signal,
             snapshots,
-          ),
+          }),
         };
       },
       withdraw_waiting: withdraw,
@@ -594,8 +591,6 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
     const folder = mkdtempSync(join(tmpdir(), 'machine-usage-'));
     const reset = '2026-11-30T21:02:00Z';
     try {
-      const claude_login = join(folder, '.credentials.json');
-      writeFileSync(claude_login, JSON.stringify({ claudeAiOauth: { accessToken: 'claude' } }));
       const antigravity_login = join(folder, 'antigravity-oauth-token');
       writeFileSync(
         antigravity_login,
@@ -642,18 +637,15 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
         ],
         [
           claude_key,
+          // The CLI's get_usage answer as on 26 Nov: no 5-hour window, a weekly and Fable's.
           new ClaudeUsageAdapter({
-            credential_path: claude_login,
-            http_get: async () => ({
-              status_code: 200,
-              body: {
-                limits: [
-                  { group: 'weekly', utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
-                  {
-                    scope: { model: { display_name: 'Fable' } },
-                    utilization: 23,
-                    resets_at: '2026-11-28T15:00:00Z',
-                  },
+            read_usage: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: null,
+                seven_day: { utilization: 79, resets_at: '2026-11-28T15:00:00Z' },
+                model_scoped: [
+                  { display_name: 'Fable', utilization: 23, resets_at: '2026-11-28T15:00:00Z' },
                 ],
               },
             }),
@@ -848,3 +840,123 @@ test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
     }
   },
 );
+
+// Gap: allowance relay tests do not prove that a joined machine's recorded usage crosses the
+// relay under the wire schema, or that older machine code is refused before any command exists.
+// This reuses the SQL presence fixture and the real relay; the machine's scan is a stub.
+test('a joined machine answers its recorded usage summary through the backend relay', async () => {
+  const database = fixture();
+  database.write((tx) => seed_machine_lease(tx, ORIGINAL_MAC_MACHINE_ID));
+  // The presence service reads its record once, as each lease replaces it.
+  const advertise = (recorded_usage: boolean) => {
+    database.write((tx) =>
+      tx.run(
+        "UPDATE mac_executor_presence SET lease_json=json_set(lease_json,'$.backend_controls',json('true'),'$.recorded_usage',json(?)) WHERE machine_id=?",
+        [String(recorded_usage), ORIGINAL_MAC_MACHINE_ID],
+      ),
+    );
+    return new MacPresenceService(database, {} as never, {
+      machine_id: ORIGINAL_MAC_MACHINE_ID,
+      changes: new ChangeSignal(),
+    });
+  };
+  let peer = advertise(false);
+  const summary = (hostId: string) => ({
+    contractVersion: 5,
+    readAt: '2026-11-26T10:00:00.000Z',
+    timeZone: 'UTC',
+    sinceDay: '2026-11-20',
+    untilDay: '2026-11-26',
+    buckets: [],
+    sources: [
+      {
+        fingerprint: { hostId, provider: 'claude', resolvedHomePath: '/projects', volumeId: '1:2' },
+        status: 'ok',
+        scannedFiles: 1,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 1,
+        message: null,
+      },
+    ],
+    pricing: { status: 'unavailable', source: 'none', fetchedAt: null, knownModels: 0 },
+    scanDurationMs: 3,
+  });
+  const machine_scan = vi.fn(async () => summary('mac-1') as never);
+  let admitted: BackendRequest | undefined;
+  let wait_seconds: number | null | undefined;
+  const relay = new VpsBackendControlRelay(
+    {
+      async put_backend_request(request) {
+        admitted = decode_value(request, 'BackendRequest');
+        return {
+          command_sequence: 1,
+          command_id: 'usage',
+          created_at_vps_ms: 1,
+          child_command: null,
+          model_list_request: null,
+          backend_request: admitted,
+        };
+      },
+      async wait_result(_id, seconds) {
+        wait_seconds = seconds;
+        return {
+          command_id: 'usage',
+          child_outcome: null,
+          model_list: null,
+          backend_result: await run_backend_request(admitted!, undefined, {
+            recorded_usage: { readSummary: machine_scan },
+          }),
+        };
+      },
+      withdraw_waiting: vi.fn(async () => false),
+    },
+    {
+      is_present: () => peer.is_present(),
+      supports_backend_controls: (operation) => peer.supports_backend_controls(operation),
+    },
+  );
+  const app = await createApp(
+    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
+    {
+      database,
+      areas: [
+        {
+          prefix: '/api/conversation/usage',
+          routes: createUsageRoutes({
+            conversation_runtime_available: true,
+            backend_ids: [],
+            backend_state: null,
+            recorded_usage: { readSummary: async () => summary('vps-1') } as never,
+            machine_backends: (id) => (id === ORIGINAL_MAC_MACHINE_ID ? relay : null),
+          }),
+        },
+      ],
+    },
+  );
+  const window = '/api/conversation/usage/summary?sinceDay=2026-11-20&untilDay=2026-11-26';
+  try {
+    const old_code = await app.inject({
+      url: `${window}&machine_id=${ORIGINAL_MAC_MACHINE_ID}`,
+    });
+    expect(old_code.statusCode).toBe(503);
+    expect(old_code.body).toContain('Update machine code before you read its recorded usage.');
+    expect(admitted).toBeUndefined();
+    peer = advertise(true);
+    const machine = await app.inject({ url: `${window}&machine_id=${ORIGINAL_MAC_MACHINE_ID}` });
+    expect(machine.statusCode).toBe(200);
+    expect(machine.json().sources[0].fingerprint.hostId).toBe('mac-1');
+    // A first scan builds the machine's cache, so it waits longer than other controls.
+    expect(wait_seconds).toBe(110);
+    expect(machine_scan).toHaveBeenCalledWith({
+      sinceDay: '2026-11-20',
+      untilDay: '2026-11-26',
+      timeZone: 'UTC',
+      resolution: 'day',
+    });
+    const home = await app.inject({ url: window });
+    expect(home.json().sources[0].fingerprint.hostId).toBe('vps-1');
+  } finally {
+    await app.close();
+  }
+});

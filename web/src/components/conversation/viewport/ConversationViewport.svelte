@@ -19,7 +19,9 @@
   import type {
     BackendModel,
   } from "../../../lib/conversation/wire";
-  import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS, TEXT_RESTORATION_WAIT_MS } from "./viewportConfiguration";
+  import { ENTRY_PRESENTATION_WAIT_MS, REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS, TEXT_RESTORATION_WAIT_MS } from "./viewportConfiguration";
+  import { demandVisibleContent } from "../../../lib/visibleContent";
+  import { isMessageRow } from "../../../lib/conversation/displaySlots";
   import { restorationWait } from './restorationWait';
   import { threadGeometry, retirementGeometry, type ThreadReading } from "./threadGeometry";
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
@@ -400,6 +402,7 @@
     pendingOpen = false;
     settledOnOpening = true;
     placementReady = true;
+    resetEntryWait();
   }
   function stopAutomaticTravel(): void {
     if (threadElement && answerRoomMessageId !== null) retainedTopInset = Number.parseFloat(getComputedStyle(threadElement).paddingTop) || SENT_MESSAGE_TOP_GAP_PIXELS;
@@ -423,6 +426,7 @@
     placement = null;
     if (placementReady) { pendingOpen = false; settledOnOpening = true; }
     placementReady = true;
+    resetEntryWait();
     pendingPresentationTarget = null;
     if (newestPlacementMessageId !== null) settledMessageIds.add(newestPlacementMessageId);
     sentMessageToPlace = null;
@@ -567,8 +571,14 @@
     if (abandonUnfulfilledAnchor) viewAnchor = null;
     pendingOpen = false;
     settledOnOpening = true;
-    placementReady = true;
-    entryPresentationPending = false;
+    resetEntryWait();
+    if (cause === 'restoration-fallback') {
+      // A thread still hidden stays hidden until it stands at the newest line.
+      entryPresentationPending = !placementReady;
+    } else {
+      placementReady = true;
+      entryPresentationPending = false;
+    }
     heldSent = null;
     liveArrivalPixels = 0;
     arrivingMessages.clear();
@@ -605,8 +615,11 @@
       if (!admitted) {
         latestIntent = null;
         latestPending = false;
-        if (cause === 'restoration-fallback') {
-          placementReady = true;
+        if (cause === 'restoration-fallback' && !placementReady) {
+          // The newest page did not come. A hidden thread opens at the end of what it holds.
+          pendingOpen = true;
+          settledOnOpening = false;
+        } else if (cause === 'restoration-fallback') {
           entryPresentationPending = false;
         }
         requestReconciliation();
@@ -659,6 +672,60 @@
     return presentationReady(contentElement);
   }
 
+  /** An open waits for its visible tail, but never beyond ENTRY_PRESENTATION_WAIT_MS. */
+  let entryWaitDeadline: number | null = null;
+  let entryWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  const entryDemands = new Map<HTMLElement, () => void>();
+  function resetEntryWait(): void {
+    if (entryWaitTimer !== null) clearTimeout(entryWaitTimer);
+    entryWaitTimer = null;
+    entryWaitDeadline = null;
+    for (const release of entryDemands.values()) release();
+    entryDemands.clear();
+  }
+  function entryWaitExpired(): boolean {
+    const now = performance.now();
+    if (entryWaitDeadline === null) {
+      entryWaitDeadline = now + ENTRY_PRESENTATION_WAIT_MS;
+      entryWaitTimer = setTimeout(() => { entryWaitTimer = null; requestReconciliation(); }, ENTRY_PRESENTATION_WAIT_MS);
+    }
+    return now >= entryWaitDeadline;
+  }
+
+  /** Every row from the top of the view to the end has finished presenting, so nothing in
+   * the tail can grow once the thread is shown. A held body in view is asked for now, so it
+   * parses or loads while the thread is still hidden instead of after its first frame. */
+  function visibleTailReady(thread: HTMLDivElement): boolean {
+    const viewport = thread.getBoundingClientRect();
+    const roots = reader !== null
+      ? [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+      : [...(contentElement?.querySelector<HTMLElement>(':scope > [data-conversation-transcript]')?.children ?? [])]
+        .filter((node): node is HTMLElement => node instanceof HTMLElement);
+    // A message row always draws. Held messages with no drawn row are not rendered yet.
+    if (reader !== null && roots.length === 0 && reader.pages.some(page => page.items.some(isMessageRow))) return false;
+    let ready = true;
+    for (const root of roots) {
+      // A row of no height at the end (live output before its first text) is still in the tail.
+      if (root.getBoundingClientRect().bottom < viewport.top) continue;
+      if (!presentationReady(root) || [root, ...root.querySelectorAll<HTMLElement>('[data-visible-content-restoring]')]
+        .some(node => node.hasAttribute('data-visible-content-restoring') && node.closest('[data-visible-content-state="released"], [data-visible-content-state="retained"]') === null)) ready = false;
+    }
+    for (const held of contentElement?.querySelectorAll<HTMLElement>('[data-visible-content-state="released"]') ?? []) {
+      const bounds = held.getBoundingClientRect();
+      if (bounds.bottom <= viewport.top || bounds.top >= viewport.bottom || entryDemands.has(held)) continue;
+      entryDemands.set(held, demandVisibleContent(held, () => held));
+      ready = false;
+    }
+    return ready;
+  }
+
+  /** The scroller reaches past the column by its scrollbar's width. Measured before every
+   * placement, so the line wraps an open is placed with are the ones it is shown with. */
+  function measureScrollbarGutter(thread: HTMLDivElement): void {
+    const gutter = `${Math.max(0, thread.offsetWidth - thread.clientWidth)}px`;
+    if (thread.style.getPropertyValue("--cv-scrollbar-gutter") !== gutter) thread.style.setProperty("--cv-scrollbar-gutter", gutter);
+  }
+
   function landTheOpen(thread: HTMLDivElement): void {
     if(textRestoration?.anchor.content && alignSavedText(thread)) return;
     if(viewAnchor!==null&&!viewAnchor.following){
@@ -702,6 +769,7 @@
           return;
         }
         dirty = false;
+        measureScrollbarGutter(thread);
 
         let geometry = threadGeometry(thread, reservedSpaceElement);
         tailGap = geometry.gap();
@@ -789,22 +857,23 @@
           const target = (targetKey === null ? destination : restoredAnchorElement(thread) ?? undefined);
           if (target === undefined) return;
           const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
-          if (!restoringAnchor && !presentationReady(target)) {
+          if (!restoringAnchor && !visibleTailReady(thread)) {
             if (targetKey !== null) return;
-            const viewport = thread.getBoundingClientRect();
-            // A held lazy body cannot hide an available tool or message beside its placeholder.
-            // The provisional newest position is already applied, so this reveals no top flash.
-            provisionalNewest = presentationRoots(thread).some(node => {
-              if (node === target || !node.querySelector('[data-conversation-row], [data-conversation-tool]') || !presentationReady(node)) return false;
-              const bounds = node.getBoundingClientRect();
-              return bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom;
-            });
-            if (!provisionalNewest) return;
+            // The tail is still presenting. Stay hidden until it is done. Only a body that
+            // outlasts the wait is shown at the provisional newest position, which is
+            // already applied, and placed again once it presents.
+            if (!entryWaitExpired()) return;
+            provisionalNewest = true;
             pendingPresentationTarget = target;
           } else pendingPresentationTarget = null;
           // Position while hidden, then let active lazy blocks finish their own presentation.
           await tick();
-          if (startedIn !== generation || !canMeasure() || thread !== threadElement || !provisionalNewest && !restoringAnchor && !presentationReady(target)) return;
+          if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
+          if (!provisionalNewest && !restoringAnchor) {
+            // The tail is read where the open lands. Its rows can have changed during the tick.
+            landTheOpen(thread);
+            if (!visibleTailReady(thread)) { entryWaitExpired(); return; }
+          }
           geometry = threadGeometry(thread, reservedSpaceElement);
           takeTheReading(geometry.read(reservedSpacePixels));
         }
@@ -820,7 +889,12 @@
           const from = thread.scrollTop;
           const initialInset = Number.parseFloat(getComputedStyle(thread).paddingTop) || 0;
           const destination = Math.max(0, Math.min(geometry.newestLineScrollTop(newestLineBottomPixels), Math.round(geometry.baseHeight()) - thread.clientHeight));
-          const completed = await conversationMotion(thread).move(positionMotion, fraction => {
+          let completed = true;
+          if (intent.cause === 'restoration-fallback') {
+            // A failed restoration is not a journey the reader asked for: it lands at once.
+            moveTheThread(thread, destination);
+            retireReplySpace(thread, true, true);
+          } else completed = await conversationMotion(thread).move(positionMotion, fraction => {
             if (!isCurrentLatest(intent) || retirementOwner !== intent) return;
             const insetChange = (Number.parseFloat(getComputedStyle(thread).paddingTop) || 0) - initialInset;
             moveTheThread(thread, from + (destination - from) * fraction + insetChange);
@@ -928,6 +1002,9 @@
           fallBackRestoration();
           return;
         }
+        // A hidden failed restoration is shown at the newest line once its tail has presented.
+        if (!placementReady && intent?.cause === 'restoration-fallback' && isCurrentLatest(intent)
+          && !visibleTailReady(thread) && !entryWaitExpired()) return;
         settledOnOpening = !provisionalNewest;
         pendingOpen = provisionalNewest;
         placementReady = true;
@@ -938,6 +1015,7 @@
           reader?.settleTextRestoration();
           releaseTextRestoration(textRestoration);
           stopRestorationWait();
+          resetEntryWait();
         }
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
@@ -992,6 +1070,7 @@
       placementReady = false;
       entryPresentationPending = true;
       pendingPresentationTarget = null;
+      resetEntryWait();
       liveArrivalPixels = 0;
       streamWrites.clear();
       arrivingMessages.clear();
@@ -1083,26 +1162,26 @@
       // rest is, because the thread was not there to be read a moment ago.
       if (previous === "rest" && wanted !== "rest") {
         pendingOpen = true;
-        // A plain reopen owns a fresh destination. Saved-address restoration keeps
-        // its distinct manual ownership, including a reader replacement in flight.
-        if (textRestoration === null && (viewAnchor === null || viewAnchor.following)) {
-          manualReader = false;
-          retirementOwner = null;
-          navigationPending = false;
-          if (answerRoomMessageId === null && heldSent === null) {
-            reservedSpacePixels = 0;
-            retainedTopInset = null;
-          }
-        } else if (textRestoration === null && reader !== null && viewAnchor !== null) {
-          // A transcript kept at the dock reopens where a fresh open would land: the saved
-          // line is placed by its text, as on entry.
-          textRestoration = {reader, anchor:copyViewReaderAnchor(viewAnchor), attempt:reader.restorationAttempt, demand:null, unsubscribe:null};
-          manualReader = true;
+        // Opening from the dock is an explicit open, and every explicit open lands at the
+        // newest line. A place the reader scrolled up to before docking is dropped.
+        if (textRestoration !== null) cancelTextRestoration();
+        if (viewAnchor !== null && !viewAnchor.following) viewAnchor = null;
+        manualReader = false;
+        retirementOwner = null;
+        navigationPending = false;
+        withTheNewestLineBeforeTheWrite = true;
+        if (answerRoomMessageId === null && heldSent === null) {
+          reservedSpacePixels = 0;
+          retainedTopInset = null;
         }
         // The thread was not drawn at rest, so it is shown only once it is placed.
         settledOnOpening = false;
         placementReady = false;
         entryPresentationPending = true;
+        resetEntryWait();
+        // Reading far back can have let go of the newest page. Fetch it while still hidden.
+        if (reader !== null && reader.transcript && reader.pages.length > 0 && !actualNewestIsHeld())
+          void jumpToTheNewestLine(null, 'restoration-fallback', reader.restorationAttempt);
       }
       requestReconciliation();
     });
@@ -1154,7 +1233,7 @@
       repairLayout(thread);
       requestReconciliation();
     });
-    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "data-conversation-sending", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
+    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "data-conversation-sending", "aria-busy", "data-markdown-rendering", "data-visible-content-state", "data-visible-content-restoring"]});
     observer.observe(thread);
     observer.observe(content);
     return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
@@ -1169,6 +1248,7 @@
     document.addEventListener("focusin", onFocusIn);
     return () => {
       disposed = true;
+      resetEntryWait();
       cancelLatestRecovery();
       stopRestorationWait();
       releaseTextRestoration(textRestoration);
@@ -1186,10 +1266,7 @@
   $effect(() => {
     const thread = threadElement;
     if (thread === null) return;
-    const measure = (): void => {
-      const gutter = Math.max(0, thread.offsetWidth - thread.clientWidth);
-      thread.style.setProperty("--cv-scrollbar-gutter", `${gutter}px`);
-    };
+    const measure = (): void => measureScrollbarGutter(thread);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(thread);

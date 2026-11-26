@@ -40,11 +40,3 @@ export interface UsageHttpResponse {
   readonly status_code: number;
   readonly body: unknown;
 }
-export interface UsageHttpGet {
-  (
-    url: string,
-    headers: Readonly<Record<string, string>>,
-    timeout_seconds: number,
-    options?: { signal?: AbortSignal },
-  ): Promise<UsageHttpResponse>;
-}

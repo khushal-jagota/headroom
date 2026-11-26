@@ -7,7 +7,6 @@ import {
   backend_io_is_test,
   SubprocessBackendProbeEnvironment,
 } from '../conversation/snapshot/environment.ts';
-import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import type { DriverHost } from '../drivers/core/host.ts';
@@ -42,7 +41,6 @@ if (mode === 'guards') {
   assert.throws(() => door.prefix_is_owned_and_writable('/synthetic'), refusal);
   await assert.rejects(door.run(['nonexistent-cross-area'], { timeout_seconds: 1 }), refusal);
   await assert.rejects(door.latest_released_version('synthetic', { timeout_seconds: 1 }), refusal);
-  await assert.rejects(http_get_usage('https://synthetic.invalid', {}, 1), refusal);
   // A host that claims production still gets test instances: no sign-in or usage reads.
   const host = {
     test_mode: false,

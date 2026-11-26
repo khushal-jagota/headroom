@@ -1,13 +1,16 @@
-/** Adapted from T3 Code b79d277c (apps/server/src/provider/Drivers/antigravityUsageReader.ts).
+/** Adapted from T3 Code 2d4ac16 (apps/server/src/provider/Drivers/antigravityUsageReader.ts).
  * Copyright (c) 2026 T3 Tools Inc. MIT permission notice: server/conversation/usage/T3-LICENSE.
  */
 /** Token usage from Antigravity's conversation databases. Each conversation is one SQLite file
  * whose rows hold raw protobuf. Databases are opened read-only; a file that cannot be read yields
  * no records. */
 import { statSync, type Stats } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
-import type { FileTranscriptParser } from '../../core/usage.ts';
+import type { FileTranscriptParser, FileTranscriptRead } from '../../core/usage.ts';
+import { is_record } from '../../../core/records.ts';
+import { listTranscriptFiles } from '../../../conversation/usage/usageTranscriptReader.ts';
 import type { UsageRecord } from '../../../conversation/usage/usageTranscripts.ts';
 
 type FieldValue = number | bigint | Uint8Array;
@@ -121,21 +124,38 @@ const MODEL_IDS: Readonly<Record<number, string>> = {
   1417: 'gemini-4-argon',
   1418: 'gemini-4-argon',
   1419: 'gemini-4-argon',
+  1427: 'gemini-4-carbon',
+  1437: 'gemini-4-carbon',
+  1525: 'gemini-4-hydrogen',
+  1526: 'gemini-4-hydrogen',
+  1527: 'gemini-4-hydrogen',
+  // agy names it MODEL_PLACEHOLDER_M528, shown as "Gemini 4 Hydrogen (XHigh)".
+  1528: 'gemini-4-hydrogen-xhigh',
+  1532: 'gemini-4-neon',
+  1533: 'gemini-4-neon',
+  1537: 'gemini-pro-orchestrator-neon',
+  1667: 'gemini-pro-orchestrator',
+  1669: 'gemini-4-hydrogen-orchestrator',
 };
 
 const GEMINI_3_FLASH_ROUTE = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/;
-/** agy records Argon turns as `gemini-4-argon-trial` and `gemini-4-argon-g`. */
-const GEMINI_4_ARGON_VARIANT = /^gemini-4-argon-(?:trial|g)$/;
+/** Effort, routing and trial variants, as in `gemini-4-hydrogen-tiered-xhigh`. */
+const VARIANT_SUFFIX =
+  /-(?:extra-low|low|medium|high|xhigh|tiered|control|thinking|agent|trial|n|r)$/;
+/** Names that do not carry the model they are priced as. agy records Argon turns as
+ * `gemini-4-argon-g`. Its orchestrators are internal routing models with no public price. */
+const PRICED_AS: Readonly<Record<string, string>> = {
+  'gemini-3.7-flash-safety-le': 'gemini-3.7-flash',
+  'gemini-4-argon-g': 'gemini-4-argon',
+};
 
-/** Effort and routing variants share the base model's price. */
+/** Variants share the base model's price. */
 function base_model(model: string): string {
-  const base = model.replace(
-    /-(?:extra-low|low|medium|high|xhigh|tiered|control|thinking|agent)$/,
-    '',
-  );
   if (GEMINI_3_FLASH_ROUTE.test(model)) return 'gemini-3.5-flash';
-  if (model === 'gemini-3.7-flash-safety-le') return 'gemini-3.7-flash';
-  if (GEMINI_4_ARGON_VARIANT.test(model)) return 'gemini-4-argon';
+  const priced_as = PRICED_AS[model];
+  if (priced_as !== undefined) return priced_as;
+  let base = model;
+  while (VARIANT_SUFFIX.test(base)) base = base.replace(VARIANT_SUFFIX, '');
   return base === 'gemini-3-flash' ? 'gemini-3-flash-preview' : base;
 }
 /**
@@ -165,6 +185,20 @@ function is_concrete_model(model: string): boolean {
     /^(?:gemini-\d|claude-(?:sonnet|opus|haiku)-\d|gpt-)/.test(model) &&
     !GEMINI_3_FLASH_ROUTE.test(model)
   );
+}
+
+/** A model id seen with one concrete name is that name for every row of it. Names that price
+ * differently disagree, and the id is then unnamed. */
+function remember_model(models: Map<number, string | null>, id: number, model: string | null) {
+  const previous = models.get(id);
+  if (previous === undefined) models.set(id, model);
+  else if (
+    previous !== model &&
+    (previous === null ||
+      model === null ||
+      antigravity_rate_model(previous) !== antigravity_rate_model(model))
+  )
+    models.set(id, null);
 }
 
 interface Metadata {
@@ -358,16 +392,22 @@ function merge_duplicates(candidates: readonly Candidate[]): Candidate[] {
   return groups.filter((group): group is Candidate => group !== null);
 }
 
-function final_model(candidate: Candidate, learned: ReadonlyMap<number, string | null>): Candidate {
-  const learned_model = learned.get(candidate.model_id);
-  const fallback = learned_model === null ? undefined : MODEL_IDS[candidate.model_id];
+/** Records keep the name their own database gives them. One without a concrete name takes the name
+ * its model id has across every scanned database, then the offline table. */
+function final_model(
+  record: UsageRecord,
+  model_id: number,
+  learned: ReadonlyMap<number, string | null>,
+): UsageRecord {
+  if (is_concrete_model(record.model)) return record;
+  const learned_model = learned.get(model_id);
+  const fallback = learned_model === null ? undefined : MODEL_IDS[model_id];
   const model =
-    (candidate.model_quality === 4 ? candidate.record.model : '') ||
     learned_model ||
     fallback ||
-    candidate.record.model ||
-    (candidate.model_id > 0 ? `antigravity-model-${candidate.model_id}` : 'antigravity-unknown');
-  return { ...candidate, record: { ...candidate.record, model } };
+    record.model ||
+    (model_id > 0 ? `antigravity-model-${model_id}` : 'antigravity-unknown');
+  return { ...record, model };
 }
 
 function with_pricing_model(record: UsageRecord): UsageRecord {
@@ -375,10 +415,22 @@ function with_pricing_model(record: UsageRecord): UsageRecord {
   return pricing_model === record.model ? record : { ...record, pricing_model };
 }
 
-function read_database(path: string): UsageRecord[] {
+/** What one database tells the others: the names it gives model ids, and the model id of each
+ * record it could not name itself, by dedupe key. */
+interface DatabaseState {
+  readonly models: readonly (readonly [number, string | null])[];
+  readonly model_ids: readonly (readonly [string, number])[];
+}
+const NO_STATE: DatabaseState = { models: [], model_ids: [] };
+
+function read_database(path: string): FileTranscriptRead<DatabaseState> {
   const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true, timeout: 100 });
   try {
-    const stat = statSync(path);
+    // An undated record takes the time of the last write, which may sit only in the log.
+    const written_ms = Math.max(
+      statSync(path).mtimeMs,
+      statSync(`${path}-wal`, { throwIfNoEntry: false })?.mtimeMs ?? -Infinity,
+    );
     const tables = new Set(
       (
         db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
@@ -386,7 +438,9 @@ function read_database(path: string): UsageRecord[] {
         }[]
       ).map((row) => row.name),
     );
-    if (!tables.has('gen_metadata') && !tables.has('steps')) throw new Error('not a conversation');
+    // Not a conversation store, e.g. agy's conversation_summaries.db index.
+    if (!tables.has('gen_metadata') && !tables.has('steps'))
+      return { records: [], state: NO_STATE };
     const generations = tables.has('gen_metadata')
       ? read_rows(db, 'SELECT idx, data FROM gen_metadata ORDER BY rowid', false)
       : [];
@@ -402,49 +456,82 @@ function read_database(path: string): UsageRecord[] {
     const steps = tables.has('steps')
       ? read_rows(db, 'SELECT idx, metadata AS data FROM steps ORDER BY rowid', true)
       : [];
-    // A model id seen with one concrete name is that name for every row of it; two names disagree.
-    const learned = new Map<number, string | null>();
-    for (const { entry } of [...generations, ...steps]) {
-      if (entry.model_id > 0 && is_concrete_model(entry.model)) {
-        const previous = learned.get(entry.model_id);
-        learned.set(
-          entry.model_id,
-          previous === undefined || previous === entry.model ? entry.model : null,
-        );
-      }
-    }
-    const session_id = basename(path, '.db');
-    return merge_duplicates(
-      candidates_of(session_id, generations, steps, trajectory_timestamp, stat.mtimeMs),
-    ).map((candidate) => with_pricing_model(final_model(candidate, learned).record));
+    const models = new Map<number, string | null>();
+    for (const { entry } of [...generations, ...steps])
+      if (entry.model_id > 0 && is_concrete_model(entry.model))
+        remember_model(models, entry.model_id, entry.model);
+    const candidates = merge_duplicates(
+      candidates_of(basename(path, '.db'), generations, steps, trajectory_timestamp, written_ms),
+    );
+    return {
+      records: candidates.map(({ record }) => record),
+      state: {
+        models: [...models],
+        model_ids: candidates.flatMap(({ record, model_id }) =>
+          model_id > 0 && !is_concrete_model(record.model) ? [[record.dedupeKey!, model_id]] : [],
+        ),
+      },
+    };
   } finally {
     db.close();
   }
 }
 
-function size_and_mtime(path: string): string {
-  try {
-    const stat = statSync(path);
-    return `${stat.size}:${stat.mtimeMs}`;
-  } catch {
-    return '-';
-  }
-}
+const fingerprint_part = (stat: Stats): string => `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
 
-const antigravity_transcript_parser: FileTranscriptParser = {
+const is_pair = (value: unknown, first: string, second: (item: unknown) => boolean) =>
+  Array.isArray(value) && value.length === 2 && typeof value[0] === first && second(value[1]);
+
+const antigravity_transcript_parser: FileTranscriptParser<DatabaseState> = {
   kind: 'files',
-  /** The write-ahead log holds new rows before the database file changes. */
-  fingerprint(path: string, stat: Stats): string {
-    if (!path.endsWith('.db')) return 'not-a-database';
-    return `${stat.size}:${stat.mtimeMs}/${size_and_mtime(`${path}-wal`)}`;
+  /** Only `.db` files are conversations. Its write-ahead log holds new rows before the database
+   * file changes, so a database is listed and fingerprinted with its log. Ctime catches a
+   * restored mtime. */
+  async list_files(root, since_ms) {
+    const listed = [];
+    for (const { path } of await listTranscriptFiles(root, -Infinity, { extension: '.db' })) {
+      let database: Stats;
+      try {
+        database = await stat(path);
+      } catch {
+        continue;
+      }
+      const log = await stat(`${path}-wal`).catch(() => null);
+      const mtimeMs = Math.max(database.mtimeMs, log?.mtimeMs ?? -Infinity);
+      if (mtimeMs < since_ms) continue;
+      const fingerprint = `${fingerprint_part(database)}/${log === null ? '-' : fingerprint_part(log)}`;
+      listed.push({ path, fingerprint, mtimeMs });
+    }
+    return listed;
   },
-  async read_file(path: string): Promise<readonly UsageRecord[]> {
-    if (!path.endsWith('.db')) return [];
+  async read_file(path) {
     try {
       return read_database(path);
     } catch {
-      return [];
+      return { records: [], state: NO_STATE };
     }
+  },
+  revive_state(raw) {
+    if (!is_record(raw) || !Array.isArray(raw.models) || !Array.isArray(raw.model_ids))
+      return undefined;
+    const name = (item: unknown) => item === null || typeof item === 'string';
+    const id = (item: unknown) => typeof item === 'number';
+    return raw.models.every((pair) => is_pair(pair, 'number', name)) &&
+      raw.model_ids.every((pair) => is_pair(pair, 'string', id))
+      ? (raw as unknown as DatabaseState)
+      : undefined;
+  },
+  /** A model id is learned across every listed database, not only the one that names it. */
+  finish(files) {
+    const learned = new Map<number, string | null>();
+    for (const { state } of files)
+      for (const [id, model] of state.models) remember_model(learned, id, model);
+    return files.map(({ records, state }) => {
+      const model_ids = new Map(state.model_ids);
+      return records.map((record) =>
+        with_pricing_model(final_model(record, model_ids.get(record.dedupeKey!) ?? 0, learned)),
+      );
+    });
   },
 };
 export default antigravity_transcript_parser;

@@ -91,8 +91,8 @@ export const queries = {
   usageLimits: () => queryOptions({
     queryKey: ["usage-limits"], queryFn: () => readUsageLimits(), retry: false
   }),
-  recordedUsage: (input: UsageSummaryInput) => ({
-    ...resourceQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input), false, USAGE_SCAN_LIMIT_MS),
+  recordedUsage: (input: UsageSummaryInput, machineId?: string) => ({
+    ...resourceQuery<UsageSummary>(["recorded-usage", input, machineId ?? null], usageSummaryPath(input, machineId), false, USAGE_SCAN_LIMIT_MS),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
     meta: { resourceBody: true, followsChangeStream: false },
     retry: false,

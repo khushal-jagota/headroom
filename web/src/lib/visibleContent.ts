@@ -32,7 +32,9 @@ type ReadinessScope = () => Node | null;
 const explicitDemands = new WeakMap<HTMLElement, Set<ReadinessScope>>();
 const publishers = new WeakMap<HTMLElement, () => void>();
 
-/** Admit one scoped target through the ordinary observer and retention policy. */
+/** Admit one scoped target through the ordinary observer and retention policy.
+ * A scope that names the element itself asks for the whole element, as an opening
+ * conversation does for a held body in view. */
 export function demandVisibleContent(element: HTMLElement, readinessScope: ReadinessScope): () => void {
   let demands = explicitDemands.get(element);
   if (!demands) { demands = new Set(); explicitDemands.set(element, demands); }
@@ -109,9 +111,14 @@ export function observeVisibleContent(
     if (scopes?.size) {
       return [...scopes].every(scope => {
         const target = scope();
+        // A demand for the element itself waits for all of its content.
+        if (target === element) return wholeContentReady();
         return target !== null && visibleContentTargetReady(element, target);
       });
     }
+    return wholeContentReady();
+  }
+  function wholeContentReady() {
     if (element.matches('img') && !(element as HTMLImageElement).complete) return false;
     if (element.querySelector('[aria-busy="true"], [data-visible-content-restoring]')) return false;
     if ([...element.querySelectorAll('img')].some(image => !image.complete)) return false;

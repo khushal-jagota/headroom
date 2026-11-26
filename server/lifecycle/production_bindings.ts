@@ -5,7 +5,6 @@ import type {
   RetainedBackendChildFactory,
 } from '../conversation/backends/contracts.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
-import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
 import {
@@ -122,24 +121,6 @@ export function compose_production_backends(
       ...(context.executor?.stall_sources() ?? []),
     ],
   };
-}
-/**
- * Each driver's transcripts on this server, for the recorded usage service. They come from the
- * drivers, as T3 Code's built-in usage drivers do: the server's instances run nothing.
- */
-export async function driver_transcript_sources(
-  drivers: readonly AnyAgentDriver[],
-  environment: NodeJS.ProcessEnv,
-): Promise<UsageTranscriptSource[]> {
-  const sources = await Promise.all(
-    [...default_instance_configs(drivers)].map(async ([instance_id, config]) => {
-      const driver = drivers.find((candidate) => candidate.driver_kind === config.driver);
-      return driver?.transcript_usage === undefined
-        ? []
-        : [{ provider: instance_id, source: await driver.transcript_usage(environment) }];
-    }),
-  );
-  return sources.flat();
 }
 /** Server instances contain pure driver rules and a machine factory, never a native runtime. */
 export function prepare_machine_backends(

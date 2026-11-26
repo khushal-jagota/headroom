@@ -7,6 +7,7 @@ import type { BackendStateStore } from '../backend_state.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { TranscriptUsageSource } from '../../drivers/core/usage.ts';
+import type { MachineBackendControls } from '../../executor/backend_control_relay.ts';
 export type NonNegativeInt = number;
 export type TrimmedNonEmptyString = string;
 export type IsoDateTime = string;
@@ -166,4 +167,6 @@ export interface UsageHttpRuntime {
   readonly backend_ids: readonly BackendInstanceId[];
   readonly recorded_usage: RecordedUsageService;
   readonly backend_state: BackendStateStore | null;
+  /** A joined machine's controls, which read that machine's recorded usage. */
+  readonly machine_backends?: (machine_id: string) => MachineBackendControls | null;
 }

@@ -1,4 +1,5 @@
 import { selected_machine } from '../snapshot/routes.ts';
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 /** Thin HTTP transport for local recorded usage and persisted provider allowances. */
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -100,6 +101,17 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
   return async (app, services) => {
     app.get('/summary', async (request) => {
       const input = summary_input(request.query as Record<string, unknown>);
+      const machine_id = selected_machine({ database: services.database }, request.query);
+      if (machine_id !== HOME_MACHINE_ID) {
+        // A joined machine scans its own transcripts and returns only its aggregated buckets.
+        const controls = runtime.machine_backends?.(machine_id) ?? null;
+        if (controls === null) throw new HttpError(503, 'The selected machine is unavailable.');
+        return await controls.request({
+          backend_key: '',
+          operation: 'read_usage_summary',
+          usage_summary_input: { ...input },
+        });
+      }
       try {
         return await runtime.recorded_usage.readSummary(input);
       } catch (error) {

@@ -15,6 +15,10 @@ export const REPLY_LINE_MOVE_MS = 120;
 /** A saved text address cannot hide an open conversation beyond this active wait. */
 export const TEXT_RESTORATION_WAIT_MS = 5_000;
 
+/** An open stays hidden while its visible tail finishes presenting, but never beyond this
+ *  wait: a body that never finishes is revealed at the newest line and placed again when it does. */
+export const ENTRY_PRESENTATION_WAIT_MS = 2_500;
+
 /** The way back to the newest line: its words ("Jump to latest", "3 new messages") and the
  *  action, which takes the button pressed so focus can return to the thread after. */
 export type ConversationJump = { label: string; go: (button: HTMLButtonElement | null) => void };

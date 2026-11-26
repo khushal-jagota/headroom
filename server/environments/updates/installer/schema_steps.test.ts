@@ -31,7 +31,16 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { register_test_root } from '../../../core/test_paths.ts';
 import { create_database_backup } from '../../backup/capture.ts';
 import { restore_database_snapshot } from '../../backup/restore.ts';
-import { create_installer_effects } from './commands.ts';
+import BetterSqlite3 from 'better-sqlite3';
+import { BACKUP_ALARM_INTENT, raise_backup_integrity_alarm } from '../../backup/integrity_alarm.ts';
+import type { NotificationIntent } from '../../../notifications/contracts.ts';
+import { resolve } from '../logic/experience.ts';
+import type { UpdateAttempt } from '../contracts.ts';
+import {
+  create_installer_effects,
+  InstallFailed,
+  SNAPSHOT_INTEGRITY_FAILURE_REASON,
+} from './commands.ts';
 import { install } from './install.ts';
 import { InstallationRecord } from './record.ts';
 import type { InstallerEffects, InstallerRequest } from './contracts.ts';
@@ -77,6 +86,27 @@ function installation(prefix: string, backup: string | null) {
 }
 function installed_sha(root: string): unknown {
   return JSON.parse(readFileSync(join(root, 'app/manifest.json'), 'utf8')).app_sha;
+}
+/** One push device, and an index whose stored definition no longer matches its entries. */
+function damage_with_push_device(path: string): void {
+  const connection = new BetterSqlite3(path);
+  try {
+    connection.exec(`
+      INSERT INTO notification_web_push_identity VALUES (1, 'private', 'public', 0);
+      INSERT INTO notification_push_subscriptions VALUES ('device', 'https://push.invalid/device', 'key', 'auth', 0, 0, NULL);
+      CREATE TABLE damaged (x TEXT, y TEXT);
+      CREATE INDEX damaged_x ON damaged(x);
+      INSERT INTO damaged VALUES ('x1', 'y1'), ('x2', 'y2');`);
+    connection.unsafeMode(true);
+    connection.pragma('writable_schema = ON');
+    connection
+      .prepare(
+        "UPDATE sqlite_schema SET sql = 'CREATE INDEX damaged_x ON damaged(y)' WHERE name = 'damaged_x'",
+      )
+      .run();
+  } finally {
+    connection.close();
+  }
 }
 function record(root: string) {
   return JSON.parse(readFileSync(join(root, 'data/update-attempt.json'), 'utf8'));
@@ -366,6 +396,15 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
       live_stopped: true,
     });
 
+    // A damaged database: the child alarms, exits with its own code, and the installer
+    // names the integrity failure. A test home has no push transport, which must not matter.
+    damage_with_push_device(request.database);
+    await assert.rejects(
+      effects.snapshot(FROM, lock),
+      (error: unknown) =>
+        error instanceof InstallFailed && error.message === SNAPSHOT_INTEGRITY_FAILURE_REASON,
+    );
+
     // Pending steps without a backup refuse before the first write.
     const stepped = join(root, 'baseline.sqlite');
     createDatabaseFromSeed(stepped, BASELINE_SEED, () => {}).close();
@@ -388,6 +427,101 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
     owner.seal();
     controller.abort();
     await owner.settled();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: a damaged database once failed the update snapshot with nothing but a journal line.
+// Real capture and alarm on SQLite, a recorded push device, and a Chief that cannot be
+// reached because the server is stopped. Scripted service effects.
+it('a snapshot that fails its integrity check alerts the owner, names it on the card, and rolls back without the Chief', async () => {
+  const { root, request, attempt } = installation('panels-snapshot-integrity-', null);
+  attempt(null, true);
+  try {
+    createDatabaseFromSeed(request.database, application_schema_seed, () => {}).close();
+    damage_with_push_device(request.database);
+    const pushes: NotificationIntent[] = [];
+    const chief: string[] = [];
+    const outcomes: unknown[] = [];
+    const events: unknown[] = [];
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async snapshot(deployed_revision) {
+          events.push('snapshot');
+          let integrity_failed = false;
+          try {
+            await create_database_backup(
+              request.database,
+              request.backup_directory,
+              deployed_revision,
+              {
+                integrity_alarm: async (source) => {
+                  integrity_failed = true;
+                  outcomes.push(
+                    await raise_backup_integrity_alarm(
+                      source,
+                      {
+                        web_push: {
+                          async send(_subscription, intent) {
+                            pushes.push(intent);
+                            return { delivered: true };
+                          },
+                        },
+                        apns: null,
+                        push_origin: null,
+                        async message_chief(text) {
+                          chief.push(text);
+                          throw new Error('connect ECONNREFUSED');
+                        },
+                      },
+                      Date.now(),
+                    ),
+                  );
+                },
+              },
+            );
+          } catch (error) {
+            // As the installer's snapshot effect maps the child's exit code.
+            if (integrity_failed) throw new InstallFailed(SNAPSHOT_INTEGRITY_FAILURE_REASON);
+            throw error;
+          }
+          assert.fail('a damaged database must not snapshot');
+        },
+        async schema_steps() {
+          assert.fail('no step runs after a failed snapshot');
+        },
+        async restore() {
+          assert.fail('nothing changed, so nothing is restored');
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, ['stop', 'snapshot', 'start', ['healthy', FROM]]);
+    assert.equal(installed_sha(root), FROM);
+    assert.deepEqual(pushes, [BACKUP_ALARM_INTENT]);
+    assert.equal(chief.length, 1);
+    assert.deepEqual(outcomes, [{ pushes_delivered: 1, chief_accepted: false }]);
+    // The update card shows the attempt's recorded detail.
+    const [state, , detail] = resolve(record(root) as UpdateAttempt, null);
+    assert.equal(state, 'failed');
+    assert.equal(
+      detail,
+      `${SNAPSHOT_INTEGRITY_FAILURE_REASON}, so Panels went back to the previous version.`,
+    );
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

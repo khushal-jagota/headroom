@@ -1,5 +1,4 @@
 import { ClaudeUsageAdapter } from './runtime/allowance_usage.ts';
-import { http_get_usage } from '../../conversation/backend_usage/http.ts';
 /** Claude on an executor machine: its Agent SDK launch and its model list probe. */
 import { with_machine_environment } from '../core/executor.ts';
 import type { ExecutorDriver } from '../core/executor.ts';
@@ -14,6 +13,7 @@ import {
   create_claude_status,
   read_claude_auth_freshness,
 } from './runtime/status.ts';
+import { read_claude_usage } from './runtime/usage.ts';
 
 export const claude_executor: ExecutorDriver = {
   child_factory(host) {
@@ -35,14 +35,17 @@ export const claude_executor: ExecutorDriver = {
   catalog(host, custody) {
     const auth_paths = host.home === null ? null : claude_auth_paths(host.home, host.environment);
     return {
-      allowance_usage:
-        auth_paths === null
-          ? undefined
-          : new ClaudeUsageAdapter({
-              credential_path: auth_paths.credentials_path,
-              http_get: http_get_usage,
-              now: () => new Date(),
+      allowance_usage: new ClaudeUsageAdapter({
+        read_usage: (options) =>
+          custody.probe((signal) =>
+            read_claude_usage(host.executable, host.one_shot_children, {
+              signal: options.signal ? AbortSignal.any([signal, options.signal]) : signal,
+              stop_options: () => custody.stop_options(),
+              environment: host.environment,
             }),
+          ),
+        now: () => new Date(),
+      }),
       status: create_claude_status({
         catalog: (executable) =>
           custody.probe(async (signal) => {
