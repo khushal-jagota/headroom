@@ -51,7 +51,7 @@ The phone follows the same rules, with one known gap: a Ticket action there stil
 
 ## What does not move by itself
 
-Inactive ordinary responses remain only within the cache budget. A screen reconciles its resource when it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file.
+Inactive ordinary responses remain only within the cache budget. A screen reconciles its resource when it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file. Each artifact list request reads one folder, so its cost follows that folder and not the whole Ticket folder. A folder sorts by its own modified time. The folder's revision changes when an entry in that folder changes.
 
 ## Decisions that shape it
 

@@ -16,12 +16,12 @@ struct TicketPresentation {
         else if ticket.agentState == "errored" { prefix = "Error working on" }
         else if ticket.assigned == true || currentStage?.ownershipMode == "user" { prefix = "Your step:" }
         else if ticket.stage == "needs_brief" { prefix = "Waiting for" }
-        else if ticket.agentState == "setting_up" { prefix = "Setting up for" }
+        else if ticket.agentState == "setting_up" { prefix = "Setting up" }
         else if ticket.agentState == "working" { prefix = "Currently working on" }
         else if TicketStatusPresentation.agentOwns(ticket.ticketStatus) { prefix = "At" }
         else if currentField == "consequences" { prefix = "At" }
         else { prefix = "Waiting at" }
-        return "\(prefix) \(label)"
+        return prefix == "Setting up" ? prefix : "\(prefix) \(label)"
     }
     func isComplete(_ field: String) -> Bool {
         guard let current = manifest.stages.firstIndex(where: { $0.id == ticket.stage }),

@@ -18,6 +18,9 @@ export const notificationTestArea: Area = {
         intents.push({ transport: 'apns', intent: delivery.intent });
         return { delivered: true };
       },
+      async send_live_activity() {
+        return { delivered: true };
+      },
       close() {},
     };
     const notifications = new NotificationLoop({

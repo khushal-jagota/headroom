@@ -1,171 +1,144 @@
-/** The usage adapter's login reading, renewal and mapping need no network: the POST is recorded. */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+/** The usage adapter reads agy's `/usage` JSON and the account email from agy's own log. */
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { AntigravityUsageAdapter, type UsageHttpPost } from './allowance_usage.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import {
+  AntigravityUsageAdapter,
+  antigravity_usage_runner,
+  read_antigravity_account_email,
+} from './allowance_usage.ts';
 
-const NOW = new Date('2026-11-18T01:35:00Z');
-const RESET = '2026-11-25T00:44:37Z';
-const bucket = (
-  bucketId: string,
-  window: string,
-  remainingFraction: number,
-  resetTime: string | null = RESET,
-) => ({
-  bucketId,
-  displayName: 'Limit Remaining',
+const NOW = new Date('2026-11-26T21:00:00Z');
+const GEMINI_WEEKLY_RESET = '2026-12-03T21:12:16Z';
+const GEMINI_5H_RESET = '2026-11-27T02:12:16Z';
+const EPOCH = '1970-01-01T00:00:00Z';
+const bucket = (id: string, window: string, remaining_fraction: number, reset_time: string) => ({
+  id,
+  name: 'Limit Remaining',
   window,
-  ...(resetTime === null ? {} : { resetTime }),
-  remainingFraction,
+  remaining_fraction,
+  reset_time,
 });
-/**
- * The groups `retrieveUserQuotaSummary` returned on the VPS on 18 November 2026. The daily host
- * names no reset for an untouched bucket, as it did on 26 November; the prod host names one.
- */
-const summary = (gemini_weekly_remaining: number, untouched_reset: string | null = RESET) => ({
-  groups: [
-    {
-      displayName: 'Gemini Models',
-      buckets: [
-        bucket('gemini-weekly', 'weekly', gemini_weekly_remaining),
-        bucket('gemini-5h', '5h', 0.75),
+/** What `agy -p "/usage" --output-format json` printed on Mac 1 (agy 1.5.18), with Gemini used. */
+const USAGE_OUTPUT = JSON.stringify({
+  status: 'SUCCESS',
+  response: 'ignored table text',
+  usage: { total_tokens: 0 },
+  command: {
+    name: 'usage',
+    data: {
+      groups: [
+        {
+          name: 'Gemini Models',
+          buckets: [
+            bucket('gemini-weekly', 'weekly', 0.5, GEMINI_WEEKLY_RESET),
+            bucket('gemini-5h', '5h', 0.75, GEMINI_5H_RESET),
+          ],
+        },
+        {
+          name: 'Claude and GPT models',
+          buckets: [bucket('3p-weekly', 'weekly', 1, EPOCH), bucket('3p-5h', '5h', 1, EPOCH)],
+        },
       ],
     },
-    {
-      displayName: 'Claude and GPT models',
-      buckets: [
-        bucket('3p-weekly', 'weekly', 1, untouched_reset),
-        bucket('3p-5h', '5h', 1, untouched_reset),
-      ],
-    },
-    {
-      displayName: 'Gemini 4 Argon',
-      buckets: [bucket('gemini-argon-wtu-weekly', 'weekly', 0.25)],
-    },
-  ],
+  },
 });
 
 const folders: string[] = [];
+const scratch = () => {
+  const folder = mkdtempSync(join(tmpdir(), 'antigravity-usage-'));
+  folders.push(folder);
+  return folder;
+};
 afterEach(() => {
   for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
-/** A CLI login file whose access token expires at `expiry`, or none. */
-function login_file(access_token: string | null, expiry = '2026-11-18T02:44:30.743865589+01:00') {
-  const folder = mkdtempSync(join(tmpdir(), 'antigravity-usage-'));
-  folders.push(folder);
-  const path = join(folder, 'antigravity-oauth-token');
-  const write = (token: string, at: string) =>
-    writeFileSync(
-      path,
-      JSON.stringify({
-        token: { access_token: token, token_type: 'Bearer', refresh_token: 'r', expiry: at },
-        auth_method: 'consumer',
-      }),
-    );
-  if (access_token !== null) write(access_token, expiry);
-  return { path, write };
-}
-function adapter(
-  path: string,
-  post: UsageHttpPost,
-  refresh_login: () => Promise<void> = async () => {
-    throw new Error('this test does not renew the login');
-  },
-) {
-  return new AntigravityUsageAdapter({
-    login_path: path,
-    http_post: post,
-    refresh_login,
-    now: () => NOW,
-  });
-}
+const adapter = (run_usage: () => Promise<string>) =>
+  new AntigravityUsageAdapter({ run_usage, now: () => NOW });
 
-// Risk: the real quota groups map to the wrong windows, ids or labels, the prod host's reading
-// replaces the daily host's (an untouched bucket without a reset took the prod host's reset
-// time), or the request lacks the user agent the API requires.
-test('the quota summary maps to Gemini, Claude and GPT, and Gemini 4 Argon windows', async () => {
-  const requests: { url: string; headers: Readonly<Record<string, string>>; body: string }[] = [];
-  const result = await adapter(login_file('cli-token').path, async (url, headers, body) => {
-    requests.push({ url, headers, body });
-    const daily = url.includes('daily');
-    return { status_code: 200, body: daily ? summary(0.5, null) : summary(1) };
-  }).refresh();
-  expect(result.outcome).toBe('succeeded');
-  const window = (
-    id: string,
-    used_percent: number,
-    label: string,
-    resets_at: Date | null = new Date(RESET),
-  ) => ({
+// Risk: the `/usage` JSON maps to the wrong windows, ids or labels, or an untouched bucket's
+// 1970-01-01 reset shows as a real reset time (a countdown to the Unix epoch).
+test('the /usage output maps to Gemini and Claude and GPT windows; the epoch reset is no reset', async () => {
+  const result = await adapter(async () => USAGE_OUTPUT).refresh();
+  expect(result).toMatchObject({ outcome: 'succeeded', detail: null, observed_at: NOW });
+  const window = (id: string, used_percent: number, label: string, resets_at: string | null) => ({
     id,
     kind: id.endsWith('5h') ? 'five_hour' : 'seven_day',
     label,
     used_percent,
-    resets_at,
+    resets_at: resets_at === null ? null : new Date(resets_at),
     window_duration_mins: id.endsWith('5h') ? 300 : 10080,
     model_scope: label.split(' · ')[1],
   });
   expect(result.windows).toEqual([
-    window('gemini-weekly', 50, '7 days · Gemini'),
-    window('gemini-5h', 25, '5 hours · Gemini'),
+    window('gemini-weekly', 50, '7 days · Gemini', GEMINI_WEEKLY_RESET),
+    window('gemini-5h', 25, '5 hours · Gemini', GEMINI_5H_RESET),
     window('3p-weekly', 0, '7 days · Claude and GPT', null),
     window('3p-5h', 0, '5 hours · Claude and GPT', null),
-    window('gemini-argon-wtu-weekly', 75, '7 days · Gemini 4 Argon'),
   ]);
-  expect(requests.map((request) => request.url)).toEqual([
-    'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
-    'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
-  ]);
-  expect(requests[0]).toMatchObject({
-    headers: { authorization: 'Bearer cli-token' },
-    body: '{}',
+});
+
+// Risk: output that is not a usage table reads as a success with no windows, or as a failure that
+// hides the difference between agy not running and agy answering without limits.
+test('a failed run is failed and an answer without limits is unavailable', async () => {
+  expect(
+    await adapter(async () => {
+      throw new Error('agy is missing');
+    }).refresh(),
+  ).toMatchObject({ outcome: 'failed', windows: [] });
+  expect(await adapter(async () => 'not json').refresh()).toMatchObject({
+    outcome: 'unavailable',
+    windows: [],
   });
-  expect(requests[0]!.headers['user-agent']).toMatch(
-    /^antigravity\/hub\/2\.24\.0 \(aidev_client; os_type=\w+; arch=\w+\)$/,
+  expect(
+    await adapter(async () =>
+      JSON.stringify({ status: 'SUCCESS', command: { data: {} } }),
+    ).refresh(),
+  ).toMatchObject({ outcome: 'unavailable', windows: [] });
+});
+
+// Risk: the runner starts agy with other arguments or another home than the usage command on
+// agy's own login, or a missing agy escapes as an exception instead of a failed reading. A real
+// child runs here, because the spawn boundary is what this proves.
+test('the runner runs agy -p /usage on the agy home, and a missing agy fails', async () => {
+  const folder = scratch();
+  const agy = join(folder, 'agy');
+  writeFileSync(
+    agy,
+    `#!/bin/sh\n[ "$*" = '-p /usage --output-format json' ] && [ "$GEMINI_HOME" = '${folder}' ] && cat '${join(folder, 'usage.json')}'\n`,
   );
+  chmodSync(agy, 0o755);
+  writeFileSync(join(folder, 'usage.json'), USAGE_OUTPUT);
+  const children = new OneShotChildren();
+  const options = { home: folder, panels_server_url: 'http://127.0.0.1:1' };
+  const found = adapter(antigravity_usage_runner(options, () => agy, children));
+  expect((await found.refresh()).outcome).toBe('succeeded');
+  const missing = adapter(antigravity_usage_runner(options, () => join(folder, 'nope'), children));
+  expect((await missing.refresh()).outcome).toBe('failed');
+  children.seal();
+  await children.settled();
 });
 
-// Risk: a signed-out home reaches the network or asks agy to renew a login that does not exist.
-test('a missing CLI login is signed out and reaches neither the network nor agy', async () => {
-  let renewals = 0;
-  const result = await adapter(
-    login_file(null).path,
-    async () => {
-      throw new Error('no network');
-    },
-    async () => {
-      renewals++;
-    },
-  ).refresh();
-  expect(result).toMatchObject({
-    outcome: 'unauthenticated',
-    detail: 'Antigravity is signed out. Sign in to Antigravity again.',
-  });
-  expect(renewals).toBe(0);
-});
+function acp_log(directory: string, name: string, text: string) {
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, name);
+  writeFileSync(path, text);
+}
+const SIGNED_IN = (email: string) =>
+  `I1126 21:11:59.935010 44 server_oauth.go:226] OAuth: authenticated successfully as ${email}\n`;
 
-// Risk: an expired access token is sent as it is, or agy's renewal is not read back, or a login
-// agy could not renew reads as anything but signed out.
-test('an expired token is renewed by agy and read again; one agy cannot renew is signed out', async () => {
-  const login = login_file('old-token', '2026-11-18T01:35:30Z');
-  const bearers: string[] = [];
-  const post: UsageHttpPost = async (_url, headers) => {
-    bearers.push(headers.authorization!);
-    return { status_code: 200, body: summary(0.5) };
-  };
-  const renewed = await adapter(login.path, post, async () =>
-    login.write('new-token', '2026-11-18T02:35:00Z'),
-  ).refresh();
-  expect(renewed.outcome).toBe('succeeded');
-  expect(new Set(bearers)).toEqual(new Set(['Bearer new-token']));
-
-  bearers.length = 0;
-  login.write('old-token', '2026-11-18T01:35:30Z');
-  const not_renewed = await adapter(login.path, post, async () => {}).refresh();
-  expect(not_renewed).toMatchObject({
-    outcome: 'unauthenticated',
-    detail: 'Antigravity is signed out. Sign in to Antigravity again.',
-  });
-  expect(bearers).toEqual([]);
+// Risk: the card names no account (Usage cannot merge the account across machines), names a
+// stale account from an older log, or reads an unbounded file. A missing or changed line is null.
+test('the account email is the newest ACP log’s sign-in line, or null', () => {
+  const logs = join(scratch(), 'log');
+  expect(read_antigravity_account_email(logs)).toBeNull();
+  acp_log(logs, 'acp-server-20261125_010000-1.log', SIGNED_IN('old@example.com'));
+  acp_log(logs, 'cli-20261126_210000.log', SIGNED_IN('cli@example.com'));
+  expect(read_antigravity_account_email(logs)).toBe('old@example.com');
+  acp_log(logs, 'acp-server-20261126_211159-2.log', SIGNED_IN('owner@example.com'));
+  expect(read_antigravity_account_email(logs)).toBe('owner@example.com');
+  acp_log(logs, 'acp-server-20261126_220000-3.log', 'I1126 server started, no sign-in line\n');
+  expect(read_antigravity_account_email(logs)).toBeNull();
 });

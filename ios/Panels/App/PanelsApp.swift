@@ -26,6 +26,12 @@ import SwiftUI
                 .preferredColorScheme(.dark)
                 .tint(PanelsTheme.accent)
                 .onChange(of: scenePhase, initial: true) { _, phase in KeepAwake.shared.foreground = phase == .active }
+                .onOpenURL { url in
+                    // The Lock Screen card and the Island link here. Only Review's summary opens.
+                    guard url == ReviewActivityAttributes.reviewURL,
+                          let server = AppStore.configuredBaseURL.flatMap({ NotificationRouting.origin($0.absoluteString) }) else { return }
+                    notifications.receivedTap(NotificationOpen(id: UUID(), serverURL: server, destination: .review(ticketID: nil)))
+                }
         }
     }
 

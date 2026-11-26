@@ -4,7 +4,8 @@ import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { native_wire_fixtures } from '../../executor/testing/native_protocol_fixtures.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
-export function seed_machine_lease(tx: TransactionSql, machine_id: string): void {
+/** A current lease request that a present machine would send. */
+export function machine_lease_request() {
   const fixture = native_wire_fixtures().LeaseRequest;
   const identity = {
     ...fixture.identity,
@@ -23,6 +24,12 @@ export function seed_machine_lease(tx: TransactionSql, machine_id: string): void
     cleanup_uncertainties: [],
     legacy_cleanup_notice: null,
   };
+  return lease;
+}
+
+export function seed_machine_lease(tx: TransactionSql, machine_id: string): void {
+  const lease = machine_lease_request();
+  const identity = lease.identity;
   // A lease time beyond any test clock keeps the machine present for the whole test.
   tx.run(
     'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,lease_json,last_lease_at_ms) VALUES(?,?,?,?,?) ON CONFLICT(machine_id) DO NOTHING',

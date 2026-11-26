@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import { answer_at_acceptance } from './acceptance.ts';
 import { own_recipient_delivery } from './lifetime.ts';
-import type { OwnerSendOutcome } from './contracts.ts';
+import { OwnerSendRefusalReason, type OwnerSendOutcome } from './contracts.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { PromptDeliveryRefusedEventPayload } from '../conversation/events.ts';
+import { MACHINE_UNAVAILABLE } from '../conversation/contracts.ts';
+import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import type { ConversationSystem, NativeMessageOperation } from '../conversation/contracts.ts';
-import { PromptDeliveryRefusalReason } from '../conversation/contracts.ts';
 import type { ConversationMessageContent } from '../conversation/contracts.ts';
 import { delivery_fate_json, type OwnerSendBody } from '../conversation/http.ts';
 import { conversation_event_payload_from_canonical_json } from '../conversation/record/codec.ts';
@@ -87,11 +90,13 @@ function event_delivery(event: {
   kind: TerminalKind;
   payload: string;
 }): Delivery {
+  const payload = conversation_event_payload_from_canonical_json(event.kind, event.payload);
   return {
     conversation_id: event.conversation_id,
-    ...delivery_fate_json(
-      outcome_fate(conversation_event_payload_from_canonical_json(event.kind, event.payload)),
-    ),
+    ...delivery_fate_json(outcome_fate(payload)),
+    ...(payload instanceof PromptDeliveryRefusedEventPayload && payload.refusal_detail !== null
+      ? { reason: payload.refusal_detail }
+      : {}),
   };
 }
 
@@ -100,14 +105,36 @@ function recorded_delivery(sql: ReadSql, keys: Keys, conversation_id: string | n
   return event ? event_delivery(event) : null;
 }
 
-function interrupted(conversation_id: string | null, uncertain = false): Delivery {
-  return uncertain
-    ? { conversation_id, fate: 'uncertain' }
-    : {
-        conversation_id,
-        fate: 'refused',
-        refusal_reason: PromptDeliveryRefusalReason.write_to_backend_failed,
-      };
+/** Home refused the message before it took custody, and says why. */
+function refused_before_acceptance(
+  conversation_id: string | null,
+  refusal_reason: OwnerSendRefusalReason,
+  reason: string,
+): Delivery {
+  return { conversation_id, fate: 'refused', refusal_reason, reason };
+}
+const HOME_RESTARTED = 'Panels restarted before it accepted this message.';
+/** The cause of a send that failed before custody, from the error that stopped it. */
+function refusal_for_error(conversation_id: string | null, error: unknown): Delivery {
+  if (is_shutdown_business_cancellation(error))
+    return refused_before_acceptance(
+      conversation_id,
+      OwnerSendRefusalReason.home_restarted_before_acceptance,
+      HOME_RESTARTED,
+    );
+  const reason = error instanceof Error ? error.message : String(error);
+  const code = error instanceof PlannerError ? error.code : null;
+  return refused_before_acceptance(
+    conversation_id,
+    code === 'conversation_save_failed'
+      ? OwnerSendRefusalReason.conversation_save_failed
+      : code === 'not_found'
+        ? OwnerSendRefusalReason.recipient_unavailable
+        : code === MACHINE_UNAVAILABLE
+          ? OwnerSendRefusalReason.machine_unavailable
+          : OwnerSendRefusalReason.refused_before_acceptance,
+    reason,
+  );
 }
 
 type Outcome = OwnerSendOutcome['outcome'];
@@ -160,7 +187,7 @@ function stored_owner_send(
         outcome,
         refusal_reason: outcome === 'refused' ? text(answer.refusal_reason) : null,
         // A message withdrawn for editing names no reason; its fate reads as refused.
-        reason: outcome === 'discarded' ? text(answer.reason) : null,
+        reason: outcome === 'discarded' || outcome === 'refused' ? text(answer.reason) : null,
       },
       answer:
         outcome === 'pending'
@@ -179,11 +206,19 @@ function stored_owner_send(
           [`${conversation_id}:${message_id}`],
         );
   if (journal && !(journal.state in SETTLED)) return pending();
-  if (journal?.outcome != null)
+  if (journal?.outcome != null) {
+    // A refusal's event carries its sentence; the journal keeps only the outcome.
+    const detail =
+      journal.state === 'refused' ? recorded_delivery(sql, keys, conversation_id)?.reason : null;
     return settled(
-      { conversation_id, ...(JSON.parse(journal.outcome) as Record<string, unknown>) },
+      {
+        conversation_id,
+        ...(JSON.parse(journal.outcome) as Record<string, unknown>),
+        ...(typeof detail === 'string' ? { reason: detail } : {}),
+      },
       SETTLED[journal.state],
     );
+  }
   // A terminal row without an outcome was discarded here because another conversation that
   // linked first admitted the message, so its event is looked up in any conversation.
   const discarded_elsewhere = journal?.state === 'discarded';
@@ -203,13 +238,23 @@ function stored_owner_send(
     return pending();
   // Not admitted yet, and still in flight: there is no outcome to report so far.
   if (sending) return null;
-  if (
-    saved.epoch !== owner_send_epoch(sql) ||
-    (conversation_id !== null && conversation_id !== current_conversation(sql, target)) ||
-    saved.pending_kind !== null
-  )
+  if (saved.pending_kind === 'prompt_delivery_uncertain')
+    return settled({ conversation_id, fate: 'uncertain' });
+  if (saved.epoch !== owner_send_epoch(sql) || saved.pending_kind !== null)
     return settled(
-      interrupted(conversation_id, saved.pending_kind === 'prompt_delivery_uncertain'),
+      refused_before_acceptance(
+        conversation_id,
+        OwnerSendRefusalReason.home_restarted_before_acceptance,
+        HOME_RESTARTED,
+      ),
+    );
+  if (conversation_id !== null && conversation_id !== current_conversation(sql, target))
+    return settled(
+      refused_before_acceptance(
+        conversation_id,
+        OwnerSendRefusalReason.recipient_conversation_replaced,
+        "The recipient's conversation was replaced before it accepted this message.",
+      ),
     );
   return null;
 }
@@ -351,7 +396,7 @@ export function run_owner_send(
                   return;
                 tx.run(
                   'UPDATE owner_send_receipts SET response=? WHERE owner_kind=? AND owner_id=? AND message_id=?',
-                  [JSON.stringify(interrupted(bound)), ...keys],
+                  [JSON.stringify(refusal_for_error(bound, error)), ...keys],
                 );
               },
               { changeSignal: 'silent' },

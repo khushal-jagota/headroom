@@ -43,6 +43,11 @@ export const PromptQueueReason = {
   command_needs_its_own_turn: 'command_needs_its_own_turn',
 } as const;
 export type PromptQueueReason = (typeof PromptQueueReason)[keyof typeof PromptQueueReason];
+/**
+ * The machine policy's refusal for a machine that can never lease again. Every other machine
+ * refusal only waits, so this one alone refuses a message at admission.
+ */
+export const MACHINE_UNAVAILABLE = 'machine_unavailable';
 export const PromptDeliveryRefusalReason = {
   no_such_conversation: 'no_such_conversation',
   backend_did_not_start: 'backend_did_not_start',

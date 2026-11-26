@@ -2,6 +2,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import type { Principal } from '../core/contracts.ts';
+import type { ReadSql } from '../core/database/contracts.ts';
+import { conversation_machine_waiting_reason } from '../machines/conversation_machine.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { dictionaryBody } from '../list_reads/http.ts';
 import { delivery_fate_json } from '../conversation/http.ts';
@@ -61,6 +63,17 @@ export function message_delivery_mode(...values: [] | [unknown]): PromptDelivery
     throw new PlannerError('validation', 'mode must be queue, steer, or send_now', { mode });
   return mode as PromptDeliveryMode;
 }
+/** An accepted message that waits for its machine says so, for example "Waiting for Mac 1". */
+export function machine_waiting_fields(
+  sql: ReadSql,
+  conversation_id: string | null,
+): { machine_waiting_reason?: string } {
+  const reason =
+    conversation_id === null
+      ? null
+      : conversation_machine_waiting_reason(sql, conversation_id, Date.now());
+  return reason === null ? {} : { machine_waiting_reason: reason };
+}
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   app.post('/messages/send', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
@@ -97,6 +110,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           conversation_id,
           fate: 'accepted',
           message_id,
+          ...services.database.read((sql) => machine_waiting_fields(sql, conversation_id)),
         }),
         before_acceptance: result_json,
         failure_label: 'accepted message delivery failed',

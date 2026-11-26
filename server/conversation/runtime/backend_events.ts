@@ -28,14 +28,20 @@ import {
 import { LifecycleOperation as O, LifecycleStatus as S } from '../record/lifecycle.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleKind as K } from '../record/lifecycle.ts';
-import { interpret_backend_event } from '../logic/backend_events.ts';
+import { interpret_backend_event, is_late_turn_event } from '../logic/backend_events.ts';
 import type { InterpretedBackendEvent } from '../logic/backend_events.ts';
 import type { AcceptedRecordEvent, RecordCommitParticipant } from '../record/contracts.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
 import type { RuntimeMutation, CoreBackendEventSink } from './contracts.ts';
 import { field_mutation, RemoteEventPrediction } from './save_attempt.ts';
 import { acquire_after_steers } from './synchronization.ts';
-import { turn_is_maintenance, same_turn, set_phase, own_settlement } from './state.ts';
+import {
+  cancel_no_turn_fallback,
+  turn_is_maintenance,
+  same_turn,
+  set_phase,
+  own_settlement,
+} from './state.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import {
@@ -178,28 +184,31 @@ export async function take_backend_event_with_receipt(
     ) {
       live = false;
     }
+    // The core ended this turn when its real ending was late. Closing events still belong to it.
+    const late = !live && is_late_turn_event(event) && same_turn(state.late_events_turn, token);
     const agent_acted = live && token !== null;
     if (agent_acted) {
       await host.accept_automatic_start(state, token!);
       state.last_touched_monotonic = host.monotonic_now();
     }
-    let interpreted: InterpretedBackendEvent = live
-      ? interpret_backend_event(
-          token,
-          event,
-          running,
-          event instanceof TurnEnded
-            ? host.options.store.lifecycle_facts(state.record.conversation_id)
-            : [],
-        )
-      : {
-          payloads: [],
-          lifecycle: [],
-          predicted: null,
-          compacted: false,
-          compaction_result: null,
-          failure_notice: false,
-        };
+    let interpreted: InterpretedBackendEvent =
+      live || late
+        ? interpret_backend_event(
+            token,
+            event,
+            running,
+            event instanceof TurnEnded
+              ? host.options.store.lifecycle_facts(state.record.conversation_id)
+              : [],
+          )
+        : {
+            payloads: [],
+            lifecycle: [],
+            predicted: null,
+            compacted: false,
+            compaction_result: null,
+            failure_notice: false,
+          };
     if (
       interpreted.lifecycle.length > 0 &&
       (event instanceof PermissionAskRaised || event instanceof UserInputRequested)
@@ -221,7 +230,7 @@ export async function take_backend_event_with_receipt(
         };
       }
     }
-    if (!live && options.in_commit === undefined) {
+    if (!live && !late && options.in_commit === undefined) {
       // The core may have ended the turn itself; a child that broke meanwhile is still broken.
       // While another turn runs on the child, that turn's own ending reports it.
       const current = state.running_turn;
@@ -321,7 +330,7 @@ export async function take_backend_event_with_receipt(
                   }),
                 ]),
               ];
-            return { result: { applied: live }, written };
+            return { result: { applied: live || late }, written };
           },
           options.in_commit === undefined
             ? null
@@ -419,6 +428,7 @@ export async function take_backend_event_with_receipt(
       }
     }
     if (predicted?.ended) {
+      cancel_no_turn_fallback(state);
       set_phase(state, 'idle');
       host.options.emit_change?.();
       drain = true;

@@ -140,6 +140,16 @@ function pin(node: HTMLElement, stood: Stood, resetScroll: boolean): void {
   if (contentTop !== null && now !== undefined && Math.abs(now - contentTop) > 0.01) {
     node.style.top = `${top + contentTop - now}px`;
   }
+  // The page can change the offset parent's box in this same render, after the card was pinned.
+  // Once the render has settled and before it paints, put the card back where it stood.
+  queueMicrotask(() => {
+    if (!node.isConnected) return;
+    const content = node.firstElementChild?.getBoundingClientRect().top;
+    const dx = onScreen.left - node.getBoundingClientRect().left;
+    const dy = contentTop !== null && content !== undefined ? contentTop - content : onScreen.top - node.getBoundingClientRect().top;
+    if (Math.abs(dx) > 0.01) node.style.left = `${parseFloat(node.style.left) + dx}px`;
+    if (Math.abs(dy) > 0.01) node.style.top = `${parseFloat(node.style.top) + dy}px`;
+  });
 }
 
 /** Where an element stood on the screen, and where its first content stood inside it. */

@@ -8,3 +8,8 @@ export const SERVER_MOVE_DEFAULT_PORT = 8767;
 
 // Work moves expose phase changes even while the change stream reconnects.
 export const WORK_MOVE_POLL_MS = 1000;
+
+// The move dialog shows tenths of a second, so its clock ticks faster than the server poll.
+export const WORK_MOVE_TICK_MS = 100;
+// A finished move stays on the page button this long, then the button and dialog return to idle.
+export const WORK_MOVE_SETTLE_MS = 4000;

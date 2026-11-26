@@ -33,6 +33,12 @@ export interface CachedBackendUsage extends BackendUsageAccount {
   readonly observed_at: Date;
   readonly windows: readonly BackendUsageWindow[];
 }
+/** The latest refresh that did not succeed, kept beside the last good figures. */
+export interface FailedBackendUsage {
+  readonly outcome: Exclude<BackendUsageOutcome, 'succeeded'>;
+  readonly detail: string | null;
+  readonly failed_at: Date;
+}
 export interface BackendUsageAdapter {
   refresh(options?: { signal?: AbortSignal }): Promise<BackendUsageResult>;
 }

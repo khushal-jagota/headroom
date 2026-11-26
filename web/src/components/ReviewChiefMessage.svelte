@@ -35,7 +35,7 @@
     bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
     sendDisabled={!composer.ready} preserveHeight sending={outcome.sending} result={outcome.result} sendTitle={outcome.note}
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
-    onSend={() => composer.send()} onError={problem => composer.error = problem} />
+    onSend={() => composer.send(0)} onError={problem => composer.error = problem} />
   {#if composer.error}<div class="review-chief-error"><ErrorLine error={composer.error} /></div>{/if}
 </div>
 

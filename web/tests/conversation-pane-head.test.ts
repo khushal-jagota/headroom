@@ -22,11 +22,11 @@ describe("the opened pane's top bar", () => {
     expect(conversationState({ ...quiet, running: true, waitingForYou: true, waitingFor: "approval" })).toMatchObject({ state: "waiting", text: "Needs your approval", mark: "dot" });
     expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "answer" }).text).toBe("Needs your answer");
     expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "key" }).text).toBe("Needs a key");
-    expect(paneHeadStatus({ ...quiet, settingUp: "Setting up · 1m 35s" }))
-      .toMatchObject({ state: "setting-up", text: "Setting up · 1m 35s", mark: "spinner" });
+    expect(paneHeadStatus({ ...quiet, settingUp: "Setting up" }))
+      .toMatchObject({ state: "setting-up", text: "Setting up", mark: "spinner" });
     // A machine Panels cannot read says the dock's words, with a still dot and no clock,
     // also while its setup is recorded (owner, A4 in the opened view).
-    for (const facts of [{ running: true }, { settingUp: "Setting up · 1m 35s" }, { waitingForYou: true }]) {
+    for (const facts of [{ running: true }, { settingUp: "Setting up" }, { waitingForYou: true }]) {
       expect(paneHeadStatus({ ...quiet, ...facts, activityUncertain: true }))
         .toEqual({ state: "offline", text: "Machine offline", mark: "dot" });
     }
@@ -49,7 +49,7 @@ describe("the opened pane's top bar", () => {
   });
 
   it("reads one state in one order: waiting, failed, working, setting up, interrupted, idle", () => {
-    const setup = "Setting up · 1m 35s";
+    const setup = "Setting up";
     const all = { ...quiet, waitingForYou: true, failure: "turn_failed" as const, running: true, settingUp: setup, interrupted: true };
     expect(conversationState(all).state).toBe("waiting");
     expect(conversationState({ ...all, waitingForYou: false }).state).toBe("failed");
@@ -76,11 +76,11 @@ describe("the opened pane's top bar", () => {
 });
 
 describe("the dock's status line", () => {
-  const clocks = { offline: false, setupClock: "1m 35s", turnClock: "2m 14s" };
+  const clocks = { offline: false, turnClock: "2m 14s" };
   const status = (facts: Partial<ConversationStateFacts>, offline = false, askWaiting = false) =>
     dockStatusFrom({ ...clocks, offline, askWaiting, conversation: { ...quiet, ...facts } });
   it("says one of four states, whatever else waits", () => {
-    expect(status({ settingUp: "Setting up · 1m 35s" })).toEqual({ kind: "setting-up", clock: "1m 35s" });
+    expect(status({ settingUp: "Setting up" })).toEqual({ kind: "setting-up", clock: null });
     expect(status({ running: true })).toEqual({ kind: "working", clock: "2m 14s" });
     expect(status({})).toEqual({ kind: "idle", clock: null });
     // A running turn keeps saying Working, with its clock, while an ask waits: the server counts it working.
@@ -106,7 +106,7 @@ describe("the dock's status line", () => {
     expect(working).toMatch(/Working for <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
     // No narration sentence under the Working line.
     expect(working).not.toContain("narration");
-    expect(rest({ kind: "setting-up", clock: "1m 35s" })).toMatch(/Setting up · <span data-conversation-rest-clock[^>]*>1m 35s</);
+    expect(rest({ kind: "setting-up", clock: null })).toMatch(/Setting up</);
     for (const [kind, words] of [["idle", "Idle"], ["offline", "Machine offline"]] as const) {
       const html = rest({ kind, clock: null });
       expect(html).toContain(`>${words}</span>`);

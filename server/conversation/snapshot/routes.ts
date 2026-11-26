@@ -379,12 +379,11 @@ export function createBackendRoutes(
               backend_key,
               signal_of(request),
             );
-            if (result.outcome === 'succeeded' && result.observed_at !== null)
-              runtime.backend_state?.keep_successful_usage(
-                result,
-                machine_id,
-                usage_account(snapshots, backend_key),
-              );
+            runtime.backend_state?.keep_usage_result(
+              result,
+              machine_id,
+              usage_account(snapshots, backend_key),
+            );
             return { backend_key, outcome: result.outcome, detail: result.detail };
           }),
         );
@@ -410,12 +409,11 @@ export function createBackendRoutes(
       }
       if (runtime.backend_state !== null) {
         for (const result of refreshed) {
-          if (result.outcome === 'succeeded' && result.observed_at !== null)
-            runtime.backend_state.keep_successful_usage(
-              result,
-              HOME_MACHINE_ID,
-              usage_account(snapshots, result.backend_key),
-            );
+          runtime.backend_state.keep_usage_result(
+            result,
+            HOME_MACHINE_ID,
+            usage_account(snapshots, result.backend_key),
+          );
         }
       }
       return {

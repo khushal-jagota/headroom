@@ -84,6 +84,12 @@ delivery is not connected yet**. For a signed Debug build, explicitly set
 `APNS_REGISTRATION_ENABLED=YES` and match `APNS_ENVIRONMENT` to its signed entitlement.
 Permission alone does not prove delivery. Simulator injections bypass Apple and the server.
 
+## Review Live Activity
+
+The widget extension `PanelsLiveActivity` draws the Review Live Activity. The app does not start it. The server starts and updates it by push; see [Notifications](../docs/notifications.md#review-live-activity). `ReviewLiveActivityController` watches the push-to-start token and each activity's update token. `NotificationController` sends them to `PUT /api/notifications/apns/live-activity` once the device is registered. The watch starts at launch, because a push-to-start can launch the app with no scene. That launch registers the device against the selected server, as a notification reply does. A token that has not arrived yet never clears a stored one. Only an ended activity sends a null update token. The app ends an older Review activity when a newer one reports its token. A tap opens Review's summary through `panels://review`.
+
+The extension's bundle ID is `com.khushaljagota.panels.LiveActivity`. Automatic signing creates its App ID. The server needs no new setting, because the push topic comes from the app's bundle ID. `PanelsTests/Fixtures/review-live-activity.json` holds the content state that both the server's tests and the host tests read. Apple's own delivery, and the Lock Screen and Island on a real phone, are checked by hand.
+
 ## Native registration contract
 
 The backend now serves this endpoint:

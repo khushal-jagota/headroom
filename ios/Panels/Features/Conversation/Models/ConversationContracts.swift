@@ -303,6 +303,12 @@ struct ConversationDelivery: Decodable, Sendable {
         case "backend_cannot_steer", "running_turn_cannot_accept_steer", "message_cannot_be_steered": "try Queue instead"
         case "running_turn_changed_before_steer": "the running turn changed"
         case "backend_rejected_steer": "agent could not accept steering"
+        case "refused_before_acceptance": "Panels refused this message"
+        case "recipient_unavailable": "the recipient no longer exists"
+        case "machine_unavailable": "its machine can no longer join"
+        case "conversation_save_failed": "the conversation could not save"
+        case "home_restarted_before_acceptance": "Panels restarted before it accepted this message"
+        case "recipient_conversation_replaced": "the recipient's conversation was replaced"
         default: reason?.replacingOccurrences(of: "_", with: " ") ?? "agent could not receive the message"
         }
     }
@@ -339,19 +345,22 @@ struct ConversationConfiguration: Decodable, Sendable {
         let senderMessageId: String?
         let content: [ConversationBody.Piece]
         var queueReason: String? = nil
+        /// The conversation's reason when its machine is away, such as "Waiting for Mac 1".
+        var machineWaitingReason: String? = nil
         var text: String { content.compactMap(\.text).joined(separator: "\n") }
         /// Why the server held this message, in the owner's words.
         var note: String {
+            if let machineWaitingReason { return "Queued · \(machineWaitingReason)" }
             switch queueReason {
-            case "attachment": "Queued · attachments wait for the turn to end"
-            case "run_change": "Queued · a model change waits for the turn to end"
-            case "steer_refused": "Queued · could not join the running turn"
-            case "command_needs_its_own_turn": "Queued · a command needs its own turn"
-            default: "Queued"
+            case "attachment": return "Queued · attachments wait for the turn to end"
+            case "run_change": return "Queued · a model change waits for the turn to end"
+            case "steer_refused": return "Queued · could not join the running turn"
+            case "command_needs_its_own_turn": return "Queued · a command needs its own turn"
+            default: return "Queued"
             }
         }
     }
-    enum CodingKeys: String, CodingKey { case machineId, backendKey, supportsSteer, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
+    enum CodingKeys: String, CodingKey { case machineId, backendKey, supportsSteer, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence, machineWaitingReason }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         machineId = try values.decodeIfPresent(String.self, forKey: .machineId)
@@ -362,6 +371,13 @@ struct ConversationConfiguration: Decodable, Sendable {
         model = try values.decodeIfPresent(String.self, forKey: .model)
         reasoningEffort = try values.decodeIfPresent(String.self, forKey: .reasoningEffort)
         heldPrompts = try values.decodeIfPresent([HeldPrompt].self, forKey: .heldPrompts) ?? []
+        if let reason = try values.decodeIfPresent(String.self, forKey: .machineWaitingReason) {
+            heldPrompts = heldPrompts.map { held in
+                var held = held
+                held.machineWaitingReason = reason
+                return held
+            }
+        }
     }
 }
 struct ConversationRow: Identifiable, Equatable {

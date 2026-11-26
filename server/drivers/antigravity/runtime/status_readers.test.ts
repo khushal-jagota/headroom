@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NewSessionResponse, SessionConfigOption } from '@agentclientprotocol/sdk/unstable';
@@ -69,26 +69,19 @@ test('each model offers the thinking levels agy reports for it, and the card def
 
 // Risk: agy has no identity command, so a card without a catalog-derived identity never offers
 // the sign-in the web gates on `identity.status === 'unauthenticated'`. Usage merges a signed-in
-// account by its email, which only the login file names; the card must carry it and no token.
+// account by its email, which only agy's ACP log names; the card must carry it.
 test('the card’s sign-in state comes from whether agy opened a catalog session', async () => {
   const environment = new RecordingBackendProbeEnvironment();
   environment.executables.set('agy', '/synthetic/agy');
   const folder = mkdtempSync(join(tmpdir(), 'agy-login-'));
-  const login_path = join(folder, 'antigravity-oauth-token');
+  const log_directory = join(folder, 'log');
+  mkdirSync(log_directory);
   writeFileSync(
-    login_path,
-    JSON.stringify({
-      token: {
-        access_token: 'secret-access',
-        refresh_token: 'secret-refresh',
-        expiry: '2030-01-01T00:00:00Z',
-      },
-      auth_method: 'oauth',
-      id_token_email: 'owner@example.com',
-    }),
+    join(log_directory, 'acp-server-20261126_211159-1.log'),
+    'OAuth: authenticated successfully as owner@example.com\n',
   );
   const card = async (read: () => Promise<AntigravityCatalogRead>) =>
-    create_antigravity_status({ catalog: read, login_path }).probe({
+    create_antigravity_status({ catalog: read, log_directory }).probe({
       environment,
       refresh: true,
       discover_update_advisory: false,
@@ -103,7 +96,6 @@ test('the card’s sign-in state comes from whether agy opened a catalog session
   }));
   expect(signed_in.identity?.status).toBe('authenticated');
   expect(signed_in.identity?.account_label).toBe('owner@example.com');
-  expect(JSON.stringify(signed_in)).not.toMatch(/secret-/);
   expect(
     (
       await card(async () => {

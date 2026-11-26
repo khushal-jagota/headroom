@@ -172,7 +172,7 @@ describe('bounded navigation owner',()=>{
       expect(demoted.settledManagers).toHaveLength(1);
     } finally {owner.dispose();}
   });
-  it('uses only current matching history summaries while a replacement demand is pending',async()=>{
+  it('tells a view that is one request behind from a queue that cannot load',async()=>{
     const {owner,connections}=fixture();
     const history=[{kind:'ticket' as const,id:'skipped'}];
     try {
@@ -181,25 +181,28 @@ describe('bounded navigation owner',()=>{
       initial.content.counts.review=1;initial.content.review_summary={skipped:1,new:0};
       connections[0].send(initial);await started;
       const summary=()=>currentReviewSummary(owner.getState().effective!,owner.getRequest(),history);
-      expect(summary()).toEqual({new:0,skipped:1});
-      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}])).toBeNull();
+      expect(summary()).toEqual({kind:'known',summary:{new:0,skipped:1}});
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}])).toEqual({kind:'pending'});
+      // The same lag is unavailable once the owner reports that its replacement read failed.
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),[{kind:'ticket',id:'different'}],0,true)).toEqual({kind:'unavailable'});
       owner.setDemand('review',{review_skipped_keys:history,review_priority_keys:history,windows:[viewWindow('review')]});
       await flush();expect(owner.getState().effective!.runtimeCurrent).toBe(true);
-      expect(summary()).toBeNull();
+      expect(summary()).toEqual({kind:'pending'});
       // A local completion plus a trusted global total proves clear even during handover.
-      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toEqual({new:0,skipped:0});
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toEqual({kind:'known',summary:{new:0,skipped:0}});
       const next=snapshot(connections[1].request,'1','next');next.content.counts.review=2;
       next.content.review_summary={skipped:1,new:1};connections[1].send(next);
-      expect(summary()).toEqual({new:1,skipped:1});
+      expect(summary()).toEqual({kind:'known',summary:{new:1,skipped:1}});
       const previous=owner.getState().publication!;
       connections[1].send({event:'patch',wire_version:3,projection_version:7,view_id:next.view_id,
         scope_generation:next.scope_generation,ordering_generation:next.ordering_generation,authority:next.authority,
         coverage:{...continuity,revision:'2'},previous_coverage:previous.continuity,
         content_version:'removed-new',previous_content_version:previous.view!.contentVersion,
         upserts:[],evictions:[],windows:[],review_context:[],review_summary:{skipped:1,new:0},counts:{...next.content.counts,review:1}});
-      expect(summary()).toEqual({new:0,skipped:1});
-      connections[1].error();expect(summary()).toBeNull();
-      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toBeNull();
+      expect(summary()).toEqual({kind:'known',summary:{new:0,skipped:1}});
+      // A connection that failed is unavailable, not pending.
+      connections[1].error();expect(summary()).toEqual({kind:'unavailable'});
+      expect(currentReviewSummary(owner.getState().effective!,owner.getRequest(),history,1)).toEqual({kind:'unavailable'});
     }finally{owner.dispose();}
   });
   it('keeps history hints outside hydrated demand and rejects excess request bytes without retaining the bad demand',()=>{

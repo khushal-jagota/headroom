@@ -7,6 +7,7 @@ import { executor_response } from '../../../cli/http.ts';
 import { CliFailure } from '../../../cli/errors.ts';
 import { CliCommand } from '../../../cli/declarations.ts';
 import { AgentGateway } from './gateway.ts';
+import { ExecutorValidationError } from '../../protocol.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
 import type { GatewayOptions } from './contracts.ts';
 import type { GatewayOutbox } from './outbox.ts';
@@ -115,6 +116,45 @@ test('unavailable, unsupported and forbidden Home capabilities never enter the o
     }
 });
 
+// Risk: a read the executor refuses locally, such as an oversize reply, reached the CLI as the bare
+// class name "VPS read failed: ExecutorValidationError". Existing cases cover only HTTP refusals.
+test('a refused read keeps its own message', async () => {
+  const child = {
+    reference: { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'conversation' },
+    active_turn: null,
+    owner: { kind: 'ticket', id: 't_one' },
+  } as unknown as MacRunningChild;
+  const read = vi
+    .fn()
+    .mockRejectedValue(new ExecutorValidationError('executor response exceeds its size bound'));
+  const gateway = new AgentGateway({
+    runner: {
+      authenticate: () => child,
+      admission_stopped: false,
+    } as unknown as GatewayOptions['runner'],
+    outbox: {} as unknown as GatewayOutbox,
+    presence: {} as GatewayOptions['presence'],
+    client: { read },
+    request_exit() {},
+    async settle_catalogs() {},
+    on_failure: (error) => {
+      throw error;
+    },
+  });
+  expect(
+    await gateway.handle({
+      request_id: 'read',
+      operation: 'read',
+      child_id: 'child',
+      capability: 'capability',
+      payload: { path: '/api/tickets' },
+    }),
+  ).toMatchObject({
+    result: null,
+    error: { code: 'validation', message: 'executor response exceeds its size bound' },
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+});
 // Risk: reads and capability probes fail immediately during a server pause. Existing
 // admission tests prove permanent refusals only. Reuse the gateway without a socket.
 test('reads and write capability probes wait through a temporary server failure', async () => {

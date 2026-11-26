@@ -529,11 +529,15 @@ test('a native no-turn refusal crosses the steer barrier and leaves a newer turn
       expect(state.steer_settlements.size).toBe(1);
       return new BackendSteerRefused({ refusal_reason: 'no_running_turn_to_steer_into' });
     });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await f.core.send('core', text_message_content('more'), {
       sender_label: 'Owner',
       sender_message_id: 'more',
       mode: 'steer',
     });
+    // The refusal alone leaves turn one running. The wait ends it and starts the queued message.
+    expect(state.running_turn?.token.turn_number).toBe(token.turn_number);
+    await vi.advanceTimersByTimeAsync(60_001);
     await vi.waitFor(() =>
       expect(state.running_turn?.token.turn_number).toBe(token.turn_number + 1),
     );
@@ -550,6 +554,7 @@ test('a native no-turn refusal crosses the steer barrier and leaves a newer turn
     ).toBe('started');
     state.retained_child_reference = null;
   } finally {
+    vi.useRealTimers();
     const options = { deadline: performance.now() / 1000 + 2 };
     await Promise.all([
       runs.stop(options),
@@ -560,6 +565,139 @@ test('a native no-turn refusal crosses the steer barrier and leaves a newer turn
     await Promise.all([runs.settled(), presence.settled(), mailbox.settled(), f.core.settled()]);
   }
 });
+
+// Risk: a steer refusal can reach the core before the turn's real ending, which travels the ordered
+// outbox. The refusal alone must not end the turn as failed. After the 60-second wait the core ends
+// it as completed, and the turn's late closing events must still be kept. Existing coverage only
+// proves that a refusal leaves a newer turn intact. The sender varies as in the incident (an owner
+// steer and a system notice); the branch reads no backend identity, so Codex and Claude share it.
+test.each([['Owner'], ['Panels notice']] as const)(
+  'a no-turn steer refusal from %s waits for the real ending before the core ends the turn',
+  async (sender_label) => {
+    const { AgentMessageCompleted, TokenUsageReported, TurnEnded } =
+      await import('../conversation/backends/contracts.ts');
+    const { NO_TURN_STEER_FALLBACK_SECONDS } = await import('../conversation/runtime/remote.ts');
+    const { text_message_content } = await import('../conversation/message_content.ts');
+    const prompt_accepted: WireValue<'CommandOutcome'> = {
+      command_id: '',
+      child: undefined as never,
+      disposition: 'succeeded',
+      result: {
+        kind: 'prompt_accepted',
+        composed_content_delivered: true,
+        agent_acceptance_proven: true,
+      },
+    };
+    const run = async (
+      work: (
+        f: Awaited<ReturnType<typeof remote_fixture>>,
+        refuse: () => Promise<void>,
+      ) => Promise<void>,
+    ) => {
+      const f = await remote_fixture();
+      try {
+        await f.finish({
+          ...prompt_accepted,
+          command_id: f.command.command_id,
+          child: f.reference,
+        });
+        const steer: WireValue<'ChildCommand'> = {
+          command_id: 'no-turn-steer',
+          child: f.reference,
+          turn: f.state.running_turn!.token,
+          operation: 'steer',
+          arguments: {
+            kind: 'steer',
+            sender_label,
+            content: [{ text: 'more' }],
+            sender_content: null,
+          },
+        };
+        const refusal: WireValue<'CommandOutcome'> = {
+          command_id: steer.command_id,
+          child: f.reference,
+          disposition: 'succeeded',
+          result: { kind: 'steer_refused', refusal_reason: 'no_running_turn_to_steer_into' },
+        };
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        await work(f, () => f.core.reconcile_remote_command(steer, refusal));
+      } finally {
+        vi.useRealTimers();
+        await f.close();
+      }
+    };
+    const endings = (f: Awaited<ReturnType<typeof remote_fixture>>) =>
+      f.store
+        .read_events_after('core', 0)
+        .flatMap((row) =>
+          row.payload.kind === 'turn_ended'
+            ? [{ ending: row.payload.ending, error: row.payload.error_summary }]
+            : [],
+        );
+    const queue_message = async (f: Awaited<ReturnType<typeof remote_fixture>>) =>
+      expect((await f.send('queued', 'queued')).constructor.name).toBe('PromptDeliveryQueued');
+    const wait = () => vi.advanceTimersByTimeAsync(NO_TURN_STEER_FALLBACK_SECONDS * 1000 + 1);
+
+    // The real ending arrives inside the limit: one completed ending, the message once.
+    await run(async (f, refuse) => {
+      const token = f.state.running_turn!.token;
+      await queue_message(f);
+      await refuse();
+      expect(f.state.running_turn).not.toBe(null);
+      expect(endings(f)).toEqual([]);
+      await f.core.take_backend_event(token, new TurnEnded({ ending: 'completed' }));
+      await vi.waitFor(() => expect(f.prompts).toHaveLength(2));
+      await wait();
+      expect(endings(f)).toEqual([{ ending: 'completed', error: null }]);
+      expect(f.prompts).toHaveLength(2);
+    });
+
+    // No ending arrives: the core ends the turn as completed, and late closing events are kept.
+    await run(async (f, refuse) => {
+      const token = f.state.running_turn!.token;
+      await queue_message(f);
+      await refuse();
+      await wait();
+      await vi.waitFor(() => expect(f.prompts).toHaveLength(2));
+      expect(endings(f)).toEqual([{ ending: 'completed', error: null }]);
+      const count = () => f.store.read_events_after('core', 0).length;
+      await f.core.take_backend_event(
+        token,
+        new AgentMessageCompleted({ content: text_message_content('closing words') }),
+      );
+      await f.core.take_backend_event(token, new TokenUsageReported({ output_tokens: 7 }));
+      expect(
+        f.store
+          .read_events_after('core', 0)
+          .map((row) => row.payload.kind)
+          .slice(-2),
+      ).toEqual(['agent_message', 'token_usage']);
+      const kept = count();
+      await f.core.take_backend_event(
+        token,
+        new TurnEnded({ ending: 'failed', error_summary: 'late' }),
+      );
+      expect(count()).toBe(kept);
+      expect(endings(f)).toEqual([{ ending: 'completed', error: null }]);
+      expect(f.prompts).toHaveLength(2);
+    });
+
+    // The real ending came first: the later refusal changes nothing.
+    await run(async (f, refuse) => {
+      await queue_message(f);
+      await f.core.take_backend_event(
+        f.state.running_turn!.token,
+        new TurnEnded({ ending: 'completed' }),
+      );
+      await vi.waitFor(() => expect(f.prompts).toHaveLength(2));
+      const count = f.store.read_events_after('core', 0).length;
+      await refuse();
+      await wait();
+      expect(f.store.read_events_after('core', 0)).toHaveLength(count);
+      expect(endings(f)).toEqual([{ ending: 'completed', error: null }]);
+    });
+  },
+);
 
 // The fixture has no artifact transport, so artifact delivery stays blocked throughout.
 // The Mac's prompt failed before its native send while the home still showed that turn

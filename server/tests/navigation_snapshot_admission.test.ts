@@ -9,6 +9,7 @@ import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
 import { review_body } from '../navigation/views/review_cards.ts';
+import { read_review_cards } from '../notifications/live_activity.ts';
 
 const view = encodeURIComponent(
   JSON.stringify({
@@ -418,6 +419,36 @@ test('a parked proposal on a blocked Ticket joins Review only when its blocker i
       cards: [{ kind: 'ticket', id: blocked.id, waits: ['proposal'] }],
     });
     expect(flag()).toBe(1);
+  } finally {
+    await f.app.close();
+    f.navigation.close();
+  }
+});
+
+// Distinct risk: the Live Activity's count is read from this stored queue, so only the real
+// projection shows that it holds one entry per card (a proposal and an ask are two) and that an
+// unreadable queue reads as unknown, never as an empty one that would push "All clear.".
+test('the Live Activity counts one entry per Review card and treats an unavailable queue as unknown', async () => {
+  const f = await setup(true);
+  try {
+    const ticket = propose(
+      f.database,
+      create(f.database, {
+        title: 'Parked',
+        settle_kickoff: false,
+        stated_ceiling: 'needs_what_changes',
+      }),
+      'Success proposal',
+    );
+    const cards = f.database.read(read_review_cards);
+    expect(cards).toHaveLength(2);
+    expect(cards).toEqual(
+      expect.arrayContaining([
+        { key: `ticket:${ticket.id}:proposal`, title: 'Parked' },
+        { key: 'chief:chief:question', title: 'Chief of Staff' },
+      ]),
+    );
+    expect(fixture().read(read_review_cards)).toBeNull();
   } finally {
     await f.app.close();
     f.navigation.close();
