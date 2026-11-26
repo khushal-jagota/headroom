@@ -93,9 +93,8 @@
       return {tone: "neutral", title: `Queued${place}`, detail: reason};
     }
     if (upload) return {tone: upload.failed ? "error" : "neutral", title: upload.note, detail: null};
-    if (local && (local.accepted || row?.kind === "prompt") && label === null) {
-      return {tone: "neutral", title: "Sent", detail: null};
-    }
+    // A send the server took says nothing: arriving is the normal case.
+    if (local && (local.accepted || row?.kind === "prompt") && label === null) return null;
     if (row || !local) return null;
     // The machine was away: not delivered, said inside the bubble (B5), the server's words behind Details.
     if (local.knownFate === 'machine_offline') return { tone: 'error', title: local.refusal?.reason ?? 'The machine is offline', detail: local.refusal?.detail || null };

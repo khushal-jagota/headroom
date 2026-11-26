@@ -17,7 +17,7 @@
  * One scripted host per test. The two lens tests share their cases: a Ticket opened from the
  * dock, by direct link and as a user-owned Ticket that opens itself, the Chief, a Manager, a
  * 390 px phone, the desktop window, and Tickets whose newest reply is a chart, an image with no
- * dimensions, or 70 KB of Markdown, and in Full a running turn with live output. The third
+ * dimensions, or 70 KB of Markdown, or the owner's own just-sent message, and in Full a running turn with live output. The third
  * test covers the ways back: a tab return at the bottom and scrolled up, a dock reopen, a lens
  * switch, and a return whose saved line cannot be restored. Each case attaches its frames.
  */
@@ -434,10 +434,14 @@ for (const lens of ['full', 'focus'] as const) {
     const chart = await ticketHost(server, `open-bottom-chart-${lens}`, 'Chart at the bottom');
     const image = await ticketHost(server, `open-bottom-image-${lens}`, 'Image at the bottom');
     const big = await ticketHost(server, `open-bottom-big-${lens}`, 'Long Markdown at the bottom');
+    const justSent = await ticketHost(server, `open-bottom-sent-${lens}`, 'Just sent at the bottom');
     for (const host of [work, owned, chief, manager]) await playConversation(server, host);
     await playConversation(server, chart, chartReply);
     await playConversation(server, image, imageReply);
     await playConversation(server, big, bigReply());
+    // The newest item is the owner's own message, sent and not yet answered.
+    for (let turn = 1; turn <= 4; turn++) await playTurn(server, justSent, turn, reply(turn));
+    await post(server, justSent.sendPath, { sender_label: 'Owner', mode: 'queue', content: [{ piece: 'text', text: 'Question 5: one more thing.' }] });
     // A Ticket waiting on its owner opens its conversation when the Ticket opens.
     await bindConversation(server, 'feedback', owned.id);
 
@@ -466,6 +470,7 @@ for (const lens of ['full', 'focus'] as const) {
       { name: 'chart-reply', open: fromDock(desktop, `#/workspace/${chart.id}`, ticketScreen(chart.id)) },
       { name: 'image-reply', open: fromDock(desktop, `#/workspace/${image.id}`, ticketScreen(image.id)) },
       { name: 'markdown-70kb-reply', open: fromDock(desktop, `#/workspace/${big.id}`, ticketScreen(big.id)) },
+      { name: 'sent-message-newest', open: fromDock(desktop, `#/workspace/${justSent.id}`, ticketScreen(justSent.id)) },
     ];
     for (const { name, open } of cases) {
       const errors = testInfo.errors.length;
