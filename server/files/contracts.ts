@@ -14,10 +14,9 @@ export interface CatalogEntry {
   directory: string | null;
   child_count: number;
 }
-export interface Inventory {
+export interface FolderListing {
   checked_at: number;
-  directories: Record<string, CatalogEntry[]>;
-  seen: Set<string>;
+  rows: CatalogEntry[];
   revision: string;
   bytes: number;
 }

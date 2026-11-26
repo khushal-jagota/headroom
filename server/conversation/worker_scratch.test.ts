@@ -9,7 +9,7 @@ import { private_ticket_path, resolveFile } from '../files/logic/paths.ts';
 import { fixture as ticket_fixture, fixture_path, create } from '../tests/ticket_fixture.ts';
 import { ticket_detail } from '../tickets/views.ts';
 import { linked } from '../files/catalog/read.ts';
-import { inventory } from '../files/catalog/inventory.ts';
+import { list_folder } from '../files/catalog/folder.ts';
 const roots: string[] = [];
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'worker-scratch-'));
@@ -118,8 +118,8 @@ test('public Ticket files and catalogs hide private checkouts, markers and alias
   expect(resolveFile(database, 'ticket', ticket.id, 'report.html')).toBe(
     join(owner, 'report.html'),
   );
-  const catalog = await inventory(owner, `/files/tickets/${ticket.id}/`);
-  expect(catalog.directories['']!.map((row) => row.path).sort()).toEqual([
+  const prefix = `/files/tickets/${ticket.id}/`;
+  expect((await list_folder(owner, prefix, '')).rows.map((row) => row.path).sort()).toEqual([
     'artifacts',
     'report.html',
   ]);
@@ -128,7 +128,10 @@ test('public Ticket files and catalogs hide private checkouts, markers and alias
     'artifacts',
     'report.html',
   ]);
-  expect(catalog.directories['artifacts']!.map((row) => row.path)).toEqual(['artifacts/worktree']);
+  expect((await list_folder(owner, prefix, 'artifacts')).rows.map((row) => row.path)).toEqual([
+    'artifacts/worktree',
+  ]);
+  expect((await list_folder(owner, prefix, 'worktree')).rows).toEqual([]);
   // Existing indexed rows predate the private policy and must be filtered at read time.
   const paths = [
     'worktree/file.txt',
