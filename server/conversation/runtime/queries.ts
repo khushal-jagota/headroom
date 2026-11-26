@@ -84,6 +84,16 @@ export async function owner_send_progress(
   sender_message_id: string,
   recipient: Principal,
 ): Promise<OwnerSendProgress | null> {
+  // A message held for workspace cleanup waits ahead of its fresh conversation's start.
+  if (
+    host.options.store.start_admission_database.read((sql) =>
+      sql.get(
+        "SELECT 1 FROM recipient_deliveries WHERE submission_id=? AND state='awaiting_lifecycle'",
+        [`${conversation_id}:${sender_message_id}`],
+      ),
+    )
+  )
+    return { state: 'queued', position: 1 };
   const state = host.conversation_state(conversation_id);
   if (!state) return null;
   return state.lock.run(() => {

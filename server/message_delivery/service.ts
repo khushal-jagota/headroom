@@ -1,3 +1,5 @@
+import { require_recipient_available } from './data/lifecycles.ts';
+import { own_recipient_delivery } from './lifetime.ts';
 /** Resolve a Panels recipient through its canonical conversation send door. */
 import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
@@ -63,7 +65,21 @@ export interface SendMessageOptions {
   admission?: MessageAdmission | null;
   recording_receipt?: NativeMessageOperation | null;
 }
-export async function send_message(
+export function send_message(
+  conversations: ConversationSystem,
+  database: Database,
+  clock: Clock,
+  ctx: RequestContext,
+  recipient: Principal,
+  message: string | ConversationMessageContent,
+  mode: PromptDeliveryMode = 'queue',
+  options: SendMessageOptions = {},
+): Promise<MessageDeliveryResult> {
+  return own_recipient_delivery(conversations, () =>
+    send_message_owned(conversations, database, clock, ctx, recipient, message, mode, options),
+  );
+}
+async function send_message_owned(
   conversations: ConversationSystem,
   database: Database,
   clock: Clock,
@@ -87,6 +103,8 @@ export async function send_message(
   if (system_message && recipient.kind === 'owner') {
     throw new PlannerError('validation', 'a system message cannot be addressed to the owner');
   }
+  if (recipient.kind !== 'owner')
+    database.read((sql) => require_recipient_available(sql, recipient));
   const label = system_message ? 'Panels' : sender_label(ctx);
   const content = typeof message === 'string' ? text_message_content(message) : message;
   const runs_under = options.runs_under ?? NO_CONVERSATION_START_OVERRIDES;

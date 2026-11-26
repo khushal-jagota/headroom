@@ -1,3 +1,9 @@
+import { run_recipient_lifecycle } from '../../runtime/conversation_start.ts';
+import { release_admission_leases } from '../../runtime/admission_locks.ts';
+import {
+  begin_recipient_lifecycle,
+  finish_recipient_lifecycle,
+} from '../../message_delivery/data/lifecycles.ts';
 /** Local child custody, child retirement, and Worker cleanup checks. */
 import { ConversationState } from './state.ts';
 import type { BackendChild, TurnToken, ChildReference } from '../backends/contracts.ts';
@@ -427,13 +433,19 @@ export async function retire_local_workspace(
   host.retiring_workspace_tickets.add(ticket_id);
   let ids: readonly string[] = [];
   try {
-    return await conversation_link_lock(`ticket:${ticket_id}`).run(async () =>
+    return await run_recipient_lifecycle(`ticket:${ticket_id}`, async () =>
       host.workspace_admission.operation(async (admitted) => {
         if (!admitted) return { reason: 'Owner update in progress' };
+        const target = { kind: 'ticket' as const, id: ticket_id };
+        const database = host.options.store.start_admission_database;
+        const generation = database.write((tx) => begin_recipient_lifecycle(tx, target));
+        release_admission_leases();
         ids = await host.options.store.workspace_conversation_ids(ticket_id, identity);
         for (const id of ids) host.retiring_workspace_conversations.add(id);
         for (const id of ids) await host.kill(id);
-        return await operation();
+        const result = await operation();
+        database.write((tx) => finish_recipient_lifecycle(tx, target, generation));
+        return result;
       }),
     );
   } catch (error) {

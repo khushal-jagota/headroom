@@ -275,6 +275,12 @@ test('two promotions of one held id have one winner', async () => {
           : {}),
       },
     });
+    const before_attempt = f.database.read((sql) =>
+      sql.get<{ attempt_id: string }>(
+        'SELECT attempt_id FROM recipient_deliveries WHERE submission_id=?',
+        [`core:${id}`],
+      ),
+    )!.attempt_id;
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const promoted = await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer');
     const logged_lines = logged.mock.calls.map(([line]) => String(line));
@@ -287,6 +293,14 @@ test('two promotions of one held id have one winner', async () => {
           : PromptDeliveryInjected,
     );
     if (fate === 'refused') {
+      const journal = f.database.read((sql) =>
+        sql.get<{ state: string; attempt_id: string }>(
+          'SELECT state,attempt_id FROM recipient_deliveries WHERE submission_id=?',
+          [`core:${id}`],
+        ),
+      )!;
+      expect(journal.state).toBe('held');
+      expect(journal.attempt_id).not.toBe(before_attempt);
       // A refused promotion was not delivered. It keeps its place, identity and admission.
       expect(promoted).toEqual(new PromptDeliveryQueued({ queue_position: 2 }));
       expect(

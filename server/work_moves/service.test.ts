@@ -34,6 +34,10 @@ import {
 import { move_work, move_everything } from './service.ts';
 import { agent_machine_id } from '../machines/conversation_machine.ts';
 import { work_move_status, unfinished_work } from './data.ts';
+import {
+  recipient_lifecycle,
+  require_recipient_available,
+} from '../message_delivery/data/lifecycles.ts';
 import { routes } from './routes.ts';
 import type { WorkMoveProof } from './contracts.ts';
 import { OWNER, CHIEF, PlannerError } from '../core/contracts.ts';
@@ -183,6 +187,16 @@ test('source unavailability, unproven cleanup and unpublished work never change 
     machine_id: HOME_MACHINE_ID,
     conversation_id: 'conv_source',
   });
+  const target = { kind: 'ticket' as const, id: ticket.id };
+  expect(() => database.read((sql) => require_recipient_available(sql, target))).toThrow(
+    expect.objectContaining({ code: 'validation' }),
+  );
+  // Failed cleanup remains fenced, but the same explicit move can prove cleanup and recover.
+  expect(
+    await move_work(services, { owner: target, machine_id: ORIGINAL_MAC_MACHINE_ID }),
+  ).toMatchObject({ moved: true, error: null });
+  expect(database.read((sql) => recipient_lifecycle(sql, target))).toMatchObject({ retiring: 0 });
+  expect(() => database.read((sql) => require_recipient_available(sql, target))).not.toThrow();
 });
 
 test('Chief and Manager moves retain their own destination after reset and receive their own record', async () => {

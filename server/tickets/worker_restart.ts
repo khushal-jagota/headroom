@@ -1,3 +1,8 @@
+import {
+  begin_recipient_lifecycle,
+  finish_recipient_lifecycle,
+} from '../message_delivery/data/lifecycles.ts';
+import { release_admission_leases } from '../runtime/admission_locks.ts';
 /** Kill a Ticket's conversation, unlink it, and start a fresh worker step. */
 import { PlannerError, type Principal } from '../core/contracts.ts';
 import { requireAbove } from '../core/authority/service.ts';
@@ -70,7 +75,7 @@ export async function restart_worker(
   let revision_restarted_in_fresh_conversation = false;
   // Refuse before the lock: a Home setup holds that lock until its Worker runs.
   database.read((sql) => require_restartable(sql, principal, ticket_id));
-  await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
+  await conversation_start.run_recipient_lifecycle(`ticket:${ticket_id}`, async () => {
     const ticket = database.read((sql) => {
       const current = require_restartable(sql, principal, ticket_id);
       const refusal = conversation_start.configured_ticket_execution_refusal(
@@ -81,6 +86,9 @@ export async function restart_worker(
       if (refusal !== null) throw refusal;
       return current;
     });
+    const target = { kind: 'ticket' as const, id: ticket_id };
+    const generation = database.write((tx) => begin_recipient_lifecycle(tx, target));
+    release_admission_leases();
     killed_conversation_id = ticket.conversation_id;
     const finish: Parameters<ConversationSystem['kill_for_restart']>[2] = async (check_cleanup) => {
       let cleanup_checked = check_cleanup === null;
@@ -88,6 +96,7 @@ export async function restart_worker(
         database.write((sql) => {
           check_cleanup?.(sql);
           cleanup_checked = true;
+          finish_recipient_lifecycle(sql, target, generation);
           _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
             killed_conversation_id,
             write_employee_configuration: options.write_employee_configuration,
@@ -99,6 +108,7 @@ export async function restart_worker(
           try {
             database.write((sql) => {
               check_cleanup?.(sql);
+              finish_recipient_lifecycle(sql, target, generation);
               _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
                 killed_conversation_id,
                 now: options.now(),

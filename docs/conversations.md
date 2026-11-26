@@ -50,6 +50,12 @@ Claude and Codex free-text question answers can carry attachments. The files rea
 
 ## How a send works
 
+Home acknowledges an agent message after it saves the complete input and its delivery obligation. The recipient owns delivery after that commit. Acceptance does not claim that the backend received the prompt. A message to the owner needs only its local event and receipt.
+
+Recipient admission gives all producers one order and releases its locks before native preparation or delivery. A persistent generation fences restart, reset, cleanup, deletion, and move. Intake refuses promptly while such an operation remains unfinished. Waiting prompts survive a server restart. Recovery resumes unattempted work and reconciles native attempts from their command records. Without proof of an outcome, delivery stays uncertain and does not repeat automatically.
+
+Failed or interrupted cleanup keeps its safety fence until an explicit retry proves cleanup. Messages to that recipient receive a terminal refusal, so the sender can continue with later writes. A new message after workspace retirement is accepted durably first, so its sender moves on at once. Cleanup of the old conversation then runs outside admission, and the held message becomes the first input of a fresh conversation. If the old conversation still runs a turn, the message receives a refusal and the turn continues. If cleanup fails or a server restart interrupts it, the held message receives one terminal refusal, and the safety fence remains until an explicit retry. Other messages to that recipient receive a refusal while cleanup runs. Pending custody limits apply per recipient, and a full recipient does not block admission for another recipient.
+
 A busy agent is not a refusal. The sender picks how a busy agent meets the message:
 
 - **Steer**, the default for messages from people and Panels system prompts, injects text into the running turn when the backend's driver says it can steer an active turn. Antigravity cannot, so a message sent during its turn waits for the turn to end.
@@ -70,7 +76,7 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 | suppressed | Dropped on purpose before the wire, usually because a notice went stale. |
 | recorded | A message to the owner was written. No backend was called. |
 
-On the web, Send clears the draft. Queue sends to a busy agent wait in a tray on the top edge of the composer, one line each, with **Steer**, **Send now**, **Edit**, and **Remove** on the line when available. A queued message enters the conversation when the agent takes it. Steer, Send now, and sends to an idle agent appear in the conversation at once with upload progress and the send result. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart records the fate of an acknowledged queued reply in the conversation.
+On the web, Send clears the draft. Queue sends to a busy agent wait in a tray on the top edge of the composer, one line each, with **Steer**, **Send now**, **Edit**, and **Remove** on the line when available. A queued message enters the conversation when the agent takes it. Steer, Send now, and sends to an idle agent appear in the conversation at once with upload progress and the send result. Panels checks by message ID when a response goes missing. **Try Again** after a connection failure repeats the original submission, including its destination. **Edit** restores a confirmed failed draft. If the agent did not confirm receipt, Panels shows that on the message and avoids another handoff. A server restart restores acknowledged queued replies and retains their delivery modes and order.
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
@@ -175,4 +181,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `server/runtime/conversation_start.ts`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-24._
+_Last verified: 2026-11-26._

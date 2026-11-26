@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { lifecycle_held_outcome } from './data/recipient_deliveries.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
@@ -78,6 +79,10 @@ function recorded_delivery(
       ? [message_id, owner_kind, owner_id]
       : [message_id, owner_kind, owner_id, conversation_id],
   );
+  if (!event && conversation_id !== null) {
+    const held = lifecycle_held_outcome(sql, conversation_id, message_id);
+    if (held) return { conversation_id, ...(JSON.parse(held.outcome) as Record<string, unknown>) };
+  }
   return event
     ? {
         conversation_id: event.conversation_id,

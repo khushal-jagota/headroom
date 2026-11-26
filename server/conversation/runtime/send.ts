@@ -1,4 +1,10 @@
-import { note_pending_owner_sends } from '../record/owner_send_receipts.ts';
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
+import {
+  admit_recipient_delivery,
+  finish_recipient_delivery,
+} from '../../message_delivery/data/recipient_deliveries.ts';
+import { release_admission_leases } from '../../runtime/admission_locks.ts';
+import { save_held_prompt } from '../record/held_prompts.ts';
 /** Sends, held prompts, and the drain that delivers them. */
 import { ConversationState, own_settlement, set_phase } from './state.ts';
 import { HeldPromptsChangedFrame, MessageToOwnerEventPayload } from '../events.ts';
@@ -19,7 +25,7 @@ import { PlannerError } from '../../core/contracts.ts';
 import { require_message_content } from '../message_content.ts';
 import type { Message } from './contracts.ts';
 import * as controls from './controls.ts';
-import { refused_row, same_message, outcome_fate } from './messages.ts';
+import { refused_row, uncertain_row, same_message, outcome_fate } from './messages.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { randomUUID } from 'node:crypto';
@@ -65,7 +71,6 @@ export async function send(
       if (refusal !== null) throw refusal;
       const state = host.conversation_state(conversation_id);
       if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
-      await host.ensure_local_custody(state);
       if (state.restart_retired)
         throw new PlannerError('retry_later', 'This Worker conversation was restarted');
       if (workspace_is_retiring(host, state))
@@ -107,14 +112,15 @@ async function send_owned(
     sender_label: options.sender_label,
     sender: options.sender ?? null,
     recipient: options.recipient ?? null,
-    sender_message_id: options.sender_message_id ?? null,
+    sender_message_id: options.sender_message_id ?? `message_${randomUUID()}`,
     sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
     snapshot_sent_at_unix_milliseconds: 0,
     model_change: options.model_change ?? null,
     reasoning_effort_change: options.reasoning_effort_change ?? null,
     reasoning_effort_is_set: options.reasoning_effort_is_set ?? false,
     owner_read_through_sequence: boundary,
-    acknowledge_owner_on_failure: options.owner_read_through_sequence == null,
+    acknowledge_owner_on_failure:
+      options.acknowledge_owner_on_failure ?? options.owner_read_through_sequence == null,
     recovery_references: options.recovery_references ?? [],
     recording_receipt: options.recording_receipt ?? null,
     queue_reason: PromptQueueReason.requested,
@@ -129,8 +135,16 @@ async function send_owned(
     });
     return duplicate;
   }
-  host.start_admission.handoff(message.sender_message_id);
   try {
+    const recipient_attempt = admit_recipient_delivery(
+      host.options.store.start_admission_database,
+      state.record.conversation_id,
+      message,
+    );
+    state.admitted_sender_messages.get(message.sender_message_id!)?.admitted?.resolve();
+    release_admission_leases();
+    host.start_admission.handoff(message.sender_message_id);
+    await host.ensure_local_custody(state);
     const fate =
       mode === PromptDeliveryMode.steer
         ? await controls.steer(host, state, message)
@@ -200,6 +214,7 @@ async function send_owned(
       !state.child_is_quarantined
     )
       host.schedule_drain(state);
+    finish_recipient_delivery(host.options.store.start_admission_database, recipient_attempt, fate);
     return fate;
   } catch (error) {
     await host.persist(state, () =>
@@ -208,12 +223,37 @@ async function send_owned(
         message.sender_message_id,
       ),
     );
+    if (!is_shutdown_business_cancellation(error)) {
+      const pending = host.options.store.start_admission_database.read((sql) =>
+        sql.get<{ state: string }>('SELECT state FROM recipient_deliveries WHERE submission_id=?', [
+          `${state.record.conversation_id}:${message.sender_message_id}`,
+        ]),
+      );
+      if (pending && ['pending', 'dispatching'].includes(pending.state)) {
+        const payload =
+          pending.state === 'dispatching'
+            ? uncertain_row(message, mode, 'delivery uncertain')
+            : refused_row(
+                message,
+                mode,
+                R.write_to_backend_failed,
+                'Recipient delivery failed before a native prompt.',
+              );
+        const rows = await host.persist(state, () =>
+          host.options.store.append_events(state.record.conversation_id, [payload], {
+            recording_receipt: message.recording_receipt,
+          }),
+        );
+        host.note_written(state, rows);
+      }
+    }
     throw error;
   } finally {
     if (message.sender_message_id !== null) {
       await state.lock.run(() => {
         const admission = state.admitted_sender_messages.get(message.sender_message_id!);
         state.admitted_sender_messages.delete(message.sender_message_id!);
+        admission?.admitted?.resolve();
         admission?.settled.resolve();
       });
     }
@@ -228,6 +268,7 @@ async function admit_sender(
   const identity = message.sender_message_id;
   if (identity === null) return null;
   while (true) {
+    if (host.shutting_down) throw new DOMException('Recipient observation stopped.', 'AbortError');
     const observation = await state.lock.run(() => {
       const admission =
         state.sender_messages_being_delivered.get(identity) ??
@@ -235,8 +276,10 @@ async function admit_sender(
       if (admission) {
         if (!same_message(message, admission.message))
           throw new Error('sender_message_id already names a different message');
+        const committing = admission.admitted !== undefined && !admission.admitted.settled;
+        if (!committing) release_admission_leases();
         return {
-          wait: admission.settled.promise,
+          wait: committing ? admission.admitted!.promise : admission.settled.promise,
           fate: null,
           sequence: state.record.latest_sequence,
         };
@@ -275,7 +318,11 @@ async function admit_sender(
         state.held_prompts.some((held) => held.sender_message_id === identity)
       )
         return false;
-      state.admitted_sender_messages.set(identity, { message, settled: new Deferred<void>() });
+      state.admitted_sender_messages.set(identity, {
+        message,
+        admitted: new Deferred<void>(),
+        settled: new Deferred<void>(),
+      });
       return true;
     });
     if (admitted) return null;
@@ -313,8 +360,33 @@ export function hold_prompt(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   message: Message,
-  position = state.held_prompts.length,
+  position?: number,
 ): PromptDeliveryQueued {
+  if (position === undefined) {
+    const orders = host.options.store.start_admission_database.read((sql) => {
+      const identities = [message, ...state.held_prompts].map(
+        (held) => `${state.record.conversation_id}:${held.sender_message_id}`,
+      );
+      return new Map(
+        sql
+          .all<{ submission_id: string; delivery_order: number }>(
+            `SELECT submission_id,delivery_order FROM recipient_deliveries WHERE submission_id IN (${identities.map(() => '?').join(',')})`,
+            identities,
+          )
+          .map((row) => [row.submission_id, row.delivery_order]),
+      );
+    });
+    const order = orders.get(`${state.record.conversation_id}:${message.sender_message_id}`);
+    const later =
+      order === undefined
+        ? -1
+        : state.held_prompts.findIndex(
+            (held) =>
+              (orders.get(`${state.record.conversation_id}:${held.sender_message_id}`) ?? -1) >
+              order,
+          );
+    position = later < 0 ? state.held_prompts.length : later;
+  }
   const held: Message = {
     ...message,
     // A message held again keeps the identity the queue already showed.
@@ -322,12 +394,12 @@ export function hold_prompt(
     snapshot_sent_at_unix_milliseconds:
       message.sent_at_unix_milliseconds ?? Math.floor(host.unix_time_now() * 1000),
   };
-  note_pending_owner_sends(
+  save_held_prompt(
     host.options.store.start_admission_database,
     state.record.conversation_id,
-    [held],
-    PromptDeliveryMode.queue,
-    false,
+    held,
+    position,
+    state.held_prompts.map((held) => held.held_prompt_id),
   );
   host.start_admission.queue(message.sender_message_id);
   state.held_prompts.splice(position, 0, held);

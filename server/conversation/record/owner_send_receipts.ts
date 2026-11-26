@@ -99,7 +99,7 @@ export function recover_owner_sends(database: Database, store: ConversationRecor
       pending_payload: string;
     }>(
       'SELECT owner_kind,owner_id,message_id,conversation_id,pending_kind,pending_payload ' +
-        'FROM owner_send_receipts WHERE pending_kind IS NOT NULL AND epoch IS NOT ?',
+        "FROM owner_send_receipts r WHERE pending_kind IS NOT NULL AND epoch IS NOT ? AND NOT EXISTS (SELECT 1 FROM recipient_deliveries d WHERE d.submission_id=r.conversation_id||':'||r.message_id)",
       [owner_send_epoch(sql)],
     ),
   );

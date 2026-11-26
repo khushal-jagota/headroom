@@ -540,6 +540,8 @@ export class InMemoryConversationSystem implements ConversationSystem {
     await this.kill(conversation_id);
     await finish(null);
   }
+  /** The in-memory system keeps no recipient delivery journal. */
+  async refuse_lifecycle_held_delivery(): Promise<void> {}
   async is_running(conversation_id: string): Promise<boolean> {
     return this._conversations.get(conversation_id)?.running_turn != null;
   }

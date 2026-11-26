@@ -1,3 +1,4 @@
+import { recipient_delivery_settlements } from '../../message_delivery/lifetime.ts';
 /** Native operation tracking, quiescence, and conversation core shutdown. */
 import { observe_shutdown, is_shutdown_business_cancellation } from '../shutdown.ts';
 import { detach_children } from './maintenance.ts';
@@ -38,10 +39,13 @@ export function native_operation<T>(
 
 export async function wait_until_quiescent(host: SqliteProcessConversationSystem): Promise<void> {
   while (true) {
-    const tasks = [...host.conversations.values()].flatMap((state) => [
-      ...state.settlement_tasks,
-      ...(state.backend_event_pump ? [state.backend_event_pump] : []),
-    ]);
+    const tasks = [
+      ...recipient_delivery_settlements(host),
+      ...[...host.conversations.values()].flatMap((state) => [
+        ...state.settlement_tasks,
+        ...(state.backend_event_pump ? [state.backend_event_pump] : []),
+      ]),
+    ];
     if (tasks.length === 0) return;
     await Promise.allSettled(tasks);
   }
@@ -126,7 +130,11 @@ function begin_shutdown(
   void (async () => {
     const [cleanup, business] = await Promise.all([
       Promise.allSettled([detaching, janitor, ...host.native_settlements]),
-      Promise.allSettled([...pumps, ...states.flatMap((state) => [...state.settlement_tasks])]),
+      Promise.allSettled([
+        ...recipient_delivery_settlements(host),
+        ...pumps,
+        ...states.flatMap((state) => [...state.settlement_tasks]),
+      ]),
     ]);
     // Cancelling our own business observer is expected. A failed native detach,
     // janitor or store cleanup is never excused by its error name.
