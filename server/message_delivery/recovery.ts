@@ -257,9 +257,44 @@ async function recover_row(host: SqliteProcessConversationSystem, row: RecoveryR
   }
 }
 
+/** A message held for failed or interrupted cleanup receives one terminal lifecycle refusal. */
+export async function refuse_lifecycle_held_delivery(
+  host: SqliteProcessConversationSystem,
+  submission_id: string,
+  detail: string,
+): Promise<void> {
+  const row = host.options.store.start_admission_database.read((sql) =>
+    sql.get<RecoveryRow>(
+      `SELECT ${columns} FROM recipient_deliveries WHERE submission_id=? AND state='awaiting_lifecycle'`,
+      [submission_id],
+    ),
+  );
+  if (!row) return;
+  const message = decode_recipient_message(row.payload);
+  await receipt(
+    host,
+    row,
+    message,
+    refused_row(message, message.requested_mode ?? 'queue', R.no_such_conversation, detail),
+  );
+}
+
 export function resume_recipient_deliveries(host: SqliteProcessConversationSystem): void {
   const database = host.options.store.start_admission_database;
   database.write(prune_finished_recipient_deliveries);
+  // The restart interrupted that cleanup, and its fence remains until an explicit retry.
+  for (const row of database.read((sql) =>
+    sql.all<{ submission_id: string }>(
+      "SELECT submission_id FROM recipient_deliveries WHERE state='awaiting_lifecycle' ORDER BY delivery_order",
+    ),
+  ))
+    void own_recipient_delivery(host, () =>
+      refuse_lifecycle_held_delivery(
+        host,
+        row.submission_id,
+        'A server restart interrupted workspace cleanup. Restart this Ticket before sending another message.',
+      ),
+    ).catch((error) => console.error('Lifecycle-held delivery recovery failed', error));
   const rows = database.read((sql) =>
     sql.all<RecoveryRow>(
       `SELECT ${columns} FROM recipient_deliveries WHERE state IN ('pending','dispatching','uncertain') ORDER BY delivery_order`,

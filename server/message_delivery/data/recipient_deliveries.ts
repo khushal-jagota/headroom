@@ -85,6 +85,12 @@ export function admit_recipient_delivery(
             ? { kind: 'manager', id: agent.agent_key.slice('manager_'.length) }
             : { kind: 'conversation', id: conversation_id });
     if (recipient.kind !== 'conversation') require_recipient_available(tx, recipient as Principal);
+    // A message held across workspace cleanup hands its custody to this admission.
+    if (message.sender_message_id !== null)
+      tx.run(
+        "DELETE FROM recipient_deliveries WHERE state='awaiting_lifecycle' AND recipient_kind=? AND recipient_id=? AND json_extract(payload,'$.sender_message_id')=?",
+        [recipient.kind, recipient.id, message.sender_message_id],
+      );
     const lifecycle_generation = recipient_lifecycle(tx, recipient as Principal).generation;
     const attempt_id = randomUUID();
     tx.run(
@@ -111,6 +117,30 @@ export function admit_recipient_delivery(
   });
   message.recording_receipt?.admitted?.();
   return result;
+}
+/** Durable custody for a message that waits for its recipient's lifecycle operation. */
+export function hold_recipient_delivery_for_lifecycle(
+  tx: TransactionSql,
+  conversation_id: string,
+  recipient: Principal,
+  message: Message,
+): string {
+  const submission_id = `${conversation_id}:${message.sender_message_id}`;
+  const { recording_receipt: _receipt, content: _content, ...values } = message;
+  tx.run(
+    "INSERT INTO recipient_deliveries(submission_id,recipient_kind,recipient_id,conversation_id,generation,payload,state,attempt_id) VALUES(?,?,?,?,?,?,'awaiting_lifecycle',?)",
+    [
+      submission_id,
+      recipient.kind,
+      recipient.id,
+      conversation_id,
+      JSON.stringify({ lifecycle_generation: recipient_lifecycle(tx, recipient).generation }),
+      JSON.stringify({ ...values, ...message_content_json_entries(message.content) }),
+      randomUUID(),
+    ],
+  );
+  message.recording_receipt?.in_admission?.(tx, conversation_id);
+  return submission_id;
 }
 export function mark_recipient_attempt(
   database: Database,

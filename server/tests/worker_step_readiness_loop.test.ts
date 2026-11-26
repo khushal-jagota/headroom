@@ -1,5 +1,6 @@
 import { setup as core_setup } from './conversation_core_fixture.ts';
 import { send_message } from '../message_delivery/service.ts';
+import { MessageRecordedToOwner } from '../message_delivery/contracts.ts';
 /** Gaps: autonomous orchestration and delivery fates are absent from Ticket route proofs.
  * Reuses Ticket SQLite fixtures and the existing in-memory contract. No provider adapter.
  */
@@ -26,6 +27,7 @@ import { OWNER, PlannerError } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import {
+  PromptDeliveryQueued,
   PromptDeliveryRefused,
   PromptDeliverySuppressed,
   PromptDeliveryUncertain,
@@ -1030,107 +1032,153 @@ test('a kickoff racing a steer shares admission order without releasing its clai
   }
 });
 
-// An ended Ticket receives a fresh conversation automatically after workspace retirement.
-// Exact cleanup can wait without holding admission for other recipients, and it never
-// interrupts a turn that is still running in the retired workspace.
+// Gap: no case held a retired workspace's cleanup while the same sender kept writing.
+// Reuse the real core: the triggering message takes durable custody before cleanup, and the
+// sender's owner reply proceeds while a hung kill waits. Failure or an active turn refuses once.
 test.each(['cleaned', 'failed', 'active'] as const)(
-  'a message after workspace retirement admits a fresh recipient when cleanup is %s',
+  'a message to a retired workspace is accepted before cleanup when cleanup is %s',
   async (cleanup) => {
-    const { db, system, options } = setup();
-    const ticket = create(db);
-    await start_ready_worker_step(ticket.id, options);
-    const old_id = read(db, ticket.id).conversation_id!;
+    const f = core_setup();
+    configure_conversation_start(f.database, {
+      db_path: f.database_path,
+      workspace_root: dirname(f.database_path),
+    });
+    const db = f.database;
+    const options = {
+      connect_database: () => db,
+      conversation_system: f.core,
+      worker_type_registry: configured_worker_type_registry(),
+      now: () => now,
+    };
+    const ended = create(db);
+    await start_ready_worker_step(ended.id, options);
+    // The Chief stands in for any agent sender: its later reply goes to the owner.
+    await f.start();
+    db.write((tx) =>
+      tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)', [
+        'chief_of_staff',
+        'core',
+      ]),
+    );
+    const old_id = read(db, ended.id).conversation_id!;
+    await (await f.child).finish();
+    await vi.waitFor(async () => expect(await f.core.is_running(old_id)).toBe(false));
     db.write((tx) => {
-      tx.run("UPDATE tickets SET stage='done' WHERE id=?", [ticket.id]);
-      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [
-        now,
-        ticket.id,
-      ]);
+      tx.run("UPDATE tickets SET stage='done' WHERE id=?", [ended.id]);
+      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [now, ended.id]);
       tx.run('INSERT INTO ticket_workspace_conversations VALUES(?,?,?,?)', [
         old_id,
-        ticket.id,
+        ended.id,
         HOME_MACHINE_ID,
         'retired-workspace',
       ]);
       tx.run('INSERT INTO ticket_workspace_retirements VALUES(?,?,?,?)', [
-        ticket.id,
+        ended.id,
         HOME_MACHINE_ID,
         'retired-workspace',
         now,
       ]);
     });
-    const started = new Deferred<void>();
     const release = new Deferred<void>();
-    const is_running = system.is_running.bind(system);
-    vi.spyOn(system, 'is_running').mockImplementation(async (id) => {
-      if (id !== old_id) return is_running(id);
-      started.resolve();
-      await release.promise;
-      return cleanup === 'active';
-    });
-    const kill = system.kill.bind(system);
-    const killed = vi.spyOn(system, 'kill').mockImplementation(async (id) => {
-      if (id === old_id && cleanup === 'failed') throw new Error('cleanup proof unavailable');
+    const killing = new Deferred<void>();
+    const is_running = f.core.is_running.bind(f.core);
+    vi.spyOn(f.core, 'is_running').mockImplementation(async (id) =>
+      id === old_id && cleanup === 'active' ? true : is_running(id),
+    );
+    const kill = f.core.kill.bind(f.core);
+    const killed = vi.spyOn(f.core, 'kill').mockImplementation(async (id) => {
+      if (id === old_id) {
+        killing.resolve();
+        await release.promise;
+        if (cleanup === 'failed') throw new Error('cleanup proof unavailable');
+      }
       await kill(id);
     });
-    const content = vi.fn(async (conversation_id: string) => {
-      const { text_message_content } = await import('../conversation/message_content.ts');
-      expect(conversation_id).not.toBe(old_id);
-      return text_message_content('owner correction');
-    });
-    const send = (id: string, message: Parameters<typeof send_message>[5]) =>
-      send_message(
-        system,
-        db,
-        new TestClock(new Date(now * 1000).toISOString()),
-        { principal: OWNER, conversationId: null },
-        { kind: 'ticket', id },
-        message,
-      );
-    const outcome = send(ticket.id, content).then(
-      (result) => ({ result, error: null }),
-      (error: unknown) => ({ result: null, error }),
+    const clock = new TestClock(new Date(now * 1000).toISOString());
+    const as_sender = { principal: { kind: 'chief' as const, id: 'chief' }, conversationId: null };
+    const custody: (number | undefined)[] = [];
+    const accepted = await send_message(
+      f.core,
+      db,
+      clock,
+      as_sender,
+      { kind: 'ticket', id: ended.id },
+      'correction',
+      'queue',
+      {
+        sender_message_id: 'correction',
+        recording_receipt: {
+          sender_id: 'sender',
+          submission_id: 'correction',
+          in_admission: (tx, id) =>
+            custody.push(
+              tx.get<{ delivery_order: number }>(
+                'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
+                [`${id}:correction`],
+              )?.delivery_order,
+            ),
+        },
+      },
     );
-    await started.promise;
-    try {
-      expect(content).not.toHaveBeenCalled();
-      const other = create(db);
-      await expect(send(other.id, 'another recipient')).resolves.toMatchObject({
-        recipient: { kind: 'ticket', id: other.id },
-      });
-      release.resolve();
-      const settled = await outcome;
-      const retiring = () =>
-        db.read((sql) =>
+    const journal = () =>
+      db.read((sql) =>
+        sql.all<{ conversation_id: string; state: string }>(
+          "SELECT conversation_id,state FROM recipient_deliveries WHERE json_extract(payload,'$.sender_message_id')='correction'",
+        ),
+      );
+    const lifecycle = () =>
+      db.read(
+        (sql) =>
           sql.get<{ retiring: number }>(
             "SELECT retiring FROM recipient_lifecycles WHERE recipient_kind='ticket' AND recipient_id=?",
-            [ticket.id],
-          ),
+            [ended.id],
+          )?.retiring,
+      );
+    const refusals = () =>
+      f.store
+        .read_events_after(old_id, 0)
+        .filter(
+          (row) =>
+            row.kind === 'prompt_delivery_refused' &&
+            (row.payload as { sender_message_id?: string }).sender_message_id === 'correction',
         );
+    try {
+      expect(accepted.fate).toBeInstanceOf(PromptDeliveryQueued);
+      expect(custody).toEqual([expect.any(Number)]);
       if (cleanup === 'active') {
         // A running turn is never interrupted, and nothing was cleaned, so the fence lifts.
-        expect(settled.error).toMatchObject({ code: 'already_running' });
+        await vi.waitFor(() => expect(refusals()).toHaveLength(1));
         expect(killed).not.toHaveBeenCalledWith(old_id);
-        expect(read(db, ticket.id).conversation_id).toBe(old_id);
-        expect(content).not.toHaveBeenCalled();
-        expect(retiring()).toEqual({ retiring: 0 });
-      } else if (cleanup === 'failed') {
-        expect(settled.error).toMatchObject({ code: 'validation' });
-        expect(read(db, ticket.id).conversation_id).toBe(old_id);
-        expect(content).not.toHaveBeenCalled();
-        expect(retiring()).toEqual({ retiring: 1 });
-      } else {
-        expect(settled.error).toBeNull();
-        const fresh = read(db, ticket.id).conversation_id!;
-        expect(fresh).not.toBe(old_id);
-        expect(settled.result).toMatchObject({ conversation_id: fresh });
-        expect(content).toHaveBeenCalledExactlyOnceWith(fresh);
-        expect(system.backend_prompt_writes(fresh)).toHaveLength(1);
-        expect(system.backend_prompt_writes(fresh)[0].text).toContain('owner correction');
+        expect(lifecycle()).toBe(0);
+        expect(read(db, ended.id).conversation_id).toBe(old_id);
+        return;
       }
+      await killing.promise;
+      expect(journal()).toEqual([{ conversation_id: old_id, state: 'awaiting_lifecycle' }]);
+      await expect(
+        send_message(f.core, db, clock, as_sender, OWNER, 'owner reply'),
+      ).resolves.toMatchObject({ fate: { constructor: MessageRecordedToOwner } });
+      expect(read(db, ended.id).conversation_id).toBe(old_id);
+      release.resolve();
+      if (cleanup === 'failed') {
+        await vi.waitFor(() => expect(refusals()).toHaveLength(1));
+        expect(journal()).toEqual([{ conversation_id: old_id, state: 'refused' }]);
+        expect(lifecycle()).toBe(1);
+        expect(read(db, ended.id).conversation_id).toBe(old_id);
+        return;
+      }
+      await vi.waitFor(() => expect(read(db, ended.id).conversation_id).not.toBe(old_id));
+      const fresh = read(db, ended.id).conversation_id!;
+      await vi.waitFor(() =>
+        expect(journal()).toEqual([{ conversation_id: fresh, state: 'delivered' }]),
+      );
+      expect(lifecycle()).toBe(0);
+      const first_prompt = f.store.read_events_after(fresh, 0).find((row) => row.kind === 'prompt');
+      expect(first_prompt?.payload).toMatchObject({ sender_message_id: 'correction' });
+      expect(refusals()).toEqual([]);
     } finally {
       release.resolve();
-      await outcome;
+      await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
     }
   },
 );

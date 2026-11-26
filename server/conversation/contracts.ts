@@ -403,6 +403,8 @@ export interface ConversationSystem {
     finish: (check_cleanup: ((sql: TransactionSql) => void) | null) => Promise<void>,
   ): Promise<void>;
   is_running(conversation_id: string): Promise<boolean>;
+  /** Give a message held for failed or interrupted workspace cleanup its terminal refusal. */
+  refuse_lifecycle_held_delivery(submission_id: string, detail: string): Promise<void>;
   has_pending_permission_ask(conversation_id: string): Promise<boolean>;
   has_pending_user_input(conversation_id: string): Promise<boolean>;
 }

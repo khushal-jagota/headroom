@@ -556,6 +556,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async sweep_idle_children(): Promise<void> {
     return import('./runtime/maintenance.ts').then((module) => module.sweep_idle_children(this));
   }
+  async refuse_lifecycle_held_delivery(submission_id: string, detail: string): Promise<void> {
+    const { refuse_lifecycle_held_delivery } = await import('../message_delivery/recovery.ts');
+    await refuse_lifecycle_held_delivery(this, submission_id, detail);
+  }
   async interrupt(conversation_id: string): Promise<void> {
     const state = this.conversation_state(conversation_id);
     if (state) await own_settlement(state, controls.interrupt(this, state));

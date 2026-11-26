@@ -2,7 +2,11 @@
 import { expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
 import { ConversationLinkLock } from '../runtime/conversation_start.ts';
-import { ConversationStartRequest, PromptDeliveryQueued } from '../conversation/contracts.ts';
+import {
+  ConversationStartRequest,
+  PromptDeliveryQueued,
+  PromptQueueReason,
+} from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { resume_recipient_deliveries } from '../message_delivery/recovery.ts';
 import {
@@ -14,6 +18,7 @@ import {
   recipient_command_is_current,
   prune_finished_recipient_deliveries,
   hold_recipient_delivery,
+  hold_recipient_delivery_for_lifecycle,
 } from '../message_delivery/data/recipient_deliveries.ts';
 import { fixture } from './ticket_fixture.ts';
 
@@ -103,6 +108,63 @@ test('restart restores held prompts in order and delivers their real content onc
     );
     resume_recipient_deliveries(restarted.core);
     expect((await child.inspect()).delivered_text).toHaveLength(1);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Gap: a message held for workspace cleanup has no conversation queue entry, so held-prompt
+// restore cannot settle it. Restart must give it one terminal refusal, not a delivery.
+test('restart refuses a message held for interrupted workspace cleanup exactly once', async () => {
+  const f = setup();
+  await f.start();
+  const recipient = { kind: 'ticket', id: 't_cleanup' } as const;
+  f.database.write((tx) => {
+    tx.run("INSERT INTO recipient_lifecycles VALUES('ticket','t_cleanup',1,1)");
+    hold_recipient_delivery_for_lifecycle(tx, 'core', recipient, {
+      requested_mode: 'queue',
+      held_prompt_id: '',
+      content: text_message_content('held correction'),
+      sender_label: 'Chief',
+      sender: { kind: 'chief', id: 'chief' },
+      recipient,
+      sender_message_id: 'held',
+      sent_at_unix_milliseconds: null,
+      snapshot_sent_at_unix_milliseconds: 0,
+      model_change: null,
+      reasoning_effort_change: null,
+      reasoning_effort_is_set: false,
+      owner_read_through_sequence: null,
+      acknowledge_owner_on_failure: false,
+      recovery_references: [],
+      recording_receipt: null,
+      queue_reason: PromptQueueReason.requested,
+      delivery_uncertain: false,
+      system_generated: false,
+    });
+  });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  const restarted = setup({ restart_of: f.database });
+  const refusals = () =>
+    restarted.store
+      .read_events_after('core', 0)
+      .filter((row) => row.kind === 'prompt_delivery_refused');
+  try {
+    resume_recipient_deliveries(restarted.core);
+    await vi.waitFor(() => expect(refusals()).toHaveLength(1));
+    expect(refusals()[0].payload).toMatchObject({ sender_message_id: 'held' });
+    resume_recipient_deliveries(restarted.core);
+    expect(
+      restarted.database.read((sql) =>
+        sql.get<{ state: string }>(
+          "SELECT state FROM recipient_deliveries WHERE submission_id='core:held'",
+        ),
+      ),
+    ).toEqual({ state: 'refused' });
+    expect(refusals()).toHaveLength(1);
+    expect(
+      restarted.store.read_events_after('core', 0).filter((row) => row.kind === 'prompt'),
+    ).toEqual([]);
   } finally {
     await restarted.core.shutdown({ deadline: performance.now() / 1000 + 10 });
   }
