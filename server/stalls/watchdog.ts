@@ -1,18 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createReadAccess } from '../core/database/index.ts';
-import type {
-  APNsAdapter,
-  APNsDevice,
-  PushSubscription,
-  WebPushAdapter,
-  WebPushIdentity,
-} from '../notifications/contracts.ts';
+import type { APNsAdapter, WebPushAdapter } from '../notifications/contracts.ts';
 import { preference_key, resolved_preferences } from '../notifications/data.ts';
 import { CHECKER_HEARTBEAT_STALE_SECONDS } from './configuration.ts';
 import { read_open_findings } from './checker.ts';
 import type { StallFinding } from './contracts.ts';
-import { push_intent, send_push, since_utc, stall_text } from './alarms.ts';
+import { push_intent, read_push_targets, send_push, since_utc, stall_text } from './alarms.ts';
 import type { PushTargets, StallAlarm } from './alarms.ts';
 
 export const WATCHDOG_STATE_FILE_NAME = 'stall-watchdog-state.json';
@@ -42,23 +36,11 @@ export function read_database(db_path: string): WatchdogReading {
         SELECT checked_at_ms FROM stall_checker_heartbeat WHERE singleton=1
       `);
       const preferences = resolved_preferences(sql);
-      const identity =
-        sql.get<WebPushIdentity>(`
-        SELECT private_key,public_key FROM notification_web_push_identity WHERE singleton=1
-      `) ?? null;
-      const subscriptions = sql.all<PushSubscription>(`
-        SELECT subscription_id,endpoint,p256dh,auth FROM notification_push_subscriptions
-        WHERE disabled_at IS NULL ORDER BY created_at,subscription_id
-      `);
-      const apns_devices = sql.all<APNsDevice>(`
-        SELECT device_id,device_token,bundle_id,environment,registration_version,updated_at
-        FROM notification_apns_devices ORDER BY created_at,device_id
-      `);
       return {
         findings: read_open_findings(sql),
         heartbeat_at_ms: heartbeat?.checked_at_ms ?? null,
         push_enabled: preferences.get(preference_key('panels', 'stall_alarm'))!,
-        push_targets: { web_push_identity: identity, subscriptions, apns_devices },
+        push_targets: read_push_targets(sql),
       };
     });
   } finally {

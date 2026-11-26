@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { onlineBackup, verifyDatabaseIntegrity } from '../../core/database/index.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
+import { alarm_backup_integrity_failure } from './integrity_alarm.ts';
 import type {
   ManagedRootName,
   ManagedFilesManifest,
@@ -84,6 +85,10 @@ export async function create_database_backup(
   sourceDatabase: string,
   backupDirectory: string,
   deployedRevision: string,
+  options: {
+    /** Tells the owner that the copy failed SQLite's integrity check. Never throws. */
+    integrity_alarm?: (sourceDatabase: string) => Promise<void>;
+  } = {},
 ): Promise<string> {
   const source = await resolved_path(sourceDatabase);
   const root = await resolved_path(backupDirectory);
@@ -93,7 +98,12 @@ export async function create_database_backup(
   try {
     const image = join(temporary, 'database.sqlite');
     await onlineBackup(source, image);
-    verifyDatabaseIntegrity(image);
+    try {
+      verifyDatabaseIntegrity(image);
+    } catch (error) {
+      await (options.integrity_alarm ?? alarm_backup_integrity_failure)(source);
+      throw error;
+    }
     const metadata: SnapshotMetadata = {
       format: SNAPSHOT_FORMAT,
       created_at: parseIsoDatetime(new Date().toISOString()).iso,
