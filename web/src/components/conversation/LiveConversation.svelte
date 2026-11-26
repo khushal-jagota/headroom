@@ -937,8 +937,10 @@
       // authorizes a new send from one of those attempts.
       const failed = known !== null || message.knownFate === "not_sent" || message.knownFate === "machine_offline";
       if (!target && !failed) return;
-      const originalConversation = known?.conversation_id ?? target?.conversation_id ?? null;
-      if (failed && (originalConversation !== currentDestination() || startingDestination !== currentDestination())) {
+      // A message sent without a conversation (a first message) may start the current one again,
+      // even after home accepted it into a conversation whose start was later refused.
+      const pinnedConversation = target ? target.conversation_id ?? null : known?.conversation_id ?? null;
+      if (failed && ((pinnedConversation !== null && pinnedConversation !== currentDestination()) || startingDestination !== currentDestination())) {
         errorNote = "This message belongs to an earlier conversation.";
         return;
       }
