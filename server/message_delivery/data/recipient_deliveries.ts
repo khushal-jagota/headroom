@@ -134,6 +134,12 @@ export function mark_recipient_attempt(
         "UPDATE recipient_deliveries SET state='dispatching',native_transport=?,attempt_id=? WHERE submission_id=? AND attempt_id=?",
         [native_transport, attempt_id, submission_id, row.attempt_id],
       );
+      // Remote start acknowledges mailbox placement before the machine fetches it.
+      // That preparation belongs to this input attempt; an older re-held attempt does not.
+      tx.run(
+        "UPDATE recipient_delivery_commands SET attempt_id=? WHERE submission_id=? AND attempt_id=? AND EXISTS (SELECT 1 FROM executor_commands c WHERE c.command_id=recipient_delivery_commands.command_id AND c.operation='start')",
+        [attempt_id, submission_id, row.attempt_id],
+      );
       if (message.held_prompt_id)
         tx.run(
           'UPDATE conversation_held_prompts SET dispatching=1,dispatch_turn=? WHERE held_prompt_id=?',
@@ -308,7 +314,9 @@ export function recipient_command_is_current(sql: ReadSql, command_id: string): 
     'SELECT c.submission_id,c.attempt_id,r.attempt_id AS expected_attempt,r.state,e.operation FROM recipient_delivery_commands c JOIN recipient_deliveries r USING(submission_id) JOIN executor_commands e ON e.command_id=c.command_id WHERE c.command_id=?',
     [command_id],
   );
-  for (const link of links) {
+  const shared_start = links[0]?.operation === 'start';
+  const required = shared_start ? links.filter((link) => link.state !== 'discarded') : links;
+  for (const link of required) {
     if (
       link.attempt_id !== link.expected_attempt ||
       (link.operation === 'start'
@@ -323,7 +331,8 @@ export function recipient_command_is_current(sql: ReadSql, command_id: string): 
       throw error;
     }
   }
-  return true;
+  // A discarded sibling does not cancel preparation needed by a surviving input.
+  return !shared_start || required.length > 0 || links.length === 0;
 }
 
 /** Receipts and conversation events retain terminal outcomes independently of delivery payloads. */

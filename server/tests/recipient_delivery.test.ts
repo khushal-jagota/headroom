@@ -332,6 +332,20 @@ test('a delayed queued result and an obsolete command cannot replace a newer att
       ),
     )!;
     const message = decode_recipient_message(held.payload);
+    await with_recipient_attempts([held], async () =>
+      f.database.write((tx) => {
+        tx.run(
+          "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,command_json,state,created_at_ms) VALUES('waiting-start','old','start','core','child','{}','waiting',1)",
+        );
+        link_recipient_command(tx, 'waiting-start', 'start');
+        tx.run(
+          "INSERT INTO recipient_deliveries(submission_id,recipient_kind,recipient_id,conversation_id,generation,payload,state,attempt_id) SELECT 'core:suppressed',recipient_kind,recipient_id,conversation_id,generation,payload,'discarded','suppressed' FROM recipient_deliveries WHERE submission_id='core:held'",
+        );
+        tx.run(
+          "INSERT INTO recipient_delivery_commands VALUES('waiting-start','core:suppressed','suppressed')",
+        );
+      }),
+    );
     const [dispatch] = mark_recipient_attempt(f.database, 'core', [message], 2, 'mailbox');
     finish_recipient_delivery(f.database, held, new PromptDeliveryQueued({ queue_position: 1 }));
     expect(
@@ -350,10 +364,17 @@ test('a delayed queued result and an obsolete command cannot replace a newer att
       }),
     );
     expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(true);
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(true);
     f.database.write((tx) => hold_recipient_delivery(tx, 'core', message.sender_message_id));
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(
+      false,
+    );
     expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(false);
     const [next] = mark_recipient_attempt(f.database, 'core', [message], 3, 'mailbox');
     expect(next.attempt_id).not.toBe(dispatch.attempt_id);
+    expect(f.database.read((sql) => recipient_command_is_current(sql, 'waiting-start'))).toBe(
+      false,
+    );
     expect(f.database.read((sql) => recipient_command_is_current(sql, 'old-attempt'))).toBe(false);
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
