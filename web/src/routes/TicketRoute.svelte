@@ -465,7 +465,7 @@
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
-                  <h2>{ticketSectionHeading(section,currentView)} {fieldLabelFor(lc, currentField)}</h2>
+                  <h2>{ticketSectionHeading(section,currentView)}{ticketSectionHeading(section,currentView)==="Setting up" ? "" : ` ${fieldLabelFor(lc, currentField)}`}</h2>
                   {#if detail.stage !== "needs_brief"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}

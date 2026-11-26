@@ -2,7 +2,6 @@
   import { conversationPreview } from "../lib/conversation/preview.svelte";
   import { elapsedTurnTime } from "../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../lib/conversation/transcript";
-  import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../lib/workerSetup";
   import ManagerGoalPreview from "./goals/ManagerGoalPreview.svelte";
   import type {GoalResponse} from "../lib/goals/contracts";
   import { skipPreviewTabStops } from "../lib/previewTabOrder";
@@ -37,9 +36,8 @@
   const elapsed = elapsedTurnTime(() => preview.startedAtUnixMilliseconds);
   // A Worker being prepared is a Ticket fact, often before any conversation; a live turn outranks it.
   let workerSetup = $derived(preview.activity === "Working" ? null : currentWorker?.worker_setup ?? null);
-  const setupElapsed = elapsedTurnTime(() => workerSetupStartedAtUnixMilliseconds(workerSetup));
   let activity = $derived(preview.activity === "Working" ? elapsed.seconds !== null ? `Working · ${formatDuration(elapsed.seconds)}` : preview.activity
-    : workerSetup ? workerSetupSentence(workerSetup, setupElapsed.seconds) : preview.activity);
+    : workerSetup ? "Setting up" : preview.activity);
   const health=createQuery(() => ({...queries.executorHealth(worker?.machine_id),enabled:worker?.locale === "macos"}));
   const machines = createQuery(() => queries.machines());
   const machineName = $derived(resolveMachineName(worker?.locale, worker?.machine_id, machines.data?.machines));

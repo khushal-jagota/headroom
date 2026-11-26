@@ -1,8 +1,4 @@
 /** The HTTP-client commands used for Panels work. Domain decisions stay on the server. */
-import {
-  worker_setup_step_label,
-  type WorkerSetupStep,
-} from '../ticket_workspaces/worker_setup.ts';
 import { randomUUID } from 'node:crypto';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { executor_client_settings } from '../core/config.ts';
@@ -182,15 +178,6 @@ function emit_record(
     render_text({ ...projection, header: human_header }, requested ?? [...parts.keys()]),
   );
 }
-/** "preparing workspace for 2m 19s" */
-function setting_up_text(setup: { step: WorkerSetupStep; began_at: unknown }): string {
-  // The CLI reads JSON numbers as JsonNumber values.
-  const began_at = numeric_value(setup.began_at) ?? now_seconds();
-  const seconds = Math.max(0, now_seconds() - began_at);
-  const elapsed =
-    seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60)}s`;
-  return `${worker_setup_step_label(setup.step)} for ${elapsed}`;
-}
 const TICKET_HEADER_KEYS = [
   'id',
   'title',
@@ -218,7 +205,7 @@ function ticket_headers(data: Body): [Body, Body] {
   const header = Object.fromEntries(
     TICKET_HEADER_KEYS.filter((key) => key in data).map((key) => [key, data[key]]),
   );
-  if (data.worker_setup) header.setting_up = setting_up_text(data.worker_setup);
+  if (data.worker_setup) header.setting_up = 'Setting up';
   const human: Body = {};
   if ('title' in data) human.title = data.title;
   human.recap = format_recap(data);
@@ -412,7 +399,7 @@ async function list_tickets(inv: Invocation): Promise<CommandResult> {
         `  id: ${scalar(ticket.id)}` +
           (ticket.project ? ` | project: ${scalar(ticket.project)}` : ''),
       );
-      if (ticket.worker_setup) output.push(`  setting up: ${setting_up_text(ticket.worker_setup)}`);
+      if (ticket.worker_setup) output.push('  setting up');
     }
   } else if (numeric_value(page.match_count)) output.push('No results at this offset.');
   output.push(`${plural(page.match_count, ...SCOPE_NOUNS[scope])}.`);
