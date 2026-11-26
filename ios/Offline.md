@@ -120,12 +120,16 @@ in the order they were saved, from any screen, and at most two run per server.
 
 An item is waiting (it looks done), sent, or failed. A recording is the one item
 that cannot look done: its words come from the server, so it shows "saved" until
-they arrive, and "transcribing" while its request is in flight. A failed item
-leaves its lane, and only it shows a mark:
+they arrive, and "transcribing" while its request is in flight. A message is sent
+once home accepts it. A later refusal, from its transcript row or receipt, marks it
+failed, so Try Again works as for a refusal at send. A message
+home answers uncertain, or with an answer this build does not know, is sent and
+never resent, and shows "Delivery unconfirmed". A failed item leaves its lane,
+and only it offers Try Again:
 
 - A failed message gets a red mark in its conversation. Tapping it shows the
   reason and Try Again, which sends the same words in the same place: with a new ID
-  after a refusal, with its own ID otherwise. A Review reply's Try Again does the
+  after a refusal, naming the refused row so the view folds it, with its own ID otherwise. A Review reply's Try Again does the
   same; after a refusal it sends the card's corrected words. A refused photo message puts its draft
   back in the composer.
 - A refused approval or send-back brings its proposal card back to the front of
@@ -148,7 +152,9 @@ ID, the server starts the conversation once, and a server test proves that for
 Chief, Ticket and Manager. If that conversation is reset between attempts, the
 repeat lands in the new one. Later messages that were never sent join the
 conversation the first message created. A refused first message leaves no
-conversation, so later messages start their own.
+conversation, so later messages start their own. Its start can also be refused after
+home accepted it, so Try Again of a message saved without a conversation sends it
+without one: it joins or starts the current conversation.
 
 The server can hold a message, for example one that names a model, until the turn
 ends. The conversation shows held messages above the composer with the server's

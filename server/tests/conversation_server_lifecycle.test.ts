@@ -547,6 +547,14 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         sender_message_id: text,
       }),
     });
+  // A send answers at acceptance. Its stored outcome says when the prompt was delivered.
+  const delivered = (text: string) =>
+    vi.waitFor(async () => {
+      const read = await fetch(
+        server.address + `/api/conversation/owner-sends/${text}?owner_kind=chief&owner_id=chief`,
+      );
+      expect((await read.json()).outcome).toMatchObject({ outcome: 'delivered' });
+    });
   try {
     expect(context.core!.options.wait_registry).toBe(WAITS);
     expect(janitor).toHaveBeenCalledOnce();
@@ -624,7 +632,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     const sent = await post('work', [{ piece: 'video_upload', upload_id: 'startup-adoption' }]);
     expect(sent.status).toBe(200);
     const delivery = (await sent.json()) as { conversation_id: string; fate: string };
-    expect(delivery.fate).toBe('started');
+    expect(delivery.fate).toBe('accepted');
+    await delivered('work');
     const id = delivery.conversation_id;
     const child = registry.child(id);
     const adopted = join(dirname(f.path), 'files/conversations', id, 'f_startup-adoption');
@@ -771,6 +780,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     await settle_backend_events();
     expect((await attention()).signal.working).toBe(false);
     expect((await post('fail')).status).toBe(200);
+    await delivered('fail');
     await child.finish({ ending: 'failed', error_summary: 'Synthetic failure' });
     await settle_backend_events();
     expect((await attention()).last_turn_failed).toBe(true);

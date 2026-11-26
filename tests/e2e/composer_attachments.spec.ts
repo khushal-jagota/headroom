@@ -137,10 +137,12 @@ async function expectStoredPieces(server: ServerHandle, conversation: string, pi
 }
 
 async function expectPromptFiles(server: ServerHandle, conversation: string, attached: Attached[]): Promise<void> {
-  const events: JsonObject[] = (await getJson(server, `/api/conversation/conversations/${conversation}/events`)).events;
-  const matching = events.filter((event) => event.kind === 'prompt' &&
-    (event.payload.content ?? []).some((piece: JsonObject) => piece.file_name === attached[0].name));
-  expect(matching).toHaveLength(1);
+  // A send answers at acceptance, so its prompt row can follow the answer.
+  const prompts = async () => ((await getJson(server, `/api/conversation/conversations/${conversation}/events`)).events as JsonObject[])
+    .filter((event) => event.kind === 'prompt' &&
+      (event.payload.content ?? []).some((piece: JsonObject) => piece.file_name === attached[0].name));
+  await expect.poll(async () => (await prompts()).length, { timeout: WAIT_MS }).toBe(1);
+  const matching = await prompts();
   await expectStoredPieces(server, conversation, matching[0].payload.content, attached);
 }
 
@@ -398,11 +400,11 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
     if (request.method() === 'POST' && request.url().endsWith('/api/chief/conversation/send')) chiefSends.push(request.url());
   });
   const response = await sent(page, '/api/chief/conversation/send', () => chief.locator('[data-review-send]').click());
-  expect((await response.json()).fate).toBe('started');
+  expect((await response.json()).fate).toBe('accepted');
   expectUploadPieces(response.request().postDataJSON().content, attachments);
   await expectPromptFiles(server, chiefConversation, attachments);
-  const received: string[] = (await getJson(server, `/api/test/signals/${chiefConversation}/delivered`)).texts;
-  expect(received.filter((text) => text.includes(chiefText))).toHaveLength(1);
+  await expect.poll(async () => ((await getJson(server, `/api/test/signals/${chiefConversation}/delivered`)).texts as string[])
+    .filter((text) => text.includes(chiefText)).length, { timeout: WAIT_MS }).toBe(1);
   expect(chiefSends).toEqual([`${server.base}/api/chief/conversation/send`]);
   await expect(chief.locator('.chat-att')).toHaveCount(0);
   // The empty Review page does not keep a delivered message or its "Sent" status.

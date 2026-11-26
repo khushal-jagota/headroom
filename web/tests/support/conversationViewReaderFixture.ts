@@ -42,7 +42,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
-  const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,background_tasks:[],pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,latest_owner_message_preview:"Latest owner answer",last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
+  const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,waiting_messages_revision:0,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,background_tasks:[],pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,latest_owner_message_preview:"Latest owner answer",last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
   if (previewClock) {
     const started = Date.now() - 240_000;
     status.turn_key = 'preview-turn'; status.turn_running = true;
@@ -226,7 +226,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     }
     if(url.pathname.endsWith('/view/receipts'))return Response.json({conversation_id:id,coverage:{through_sequence:sequence},receipts:[]});
     if(url.pathname.endsWith('/owner-read'))return Response.json({owner_read_through_sequence:JSON.parse(String(init?.body)).through_sequence});
-    return Response.json({conversation_id:previewClock?url.pathname.split('/')[4]:id,backend_key:'codex',supports_steer:true,model:previewClock?(url.pathname.includes('/preview-chief')?'gpt-6.1-terra':previewModel):null,reasoning_effort:previewClock?'medium':null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:previewClock?status.turn_running===true:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
+    return Response.json({conversation_id:previewClock?url.pathname.split('/')[4]:id,backend_key:'codex',supports_steer:true,model:previewClock?(url.pathname.includes('/preview-chief')?'gpt-6.1-terra':previewModel):null,reasoning_effort:previewClock?'medium':null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:previewClock?status.turn_running===true:false,held_prompts:[],pending_messages:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
   };
   class Source extends EventTarget{
     onerror:null|(()=>void)=null;closed=false;

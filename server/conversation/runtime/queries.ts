@@ -1,7 +1,4 @@
 /** Questions about live conversation state, and workspace activity. */
-import type { Principal } from '../../core/contracts.ts';
-import type { OwnerSendProgress } from '../contracts.ts';
-import { matches_owner_sender_message } from './messages.ts';
 import type { RunningTurn } from '../record/contracts.ts';
 import { backend_supports_active_steering, HeldPrompt } from '../contracts.ts';
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
@@ -75,44 +72,6 @@ export async function held_prompts(
         }),
     ),
   );
-}
-
-/** Observe a queue item and its possible handoff under the same conversation lock. */
-export async function owner_send_progress(
-  host: SqliteProcessConversationSystem,
-  conversation_id: string,
-  sender_message_id: string,
-  recipient: Principal,
-): Promise<OwnerSendProgress | null> {
-  // A message held for workspace cleanup waits ahead of its fresh conversation's start.
-  if (
-    host.options.store.start_admission_database.read((sql) =>
-      sql.get(
-        "SELECT 1 FROM recipient_deliveries WHERE submission_id=? AND state='awaiting_lifecycle'",
-        [`${conversation_id}:${sender_message_id}`],
-      ),
-    )
-  )
-    return { state: 'queued', position: 1 };
-  const state = host.conversation_state(conversation_id);
-  if (!state) return null;
-  return state.lock.run(() => {
-    const position = state.held_prompts.findIndex((message) =>
-      matches_owner_sender_message(message, sender_message_id, recipient),
-    );
-    if (position >= 0) {
-      return state.held_prompts[position].delivery_uncertain
-        ? { state: 'uncertain' }
-        : { state: 'queued', position: position + 1 };
-    }
-    const admission =
-      state.sender_messages_being_delivered.get(sender_message_id) ??
-      state.admitted_sender_messages.get(sender_message_id);
-    return admission &&
-      matches_owner_sender_message(admission.message, sender_message_id, recipient)
-      ? { state: 'pending' }
-      : null;
-  });
 }
 
 export async function sender_message_ids_awaiting_outcome(

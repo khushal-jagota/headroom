@@ -142,6 +142,8 @@ async function send_owned(
       message,
     );
     state.admitted_sender_messages.get(message.sender_message_id!)?.admitted?.resolve();
+    // A reader lists the accepted message until its conversation places it.
+    host.publish_held_prompts_changed(state);
     release_admission_leases();
     host.start_admission.handoff(message.sender_message_id);
     await host.ensure_local_custody(state);

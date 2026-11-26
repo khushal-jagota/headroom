@@ -1,10 +1,9 @@
 import { onDestroy, untrack } from 'svelte';
 import { connectionStatus } from '../changeStream';
-import { fateSentence } from '../conversation/composer';
 import { readComposerDraft, writeComposerDraft } from '../conversation/composerDraft';
 import { mintOutgoingMessage, theServerRefusedTheSend } from '../conversation/outgoing';
 import { rememberSentAttachments } from '../conversation/localSentMedia';
-import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from '../conversation/ownerSend';
+import { ownerSendOutcomeAsDelivery, ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from '../conversation/ownerSend';
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES, pendingConversationFileBytes, pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../conversation/pendingFiles';
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES, pendingConversationImageBytes, pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from '../conversation/pendingImages';
 import { attachmentTransfersFor, clearAttachmentDraft, openAttachmentDraft, pendingUploadsAsPieces, publishAttachmentDraft, restoredPendingUploads } from '../conversation/videoUploads/uploads';
@@ -16,9 +15,8 @@ import {
 } from '../conversation/wire';
 import { readReviewDraft, saveReviewDraft } from './messages';
 import { recallReviewAttempts, rememberReviewAttempts, type ReviewReplyAttempt } from './sendAttempts';
+import { reviewReplyOutcome, type ReplyStatus } from './replyOutcome';
 
-type ReplyStatus = 'preparing' | 'uploading' | 'upload-failed' | 'waiting' | 'checking' | 'sending'
-  | 'connection-failed' | 'failed' | 'uncertain' | 'queued' | 'sent';
 export type ReviewOutgoingReply = ReviewReplyAttempt & {
   status: ReplyStatus;
   note: string | null;
@@ -27,7 +25,7 @@ export type ReviewOutgoingReply = ReviewReplyAttempt & {
 };
 
 function isAccepted(attempt: ReviewOutgoingReply): boolean {
-  return attempt.status === 'queued' || attempt.status === 'sent';
+  return attempt.status === 'accepted' || attempt.status === 'sent';
 }
 
 function uploadFailed(upload: PendingAttachment): boolean {
@@ -43,13 +41,6 @@ type Options = {
   attemptMetadataKey: string;
   legacyConversationId?: string;
 };
-
-function statusFor(delivery: DeliveredMessage): Pick<ReviewOutgoingReply, 'status' | 'note'> {
-  if (delivery.fate === 'uncertain') {
-    return { status: 'uncertain', note: 'The agent did not confirm receipt.' };
-  }
-  return { status: 'failed', note: fateSentence(delivery) ?? 'The reply was not sent.' };
-}
 
 // A card and its bar beneath an open artifact edit one draft and send from one list.
 const mounted = new Map<string, { composer: ReviewReplyComposer; references: number; mounts: number }>();
@@ -88,7 +79,8 @@ export class ReviewReplyComposer {
   submitting = $state(false);
   intakeBusy = $state(false);
   error = $state<unknown>(null);
-  accepted = $state<{ through: number | undefined; fate: 'started' | 'injected' | 'queued' } | null>(null);
+  /** The newest reply the conversation recorded, and the read boundary it was sent with. */
+  delivered = $state<{ through: number | undefined; fate: 'started' | 'injected' } | null>(null);
 
   constructor(options: Options) {
     this.#options = options;
@@ -98,7 +90,7 @@ export class ReviewReplyComposer {
   }
 
   get draftKey() { return this.#key; }
-  get hasHeldReply() { return this.attempts.some(attempt => attempt.status === 'queued'); }
+  get hasHeldReply() { return this.attempts.some(attempt => attempt.status === 'accepted'); }
   get hasUnsettled() { return this.attempts.some(attempt => !isAccepted(attempt)); }
   get canAttach() {
     return this.attachmentReady && (this.uploadDestination.expected_conversation_id !== null || !this.attempts.some(attempt =>
@@ -181,6 +173,11 @@ export class ReviewReplyComposer {
 
   #observeQueue(id: string | null): (() => void) | undefined {
     this.queueView = null;
+    // A reply accepted into a conversation that is no longer this one's, after a refused
+    // start or a reset, has no tail here to settle it. Read its outcome now.
+    for (const attempt of this.attempts) {
+      if (attempt.status === 'accepted' && attempt.conversationId !== id) void this.#check(attempt);
+    }
     if (id === null) return;
 
     const scope = new AbortController();
@@ -209,7 +206,7 @@ export class ReviewReplyComposer {
           });
           const held = new Set(view.held_prompts.filter(prompt => !prompt.delivery_uncertain)
             .map(prompt => prompt.sender_message_id));
-          await Promise.all(this.attempts.filter(attempt => attempt.status === 'queued'
+          await Promise.all(this.attempts.filter(attempt => attempt.status === 'accepted'
             && attempt.conversationId === id && !held.has(attempt.message.messageId))
             .map(attempt => this.#check(attempt, scope.signal)));
 
@@ -344,7 +341,8 @@ export class ReviewReplyComposer {
   }
 
   #store(attempts: ReviewOutgoingReply[]): Promise<boolean> {
-    const contents = attempts.filter(attempt => !isAccepted(attempt)).map(({ message, conversationId, localRefusal, pendingUploads }) => ({
+    // An accepted reply stays stored until it is recorded, so a reload still reads its outcome.
+    const contents = attempts.filter(attempt => attempt.status !== 'sent').map(({ message, conversationId, localRefusal, pendingUploads }) => ({
       message, conversationId, localRefusal,
       pendingUploads: pendingUploads?.map(upload => ({ ...upload }))
     }));
@@ -368,15 +366,17 @@ export class ReviewReplyComposer {
     const id = attempt.message.messageId;
     const current = this.attempts.find(entry => entry.message.messageId === id);
     if (!current) return;
-    if (current.status === 'queued' && delivery.fate === 'suppressed') {
+    const outcome = reviewReplyOutcome(delivery, current.status);
+    if (outcome === null) {
       await this.#remove(id);
       return;
     }
-    if (delivery.fate === 'started' || delivery.fate === 'injected' || delivery.fate === 'queued') {
-      const firstQueueReceipt = delivery.fate === 'queued' && current.status !== 'queued';
+    if (outcome.status === 'accepted' || outcome.status === 'sent') {
+      const firstAcceptance = outcome.status === 'accepted' && current.status !== 'accepted';
       const through = attempt.message.ownerReadThroughSequence;
-      if (this.accepted?.through === undefined || (through !== undefined && through >= this.accepted.through)) {
-        this.accepted = { through, fate: delivery.fate };
+      if ((delivery.fate === 'started' || delivery.fate === 'injected')
+        && (this.delivered?.through === undefined || (through !== undefined && through >= this.delivered.through))) {
+        this.delivered = { through, fate: delivery.fate };
       }
       if (this.#options.legacyConversationId === undefined && !this.uploads.length
         && delivery.conversation_id !== this.uploadDestination.expected_conversation_id
@@ -385,15 +385,13 @@ export class ReviewReplyComposer {
       }
       this.attempts = this.attempts.map(entry => entry.message.messageId === id
         ? { ...entry, conversationId: delivery.conversation_id } : entry);
-      this.#update(id, {
-        status: delivery.fate === 'queued' ? 'queued' : 'sent',
-        note: delivery.fate === 'queued' ? 'Queued' : delivery.fate === 'injected' ? 'Sent to the running turn' : 'Sent'
-      });
-      if (firstQueueReceipt) void this.#refreshQueue?.();
+      this.#update(id, { status: outcome.status, note: outcome.note });
+      // The outcome can be recorded before the send's answer arrives. Read it at once.
+      if (firstAcceptance) void this.#refreshQueue?.();
       await this.#store(this.attempts);
       return;
     }
-    this.#update(id, statusFor(delivery));
+    this.#update(id, { status: outcome.status, note: outcome.note });
     if (delivery.fate !== 'uncertain' && delivery.conversation_id !== null && attempt.conversationId !== delivery.conversation_id) {
       // A confirmed failure gets a new message ID on retry. Keep that retry with the
       // first send's destination even when it was unknown before the send.
@@ -408,9 +406,9 @@ export class ReviewReplyComposer {
     if (this.#checking.has(id)) return;
     this.#checking.add(id);
     try {
-      const delivery = await readOwnerSend(this.#options.owner, id, signal);
+      const outcome = await readOwnerSend(this.#options.owner, id, signal);
       if (signal?.aborted) return;
-      if (delivery) await this.#apply(attempt, delivery);
+      if (outcome) await this.#apply(attempt, ownerSendOutcomeAsDelivery(outcome));
       else this.#noteMissingResult(attempt);
     } catch {
       if (signal?.aborted) return;
@@ -421,14 +419,15 @@ export class ReviewReplyComposer {
   }
 
   #noteMissingResult(attempt: ReviewOutgoingReply): void {
-    if (attempt.status === 'uncertain' || attempt.status === 'queued') return;
+    if (attempt.status === 'uncertain' || attempt.status === 'accepted') return;
     this.#update(attempt.message.messageId, { status: 'connection-failed', note: 'Panels did not confirm the send.' });
   }
 
   async reconcile(signal?: AbortSignal): Promise<void> {
     if (!this.ready || this.submitting) return;
     await Promise.all(this.attempts
-      .filter(attempt => attempt.status === 'checking' || attempt.status === 'connection-failed' || attempt.status === 'uncertain')
+      .filter(attempt => attempt.status === 'checking' || attempt.status === 'connection-failed'
+        || attempt.status === 'uncertain' || attempt.status === 'accepted')
       .map(attempt => this.#check(attempt, signal)));
   }
 

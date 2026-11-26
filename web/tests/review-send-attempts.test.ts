@@ -2,6 +2,9 @@ import { expect, it, vi } from 'vitest';
 import { mintOutgoingMessage, rememberOutgoingMessages, resetOutgoingImageReservationsForTest } from '../src/lib/conversation/outgoing';
 import { chiefAttemptKey, chiefAttemptMetadataKey } from '../src/lib/review/chiefMessage';
 import { recallReviewAttempts, rememberReviewAttempts } from '../src/lib/review/sendAttempts';
+import { reviewReplyOutcome } from '../src/lib/review/replyOutcome';
+import { ownerSendOutcomeAsDelivery } from '../src/lib/conversation/ownerSend';
+import type { OwnerSendOutcome } from '../src/lib/conversation/wire';
 
 function useTabStorage() {
   const values = new Map<string, string>();
@@ -75,4 +78,25 @@ it('reopens an attachment-only message without saving its browser file or previe
   } finally {
     resetOutgoingImageReservationsForTest();
   }
+});
+
+// A send answers at acceptance. Only a recorded reply may tick and finish the card; a
+// pending one keeps it open, and a later refusal or uncertainty ends it with its words.
+it('keeps an accepted reply waiting until its outcome read settles it', () => {
+  expect(reviewReplyOutcome({ fate: 'accepted', message_id: 'm', conversation_id: 'c' }, 'sending'))
+    .toEqual({ status: 'accepted', note: 'Accepted for delivery' });
+  const read = (outcome: OwnerSendOutcome['outcome'], fields: Partial<OwnerSendOutcome> = {}) => reviewReplyOutcome(
+    ownerSendOutcomeAsDelivery({ message_id: 'm', conversation_id: 'c', outcome, refusal_reason: null, reason: null, ...fields }),
+    'accepted');
+  expect(read('pending')?.status).toBe('accepted');
+  expect(read('delivered')?.status).toBe('sent');
+  expect(read('refused', { refusal_reason: 'model_resolution_failed' }))
+    .toEqual({ status: 'failed', note: 'Not delivered. The selected model is unavailable.' });
+  expect(read('uncertain')).toEqual({ status: 'uncertain', note: 'The agent did not confirm receipt.' });
+  expect(read('discarded', { reason: 'automatic_compaction_child_stopped' })).toBeNull();
+  // A reply restored after a reload is read again from "checking". It must settle the same way.
+  expect(reviewReplyOutcome(ownerSendOutcomeAsDelivery({ message_id: 'm', conversation_id: 'c', outcome: 'discarded',
+    refusal_reason: null, reason: null }), 'checking')).toBeNull();
+  expect(reviewReplyOutcome({ fate: 'suppressed', reason: 'proposal_revision_changed', conversation_id: 'c' }, 'sending'))
+    .toEqual({ status: 'failed', note: 'not sent · proposal_revision_changed' });
 });

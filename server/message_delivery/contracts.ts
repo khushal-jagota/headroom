@@ -8,6 +8,14 @@ export interface MessageDeliveryResult {
   conversation_id: string | null;
   fate: PromptDeliveryFate | MessageRecordedToOwner | MessageAcceptedForDelivery;
 }
+/** What later happened to an owner message that home accepted, read from stored rows only. */
+export interface OwnerSendOutcome {
+  readonly message_id: string;
+  readonly conversation_id: string | null;
+  readonly outcome: 'pending' | 'delivered' | 'refused' | 'discarded' | 'uncertain';
+  readonly refusal_reason: string | null;
+  readonly reason: string | null;
+}
 /** An upload admission writes only through its owning area's write door. */
 export interface MessageAdmission {
   preflight(current_conversation_id: string | null): Promise<MessageDeliveryResult | null>;

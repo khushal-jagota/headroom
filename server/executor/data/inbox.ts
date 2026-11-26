@@ -104,6 +104,7 @@ interface InboxPosition {
   sequence: string;
   result_json: string;
   machine_id: string;
+  disposition: string;
 }
 export interface AcceptOptions {
   identity: ExecutorIdentity;
@@ -260,27 +261,31 @@ export class InboxStore {
       return replay_agent_message(sql, envelope, this.machine_id, source)!.receipt;
     }
     const previous = sql.get<InboxPosition>(
-      'SELECT CAST(sequence AS TEXT) AS sequence,result_json,machine_id FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
+      'SELECT CAST(sequence AS TEXT) AS sequence,result_json,machine_id,disposition FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
       [envelope.sender_id, envelope.conversation_id],
     );
     if (previous && previous.machine_id !== this.machine_id)
       throw new PlannerError('agent_forbidden', 'receipt belongs to another machine');
     if (!previous || envelope.sequence > counter(previous.sequence)) return null;
     const stored = InboxStore.receipt(previous);
-    if (envelope.sequence === counter(previous.sequence)) {
-      if (stored.submission_id !== envelope.submission_id)
-        throw invalid('Submission identity conflicts with its first receipt');
-      return stored;
-    }
     const args = envelope.payload.arguments;
     const body = is_json_object(args) ? args.body : null;
     const target = is_json_object(body) ? body.target : null;
-    if (
-      envelope.kind === 'cli_write' &&
-      envelope.payload.operation === 'message.send' &&
-      is_json_object(target) &&
-      target.kind === 'owner'
-    )
+    const message_send =
+      envelope.kind === 'cli_write' && envelope.payload.operation === 'message.send';
+    if (envelope.sequence === counter(previous.sequence)) {
+      if (stored.submission_id !== envelope.submission_id)
+        throw invalid('Submission identity conflicts with its first receipt');
+      if (
+        previous.disposition === 'dispatching' &&
+        message_send &&
+        is_json_object(target) &&
+        target.kind !== 'owner'
+      )
+        return reconciled_dispatch(sql, stored, target);
+      return stored;
+    }
+    if (message_send && is_json_object(target) && target.kind === 'owner')
       throw invalid('No retained acceptance exists for this older message submission');
     return {
       sender_id: envelope.sender_id,
@@ -452,4 +457,41 @@ export class InboxStore {
       throw error;
     }
   }
+}
+
+/**
+ * A dispatch reservation from before recipient journals holds no message. Its recipient's
+ * conversation event, named by the submission ID, settles it. Without one it stays uncertain.
+ */
+function reconciled_dispatch(
+  sql: ReadSql,
+  stored: WireValue<'AcceptanceReceipt'>,
+  target: WireValue<'JsonObject'>,
+): WireValue<'AcceptanceReceipt'> {
+  const event = sql.get<{ conversation_id: string; kind: string; refusal_reason: string | null }>(
+    "SELECT conversation_id,kind,json_extract(payload,'$.refusal_reason') AS refusal_reason FROM conversation_events " +
+      // The full kind list lets the partial sender-message index serve this lookup.
+      "WHERE json_extract(payload,'$.sender_message_id')=? " +
+      "AND kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
+      "AND kind IN ('prompt','prompt_delivery_refused') " +
+      "ORDER BY CASE kind WHEN 'prompt' THEN 0 ELSE 1 END,sequence DESC LIMIT 1",
+    [stored.submission_id],
+  );
+  if (!event) return stored;
+  const result: WireValue<'JsonObject'> =
+    event.kind === 'prompt'
+      ? {
+          target: { kind: target.kind, id: target.id },
+          conversation_id: event.conversation_id,
+          fate: 'accepted',
+          submission_id: stored.submission_id,
+        }
+      : {
+          target: { kind: target.kind, id: target.id },
+          conversation_id: event.conversation_id,
+          fate: 'refused',
+          refusal_reason: event.refusal_reason,
+        };
+  // A refusal keeps the delivery answer the machine already understands, as before journals.
+  return { ...stored, disposition: 'accepted', result };
 }

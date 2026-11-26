@@ -31,8 +31,9 @@
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { ATTACHMENT_NOT_READ_BACK, editablePiecesFromRecorded, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
   import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
-  import { ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from "../../lib/conversation/ownerSend";
+  import { ownerSendOutcomeAsDelivery, ownerSendPath, postOwnerSend, readOwnerSend, type SendOwner } from "../../lib/conversation/ownerSend";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
+  import { acceptedPendingMessages } from "../../lib/conversation/transcriptOutgoing";
   import {
     heldPromptIsInLens,
     conversationLensPreference,
@@ -440,6 +441,11 @@
     .filter(item => item.kind === "row" && ["prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded"].includes(item.row_kind))
     .flatMap(item => item.kind === "row" && item.sender_message_id ? [item.sender_message_id] : []) ?? []));
   const committedMessageIds = $derived(new Set([...acknowledgedMessageIds, ...admittedMessageIds]));
+  /** Messages home accepted from other senders that the conversation has not placed yet.
+   *  Each shows as accepted for delivery until its prompt row replaces it. */
+  let pendingMessages = $derived(acceptedPendingMessages(
+    (view?.pending_messages ?? []).filter(pending => heldPromptIsInLens(pending, lens, senderLabel)),
+    committedMessageIds, sentMessages));
   let visibleHeldRows = $derived(heldPromptRows(
     (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)
       && (held.sender_message_id == null || !committedMessageIds.has(held.sender_message_id)
@@ -469,6 +475,19 @@
       void refreshComposerCatalog();
     }
     wasRunning = nowRunning;
+  });
+
+  /**
+   * A send is answered once home has the message, and the queue may take it just after.
+   * The view stream says when the held prompts change, so the queue and its controls
+   * follow at once instead of waiting for the next recorded row.
+   */
+  let heldPromptsSeen: string | null = null;
+  $effect(() => {
+    const status = reader?.status;
+    const seen = status ? `${status.runtime_epoch}:${status.waiting_messages_revision}` : null;
+    if (seen !== null && heldPromptsSeen !== null && seen !== heldPromptsSeen) void refreshView();
+    heldPromptsSeen = seen;
   });
 
   /** The composer's typeahead menu, read on open and when a turn ends.
@@ -781,6 +800,14 @@
     const destinationIsCurrent = id !== null && id === openedId;
     const awaitingFirstLink = id !== null && openedId === null && conversationId === null;
     switch (delivered.fate) {
+      case "accepted":
+        // Home holds it. A conversation that does not exist yet names no ID, and the words
+        // stay until a row says what became of them.
+        if (id !== null && !destinationIsCurrent && !awaitingFirstLink) await stopDrawing(message.messageId);
+        else await updateOutgoing(message.messageId, {
+          knownFate: "accepted_for_delivery", ...(id === null ? {} : {settledConversationId: id})
+        });
+        break;
       case "started":
       case "injected":
         if (!destinationIsCurrent && !awaitingFirstLink) {
@@ -850,7 +877,7 @@
       try {
         const result = await readOwnerSend(owner, message.messageId);
         if (result && !readOnly && owner.kind === sendOwner?.kind && owner.id === sendOwner.id) {
-          await applySendResult(message, result);
+          await applySendResult(message, ownerSendOutcomeAsDelivery(result));
         }
       } catch {
         // The stored send is available for the next connection or a manual retry.
@@ -896,7 +923,8 @@
     sendStatusChecks.add(messageId);
     let repeated = false;
     try {
-      const known = await readOwnerSend(owner, messageId);
+      const outcome = await readOwnerSend(owner, messageId);
+      const known = outcome === null ? null : ownerSendOutcomeAsDelivery(outcome);
       if (!currentOwner() || !sentMessages.some(candidate => candidate.messageId === messageId)) return;
       if (known && known.fate !== "refused" && known.fate !== "suppressed") {
         await applySendResult(message, known);
@@ -907,8 +935,10 @@
       // authorizes a new send from one of those attempts.
       const failed = known !== null || message.knownFate === "not_sent" || message.knownFate === "machine_offline";
       if (!target && !failed) return;
-      const originalConversation = known?.conversation_id ?? target?.conversation_id ?? null;
-      if (failed && (originalConversation !== currentDestination() || startingDestination !== currentDestination())) {
+      // A message sent without a conversation (a first message) may start the current one again,
+      // even after home accepted it into a conversation whose start was later refused.
+      const pinnedConversation = target ? target.conversation_id ?? null : known?.conversation_id ?? null;
+      if (failed && ((pinnedConversation !== null && pinnedConversation !== currentDestination()) || startingDestination !== currentDestination())) {
         errorNote = "This message belongs to an earlier conversation.";
         return;
       }
@@ -1187,7 +1217,7 @@
   transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
-  outgoingMessages={sentMessages}
+  outgoingMessages={[...sentMessages, ...pendingMessages]}
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}

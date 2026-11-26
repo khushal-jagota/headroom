@@ -27,7 +27,7 @@
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
   import { releaseTextRestoration, type TextRestorationPlacement, type LatestPlacementIntent } from './placement';
-  import { outgoingMessageIsSending } from "../../../lib/conversation/outgoing";
+  import { homeHasTheSend, outgoingMessageIsSending } from "../../../lib/conversation/outgoing";
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -553,7 +553,7 @@
   }
 
   function hasUnplacedAcceptedSend(): boolean {
-    if (outgoingMessages.some(message => (message.accepted || outgoingMessageIsSending(message)) && !message.restored && !settledMessageIds.has(message.messageId))) return true;
+    if (outgoingMessages.some(message => (homeHasTheSend(message) || outgoingMessageIsSending(message)) && !message.restored && !settledMessageIds.has(message.messageId))) return true;
     return [...(contentElement?.querySelectorAll<HTMLElement>(PLACEABLE_SEND) ?? [])]
       .some(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) &&
         !outgoingMessages.some(message => message.messageId === element.dataset.conversationOutgoing && message.restored));

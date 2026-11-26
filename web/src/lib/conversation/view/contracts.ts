@@ -397,6 +397,9 @@ export interface ConversationViewStatus {
   runtime_epoch: string;
   revision: number;
   activity_at_unix_milliseconds: number | null;
+  /** Changes when a message waiting for this conversation is admitted, held or settled.
+   *  Read the conversation's held prompts and pending messages again when it does. */
+  waiting_messages_revision: number;
   rest: ViewRestFacts;
   authority: "current" | "unknown";
   turn_key: string | null;

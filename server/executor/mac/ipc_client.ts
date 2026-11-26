@@ -60,9 +60,10 @@ export async function request(
     result_seconds: CLI_RESULT_TIMEOUT_SECONDS,
     reserve_seconds: CLI_TRANSPORT_RESERVE_SECONDS,
   },
+  /** A write's request ID is its submission ID, so a caller may mint it to name the write. */
+  request_id: string = randomUUID(),
 ): Promise<IpcResponse> {
   const deadline = monotonic() + limits.result_seconds;
-  const request_id = randomUUID();
   const settings = executor_client_settings(environment);
   let submission_id: string = request_id;
   if (operation === 'write') decode_value(payload, 'IpcWritePayload');

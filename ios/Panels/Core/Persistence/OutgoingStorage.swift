@@ -248,9 +248,14 @@ import SwiftData
                 reasoningEffort: metadata.omitEffort ? nil : message.reasoningEffort,
                 reasoningEffortIsSet: !metadata.omitEffort && message.reasoningEffortIsSet,
                 senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
-                ownerReadThroughSequence: message.ownerReadThroughSequence)
+                ownerReadThroughSequence: message.ownerReadThroughSequence, reconcilesSequence: message.reconcilesSequence)
         }
         return work
+    }
+    /// The message as it was saved, before it took the conversation a first message created.
+    func composedMessage(server: String, id: String) throws -> ConversationSend? {
+        guard let row = try raw(server, "outbox", id) else { return nil }
+        return try JSONDecoder().decode(PendingWork.self, from: row.payload).message
     }
     func audioIsUnowned(_ file: String) throws -> Bool {
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.audioFile == file })
@@ -459,6 +464,28 @@ import SwiftData
             return true
         }
     }
+    /// Home accepted a message and refused it later: it fails with the refusal, so Try Again
+    /// sends it again. Returns whether it changed.
+    func reopenRefused(server: String, id: String, note: String, now: Date = .now) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.kind == PendingWork.Kind.message.rawValue,
+                  row.state == PendingWork.State.sent.rawValue else { return false }
+            row.state = PendingWork.State.failed.rawValue; row.note = note; row.completed = now
+            row.expiresAt = Self.expiry(kind: row.kind, state: .failed, completed: now)
+            return true
+        }
+    }
+    /// Another device sent a refused message again and its refused row folded away: the
+    /// refusal is settled, so this copy leaves instead of offering a second resend.
+    func dropFoldedRefusal(server: String, id: String) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.kind == PendingWork.Kind.message.rawValue,
+                  row.state == PendingWork.State.failed.rawValue else { return false }
+            context.delete(row)
+            if let payload = try raw(server, "outbox", id) { context.delete(payload) }
+            return true
+        }
+    }
     /// Try Again for an item that keeps its identity: it waits again in its old place.
     func requeue(server: String, id: String) throws {
         try transaction(server) {
@@ -486,8 +513,12 @@ import SwiftData
         try transaction(server) {
             guard let original = try metadata(server, id), original.state == "failed", replacement.state == .waiting else { throw StoreError.invalidTransition }
             let next = try insert(try capturePhotoDraft(replacement, server: server, capturedDraft: capturedDraft), server: server, sequence: original.sequence)
-            next.lane = original.lane; next.conversationID = original.conversationID
-            next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
+            next.lane = original.lane
+            // A replacement saved without a conversation joins or starts the current one.
+            if replacement.message?.conversationId != nil {
+                next.conversationID = original.conversationID
+                next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
+            }
             if let payload = try raw(server, "outbox", id) { context.delete(payload) }
             context.delete(original)
         }

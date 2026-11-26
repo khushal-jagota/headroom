@@ -269,7 +269,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
         identity.principal,
         target,
         parsed,
-        async (body, remember_destination) => {
+        async (body, remember_destination, recording_receipt) => {
           const created_conversation_id = conversation_start.new_conversation_id();
           const overrides = runs_under(body);
           const admission = video_send_admission(
@@ -306,6 +306,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
               sender_message_id: body.sender_message_id,
               sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
               reconciles_sequence: body.reconciles_sequence,
+              recording_receipt,
             },
           );
           return {

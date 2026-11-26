@@ -38,7 +38,7 @@
       });
       // The emptied line and the agent's working mark are the whole of "it is coming",
       // so only a fate they cannot show gets words: a refusal, or a send nobody can
-      // vouch for. A started, queued, or steered send says nothing and changes nothing.
+      // vouch for. An accepted, started, queued, or steered send says nothing and changes nothing.
       note = fate.fate === "refused" || fate.fate === "uncertain" ? fateSentence(fate) : null;
     } catch (problem) {
       note = problem instanceof Error ? problem.message : "not delivered";

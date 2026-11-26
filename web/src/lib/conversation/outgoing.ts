@@ -26,10 +26,16 @@ import {
  * arrived is a question the record answers a moment later, so this says nothing while it
  * waits to be told — announcing that nobody knows, to a browser that has not yet looked,
  * puts a frightening sentence on a message that is about to turn out fine.
+ *
+ * ``accepted_for_delivery`` is home's answer that it holds the message, and nothing more:
+ * no agent has it yet, and whether one will is what its row says when it comes. Home
+ * holding it for a busy agent is ``waiting_for_the_agent``, which only a held prompt in
+ * the server's queue says.
  */
 export type OutgoingMessageKnownFate =
   | "nothing_yet"
   | "sent_before_this_page"
+  | "accepted_for_delivery"
   | "waiting_for_the_agent"
   | "answer_never_came_back"
   | "machine_offline"
@@ -166,6 +172,7 @@ function base64DecodedByteCount(data: string): number {
 const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
+  accepted_for_delivery: "accepted for delivery",
   waiting_for_the_agent: "queued",
   answer_never_came_back: "no response from Panels",
   machine_offline: null,
@@ -176,6 +183,12 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
 /** A send the server has not answered yet, and that nothing has yet shown to have failed. */
 export function outgoingMessageIsSending(message: OutgoingMessage): boolean {
   return message.knownFate === "nothing_yet" && message.sendTarget !== undefined && !message.accepted;
+}
+
+/** Home has this send: it accepted it, or the record says the agent has it. The pane places
+ *  such a send as a send, not as a message brought back to recover. */
+export function homeHasTheSend(message: OutgoingMessage): boolean {
+  return message.accepted === true || message.knownFate === "accepted_for_delivery";
 }
 
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
@@ -377,9 +390,10 @@ export function tellWhenAWaitRunsOut(
 
 /** Whether this tab holds a send the record has not answered for.
  *
- * Both of these are waiting on the record and neither can be settled here. One never heard
- * an answer, and one came back from before the page reloaded and has not been told yet. A
- * conversation holding either has a reason to read the record again when it can.
+ * Each of these waits on the record and none can be settled here. One never heard an
+ * answer, one came back from before the page reloaded and has not been told yet, and two
+ * are held by home with no outcome yet. A conversation holding any of them has a reason to
+ * read the record again when it can.
  */
 export function anOutgoingMessageIsWaitingOnTheRecord(
   outgoing: readonly OutgoingMessage[]
@@ -387,6 +401,7 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
   return outgoing.some((message) =>
     message.knownFate === "answer_never_came_back"
     || message.knownFate === "sent_before_this_page"
+    || message.knownFate === "accepted_for_delivery"
     || message.knownFate === "waiting_for_the_agent"
   );
 }

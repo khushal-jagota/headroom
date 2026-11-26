@@ -1,7 +1,16 @@
 /** Shared admission and recovery risks that isolated receipt and claim tests do not cover. */
 import { expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
-import { ConversationLinkLock } from '../runtime/conversation_start.ts';
+import {
+  ConversationLinkLock,
+  configure_conversation_start,
+} from '../runtime/conversation_start.ts';
+import { send_message } from '../message_delivery/service.ts';
+import { owner_send_outcome, run_owner_send } from '../message_delivery/owner_sends.ts';
+import { delivery_fate_json } from '../conversation/http.ts';
+import { OWNER } from '../core/contracts.ts';
+import { buildClock, type Clock } from '../core/clock.ts';
+import { loadConfig } from '../core/config.ts';
 import {
   ConversationStartRequest,
   PromptDeliveryQueued,
@@ -494,4 +503,284 @@ test('terminal retention removes settled payloads but retains unresolved command
       )
       .map((row) => row.command_id),
   ).toEqual(['waiting']);
+});
+
+/** One owner composer send through the owner-send door, as the Chief's route makes it. */
+function owner_sender(
+  f: ReturnType<typeof setup>,
+  clock: Clock,
+  target: { kind: 'chief'; id: string },
+) {
+  return (
+    id: string,
+    options: {
+      owner_read_through_sequence?: number;
+      after_admission?: () => void;
+    } = {},
+  ) =>
+    run_owner_send(
+      f.database,
+      f.core,
+      OWNER,
+      target,
+      {
+        conversation_id: null,
+        owner_read_through_sequence: options.owner_read_through_sequence ?? null,
+        backend_key: null,
+        model: null,
+        reasoning_effort: null,
+        content: [{ piece: 'text', text: id }],
+        sender_label: 'You',
+        mode: 'queue',
+        sender_message_id: id,
+        sent_at_unix_milliseconds: null,
+        reconciles_sequence: null,
+        provided_fields: new Set(),
+      },
+      async (body, remember_destination, recording_receipt) => {
+        const delivered = await send_message(
+          f.core,
+          f.database,
+          clock,
+          { principal: OWNER, conversationId: null },
+          target,
+          remember_destination(text_message_content(id)),
+          body.mode,
+          {
+            conversation_id: body.conversation_id,
+            created_conversation_id: 'new-chief',
+            owner_read_through_sequence: body.owner_read_through_sequence,
+            sender_message_id: id,
+            recording_receipt:
+              recording_receipt && options.after_admission
+                ? {
+                    ...recording_receipt,
+                    admitted: () => {
+                      recording_receipt.admitted?.();
+                      options.after_admission!();
+                    },
+                  }
+                : recording_receipt,
+          },
+        );
+        return {
+          conversation_id: delivered.conversation_id,
+          ...delivery_fate_json(delivered.fate),
+        };
+      },
+    );
+}
+
+// Risk: an owner send waits for native delivery, so a slow launch holds its sender, the next
+// owner send to the same target, and a repeat of a lost answer. Gap: the owner routes had no
+// test with native delivery held. This reuses the scripted core, and the first message
+// creates the Chief's conversation, as the incident's launch did. The queue takes the second
+// message after its answer, so the view stream must say so: a reader has no other cue.
+test('an owner send answers at acceptance and its outcome settles from stored rows', async () => {
+  const { ConversationViewLiveOutput } = await import('../conversation/views/live_output.ts');
+  const views = new ConversationViewLiveOutput();
+  const f = setup({
+    behavior: { barrier: 'native' },
+    core: { publish_frame: (id, frame) => views.publish_frame(id, frame) },
+  });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: f.database_path,
+  });
+  const clock = buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' }));
+  const target = { kind: 'chief' as const, id: 'chief' };
+  const owner_send = owner_sender(f, clock, target);
+  const stored_answer = (id: string) =>
+    f.database.read(
+      (sql) =>
+        sql.get<{ response: string | null }>(
+          'SELECT response FROM owner_send_receipts WHERE message_id=?',
+          [id],
+        )?.response,
+    );
+  const outcome = (id: string) => owner_send_outcome(f.database, target, id);
+  const accepted = (id: string) => ({
+    conversation_id: 'new-chief',
+    fate: 'accepted',
+    message_id: id,
+  });
+  expect(await owner_send('first')).toEqual(accepted('first'));
+  const child = await f.child;
+  await child.wait_for_barrier('native');
+  try {
+    // Previous code reads a stored answer as final, so nothing is stored before it is.
+    expect(stored_answer('first')).toBeNull();
+    expect(outcome('first')).toMatchObject({ conversation_id: 'new-chief', outcome: 'pending' });
+    expect(await owner_send('first')).toEqual(accepted('first'));
+    const view = views.subscribe('new-chief', 'focus', { transcript: true, turn_key: null });
+    const waiting = views.status('new-chief')[2];
+    expect(await owner_send('second')).toEqual(accepted('second'));
+    // One wake for its admission, and one for the hold decided after the answer.
+    await vi.waitFor(() => expect(views.status('new-chief')[2]).toBe(waiting + 2));
+    expect(await view.next_wake(0)).toBe(true);
+    view.close();
+    expect(stored_answer('second')).toBeNull();
+    expect(outcome('second')).toMatchObject({ outcome: 'pending' });
+    // A replaced recipient refuses the held message when its turn comes.
+    f.database.write((tx) =>
+      tx.run("UPDATE agents SET conversation_id='replacement' WHERE agent_key='chief_of_staff'"),
+    );
+    await child.release('native');
+    await vi.waitFor(() =>
+      expect(outcome('first')).toEqual({
+        message_id: 'first',
+        conversation_id: 'new-chief',
+        outcome: 'delivered',
+        refusal_reason: null,
+        reason: null,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(stored_answer('first')).toBe(
+        JSON.stringify({ conversation_id: 'new-chief', fate: 'started' }),
+      ),
+    );
+    await child.finish();
+    await vi.waitFor(() =>
+      expect(outcome('second')).toMatchObject({
+        outcome: 'refused',
+        refusal_reason: 'no_such_conversation',
+      }),
+    );
+    expect(
+      f.store
+        .read_events_after('new-chief', 0)
+        .filter((row) => row.kind === 'prompt')
+        .map((row) => (row.payload as { sender_message_id?: string }).sender_message_id),
+    ).toEqual(['first']);
+    expect((await child.inspect()).delivered_text).toHaveLength(1);
+  } finally {
+    await child.release('native');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: a steer that arrives while its recipient starts waits for the start without a held
+// prompt, so a reader shows nothing for an accepted message. Gap: the conversation read listed
+// only held prompts. This reuses the scripted core, held at its first native prompt.
+test('an accepted steer is listed as pending until its prompt row lands', async () => {
+  const { accepted_unplaced_messages } =
+    await import('../message_delivery/data/recipient_deliveries.ts');
+  const { Deferred } = await import('../core/deferred.ts');
+  const f = setup({ behavior: { barrier: 'native' } });
+  await f.start();
+  const first = f.send('first', 'first');
+  const child = await f.child;
+  await child.wait_for_barrier('native');
+  const pending = async () => {
+    const held = await f.core.held_prompts('core');
+    return f.database.read((sql) =>
+      accepted_unplaced_messages(
+        sql,
+        'core',
+        new Set(held.flatMap((row) => row.sender_message_id ?? [])),
+      ),
+    );
+  };
+  try {
+    const accepted = new Deferred<void>();
+    const steer = f.core.send('core', text_message_content('steer words'), {
+      sender_label: 'Chief',
+      sender: { kind: 'chief', id: 'chief' },
+      sender_message_id: 'steer',
+      mode: 'steer',
+      recording_receipt: {
+        sender_id: '',
+        submission_id: 'steer',
+        admitted: () => accepted.resolve(),
+      },
+    });
+    await accepted.promise;
+    // The first message is on its way to the agent, so it is listed too until its row lands.
+    expect(await pending()).toEqual([
+      expect.objectContaining({ sender_message_id: 'first', requested_mode: 'queue' }),
+      {
+        sender_message_id: 'steer',
+        requested_mode: 'steer',
+        sender_label: 'Chief',
+        sender: { kind: 'chief', id: 'chief' },
+        recipient: null,
+        sent_at_unix_milliseconds: null,
+        text: 'steer words',
+      },
+    ]);
+    await child.release('native');
+    await Promise.all([first, steer]);
+    await vi.waitFor(async () => expect(await pending()).toEqual([]));
+    expect(
+      f.store
+        .read_events_after('core', 0)
+        .filter((row) => row.kind === 'prompt')
+        .map((row) => {
+          const payload = row.payload as { sender_message_id?: string; mode?: string };
+          return [payload.sender_message_id, payload.mode];
+        }),
+    ).toContainEqual(['steer', 'steer']);
+  } finally {
+    await child.release('native');
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
+});
+
+// Risk: an owner reply answered at acceptance no longer marks what the owner read when its row
+// lands, or marks it on a refusal that comes later. Gap: the earlier owner test names no read
+// boundary. Reuse the scripted core with a Chief conversation that already has rows.
+test('owner read-through applies when an accepted reply lands or is refused later', async () => {
+  const f = setup();
+  await f.start();
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: f.database_path,
+  });
+  f.database.write((tx) =>
+    tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','core')"),
+  );
+  const target = { kind: 'chief' as const, id: 'chief' };
+  const owner_send = owner_sender(
+    f,
+    buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' })),
+    target,
+  );
+  const read_through = () => f.store.read_conversation('core')!.owner_read_through_sequence;
+  const latest = () => f.store.read_conversation('core')!.latest_sequence;
+  const settled = (id: string, outcome: string) =>
+    vi.waitFor(() => expect(owner_send_outcome(f.database, target, id)).toMatchObject({ outcome }));
+  try {
+    await f.send('earlier', 'earlier');
+    const child = await f.child;
+    await child.finish();
+    await vi.waitFor(async () => expect(await f.core.is_running('core')).toBe(false));
+    const boundary = latest();
+    expect(read_through()).toBeLessThan(boundary);
+    expect(await owner_send('reply', { owner_read_through_sequence: boundary })).toMatchObject({
+      fate: 'accepted',
+    });
+    await settled('reply', 'delivered');
+    expect(read_through()).toBe(boundary);
+    await child.finish();
+    await vi.waitFor(async () => expect(await f.core.is_running('core')).toBe(false));
+    // Without a named boundary, the reply acknowledges what was there when it was sent,
+    // even when the conversation refuses it after the answer.
+    const later = latest();
+    expect(later).toBeGreaterThan(boundary);
+    expect(
+      await owner_send('refused-reply', {
+        after_admission: () =>
+          f.database.write((tx) =>
+            tx.run(
+              "UPDATE agents SET conversation_id='replacement' WHERE agent_key='chief_of_staff'",
+            ),
+          ),
+      }),
+    ).toMatchObject({ fate: 'accepted' });
+    await settled('refused-reply', 'refused');
+    expect(read_through()).toBe(later);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 10 });
+  }
 });

@@ -122,6 +122,16 @@ test('a repeated first message reaches each owner once and the repeat is answere
       });
       return { status: response.status, body: (await response.json()) as Record<string, any> };
     };
+    // A send answers at acceptance. Its stored outcome reports the delivery.
+    const settled = (kind: string, id: string, sender_message_id: string) =>
+      vi.waitFor(async () => {
+        const read = await call(
+          'GET',
+          `/conversation/owner-sends/${sender_message_id}?owner_kind=${kind}&owner_id=${id}`,
+        );
+        expect(read.body.outcome?.outcome).not.toBe('pending');
+        return read.body.outcome;
+      });
     const conversations = () =>
       database.read((sql) =>
         sql.all<{ conversation_id: string }>('SELECT conversation_id FROM conversations'),
@@ -137,6 +147,7 @@ test('a repeated first message reaches each owner once and the repeat is answere
     const owners = [
       {
         kind: 'chief',
+        id: 'chief',
         base: '/chief/conversation',
         link: () =>
           database.read(
@@ -148,6 +159,7 @@ test('a repeated first message reaches each owner once and the repeat is answere
       },
       {
         kind: 'ticket',
+        id: ticket.id,
         base: `/tickets/${ticket.id}/conversation`,
         link: () =>
           database.read(
@@ -160,6 +172,7 @@ test('a repeated first message reaches each owner once and the repeat is answere
       },
       {
         kind: 'manager',
+        id: manager.id,
         base: `/managers/${manager.id}/conversation`,
         link: () =>
           database.read(
@@ -196,15 +209,32 @@ test('a repeated first message reaches each owner once and the repeat is answere
       first_bodies.set(owner.kind, body);
       const send = () => call('POST', owner.base + '/send', body);
       const concurrent = await Promise.all([send(), send()]);
-      const later = await send();
-      const replies = [...concurrent, later];
-      for (const reply of replies) expect(reply, owner.kind).toMatchObject({ status: 200 });
-      const id = replies[0].body.conversation_id;
+      for (const reply of concurrent) expect(reply, owner.kind).toMatchObject({ status: 200 });
+      const id = concurrent[0].body.conversation_id;
       expect(typeof id, owner.kind).toBe('string');
+      // The first answers at acceptance. The repeat answers accepted while the message is
+      // pending, or its final answer once it settled, and never sends it again.
+      expect(concurrent[0].body, owner.kind).toEqual({
+        conversation_id: id,
+        fate: 'accepted',
+        message_id: sender_message_id,
+      });
       expect(
-        replies.map((reply) => reply.body),
+        [concurrent[0].body, { conversation_id: id, fate: 'started' }],
         owner.kind,
-      ).toEqual(replies.map(() => ({ conversation_id: id, fate: 'started' })));
+      ).toContainEqual(concurrent[1].body);
+      expect(await settled(owner.kind, owner.id, sender_message_id), owner.kind).toEqual({
+        message_id: sender_message_id,
+        conversation_id: id,
+        outcome: 'delivered',
+        refusal_reason: null,
+        reason: null,
+      });
+      const later = await send();
+      expect(later, owner.kind).toEqual({
+        status: 200,
+        body: { conversation_id: id, fate: 'started' },
+      });
       expect(conversations().length - before, owner.kind).toBe(1);
       expect(owner.link(), owner.kind).toBe(id);
       expect(prompts(sender_message_id), owner.kind).toEqual([
@@ -277,7 +307,15 @@ test('a repeated first message reaches each owner once and the repeat is answere
     expect(chief.link()).toBeNull();
     expect(prompts('repeat-chief')).toEqual([{ conversation_id: first, kind: 'prompt' }]);
     const chief_lookup = '/conversation/owner-sends/repeat-chief?owner_kind=chief&owner_id=chief';
-    expect((await call('GET', chief_lookup)).body).toEqual({ delivery: repeated.body });
+    expect((await call('GET', chief_lookup)).body).toEqual({
+      outcome: {
+        message_id: 'repeat-chief',
+        conversation_id: first,
+        outcome: 'delivered',
+        refusal_reason: null,
+        reason: null,
+      },
+    });
     expect(
       (
         await call(
@@ -304,22 +342,35 @@ test('a repeated first message reaches each owner once and the repeat is answere
     });
     const lookup = `/conversation/owner-sends/${queued_id}?owner_kind=manager&owner_id=${manager.id}`;
     const queued = await call('POST', manager_owner.base + '/send', queued_body);
-    expect(queued).toMatchObject({
+    expect(queued).toEqual({
       status: 200,
-      body: { conversation_id: target, fate: 'queued' },
+      body: { conversation_id: target, fate: 'accepted', message_id: queued_id },
     });
-    expect((await call('GET', lookup)).body).toEqual({ delivery: queued.body });
+    expect((await call('GET', lookup)).body).toEqual({
+      outcome: {
+        message_id: queued_id,
+        conversation_id: target,
+        outcome: 'pending',
+        refusal_reason: null,
+        reason: null,
+      },
+    });
+    // A held message has no final answer yet, so none is stored.
+    expect(
+      database.read((sql) =>
+        sql.get('SELECT response FROM owner_send_receipts WHERE message_id=?', [queued_id]),
+      ),
+    ).toEqual({ response: null });
     await server.close({ deadline: performance.now() / 1000 + 30 });
     server = undefined;
     server = await start();
-    const recovered = await call('GET', lookup);
-    expect(recovered).toMatchObject({
-      status: 200,
-      body: { delivery: { conversation_id: target, fate: 'started' } },
+    expect(await settled('manager', manager.id, queued_id)).toMatchObject({
+      conversation_id: target,
+      outcome: 'delivered',
     });
     expect(await call('POST', manager_owner.base + '/send', queued_body)).toEqual({
       status: 200,
-      body: recovered.body.delivery,
+      body: { conversation_id: target, fate: 'started' },
     });
     expect(prompts(queued_id)).toEqual([{ conversation_id: target, kind: 'prompt' }]);
     const recovered_payload = database.read((sql) =>
@@ -334,6 +385,26 @@ test('a repeated first message reaches each owner once and the repeat is answere
       text: 'keep these words',
       detail: null,
     });
+    // A plain-HTTP sender that names its message is answered at acceptance with that name.
+    const named = { target: { kind: 'manager', id: manager.id }, message: 'named', mode: 'queue' };
+    expect(
+      await call('POST', '/messages/send', JSON.stringify({ ...named, message_id: 'named-send' })),
+    ).toEqual({
+      status: 200,
+      body: {
+        target: named.target,
+        conversation_id: target,
+        fate: 'accepted',
+        message_id: 'named-send',
+      },
+    });
+    expect(
+      database.read((sql) =>
+        sql.get('SELECT 1 AS held FROM recipient_deliveries WHERE submission_id=?', [
+          `${target}:named-send`,
+        ]),
+      ),
+    ).toEqual({ held: 1 });
     // The first request failed before selecting content. A lost response and later
     // reset cannot turn it into a first send with a configuration that now validates.
     const preflight_id = 'refused-before-destination';
@@ -350,10 +421,16 @@ test('a repeated first message reaches each owner once and the repeat is answere
     );
     expect((await call('POST', manager_owner.base + '/reset')).status).toBe(200);
     const failed = await call('GET', preflight_url);
-    expect(failed.body.delivery).toMatchObject({ conversation_id: null, fate: 'refused' });
+    expect(failed.body.outcome).toEqual({
+      message_id: preflight_id,
+      conversation_id: null,
+      outcome: 'refused',
+      refusal_reason: 'write_to_backend_failed',
+      reason: null,
+    });
     expect(await call('POST', manager_owner.base + '/send', preflight_body)).toEqual({
       status: 200,
-      body: failed.body.delivery,
+      body: { conversation_id: null, fate: 'refused', refusal_reason: 'write_to_backend_failed' },
     });
     expect(manager_owner.link()).toBeNull();
     expect(prompts(preflight_id)).toEqual([]);

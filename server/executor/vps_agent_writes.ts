@@ -1,4 +1,4 @@
-import { Deferred } from '../core/deferred.ts';
+import { answer_at_acceptance } from '../message_delivery/acceptance.ts';
 /** Bind canonical agent mutations and native message dispatch to one inbox position. */
 import { IncomingMessage } from 'node:http';
 import { ADMITTED_REQUEST_SCOPE } from '../core/http/lifetime.ts';
@@ -315,86 +315,81 @@ export class AgentWrites {
       admitCommand(sql, principal, 'POST', '/api/messages/send', {}, body);
     });
     const files = await retain_published_message_files(published);
-    const accepted = new Deferred<WireValue<'AcceptanceReceipt'>>();
     let receipt: WireValue<'AcceptanceReceipt'> | null = null;
-    const operation: NativeMessageOperation = {
-      sender_id: envelope.sender_id,
-      submission_id: envelope.submission_id,
-      in_admission: (tx, conversation_id) => {
-        require_current_incarnation_in_transaction(
-          tx,
-          identity.executor_incarnation,
-          this.store.machine_id,
-        );
-        require_same_agent_owner(tx, write.child, principal);
-        const prior = this.store.prior_receipt(tx, envelope, identity);
-        if (prior !== null)
-          throw new PlannerError('retry_later', 'Message position changed before acceptance');
-        admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
-        this.store.require_file_owner(tx, envelope);
-        this.store.require_unchanged_files(envelope, published);
-        receipt = {
-          sender_id: envelope.sender_id,
-          submission_id: envelope.submission_id,
-          disposition: 'accepted',
-          accepted_at_vps_ms: now_ms(),
-          result: {
-            target: { kind: recipient.kind, id: recipient.id },
-            conversation_id,
-            fate: 'accepted',
-            submission_id: envelope.submission_id,
-          },
-        };
-        write_agent_message_acceptance(
-          tx,
-          {
-            submission_id: envelope.submission_id,
-            machine_id: this.store.machine_id,
+    return answer_at_acceptance(
+      (recording_receipt) =>
+        send_message(
+          this.conversations,
+          this.store.database,
+          this.clock,
+          { principal, conversationId: envelope.conversation_id },
+          recipient,
+          message,
+          mode,
+          { sender_message_id: envelope.submission_id, recording_receipt },
+        ),
+      {
+        sender_id: envelope.sender_id,
+        submission_id: envelope.submission_id,
+        in_admission: (tx, conversation_id) => {
+          require_current_incarnation_in_transaction(
+            tx,
+            identity.executor_incarnation,
+            this.store.machine_id,
+          );
+          require_same_agent_owner(tx, write.child, principal);
+          const prior = this.store.prior_receipt(tx, envelope, identity);
+          if (prior !== null)
+            throw new PlannerError('retry_later', 'Message position changed before acceptance');
+          admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
+          this.store.require_file_owner(tx, envelope);
+          this.store.require_unchanged_files(envelope, published);
+          receipt = {
             sender_id: envelope.sender_id,
-            source_conversation_id: envelope.conversation_id,
-            source: principal,
-            envelope,
-            recipient,
-            mode,
-            message,
-            target_conversation_id: conversation_id,
-            receipt,
-            pending: true,
-          },
-          files,
-          tx.get<{ delivery_order: number }>(
-            'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
-            [`${conversation_id}:${envelope.submission_id}`],
-          )!.delivery_order,
-        );
-        this.store.write_position(tx, envelope, receipt);
+            submission_id: envelope.submission_id,
+            disposition: 'accepted',
+            accepted_at_vps_ms: now_ms(),
+            result: {
+              target: { kind: recipient.kind, id: recipient.id },
+              conversation_id,
+              fate: 'accepted',
+              submission_id: envelope.submission_id,
+            },
+          };
+          write_agent_message_acceptance(
+            tx,
+            {
+              submission_id: envelope.submission_id,
+              machine_id: this.store.machine_id,
+              sender_id: envelope.sender_id,
+              source_conversation_id: envelope.conversation_id,
+              source: principal,
+              envelope,
+              recipient,
+              mode,
+              message,
+              target_conversation_id: conversation_id,
+              receipt,
+              pending: true,
+            },
+            files,
+            tx.get<{ delivery_order: number }>(
+              'SELECT delivery_order FROM recipient_deliveries WHERE submission_id=?',
+              [`${conversation_id}:${envelope.submission_id}`],
+            )!.delivery_order,
+          );
+          this.store.write_position(tx, envelope, receipt);
+        },
+        accepted: () => {
+          if (receipt === null) throw new Error('recipient admission omitted its receipt');
+          return receipt;
+        },
+        before_acceptance: () => {
+          throw new Error('recipient completed without durable custody');
+        },
+        failure_label: 'accepted recipient delivery failed',
       },
-      admitted: () => {
-        if (receipt === null) throw new Error('recipient admission omitted its receipt');
-        accepted.resolve(receipt);
-      },
-    };
-    const delivery = send_message(
-      this.conversations,
-      this.store.database,
-      this.clock,
-      { principal, conversationId: envelope.conversation_id },
-      recipient,
-      message,
-      mode,
-      { sender_message_id: envelope.submission_id, recording_receipt: operation },
     );
-    void delivery.catch((error) => {
-      if (!accepted.settled) accepted.reject(error);
-      else console.error('accepted recipient delivery failed', error);
-    });
-    return Promise.race([
-      accepted.promise,
-      delivery.then(() => {
-        if (accepted.value) return accepted.value;
-        throw new Error('recipient completed without durable custody');
-      }),
-    ]);
   }
 
   private async accept_owner_message(

@@ -26,3 +26,13 @@ The minimum iPhone build is **11**, the first build with the renamed status. Bui
 The minimum desktop bridge version is **2**. Bridge 1 also misclassifies the renamed status. Its API reads and actions receive HTTP 426 `desktop_update_required`. GET and HEAD `/api/meta` remain available so the native updater can read the new floor and request an app update. The new desktop shell reports bridge 2.
 
 Publish the matching client builds with this server release. An old client must update before it can resume work. A signed-device check and signed desktop release remain release-owner work; CI host tests and the unsigned simulator build do not prove distribution or device readiness.
+
+## Acceptance and delivery release
+
+Owner sends answer `accepted` as soon as home holds the message. Delivery is reported later under the same message ID.
+
+The minimum iPhone build is **13**, the first build that reads these answers. Builds 11 and 12 show an accepted message as sent, but a refusal that arrives after acceptance has no working Try Again there. Their reads and actions receive HTTP 426 `ios_update_required`, and the app asks for a TestFlight update and keeps its drafts.
+
+The desktop bridge floor stays **2**. The desktop shell shows the web app that home serves and reads no send outcome.
+
+Publish iPhone build 13 with this server release.

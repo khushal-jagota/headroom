@@ -3,7 +3,9 @@ import {
   worker_setup_step_label,
   type WorkerSetupStep,
 } from '../ticket_workspaces/worker_setup.ts';
+import { randomUUID } from 'node:crypto';
 import type { CommandResult, Invocation } from './contracts.ts';
+import { executor_client_settings } from '../core/config.ts';
 import { send, send_text, emit, fail_validation, json } from './http.ts';
 import { read_json_input, read_named_file, read_text } from './input.ts';
 import { part, parse_part_names, project_record, render_text } from './record_projection.ts';
@@ -647,14 +649,26 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
           : v.ticket_id != null
             ? { kind: 'ticket', id: v.ticket_id }
             : { kind: 'manager', id: v.manager_id };
+      // One ID names the message: the machine's request ID, or the body's message_id over HTTP.
+      const message_id = randomUUID();
       data = await send(inv, 'POST', '/api/messages/send', {
-        json_body: { target, message: text, mode: v.mode },
+        json_body: {
+          target,
+          message: text,
+          mode: v.mode,
+          ...(executor_client_settings(inv.environment).root ? {} : { message_id }),
+        },
+        request_id: message_id,
       });
       return emit(
-        data,
+        { ...data, message_id },
         as_json,
-        `message ${scalar(data.fate)}` +
-          (data.fate === 'refused' ? `: ${scalar(data.refusal_reason)}` : ''),
+        data.fate === 'accepted'
+          ? `accepted for delivery · ${message_id}`
+          : data.fate === 'recorded'
+            ? `recorded · ${message_id}`
+            : `message ${scalar(data.fate)}` +
+              (data.fate === 'refused' ? `: ${scalar(data.refusal_reason)}` : ''),
       );
     }
     case 'recap':

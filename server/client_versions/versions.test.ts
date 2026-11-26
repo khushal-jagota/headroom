@@ -147,8 +147,10 @@ test('declared versions gate incompatible reads and writes and accepted device v
     expect(
       (await app.inject({ url: '/api/meta', headers: { 'x-panels-client': '{bad' } })).statusCode,
     ).toBe(400);
-    // Old native clients decode strings but misclassify the renamed status. Refuse
-    // both reads and actions before handlers, while desktop metadata remains usable.
+    // Old native clients decode strings but misclassify the renamed status (builds 9-10), or
+    // read a send accepted for delivery as final and lose Try Again for a later refusal
+    // (builds 11-12). Refuse both reads and actions before handlers, while desktop metadata
+    // remains usable.
     const before_old_clients = writes;
     const old_desktop = headers({ ...identity, bridge_version: 1 });
     expect((await app.inject({ url: '/api/ticket-status', headers: old_desktop })).statusCode).toBe(
@@ -158,7 +160,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
       (await app.inject({ method: 'POST', url: '/api/write', headers: old_desktop })).statusCode,
     ).toBe(426);
     expect((await app.inject({ url: '/api/meta', headers: old_desktop })).statusCode).toBe(200);
-    for (const build of [9, 10]) {
+    for (const build of [9, 10, 11, 12]) {
       const old_ios = { 'x-panels-ios-build': String(build) };
       expect((await app.inject({ url: '/api/ticket-status', headers: old_ios })).statusCode).toBe(
         426,
@@ -170,7 +172,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
     expect(writes).toBe(before_old_clients);
     expect(
       (
-        await app.inject({ url: '/api/ticket-status', headers: { 'x-panels-ios-build': '11' } })
+        await app.inject({ url: '/api/ticket-status', headers: { 'x-panels-ios-build': '13' } })
       ).json(),
     ).toEqual({ ticket_status: 'agent_owned' });
     expect(

@@ -28,7 +28,7 @@ export interface ViewStatusLiveOutput {
   readonly runtime_epoch: string;
   output(conversation_id: string): ViewLiveOutput | null;
   read_chunk(conversation_id: string, reference: ViewBodyReference, offset: number): ViewBodyChunk;
-  status(conversation_id: string): readonly [number, number | null];
+  status(conversation_id: string): readonly [number, number | null, number];
   latest_tool_id(conversation_id: string): string | null;
   progress(conversation_id: string): ViewBodyReference | null;
 }
@@ -259,11 +259,12 @@ export function read_status(
     'SELECT task_id,task_description FROM conversation_background_tasks WHERE conversation_id=? ORDER BY rowid',
     [conversation_id],
   );
-  const [revision, activity_at] = live.status(conversation_id);
+  const [revision, activity_at, waiting_messages_revision] = live.status(conversation_id);
   return {
     runtime_epoch: live.runtime_epoch,
     revision,
     activity_at_unix_milliseconds: activity_at,
+    waiting_messages_revision,
     rest: {
       latest_happened,
       latest_turn,

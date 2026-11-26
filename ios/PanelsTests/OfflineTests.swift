@@ -290,22 +290,25 @@ import XCTest
         let api = APIClient(baseURL: URL(string: "https://retry-\(UUID().uuidString.lowercased()).invalid")!)
         let server = LocalStore.server(api.baseURL)
         defer { try? LocalStore.shared.remove(server: server, kind: "outbox", ids: Outbox.shared.entries(server).map(\.id)) }
-        func message(_ id: String, _ state: PendingWork.State) -> PendingWork {
-            PendingWork(id: id, created: .now, kind: .message, state: state, note: state == .failed ? "Not delivered · agent could not start" : "", owner: .chief,
+        func message(_ id: String, _ state: PendingWork.State, note: String? = nil) -> PendingWork {
+            PendingWork(id: id, created: .now, kind: .message, state: state, note: note ?? (state == .failed ? "Not delivered · agent could not start" : ""), owner: .chief,
                 message: ConversationSend(conversationId: "c", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: 1))
         }
         try Outbox.shared.save(message("waiting", .waiting), server: server)
         try Outbox.shared.save(message("refused", .failed), server: server)
+        try Outbox.shared.save(message("unconfirmed", .sent, note: "Delivery unconfirmed"), server: server)
         let model = ConversationModel()
         model.conversationID = "c"
         model.restore(owner: .chief, api: api)
-        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused"])
+        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused", "unconfirmed"])
         XCTAssertNil(model.rows[0].note, "A waiting message looks sent")
         XCTAssertNil(model.rows[0].retryID)
         XCTAssertEqual(model.rows[1].note, "Not delivered · agent could not start")
         XCTAssertEqual(model.rows[1].retryID, "refused")
+        XCTAssertEqual(model.rows[2].note, "Delivery unconfirmed", "An unconfirmed message does not look delivered")
+        XCTAssertNil(model.rows[2].retryID, "An unconfirmed message is never resent")
         await model.retry("refused", to: .chief, using: api)
-        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused"], "The retried message keeps its bubble")
+        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused", "unconfirmed"], "The retried message keeps its bubble")
         XCTAssertNil(model.rows[1].note)
         XCTAssertNil(model.rows[1].retryID)
         XCTAssertNil(Outbox.shared.work(server, id: "refused"), "A refused original has no receipt to wait for")
@@ -495,6 +498,99 @@ import XCTest
         XCTAssertEqual(outbox.work(server, id: "refused")?.note, "Not delivered · agent could not start")
         XCTAssertEqual(outbox.work(server, id: "after")?.state, .sent)
         XCTAssertEqual(OfflineProtocol.state.writes, ["refused", "after"], "A refusal is never resent by itself")
+    }
+    /// Uncertain, and a fate this build does not know, settle without a resend and keep
+    /// "Delivery unconfirmed" rather than looking delivered.
+    func testUncertainAndUnknownFatesSettleOnceUnconfirmedAndNeverResend() async throws {
+        var outbox = Outbox(store: store)
+        try store.outgoing.enqueue(message("uncertain"), server: server)
+        try store.outgoing.enqueue(message("unknown", at: 2), server: server)
+        try store.outgoing.enqueue(message("after", at: 3), server: server)
+        OfflineProtocol.state.messageFates = ["uncertain": "uncertain", "unknown": "handed_to_a_future_relay"]
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["uncertain", "unknown", "after"], "Neither is ever resent, and the lane moves on")
+        for id in ["uncertain", "unknown"] {
+            XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
+            XCTAssertEqual(outbox.work(server, id: id)?.note, "Delivery unconfirmed")
+        }
+        XCTAssertEqual(outbox.work(server, id: "after")?.state, .sent)
+        XCTAssertEqual(outbox.work(server, id: "after")?.note, "", "An accepted message carries no note")
+    }
+    /// Home answers at acceptance, so a refusal usually arrives later, in the transcript. The
+    /// message fails again with that refusal; Try Again sends it once under a new ID that names
+    /// the refused row, which then folds away.
+    func testLateRefusalAfterAcceptanceTriesAgainOnceAndFoldsTheRefusedRow() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineProtocol.self]
+        let api = APIClient(baseURL: URL(string: "https://offline-test-\(UUID().uuidString.lowercased()).invalid")!, session: URLSession(configuration: configuration))
+        let shared = LocalStore.server(api.baseURL)
+        defer { try? LocalStore.shared.remove(server: shared, kind: "outbox", ids: Outbox.shared.entries(shared).map(\.id)) }
+        func row(_ sender: String, kind: String, sequence: Int) -> [String: Any] {
+            ["kind": "row", "key": "e\(sequence)", "sender_message_id": sender, "source_sequence": sequence,
+             "body": ["kind": "inline", "value": ["kind": kind, "reason": "backend_did_not_start", "content": [["piece": "text", "text": "late"]]]]]
+        }
+        try LocalStore.shared.outgoing.enqueue(message("late"), server: shared)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(Outbox.shared.work(shared, id: "late")?.state, .sent, "Acceptance settles the message")
+        let model = ConversationModel()
+        model.conversationID = "conversation"
+        model.restore(owner: .ticket("ticket"), api: api)
+        OfflineProtocol.state.viewItems = [row("late", kind: "prompt_refused", sequence: 7)]
+        await model.refresh(using: api, transcript: true)
+        XCTAssertEqual(Outbox.shared.work(shared, id: "late")?.state, .failed, "The later refusal reopens it")
+        XCTAssertEqual(model.rows.map(\.id), ["late"])
+        XCTAssertEqual(model.rows.first?.note, "Not delivered · agent could not start")
+        XCTAssertEqual(model.rows.first?.retryID, "late")
+
+        await model.retry("late", to: .ticket("ticket"), using: api)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes.count, 2, "Try Again sends it once")
+        let resendID = try XCTUnwrap(OfflineProtocol.state.writes.last)
+        XCTAssertNotEqual(resendID, "late", "Home keeps the refused ID's answer, so the resend needs its own")
+        let resend = try json(XCTUnwrap(OfflineProtocol.state.messageBodies.last?.1))
+        XCTAssertEqual(resend["reconciles_sequence"] as? Int, 7, "The resend names the refused row")
+        XCTAssertEqual(Outbox.shared.work(shared, id: resendID)?.state, .sent)
+        // Home folds the refused row once the resend is recorded.
+        OfflineProtocol.state.viewItems = [row(resendID, kind: "prompt", sequence: 9)]
+        await model.refresh(using: api, transcript: true)
+        XCTAssertEqual(model.rows.map(\.id), ["late"], "One bubble, in the refused message's place")
+        XCTAssertNil(model.rows.first?.note)
+        XCTAssertNil(model.rows.first?.retryID)
+
+        // Another device sends a refused message again: its row folds away live, and the
+        // phone's failed copy leaves rather than offering a second resend.
+        try LocalStore.shared.outgoing.enqueue(message("elsewhere", at: 2), server: shared)
+        await Outbox.shared.drain(api: api)
+        let status: [String: Any] = ["authority": "current", "turn_running": true, "rest": ["plan_progress": [:]]]
+        let snapshot: [String: Any] = ["page": ["items": [row(resendID, kind: "prompt", sequence: 9), row("elsewhere", kind: "prompt_refused", sequence: 10)],
+            "older": NSNull()], "status": status, "coverage": ["through_sequence": 10]]
+        model.beginTail()
+        _ = await model.applyTail(.snapshot(try APIClient.decoder().decode(ConversationSnapshot.self, from: JSONSerialization.data(withJSONObject: snapshot))), using: api)
+        XCTAssertEqual(Outbox.shared.work(shared, id: "elsewhere")?.state, .failed)
+        let fold: [String: Any] = ["lens": "focus", "from_sequence": 10, "coverage": ["through_sequence": 11], "upserts": [], "scope_changes": [],
+            "removed_keys": ["e10"], "invalidated_scopes": [], "status": status]
+        let applied = await model.applyTail(.changes(try APIClient.decoder().decode(ConversationTailChanges.self, from: JSONSerialization.data(withJSONObject: fold))), using: api)
+        XCTAssertTrue(applied)
+        XCTAssertNil(Outbox.shared.work(shared, id: "elsewhere"), "The folded refusal is settled")
+        XCTAssertFalse(model.rows.contains { $0.id == "elsewhere" })
+        XCTAssertEqual(OfflineProtocol.state.writes.count, 3, "Nothing sends it a second time")
+
+        // A first message's start can be refused after acceptance, which retires the conversation
+        // it was accepted into. Its Try Again joins or starts the current conversation instead.
+        OfflineProtocol.state.createdConversation = "C1"
+        try LocalStore.shared.outgoing.enqueue(message("first", conversation: nil, at: 3), server: shared)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(Outbox.shared.work(shared, id: "first")?.message?.conversationId, "C1", "Acceptance names the new conversation")
+        XCTAssertEqual(try LocalStore.shared.outgoing.reopenRefused(server: shared, id: "first", note: "Not delivered · agent could not start"), true)
+        let retried = await Outbox.shared.retry("first", api: api)
+        await Outbox.shared.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes.count, 5)
+        XCTAssertEqual(OfflineProtocol.state.writes.last, try XCTUnwrap(retried))
+        let restart = try json(XCTUnwrap(OfflineProtocol.state.messageBodies.last?.1))
+        XCTAssertNil(restart["conversation_id"], "The retry does not target the retired conversation")
+        XCTAssertEqual(restart["backend_key"] as? String, "codex", "It keeps the settings it was composed with")
     }
     func testPhoto422RestoresDraftAndRetryClearsOnlyThatDraft() async throws {
         store.saveDraft("  Original words  ", server: server, id: "photo-draft")
@@ -887,6 +983,10 @@ private final class OfflineState: @unchecked Sendable {
         var deliveredMessages: [String] = []
         var refuseMessageIDs: Set<String> = []
         var loseResponseIDs: Set<String> = []
+        /// An answer other than acceptance for these sender message IDs.
+        var messageFates: [String: String] = [:]
+        /// The conversation view's rows.
+        var viewItems: [[String: Any]] = []
         var createdConversation: String?
         var requests: [String] = []
         var reads: [(String, Int)] = []
@@ -918,6 +1018,8 @@ private final class OfflineState: @unchecked Sendable {
     var loseAnswerBeforeSave: Bool { get { value(\.loseAnswerBeforeSave) } set { store(\.loseAnswerBeforeSave, newValue) } }
     var refuseMessageIDs: Set<String> { get { value(\.refuseMessageIDs) } set { store(\.refuseMessageIDs, newValue) } }
     var loseResponseIDs: Set<String> { get { value(\.loseResponseIDs) } set { store(\.loseResponseIDs, newValue) } }
+    var messageFates: [String: String] { get { value(\.messageFates) } set { store(\.messageFates, newValue) } }
+    var viewItems: [[String: Any]] { get { value(\.viewItems) } set { store(\.viewItems, newValue) } }
     var createdConversation: String? { get { value(\.createdConversation) } set { store(\.createdConversation, newValue) } }
     var answerFate: String { get { value(\.answerFate) } set { store(\.answerFate, newValue) } }
     var answerReceipts: [String: String] { get { value(\.answerReceipts) } set { store(\.answerReceipts, newValue) } }
@@ -1045,9 +1147,10 @@ private final class OfflineState: @unchecked Sendable {
                 let receipt: Any = values.answerReceipts[operationID].map { ["operation_id": operationID, "fate": $0] } ?? NSNull()
                 return try JSONSerialization.data(withJSONObject: ["receipt": receipt])
             }
+            if path.hasSuffix("/view/receipts") { return Data(#"{"receipts":[]}"#.utf8) }
             if path.hasSuffix("/view") {
                 let input: Any = values.pendingUserInput.map { ["kind": "user_input", "request_id": $0, "row_key": "input", "source_sequence": 2] } ?? NSNull()
-                return try JSONSerialization.data(withJSONObject: ["page": ["items": [], "older": NSNull()],
+                return try JSONSerialization.data(withJSONObject: ["page": ["items": values.viewItems, "older": NSNull()],
                     "status": ["authority": "current", "turn_running": true, "rest": ["plan_progress": [:]], "pending_user_input": input]])
             }
             if request.httpMethod != "POST" { return values.ticket }
@@ -1082,7 +1185,9 @@ private final class OfflineState: @unchecked Sendable {
             if !values.deliveredMessages.contains(id) { values.deliveredMessages.append(id) }
             let conversation = body["conversation_id"] as? String ?? values.createdConversation ?? "conversation"
             if values.loseResponseIDs.remove(id) != nil { throw URLError(.networkConnectionLost) }
-            return try respond(JSONSerialization.data(withJSONObject: ["conversation_id": conversation, "fate": "started"]))
+            // A current home answers at acceptance.
+            return try respond(JSONSerialization.data(withJSONObject: ["conversation_id": conversation,
+                "fate": values.messageFates[id] ?? "accepted", "message_id": id]))
         }
     }
 }

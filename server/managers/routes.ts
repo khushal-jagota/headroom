@@ -261,7 +261,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         identity.principal,
         target,
         parsed,
-        async (body, remember_destination) => {
+        async (body, remember_destination, recording_receipt) => {
           const item = database.read((sql) => data.read_manager(sql, request.params.item_id).item);
           const current = conversation_start.read_agent_conversation(
             database,
@@ -318,6 +318,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
               sender_message_id: body.sender_message_id,
               sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
               reconciles_sequence: body.reconciles_sequence,
+              recording_receipt,
             },
           );
           return {
