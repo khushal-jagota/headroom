@@ -107,6 +107,16 @@ function copy_turn(running: RunningTurn): RunningTurn {
     user_input_provider_ids: new Map(running.user_input_provider_ids),
   };
 }
+/** Events that report on a turn without changing its state, so they stay valid after the turn ended. */
+export function is_late_turn_event(event: BackendEventValue): boolean {
+  return (
+    event instanceof AgentMessageCompleted ||
+    event instanceof ToolCallStarted ||
+    event instanceof ToolCallFinished ||
+    event instanceof PlanUpdated ||
+    event instanceof TokenUsageReported
+  );
+}
 export function interpret_backend_event(
   token: TurnToken | null,
   event: BackendEventValue,

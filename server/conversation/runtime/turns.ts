@@ -1,5 +1,5 @@
 /** Turn attempts, request revocation, and turn endings. */
-import { ConversationState, turn_is_maintenance } from './state.ts';
+import { ConversationState, cancel_no_turn_fallback, turn_is_maintenance } from './state.ts';
 import type { TurnToken } from '../backends/contracts.ts';
 import type { LifecycleFact } from '../record/lifecycle.ts';
 import type { RuntimeMutation } from './contracts.ts';
@@ -67,6 +67,7 @@ export async function end_turn(
   cancel_fact: LifecycleFact | null = null,
 ): Promise<StoredConversationEvent | null> {
   if (running.ended) return null;
+  cancel_no_turn_fallback(state);
   await host.revoke_turn_requests(state, running);
   const interpreted = interpret_backend_event(
     running.token,

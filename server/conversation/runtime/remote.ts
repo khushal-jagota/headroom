@@ -52,7 +52,13 @@ import type { JsonObject } from '../../executor/wire.generated.ts';
 import type { WireValue } from '../../executor/contracts.ts';
 import { RemoteTurnRejected, admit_remote_turn } from './remote_turn.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
-import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
+import {
+  ConversationState,
+  cancel_no_turn_fallback,
+  own_settlement,
+  same_turn,
+  set_phase,
+} from './state.ts';
 import { background_tasks_ended_with_child } from './maintenance.ts';
 import { acquire_after_steers, contention_only_write } from './synchronization.ts';
 import { write_replayed_prompt } from './delivery.ts';
@@ -147,6 +153,13 @@ export async function confirm_remote_prompt_accepted(
     })(),
   );
 }
+/**
+ * How long a turn keeps running after its agent refused a steer for lack of a running turn.
+ * The agent's real ending normally arrives first. A blocked artifact upload can hold it for up to
+ * 420 seconds, so the core ends the turn itself after this wait. The value is a judgment: it is one
+ * file transfer stall and one maximum retry delay.
+ */
+export const NO_TURN_STEER_FALLBACK_SECONDS = 60;
 /** Native command facts settle a stale active turn without dependence on artifact delivery. */
 export async function reconcile_remote_command(
   host: SqliteProcessConversationSystem,
@@ -197,9 +210,12 @@ export async function reconcile_remote_command(
             same_turn(state.reserved_turn.token, turn))
         )
           return;
-        const detail = no_turn
-          ? 'The remote agent has no running turn to steer into.'
-          : typeof outcome.result.error_message === 'string'
+        if (no_turn) {
+          arm_no_turn_fallback(host, state, turn);
+          return;
+        }
+        const detail =
+          typeof outcome.result.error_message === 'string'
             ? outcome.result.error_message
             : 'The remote prompt failed.';
         await host.persist(state, () =>
@@ -212,6 +228,57 @@ export async function reconcile_remote_command(
           state.child_is_quarantined = true;
         }
         await host.end_turn(state, running, 'failed', detail);
+        set_phase(state, 'idle');
+      } finally {
+        lease.release();
+      }
+      if (!host.shutting_down) host.schedule_drain(state);
+    })(),
+  );
+}
+/** The agent says its turn is over. Wait for the real ending, then end the turn here if it never comes. */
+function arm_no_turn_fallback(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  turn: TurnToken,
+): void {
+  if (same_turn(state.no_turn_fallback?.turn ?? null, turn)) return;
+  cancel_no_turn_fallback(state);
+  const timer = setTimeout(() => {
+    void end_turn_after_no_turn_refusal(host, state, turn).catch((error) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not end a turn that refused a steer`,
+        error,
+      ),
+    );
+  }, NO_TURN_STEER_FALLBACK_SECONDS * 1000);
+  state.no_turn_fallback = { turn, timer };
+}
+async function end_turn_after_no_turn_refusal(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  turn: TurnToken,
+): Promise<void> {
+  if (host.shutting_down) return;
+  await own_settlement(
+    state,
+    (async () => {
+      const lease = await acquire_after_steers(state, undefined, { admitted_settlement: true });
+      try {
+        host.options.require_runtime_ownership?.();
+        const running = state.running_turn;
+        if (
+          running === null ||
+          !same_turn(running.token, turn) ||
+          running.ended ||
+          running.ending_is_the_cores
+        )
+          return;
+        await host.persist(state, () =>
+          host.start_admission.reject(host.options.store.start_admission_database, turn),
+        );
+        await host.end_turn(state, running, 'completed', null);
+        state.late_events_turn = turn;
         set_phase(state, 'idle');
       } finally {
         lease.release();
