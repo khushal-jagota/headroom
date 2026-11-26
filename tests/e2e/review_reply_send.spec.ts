@@ -104,3 +104,36 @@ test('test_review_reply_that_the_server_refuses_returns_to_the_box_with_a_cross'
   await expect(page.locator('[data-review-card]')).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { __seen: { outgoing: number } }).__seen.outgoing)).toBe(0);
 });
+
+test('test_review_chief_box_shrinks_back_to_one_line_after_a_long_message_is_sent', async ({ signalServer, newContext }) => {
+  // The Chief box holds its height while a send is in flight. Only a real browser lays out the box,
+  // so only it shows that the hold is let go once the send succeeds, and kept when it fails.
+  const chiefConversation = 'review-shrink-chief';
+  await post(signalServer, `/api/test/signals/${chiefConversation}/start`);
+  await bindConversation(signalServer, 'agent', 'chief_of_staff', chiefConversation);
+  await post(signalServer, `/api/test/signals/${chiefConversation}/finish`);
+  const page = await openPage(await newContext(), signalServer, '#/review', '[data-review-chief-composer]');
+  page.setDefaultTimeout(WAIT_MS);
+  const chief = page.locator('[data-review-chief-composer]');
+  const input = chief.locator('[data-review-reply]');
+  const height = async () => (await chief.locator('.composer-field').boundingBox())!.height;
+  const oneLine = await height();
+  const long = Array.from({ length: 8 }, (_, line) => `Line ${line + 1} of a long message to the Chief.`).join('\n');
+  const evidence = process.env.PANELS_SHRINK_CAPTURE_DIR;
+  const sendRoute = '**/api/chief/conversation/send';
+  await page.route(sendRoute, (route) => route.fulfill({
+    status: 409, contentType: 'application/json', body: '{"detail":"The Chief is not available right now."}',
+  }));
+  await input.fill(long);
+  await expect.poll(height, { message: 'a long draft grows the box' }).toBeGreaterThan(oneLine * 2);
+  if (evidence) await chief.screenshot({ path: `${evidence}/before-send.png` });
+  await chief.locator('[data-review-send]').click();
+  await expect(chief.locator('[data-review-send]')).toHaveClass(/failed/);
+  await expect(input).toHaveValue(long);
+  expect(await height(), 'a failed send keeps the size').toBeGreaterThan(oneLine * 2);
+  await page.unroute(sendRoute);
+  await chief.locator('[data-review-send]').click();
+  await expect(input).toHaveValue('');
+  await expect.poll(height, { message: 'a sent message lets the box shrink back' }).toBeLessThan(oneLine + 2);
+  if (evidence) await chief.screenshot({ path: `${evidence}/after-send.png` });
+});
