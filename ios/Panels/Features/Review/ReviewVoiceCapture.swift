@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor @Observable final class ReviewVoiceCapture {
     /// `saved`: the recording is on disk and waits for its words.
@@ -102,5 +103,96 @@ import Observation
         guard !transcript.isEmpty else { return draft }
         let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return existing.isEmpty ? transcript : existing + "\n\n" + transcript
+    }
+}
+
+struct DecisionVoiceParts {
+    let accessory: AnyView
+    let noteEnabled: Bool
+    let error: String?
+    let focusRequest: Int
+    let blurRequest: Int
+}
+
+/// The note's voice recording, shared by the Review card and the Ticket page card. It owns the
+/// recorder, its mic button and its recording bar, and hands the composer what it must show.
+struct DecisionVoiceNote<Key: Equatable, Content: View>: View {
+    let isActive: Bool
+    let draftID: String?
+    /// The mic can start: the decision is live and nothing else is happening to it.
+    let canRecord: Bool
+    /// Changes whenever saved work changes, so a finished transcript reaches the note.
+    let savedKey: Key
+    let savedVoice: () -> [PendingWork]
+    /// Reads the saved work again before the recording is restored.
+    let refreshSaved: () -> Void
+    /// Reads the note's saved words again into the composer.
+    let reloadDraft: () -> Void
+    @ViewBuilder let content: (DecisionVoiceParts) -> Content
+    @Environment(AppStore.self) private var store
+    @State private var voice = ReviewVoiceCapture()
+    @State private var focusRequest = 0
+    @State private var blurRequest = 0
+    @ScaledMetric(relativeTo: .body) private var microphoneSize: CGFloat = 17
+    private var api: APIClient { store.client }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if voice.phase != .idle { voiceStatus.padding(.horizontal, 20).padding(.top, 8).background(PanelsTheme.Web.surface) }
+            content(DecisionVoiceParts(accessory: AnyView(micButton), noteEnabled: voice.phase == .idle, error: voice.error,
+                          focusRequest: focusRequest, blurRequest: blurRequest))
+        }
+        .onChange(of: isActive, initial: true) { _, active in
+            guard active else { voice.preserve(); return }
+            refreshSaved(); reloadDraft(); restoreVoice()
+        }
+        .onChange(of: savedKey) { _, _ in
+            guard isActive else { return }
+            refreshSaved(); reloadDraft(); restoreVoice()
+        }
+        .onChange(of: draftID) { _, _ in if isActive { restoreVoice() } }
+        .onDisappear { voice.preserve() }
+    }
+
+    private var micButton: some View {
+        Button {
+            Haptics.light(); blurRequest += 1
+            Task { await voice.start(api: api, draftID: draftID) }
+        } label: {
+            Image(systemName: "mic").resizable().scaledToFit()
+                .frame(width: min(microphoneSize, 24), height: min(microphoneSize, 24))
+                .frame(width: 40, height: 40).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
+        .accessibilityLabel("Record a note").accessibilityIdentifier("review.mic")
+        .disabled(!canRecord || draftID == nil || voice.phase != .idle)
+    }
+    private func restoreVoice() { voice.restore(api: api, draftID: draftID, savedWork: savedVoice()) }
+    private func append(_ transcript: String?) {
+        if transcript != nil { reloadDraft() }
+        focusRequest += 1
+    }
+    @ViewBuilder private var voiceStatus: some View {
+        HStack(spacing: PanelsTheme.Space.md) {
+            Button { Haptics.selection(); voice.cancel(); focusRequest += 1 } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel recording")
+            Spacer()
+            switch voice.phase {
+            case .recording:
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let elapsed = max(0, Int(context.date.timeIntervalSince(voice.startedAt)))
+                    Text("recording \(elapsed / 60):\(String(format: "%02d", elapsed % 60))").monospacedDigit()
+                }
+                Spacer()
+                Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
+            case .saved:
+                Text(voice.transcribing ? "transcribing" : "saved"); Spacer()
+                if voice.transcribing { RingSpinner() }
+            case .failed:
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not transcribed")
+                Spacer()
+                Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
+            case .idle: EmptyView()
+            }
+        }.foregroundStyle(PanelsTheme.muted)
     }
 }

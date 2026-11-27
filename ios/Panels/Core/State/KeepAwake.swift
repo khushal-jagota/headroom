@@ -33,3 +33,29 @@ import UIKit
         apply(awake)
     }
 }
+
+/// The keyboard's own dictation key is the system's, so no recorder of ours runs.
+/// This holds the screen while the keyboard is in dictation, and lets go when the
+/// keyboard changes mode or goes away.
+@MainActor final class DictationAwake {
+    private let awake: KeepAwake
+    /// Lives as long as the app, so the observers are never removed.
+    private var observers: [NSObjectProtocol] = []
+
+    init(awake: KeepAwake = .shared, center: NotificationCenter = .default) {
+        self.awake = awake
+        observers = [
+            center.addObserver(forName: UITextInputMode.currentInputModeDidChangeNotification, object: nil, queue: .main) { [weak self] note in
+                let language = (note.object as? UITextInputMode)?.primaryLanguage
+                MainActor.assumeIsolated { self?.inputMode(language) }
+            },
+            center.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.inputMode(nil) }
+            },
+        ]
+    }
+
+    func inputMode(_ primaryLanguage: String?) {
+        if primaryLanguage == "dictation" { awake.hold(self) } else { awake.release(self) }
+    }
+}
