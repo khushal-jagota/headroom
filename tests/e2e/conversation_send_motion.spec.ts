@@ -112,7 +112,7 @@ for (const mode of ['idle', 'steer'] as const) {
         const box = sent?.getBoundingClientRect();
         const threadTop = thread?.getBoundingClientRect().top ?? 0;
         frames.push({
-          shown: !!box && !!thread && box.bottom > thread.getBoundingClientRect().top && box.top < thread.getBoundingClientRect().bottom,
+          shown: !!box && !!thread && box.top >= thread.getBoundingClientRect().top && box.top < thread.getBoundingClientRect().bottom,
           top: box ? box.top : NaN,
           fromThreadTop: box ? box.top - threadTop : NaN,
           paneHeight: pane?.getBoundingClientRect().height ?? NaN,

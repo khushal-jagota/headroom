@@ -361,7 +361,9 @@
     } else if (heldSent !== null) {
       const sent = heldSentElement(thread);
       if (sent) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
-    } else if (withTheNewestLineBeforeTheWrite && streamWrites.size === 0 && liveArrivalPixels === 0 && pendingFullMessageKey === null && arrivingMessages.size === 0) {
+    } else if (withTheNewestLineBeforeTheWrite && streamWrites.size === 0 && liveArrivalPixels === 0 && pendingFullMessageKey === null && arrivingMessages.size === 0 && !dockIsOpening(thread)) {
+      // While the dock opens, the following callback holds the card bottom. Pinning to the
+      // newest line here would follow the padding that changes during the open.
       moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
     }
     noteFollowShape(thread);
