@@ -818,7 +818,16 @@
           const wrapper = accepted.closest<HTMLElement>('[data-conversation-view-key]');
           heldSent = { messageId: id, displayKey: wrapper?.dataset.conversationDisplayKey ?? null, rowKey: wrapper?.dataset.conversationViewKey ?? null };
           liveArrivalPixels = 0;
-        } else if (answerRoomMessageId !== null && !waitingForTheDock) {
+        } else if (waitingForTheDock) {
+          // The earlier send's room is not this send's room. Drop it now, so the thread ends at
+          // this message while the pane grows. The room for this send is built at the dock's end.
+          heldSent = null;
+          answerRoomMessageId = null;
+          reservedSpacePixels = 0;
+          retainedTopInset = null;
+          liveArrivalPixels = 0;
+          withTheNewestLineBeforeTheWrite = true;
+        } else if (answerRoomMessageId !== null) {
           const asking = heldSentElement(thread) ?? geometry.sentMessage(answerRoomMessageId);
           if (asking !== null) {
             reservedSpacePixels = geometry.answerRoomPixels(asking);
