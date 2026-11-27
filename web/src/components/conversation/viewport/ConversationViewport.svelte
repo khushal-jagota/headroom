@@ -298,6 +298,8 @@
     newestMessageSequence = Math.max(newestMessageSequence, reader?.coverage ?? 0);
   }
   let previousThreadHeight = 0;
+  let lastFollowedScrollTop = 0;
+  let lastFollowedAt = 0;
   let positionWritesPixels = 0;
 
   function onTextPresentation(event: Event): void {
@@ -1229,9 +1231,16 @@
       if (keys.includes(positionMotion)) return;
       if (difference !== 0 && heldSent === null && !pendingOpen) {
         // Size writes run first in the shared frame. Keep content fixed to the card bottom.
-        moveTheThread(thread, thread.scrollTop + difference);
+        // A thread that stood at its end is already clamped by the browser as it grows, so the
+        // growth is counted from where the previous frame left it, not from the clamped position.
+        // Counting it from the clamped position moves the content by the growth a second time.
+        const now = performance.now();
+        const clamped = now - lastFollowedAt < 100 && thread.scrollTop >= thread.scrollHeight - height - 1 && thread.scrollTop < lastFollowedScrollTop;
+        moveTheThread(thread, (clamped ? lastFollowedScrollTop : thread.scrollTop) + difference);
       }
       repairLayout(thread);
+      lastFollowedScrollTop = thread.scrollTop;
+      lastFollowedAt = performance.now();
     });
     let observedHeight = thread.clientHeight;
     const observer = new ResizeObserver(() => {
