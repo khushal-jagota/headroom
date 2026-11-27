@@ -6,6 +6,9 @@ import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
 import {
   CONNECTION_GRACE_MS, CONNECTION_PROBE_TIMEOUT_MS, STREAM_SILENCE_MS, UPDATE_RECOVERY_POLL_MS
 } from "./updates/config";
+import {
+  flushConnectionEvents, recordProbe, startConnectionLog, stopConnectionLog, watchStream
+} from "./connectionLog";
 
 // The server sends one contentless "something changed" frame per commit. The
 // browser probes versions for mounted resources and refetches changed bodies.
@@ -32,6 +35,8 @@ let probeTimer: number | null = null;
 let probing = false;
 let silenceTimer: number | null = null;
 let started = false;
+/** The record of the open stream, so that silence can name its cause. */
+let streamWatch: ReturnType<typeof watchStream> | null = null;
 /** The server answered a probe since the stream was lost. */
 let answered = false;
 
@@ -60,6 +65,7 @@ export function startChangeStream(): void {
   if (started) return;
   started = true;
   document.addEventListener("visibilitychange", onVisibilityChange);
+  startConnectionLog();
   window.addEventListener("offline", onNetworkOffline);
   window.addEventListener("online", onNetworkOnline);
   // The first open is a recovery too: a server that never answers still ends in the card.
@@ -72,8 +78,11 @@ function openStream(): void {
   if (!started) return;
   const source = new EventSource("/api/changes");
   stream = source;
+  const thisWatch = streamWatch = watchStream("/api/changes");
   source.onopen = () => {
     if (stream !== source) return;
+    thisWatch.opened();
+    flushConnectionEvents();
     clearReconnect();
     clearRecovery();
     ensureDebug().sseOpens += 1;
@@ -106,6 +115,7 @@ function openStream(): void {
   });
   source.onerror = () => {
     if (stream !== source) return;
+    thisWatch.ended("error_event");
     streamLost();
     // HTTP 503 can permanently close EventSource. Native retry cannot reopen it.
     if (source.readyState === 2 && reconnectTimer === null) {
@@ -120,6 +130,7 @@ function watchSilence(source: EventSource): void {
   silenceTimer = window.setTimeout(() => {
     silenceTimer = null;
     if (stream !== source) return;
+    streamWatch?.ended("silence");
     source.close();
     streamLost();
     retryChangeStream();
@@ -166,8 +177,10 @@ function armGrace(): void {
 function probeServer(): void {
   if (probing || probeTimer !== null || !recovering()) return;
   probing = true;
+  const sent = Date.now();
   fetch("/api/meta", { signal: AbortSignal.timeout(CONNECTION_PROBE_TIMEOUT_MS), cache: "no-store" })
-    .then(response => { if (response.ok) answered = true; }, () => {})
+    .then(response => { if (response.ok) answered = true; recordProbe(response.ok, Date.now() - sent); },
+      () => recordProbe(false, Date.now() - sent))
     .finally(() => {
       probing = false;
       if (!recovering() || probeTimer !== null) return;
@@ -224,6 +237,7 @@ export function stopChangeStream(): void {
   clearReconnect();
   stopScreenRefresh();
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  stopConnectionLog();
   window.removeEventListener("offline", onNetworkOffline);
   window.removeEventListener("online", onNetworkOnline);
   clearRecovery();

@@ -43,6 +43,10 @@ The app checks the address before it stores it. HTTP works only on loopback. Rem
 
 Setup uses the same Svelte build at `panels://setup`, a separate origin with no forwarding of `/api` or `/files`. Its entry does not start the workspace or server queries. Only this origin can change the server through the bridge. When the workspace cannot reach the server, the sidebar shows a compact warning. Its information dialog offers the saved address, retry, and a link to setup. A red dot on the sidebar button signals the warning when the sidebar is hidden. The last session stays visible. The existing change stream restores fresh data after recovery.
 
+## The connection log
+
+The native side keeps its own short log of why the connection dropped, because only it sees two things: the Chromium error that ended a screen request (for example `ERR_NETWORK_CHANGED`, which a change of the Mac's network causes under a live HTTP/2 stream), and the Mac's sleep, wake and screen lock. Chromium reports that error for the whole request, not to the forward, so the log listens to the app scheme's failed requests as well as to a failed forward. The log is a file of up to 200 events in the app's data folder. It goes to the server in one background batch at `POST /api/client-events`, with the app's identity, and a failed send waits for the next try. The menu item "Record Network Log for a Day" starts a Chromium net-log in the app's logs folder. It is capped at 100 MB and switches itself off after 24 hours, also across a restart.
+
 ## The last session
 
 The app opens with its last state. The native side remembers the screen the window was on and reopens there. The screens keep their server reads and the last navigation view in their own IndexedDB, so the next launch shows them at once, before the server answers. Every restored read then refreshes from the server. Until fresh data replaces the saved copy on screen, the shell status says "Showing your last session", or that navigation is reconnecting. Writes still go to the server, so nothing changes while it cannot be reached.
