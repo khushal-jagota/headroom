@@ -140,7 +140,7 @@
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
           bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.attachmentReady || markingRead}
           sendDisabled={markingRead || !composer.ready || !through}
-          sending={outcome.sending} result={outcome.result} sendTitle={outcome.note} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
+          sending={outcome.sending} result={outcome.result} sendTitle={outcome.note} note={composer.hasHeldReply ? 'Queued. It goes when Chief finishes its turn.' : undefined} onSend={() => composer.send(through)} onError={problem => composer.error = problem}/>
         <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error || composer.error}<ErrorLine error={error ?? composer.error}/>{/if}
       </div>

@@ -21,7 +21,7 @@ import {
 } from './support/fixtures.ts';
 import { post } from './support/conversation.ts';
 
-async function ticketMessage(server: ServerHandle): Promise<void> {
+async function ticketMessage(server: ServerHandle, finishTurn = true): Promise<void> {
   const project = await api.post(server, '/api/projects', { name: 'Reply proof' });
   const ticket = await api.post(server, '/api/tickets', {
     title: 'Reply proof ticket', worker_type: 'coding', brief: 'Agreed brief.',
@@ -31,7 +31,7 @@ async function ticketMessage(server: ServerHandle): Promise<void> {
     next_ceiling: 'needs_what_changes', next_holder: { kind: 'owner', id: 'owner' },
   });
   await post(server, '/api/test/signals/reply-proof/start');
-  await post(server, '/api/test/signals/reply-proof/finish');
+  if (finishTurn) await post(server, '/api/test/signals/reply-proof/finish');
   await bindConversation(server, 'ticket', String(ticket.id), 'reply-proof');
   await connectedMessage(server, 'reply-proof', ticketPrincipal(String(ticket.id)), 'Which database should the migration use?');
 }
@@ -85,6 +85,24 @@ test('test_review_reply_keeps_one_steady_result_while_a_slow_send_arrives', asyn
   expect(seen.outgoing, 'no second copy of the reply was drawn on any frame').toBe(0);
   expect(seen.finalTexts, 'the page after the card never said that something waits').toEqual(['All clear. Nothing to review.']);
   expect(seen.finals, 'the page after the card was drawn once').toBe(1);
+});
+
+test('test_review_reply_to_a_busy_agent_steers_and_leaves_its_card_before_the_turn_ends', async ({ signalServer, newContext }) => {
+  const server = signalServer;
+  await ticketMessage(server, false);
+  const context = await newContext();
+  const modes: string[] = [];
+  await context.route(/\/conversation\/send$/, async (route) => {
+    modes.push(route.request().postDataJSON().mode);
+    await route.continue();
+  });
+  const page = await openPage(context, server, '#/review', '[data-review-card][data-review-loaded="true"]');
+  page.setDefaultTimeout(WAIT_MS);
+  await page.locator('[data-review-reply]').fill('Use Postgres, please.');
+  await page.locator('[data-review-send]').click();
+  // The turn never finishes in this test. Only a steer lets the card leave.
+  await expect(page.locator('[data-review-final-status]')).toHaveText('All clear. Nothing to review.');
+  expect(modes).toEqual(['steer']);
 });
 
 test('test_review_reply_that_the_server_refuses_returns_to_the_box_with_a_cross', async ({ signalServer, newContext }) => {

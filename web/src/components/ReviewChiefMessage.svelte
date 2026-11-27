@@ -33,7 +33,7 @@
   <ReviewReplyInput bind:this={reply} draftKey={composer.draftKey} uploadDestination={composer.uploadDestination}
           bind:uploads={composer.uploads} bind:text={composer.text} bind:files={composer.files} bind:images={composer.images}
     bind:intakeBusy={composer.intakeBusy} bind:voiceActive attachmentDisabled={!composer.canAttach}
-    sendDisabled={!composer.ready} preserveHeight sending={outcome.sending} result={outcome.result} sendTitle={outcome.note}
+    sendDisabled={!composer.ready} preserveHeight sending={outcome.sending} result={outcome.result} sendTitle={outcome.note} note={composer.hasHeldReply ? 'Queued. It goes when Chief finishes its turn.' : undefined}
     placeholder="Message Chief…" label="Message Chief" sendLabel="Send message to Chief"
     onSend={() => composer.send(0)} onError={problem => composer.error = problem} />
   {#if composer.error}<div class="review-chief-error"><ErrorLine error={composer.error} /></div>{/if}

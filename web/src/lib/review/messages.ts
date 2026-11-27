@@ -17,5 +17,5 @@ export const draftStorageKey = (id:string) => `review-draft:${id}`;
 export const attemptStorageKey = (id:string) => `review-reply:${id}`;
 export async function readReviewDraft(id:string) { return (await recallOutgoingMessages(draftStorageKey(id)))[0]?.content ?? []; }
 export async function saveReviewDraft(id:string, content:OutgoingMessage['content']):Promise<boolean> {
-  return rememberOutgoingMessages(draftStorageKey(id),content.length ? [mintOutgoingMessage({content,senderLabel:'owner',mode:'queue'})] : []);
+  return rememberOutgoingMessages(draftStorageKey(id),content.length ? [mintOutgoingMessage({content,senderLabel:'owner',mode:'steer'})] : []);
 }
