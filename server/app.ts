@@ -17,6 +17,7 @@ import type { Database } from './core/database/index.ts';
 import { installMiddleware } from './core/http/middleware.ts';
 import { install_request_lifetime, type HttpRequestScope } from './core/http/lifetime.ts';
 import type { WorkspaceAdmission } from './core/http/middleware.ts';
+import type { StreamCloseSink } from './core/http/live_streams/records.ts';
 import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
@@ -41,6 +42,7 @@ export interface AppServices {
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
   waitingScreensRoot?: () => string | null;
+  streamCloseSink?: StreamCloseSink;
   executor?: VpsExecutorRegistry | null;
   /** More executor routes that authenticate machines themselves, such as the server move. */
   executorRoutes?: readonly FastifyPluginAsync[];
@@ -69,6 +71,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     request_lifetime,
     services.updateBarrier,
     { database: services.database, clock },
+    services.streamCloseSink,
   );
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot

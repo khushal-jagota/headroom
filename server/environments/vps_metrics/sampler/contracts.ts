@@ -1,5 +1,7 @@
 import type { MetricsConfig } from '../configuration.ts';
 import type { Collector, MetricsErrorWire } from '../contracts.ts';
+import type { StreamCloseRecord } from '../../../core/http/live_streams/records.ts';
+import type { ClientEventRecord } from '../connection_records.ts';
 
 /** The explicit composition factory runs inside the sampler, never on the app loop. */
 export interface CollectorFactory {
@@ -16,7 +18,17 @@ export interface SamplerBoot {
   config: MetricsConfig;
   collector: CollectorFactory | null;
 }
-export type SamplerCommand = { type: 'activity'; request: string; now: number } | { type: 'stop' };
+export type SamplerCommand =
+  | { type: 'activity'; request: string; now: number }
+  | { type: 'stream_close'; record: StreamCloseRecord }
+  | {
+      type: 'client_events';
+      device_id: string;
+      client_kind: string;
+      received_at: number;
+      events: ClientEventRecord[];
+    }
+  | { type: 'stop' };
 export type SamplerReply =
   | { type: 'ready' }
   | { type: 'ownership'; owner: boolean }

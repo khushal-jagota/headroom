@@ -215,6 +215,7 @@ export async function createEnvironmentRuntime(
       },
     ],
     resourceProviders: [deployment.resource],
+    stream_close_sink: (record) => metrics.record_stream_close(record),
     before_worker_readiness_poll: () => {
       const updating = updates.poll();
       return move.coordinator.holds_work() || updating;
