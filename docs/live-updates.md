@@ -35,7 +35,7 @@ These rules hold for all three channels.
 
 ## How it behaves
 
-Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab reads nothing, and its return runs one revision check. A dropped connection shows Reconnecting on the shell status, and the reconnect runs the check. Drafts and outgoing messages live outside the cache, so a re-read never overwrites what the person types. A sent message that got no answer says so on its bubble and offers to send the same words again.
+Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab reads nothing, and its return runs one revision check. A lost change stream is not shown at first. The page keeps its data, asks the server at once, and the browser reopens the stream after one second (the server's `retry` line). The shell status says "Can't reach Panels" and dims the screen only if the server does not answer for eight seconds. If the operating system reports no network, it says "This Mac is offline" at once. The server sends a named heartbeat every 15 seconds, and a stream that is silent for 2.5 times that is closed and reopened. The reconnect runs the check. Drafts and outgoing messages live outside the cache, so a re-read never overwrites what the person types. A sent message that got no answer says so on its bubble and offers to send the same words again.
 
 Model pickers follow revisions of their saved source facts for the selected machine. A revision check calls no machine. A picker body and its revision come from the same saved state, so its own read cannot cause repeated refreshes. [Usage](usage.md) describes discovery and explicit Refresh.
 

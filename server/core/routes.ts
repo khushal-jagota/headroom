@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
 import { SSE_HEARTBEAT_MS } from './config.ts';
+import { STREAM_RETRY_FRAME } from './http/live_streams/configuration.ts';
 import type { Clock } from './clock.ts';
 import { TestClock } from './clock.ts';
 import { PlannerError } from './contracts.ts';
@@ -85,6 +86,7 @@ export async function registerCoreRoutes(
         }
       },
     });
+    stream.push(STREAM_RETRY_FRAME);
     const flush = (): void => {
       scheduled = undefined;
       if (!owing && !stream.destroyed) {
@@ -97,7 +99,8 @@ export async function registerCoreRoutes(
       if (!scheduled && !owing) scheduled = setImmediate(flush);
     });
     const timer = setInterval(() => {
-      if (!stream.destroyed && !changed && !owing) owing = !stream.push(': keep-alive\n\n');
+      if (!stream.destroyed && !changed && !owing)
+        owing = !stream.push(`event: heartbeat\ndata: ${new Date().toISOString()}\n\n`);
     }, SSE_HEARTBEAT_MS);
     timer.unref();
     streams.add(stream);

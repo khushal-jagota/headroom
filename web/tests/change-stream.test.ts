@@ -4,6 +4,7 @@ import { startChangeStream, stopChangeStream } from "../src/lib/changeStream";
 import { queryClient } from "../src/lib/queryClient";
 import { get } from "svelte/store";
 import { connectionStatus } from "../src/lib/changeStream";
+import { CONNECTION_GRACE_MS, STREAM_SILENCE_MS } from "../src/lib/updates/config";
 
 class ControlledEventSource {
   static current: ControlledEventSource;
@@ -12,20 +13,34 @@ class ControlledEventSource {
   onerror: (() => void) | null = null;
   closed = false;
   readyState = 1;
+  private named = new Map<string, () => void>();
   constructor(readonly url: string) { ControlledEventSource.current = this; }
+  addEventListener(name: string, listener: () => void) { this.named.set(name, listener); }
+  emit(name: string) { this.named.get(name)?.(); }
   close() { this.closed = true; }
+}
+
+// The page's own window events. `window` is the test's global object, so these stand in for it.
+function stubWindowEvents() {
+  const events = new EventTarget();
+  vi.stubGlobal("addEventListener", (name: string, listener: () => void) => events.addEventListener(name, listener));
+  vi.stubGlobal("removeEventListener", (name: string, listener: () => void) => events.removeEventListener(name, listener));
+  return events;
 }
 
 afterEach(() => {
   stopChangeStream();
   queryClient.clear();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("contentless change stream refresh", () => {
   it("reconciles observer data on open and reopen, defers hidden commits, and ignores stopped source callbacks", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
     let visibilityState = "visible";
     const listeners = new Set<() => void>();
     vi.stubGlobal("document", {
@@ -51,7 +66,7 @@ describe("contentless change stream refresh", () => {
     expect(revisions.at(-1)).toBe(2);
     expect(get(connectionStatus)).toBe("connected");
     old.onerror?.();
-    expect(get(connectionStatus)).toBe("reconnecting");
+    expect(get(connectionStatus)).toBe("recovering");
     revision = 3;
     old.onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -92,6 +107,8 @@ describe("contentless change stream refresh", () => {
   it("reopens a permanently CLOSED stream and cancels recovery on stop", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
     vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal("EventSource", ControlledEventSource);
     startChangeStream();
@@ -116,6 +133,7 @@ describe("contentless change stream refresh", () => {
   it("coalesces bursts at the first frame deadline for subscribed queries", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
     vi.stubGlobal("document", {
       visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn()
     });
@@ -142,5 +160,81 @@ describe("contentless change stream refresh", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(mountedRead).toHaveBeenCalledTimes(2);
     unsubscribe();
+  });
+
+  // Distinct risk: a self-healing reset must not show the card, and a real outage must. The
+  // Brief's timings (8 s grace, 37.5 s silence) and the offline words depend on this flow, and
+  // no other test drives the stream through them.
+  it("recovers silently inside the grace time and shows the card only after it", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const windowEvents = stubWindowEvents();
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("EventSource", ControlledEventSource);
+    const probe = vi.fn(async () => { throw new Error("no network path"); });
+    vi.stubGlobal("fetch", probe);
+    startChangeStream();
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
+    // A reset that heals: no card, the probe starts at once, and the open ends the recovery.
+    ControlledEventSource.current.onerror?.();
+    expect(get(connectionStatus)).toBe("recovering");
+    expect(probe).toHaveBeenCalledWith("/api/meta", expect.objectContaining({ cache: "no-store" }));
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS - 1);
+    expect(get(connectionStatus)).toBe("recovering");
+    ControlledEventSource.current.onopen?.();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS * 3);
+    expect(get(connectionStatus)).toBe("connected");
+    // An outage nothing answers: the card shows when the grace time ends.
+    ControlledEventSource.current.onerror?.();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS - 1);
+    expect(get(connectionStatus)).toBe("recovering");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(get(connectionStatus)).toBe("unreachable");
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
+    // A server that answers the probe is given one more grace time for the stream to reopen.
+    probe.mockImplementation(async () => ({ ok: true }) as unknown as never);
+    ControlledEventSource.current.onerror?.();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
+    expect(get(connectionStatus)).toBe("recovering");
+    ControlledEventSource.current.onopen?.();
+    // The operating system's word that there is no network wins, and the return reopens the stream.
+    vi.stubGlobal("navigator", { onLine: false });
+    ControlledEventSource.current.onerror?.();
+    expect(get(connectionStatus)).toBe("offline");
+    const beforeReturn = ControlledEventSource.current;
+    vi.stubGlobal("navigator", { onLine: true });
+    windowEvents.dispatchEvent(new Event("online"));
+    expect(get(connectionStatus)).toBe("recovering");
+    expect(ControlledEventSource.current).not.toBe(beforeReturn);
+  });
+
+  it("treats a stream with no heartbeat for 37.5 s as lost, but only once the server has sent one", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("EventSource", ControlledEventSource);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    startChangeStream();
+    const older = ControlledEventSource.current;
+    older.onopen?.();
+    // An older server sends only comment lines the page cannot see. Silence proves nothing there.
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS * 2);
+    expect(ControlledEventSource.current).toBe(older);
+    expect(get(connectionStatus)).toBe("connected");
+    older.emit("heartbeat");
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS - 1);
+    expect(ControlledEventSource.current).toBe(older);
+    older.emit("heartbeat");
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS - 1);
+    expect(ControlledEventSource.current).toBe(older);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(older.closed).toBe(true);
+    expect(ControlledEventSource.current).not.toBe(older);
+    expect(get(connectionStatus)).toBe("recovering");
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
   });
 });

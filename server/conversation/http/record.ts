@@ -1,6 +1,7 @@
 /** Public record encoding and the replay/live HTTP join. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import { Readable } from 'node:stream';
+import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
 import { PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS } from './configuration.ts';
 import type { FastifyReply } from 'fastify';
 import {
@@ -56,6 +57,7 @@ export function send_event_tail(
   const subscription = runtime.live_tail.subscribe(id);
   async function* output() {
     try {
+      yield STREAM_RETRY_FRAME;
       const replayed = runtime.store.read_events_after(id, after);
       let highest = replayed.at(-1)?.sequence ?? after;
       for (const event of replayed)

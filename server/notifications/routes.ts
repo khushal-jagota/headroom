@@ -16,6 +16,7 @@ import * as apns_data from './apns_data.ts';
 import * as live_activity_data from './live_activity_data.ts';
 import { desktop_notification_streams } from './desktop_streams.ts';
 import { SSE_HEARTBEAT_MS } from '../core/config.ts';
+import { STREAM_RETRY_FRAME } from '../core/http/live_streams/configuration.ts';
 function settings(sql: ReadSql) {
   const preferences = data.resolved_preferences(sql);
   const identity = data.read_web_push_identity(sql);
@@ -66,6 +67,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   app.get('/notifications/desktop', { config: { uncompressed: true } }, async (request, reply) => {
     requireOwner(services.identity(request));
     const stream = new Readable({ read() {} });
+    stream.push(STREAM_RETRY_FRAME);
     const stop_listening = desktop_notification_streams(services.database).listen(
       (notification) => {
         if (!stream.destroyed) stream.push(`data: ${JSON.stringify(notification)}\n\n`);
