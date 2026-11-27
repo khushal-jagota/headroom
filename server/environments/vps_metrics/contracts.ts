@@ -35,6 +35,22 @@ export interface ServiceRecord {
   state_reason: string | null;
   process_count: MetricNumber;
 }
+export type TailnetPath = 'direct' | 'relayed' | 'idle' | 'offline';
+export interface TailnetPeer {
+  identity: string;
+  name: string;
+  path: TailnetPath;
+  endpoint: string | null;
+  relay: string | null;
+  last_handshake: MetricNumber | null;
+  metrics: Record<string, Measurement>;
+}
+export interface TailnetRecord {
+  availability: Availability;
+  reason: string | null;
+  home_relay: string | null;
+  peers: TailnetPeer[];
+}
 export interface Sample {
   timestamp: MetricNumber;
   monotonic: MetricNumber;
@@ -49,6 +65,8 @@ export interface Sample {
   process_reason: string | null;
   disk_total_members: string[];
   network_total_members: string[];
+  /** Absent in samples stored before the tailnet path was recorded. */
+  tailnet?: TailnetRecord;
 }
 export interface AggregateStatistics {
   weighted_sum: MetricNumber;

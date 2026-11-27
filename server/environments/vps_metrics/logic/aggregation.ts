@@ -1,9 +1,12 @@
 import type { AggregateStatistics, Measurement, ProgressMarker, Sample } from '../contracts.ts';
 import { float, number } from '../codec.ts';
+/** A peer's history entity. The prefix keeps it apart from service cgroup paths. */
+export const tailnet_entity = (identity: string): string => 'tailnet:' + identity;
 export function signals(sample: Sample): Record<string, Record<string, Measurement>> {
   return Object.fromEntries([
     ['', sample.metrics],
     ...sample.services.map((service) => [service.identity, service.metrics]),
+    ...(sample.tailnet?.peers ?? []).map((peer) => [tailnet_entity(peer.identity), peer.metrics]),
   ]);
 }
 export function interval_start(sample: Sample, previous: ProgressMarker | null): number {
