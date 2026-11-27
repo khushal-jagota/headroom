@@ -5,11 +5,11 @@
   3. snapshot_main.ts with the staged copy (in-window catch-up)        -> snapshot_seconds.catch_up
   4. start the home again (launch_copy.sh) and wait for ready health
   5. snapshot_verify_main.ts (late check + retention)                  -> snapshot_seconds.late_check/retention
-Usage: python3 -I snapshot_flow.py REHEARSAL_ROOT APP PORT SCRIPTS_DIR EVIDENCE_DIR"""
+Usage: CANDIDATE_SHA=<full sha> python3 -I snapshot_flow.py REHEARSAL_ROOT APP PORT SCRIPTS_DIR EVIDENCE_DIR"""
 import json, os, subprocess, sys, time, urllib.request
 root, app, port, scripts, evidence = sys.argv[1:6]
 assert port != "8767"
-SHA = "e40325811ca0f6344aebc1a0403898a208506263"
+SHA = os.environ["CANDIDATE_SHA"]  # the full candidate SHA
 data, db, backups = f"{root}/data", f"{root}/data/planner.db", f"{root}/data/backups"
 node, upd = f"{app}/node/bin/node", f"{app}/server/environments/updates"
 ATTEMPT = "rehearsal-new-flow"

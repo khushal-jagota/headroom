@@ -1,10 +1,10 @@
 """From the recorded launch time: seconds until ready health, and until the Chief's conversation view
 answers 200 (not 409 'Conversation view is upgrading') and its tail stream sends a snapshot.
-Usage: python3 -I readiness.py REHEARSAL_ROOT PORT CHIEF_CONVERSATION_ID OUT_JSON"""
-import json, sys, time, urllib.request, urllib.error
+Usage: CANDIDATE_SHA=<full sha> python3 -I readiness.py REHEARSAL_ROOT PORT CHIEF_CONVERSATION_ID OUT_JSON"""
+import json, os, sys, time, urllib.request, urllib.error
 root, port, chief, out = sys.argv[1:5]
 assert port != "8767"
-SHA = "e40325811ca0f6344aebc1a0403898a208506263"
+SHA = os.environ["CANDIDATE_SHA"]  # the full candidate SHA
 launched = float(open(f"{root}/launch.time").read())
 base = f"http://127.0.0.1:{port}"
 res = {"view_409_upgrading_seen": 0}
