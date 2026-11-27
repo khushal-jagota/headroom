@@ -16,6 +16,8 @@ const MAX_EVENTS = 200;
 const MAX_BATCH = 50;
 const SEND_DELAY_MS = 5_000;
 const RETRY_MS = 30_000;
+/** After a 429 the server asks for a minute. */
+const TOO_MANY_BATCHES_MS = 60_000;
 const SEND_LIMIT_MS = 10_000;
 
 // The event shape is version 1 of `POST /api/client-events`, owned by the server's design for
@@ -68,8 +70,10 @@ async function send(): Promise<void> {
     scheduleSend(RETRY_MS);
     return;
   }
-  // A refused shape (400, 413, 422) can never succeed, so that batch is dropped like a stored one.
-  if (status !== 204 && ![400, 413, 422].includes(status)) { scheduleSend(RETRY_MS); return; }
+  // Any 2xx means stored. A refused shape (400, 413, 422) can never succeed, so that batch is
+  // dropped like a stored one. A 429 or 503 keeps the batch.
+  const stored = status >= 200 && status < 300;
+  if (!stored && ![400, 413, 422].includes(status)) { scheduleSend(status === 429 ? TOO_MANY_BATCHES_MS : RETRY_MS); return; }
   // Newer events may have joined the queue during the send. The sent ones are the oldest.
   queue = events().slice(batch.length);
   writeJson(EVENTS_FILE, queue);
@@ -79,7 +83,8 @@ async function send(): Promise<void> {
 /** The live streams the app relays, named as the server names their routes. */
 function streamOf(path: string): string | undefined {
   if (path === '/api/changes' || path === '/api/navigation/view/events') return path;
-  if (/^\/api\/conversation\/conversations\/[^/]+\/tail$/.test(path)) return '/api/conversation/conversations/:id/tail';
+  const tail = /^\/api\/conversation\/conversations\/[^/]+(\/view)?\/tail$/.exec(path);
+  if (tail) return `/api/conversation/conversations/:conversation_id${tail[1] ?? ''}/tail`;
   return undefined;
 }
 

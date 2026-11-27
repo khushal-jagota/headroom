@@ -10,7 +10,8 @@ import { clientIdentityHeaders } from "./clientIdentity";
 export type StreamName =
   | "/api/changes"
   | "/api/navigation/view/events"
-  | "/api/conversation/conversations/:id/tail";
+  | "/api/conversation/conversations/:conversation_id/tail"
+  | "/api/conversation/conversations/:conversation_id/view/tail";
 export type EndReason = "error_event" | "silence" | "probe_failure";
 
 export type ConnectionEvent = {
@@ -31,15 +32,17 @@ export const CONNECTION_LOG_KEY = "panels.connection-events";
 export const CONNECTION_LOG_MAX_EVENTS = 200;
 const MAX_BATCH = 50;
 const TICK_MS = 1_000;
-/** The page sends at most one batch in this time. */
+/** The page sends at most one batch in this time. The server allows 12 a minute. */
 export const CONNECTION_LOG_SEND_GAP_MS = 10_000;
+/** After a 429 the server asks for a minute. */
+const TOO_MANY_BATCHES_WAIT_MS = 60_000;
 const SEND_LIMIT_MS = 10_000;
 
 let tickTimer: number | null = null;
 let lastTick = 0;
 let largestDrift = 0;
 let sending = false;
-let lastSend = 0;
+let nextSendAt = 0;
 
 function stored(): ConnectionEvent[] {
   try {
@@ -116,11 +119,11 @@ function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number, 
  * This uses plain `fetch`, not `clientFetch`, so an update's write pause never holds it.
  */
 export function flushConnectionEvents(): void {
-  if (sending || navigator.onLine === false || Date.now() - lastSend < CONNECTION_LOG_SEND_GAP_MS) return;
+  if (sending || navigator.onLine === false || Date.now() < nextSendAt) return;
   const batch = stored().slice(0, MAX_BATCH);
   if (batch.length === 0) return;
   sending = true;
-  lastSend = Date.now();
+  nextSendAt = Date.now() + CONNECTION_LOG_SEND_GAP_MS;
   void (async () => {
     try {
       const response = await fetch("/api/client-events", {
@@ -129,8 +132,10 @@ export function flushConnectionEvents(): void {
         body: JSON.stringify({ version: 1, events: batch }),
         signal: AbortSignal.timeout(SEND_LIMIT_MS),
       });
-      // A refused shape (400, 413, 422) can never succeed, so its batch goes like a stored one.
-      if (response.status !== 204 && ![400, 413, 422].includes(response.status)) return;
+      // Any 2xx means stored. A refused shape (400, 413, 422) can never succeed, so its batch
+      // goes like a stored one. A 429 or 503 keeps the batch.
+      if (response.status === 429) nextSendAt = Date.now() + TOO_MANY_BATCHES_WAIT_MS;
+      if (!response.ok && ![400, 413, 422].includes(response.status)) return;
       // Newer events may have joined the log during the send. The sent ones are the oldest.
       store(stored().slice(batch.length));
     } catch {

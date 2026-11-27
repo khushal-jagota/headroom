@@ -20,7 +20,6 @@ export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 
 let stream: EventSource | null = null;
-let watch: ReturnType<typeof watchStream> | null = null;
 let flushTimer: number | null = null;
 let reconnectTimer: number | null = null;
 let started = false;
@@ -58,7 +57,7 @@ function openStream(): void {
   if (!started) return;
   const source = new EventSource("/api/changes");
   stream = source;
-  const thisWatch = watch = watchStream("/api/changes");
+  const thisWatch = watchStream("/api/changes");
   source.onopen = () => {
     if (stream !== source) return;
     thisWatch.opened();

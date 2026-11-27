@@ -426,7 +426,7 @@ export class ConversationViewReader {
         return new Promise<'preparing' | 'snapshot-ready' | void>((resolve, reject) => {
             let settled = false;
             const source = new EventSource(this.url('/tail', query));
-            const watch = watchStream('/api/conversation/conversations/:id/tail');
+            const watch = watchStream('/api/conversation/conversations/:conversation_id/view/tail');
             source.addEventListener('open', () => watch.opened());
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
