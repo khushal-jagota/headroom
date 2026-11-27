@@ -63,3 +63,9 @@
   [data-screen="vps"] .row-value { text-align:left; }
 }
 @media (prefers-reduced-motion:reduce) { :is([data-screen="vps"], .vps-controls) .vps-block { animation:none; } }
+[data-screen="vps"] .path-strip { flex:1 1 100%; display:block; height:var(--space-4); }
+[data-screen="vps"] .path-bar { fill:var(--chart-reference); }
+[data-screen="vps"] .path-bar--direct { fill:var(--vps-line,var(--tone-secondary)); }
+[data-screen="vps"] .path-bar--relayed { fill:var(--chart-line-attention); }
+[data-screen="vps"] .path-change { stroke:var(--tone-primary); stroke-width:1; vector-effect:non-scaling-stroke; }
+[data-screen="vps"] .path-rates { padding-inline:var(--space-2); color:var(--tone-tertiary); font-size:var(--type-small); font-variant-numeric:tabular-nums; }

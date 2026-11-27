@@ -14,6 +14,7 @@ import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import { counter_rate, host_cpu_percent } from '../logic/rates.ts';
 import type { CollectorDependencies, CollectorPaths } from './contracts.ts';
 import { ended_source_error, evidence_error, source_error } from './errors.ts';
+import { TailnetReader } from './tailnet.ts';
 
 type Metrics = Record<string, Measurement>;
 function lines(value: string): string[] {
@@ -98,7 +99,9 @@ export class LinuxCollector implements Collector {
   private readonly config: MetricsConfig;
   private readonly paths: CollectorPaths;
   private readonly deps: CollectorDependencies;
+  private readonly tailnet: TailnetReader;
   constructor(config: MetricsConfig, paths: CollectorPaths, dependencies: CollectorDependencies) {
+    this.tailnet = new TailnetReader(config, dependencies.tailscale_query);
     this.config = config;
     this.paths = paths;
     this.deps = dependencies;
@@ -587,8 +590,13 @@ export class LinuxCollector implements Collector {
     this.same_boot = boot !== 'unavailable' && boot === this.boot;
     this.elapsed = this.time === null ? 0 : mono - this.time;
     this.counters = new Map();
+    // The tailnet commands run beside the host reads and carry their own time limit.
+    const tailnet_metrics: Metrics = {},
+      tailnet_read = this.tailnet.read(mono, tailnet_metrics, this.same_boot);
     const [metrics, cores, disks, interfaces] = await this.host(),
       [processes, count, errors, groups] = await this.processes(boot);
+    const tailnet = await tailnet_read;
+    Object.assign(metrics, tailnet_metrics);
     if (options.include_slow) await this.collect_slow();
     Object.assign(metrics, this.slow);
     const services = await this.services(groups, processes);
@@ -613,6 +621,7 @@ export class LinuxCollector implements Collector {
       process_reason: errors.length ? errors.join('; ') : null,
       disk_total_members: disks,
       network_total_members: interfaces,
+      tailnet,
     };
   }
 }

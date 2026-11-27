@@ -4,7 +4,10 @@ export type Resolution = 'raw' | 'minute' | 'coarse';
 export interface Measurement { value: number | null; unit: string; reason: string | null; sampled_at?: number; numerator?: number | null; duration?: number | null }
 export interface ProcessRecord { identity: { boot_id: string; pid: number; start_ticks: number }; parent_pid: number; uid: number | null; name: string; state: string; service: string; metrics: Record<string, Measurement> }
 export interface ServiceRecord { identity: string; name: string; kind: string; metrics: Record<string, Measurement>; state: string | null; state_reason: string | null; process_count: number }
-export interface Sample { timestamp: number; monotonic: number; boot_id: string; expected_interval: number; core_count: number; metrics: Record<string, Measurement>; services: ServiceRecord[]; processes: ProcessRecord[]; process_count: number; process_availability: Availability; process_reason: string | null; disk_total_members: string[]; network_total_members: string[] }
+export type TailnetPath = 'direct' | 'relayed' | 'idle' | 'offline';
+export interface TailnetPeer { identity: string; name: string; path: TailnetPath; endpoint: string | null; relay: string | null; last_handshake: number | null; metrics: Record<string, Measurement> }
+export interface TailnetRecord { availability: Availability; reason: string | null; home_relay: string | null; peers: TailnetPeer[] }
+export interface Sample { timestamp: number; monotonic: number; boot_id: string; expected_interval: number; core_count: number; metrics: Record<string, Measurement>; services: ServiceRecord[]; processes: ProcessRecord[]; process_count: number; process_availability: Availability; process_reason: string | null; disk_total_members: string[]; network_total_members: string[]; tailnet?: TailnetRecord }
 export interface RetentionCoverage { requested_start: number | null; retained_start: number | null; retained_end: number | null; budget_evicted: boolean; policy_seconds: number }
 export interface CollectionStatus { availability: Availability; reason: string | null; last_sample_at: number | null; last_attempt_at: number | null; cadence_seconds: number }
 export interface LatestResponse { sequence: number | null; sample: Sample | null; collection: CollectionStatus; coverage: RetentionCoverage }
@@ -21,6 +24,8 @@ export interface WorkloadRow { id: string; name: string; count: number; cpu: Rea
 export interface HistoryRange { start: number; end: number; resolution: Resolution }
 export interface TrendPoint { timestamp: number; end: number; value: number | null; boot_id: string }
 export interface Trend { primary: TrendPoint[]; secondary: TrendPoint[]; start: number; end: number; gapSeconds: number }
-export interface VpsMetricsState { latest: LatestResponse | null; processes: ProcessPage | null; window: WindowId; history: Partial<Record<InstrumentId, Trend>>; loading: boolean; historyLoading: boolean; failed: boolean; now: number; processError: string | null; historyError: string | null }
-export interface MetricsApi { latest(signal: AbortSignal): Promise<LatestResponse>; activity(signal: AbortSignal): Promise<{ active_until: number }>; processes(sequence: number | null, offset: number, signal: AbortSignal): Promise<ProcessPage>; history(key: string, range: HistoryRange, signal: AbortSignal): Promise<HistoryResponse> }
+/** Per peer: whether the path was direct, and where it changed. `rates` is host-wide: relay packets, with path discovery as the second line. */
+export interface TailnetHistory { peers: Record<string, { direct: TrendPoint[]; changes: TrendPoint[] }>; rates: Trend }
+export interface VpsMetricsState { latest: LatestResponse | null; tailnet: TailnetHistory | null; processes: ProcessPage | null; window: WindowId; history: Partial<Record<InstrumentId, Trend>>; loading: boolean; historyLoading: boolean; failed: boolean; now: number; processError: string | null; historyError: string | null }
+export interface MetricsApi { latest(signal: AbortSignal): Promise<LatestResponse>; activity(signal: AbortSignal): Promise<{ active_until: number }>; processes(sequence: number | null, offset: number, signal: AbortSignal): Promise<ProcessPage>; history(key: string, range: HistoryRange, signal: AbortSignal, entity?: string): Promise<HistoryResponse> }
 export interface MetricsController { subscribe(listener: (state: VpsMetricsState) => void): () => void; setVisible(visible: boolean): void; setWindow(window: WindowId): void; destroy(): void }

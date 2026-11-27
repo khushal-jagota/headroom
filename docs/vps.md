@@ -18,6 +18,10 @@ Percentages for services and processes are against the whole machine, so a row c
 
 The Mac collector uses native host and process observations through the same store and API. Process rates require the same boot UUID and exact process birth. Available memory means free plus inactive pages. Linux pressure and unproved disk, network, and process I/O measurements remain unavailable. Service grouping is unavailable on the Mac. An empty service table does not prove that launchd has no jobs.
 
+## Tailnet path
+
+Each sample also records how the machine reaches every tailnet device, so a dropped stream can be lined up with a path change. The Linux collector runs `tailscale status --json` and `tailscale debug metrics` as the server's own user, beside the other reads, with a one second limit. For each device the sample holds whether the path is direct or relayed, the peer endpoint, the last handshake, the device's home relay, and whether the path changed since the last sample. The machine's own home relay is recorded once. The debug counters are host-wide, so the sample holds three rates for the machine as a whole: path discovery attempts, relay packets, and home relay changes. A missing, slow or failing `tailscale` records the source as unavailable with a reason, and the sample is taken on time. The Diagnostics page lists each device with a path strip, and draws the two rates as a trend. The Mac collector does not record this.
+
 ## Decisions that shape it
 
 - A separate store and no change signal, so monitoring cannot slow the workspace.
@@ -29,4 +33,4 @@ The Mac collector uses native host and process observations through the same sto
 - `server/environments/vps_metrics/`: sampler, collectors, store, and retention. Limits are in `configuration.ts`.
 - `web/src/components/vps/`: the page.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-27._

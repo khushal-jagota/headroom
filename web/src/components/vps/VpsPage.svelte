@@ -7,6 +7,7 @@
   import SegmentedControl from '../SegmentedControl.svelte';
   import VpsInstrument from './VpsInstrument.svelte';
   import VpsWorkloadRows from './VpsWorkloadRows.svelte';
+  import VpsTailnet from './VpsTailnet.svelte';
   import VpsSkeleton from './VpsSkeleton.svelte';
   import './vps.css';
 
@@ -63,6 +64,7 @@
           <VpsInstrument {...placeholder} {loading} instrument={cards.find(card => card.id === placeholder.id)} trend={metricsState?.history[placeholder.id]} />
         {/each}
       </div>
+      <VpsTailnet {sample} history={metricsState?.tailnet ?? null} {loading} />
       <VpsWorkloadRows kind="services" rows={services} {loading} unavailable={!loading && !sample ? metricsState?.latest?.collection.reason || 'Services unavailable' : null} />
       <VpsWorkloadRows kind="processes" rows={processes} loading={loading || !!sample && !metricsState?.processes && !metricsState?.processError} unavailable={metricsState?.processes?.availability === 'unavailable' ? metricsState.processes.reason || 'Processes unavailable' : metricsState?.processError && !metricsState.processes ? metricsState.processError : !loading && !sample ? 'Processes unavailable' : null} />
     </div>

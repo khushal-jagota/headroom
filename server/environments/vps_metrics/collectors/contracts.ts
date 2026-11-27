@@ -20,4 +20,5 @@ export interface CollectorDependencies {
   page_size(): number;
   statvfs(path: string): FilesystemStatistics | Promise<FilesystemStatistics>;
   service_query(scope: string, timeout: number, output_bytes: number): Promise<string>;
+  tailscale_query(args: readonly string[], timeout: number, output_bytes: number): Promise<string>;
 }

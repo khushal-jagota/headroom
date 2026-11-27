@@ -97,3 +97,20 @@ export function formatReading(read: Reading, digits?: number): { value: string; 
   const match = text.match(/^([\d.,-]+)\s*(.*)$/);
   return match ? { value: match[1], unit: match[2] } : { value: text, unit: '' };
 }
+export function formatAge(seconds: number): string {
+  return seconds < 60 ? `${Math.max(0, Math.floor(seconds))} s` : seconds < 3600 ? `${Math.floor(seconds / 60)} min` : seconds < 86400 ? `${Math.floor(seconds / 3600)} h` : `${Math.floor(seconds / 86400)} d`;
+}
+export interface TailnetRow { id: string; name: string; path: string; direct: boolean | null; handshake: string }
+/** One line per peer: the path in use now. The handshake age counts from the sample's own time, so a stale feed does not make it look older. */
+export function tailnetRows(sample: Sample): TailnetRow[] {
+  return (sample.tailnet?.peers ?? []).map(peer => ({
+    id: peer.identity, name: peer.name,
+    path: peer.path === 'direct' ? `Direct · ${peer.endpoint}` : peer.path === 'relayed' ? `Relayed${peer.relay ? ` via ${peer.relay}` : ''}` : peer.path === 'idle' ? 'Idle, no path in use' : 'Offline',
+    direct: peer.path === 'direct' ? true : peer.path === 'relayed' ? false : null,
+    handshake: peer.last_handshake === null ? 'no handshake yet' : `handshake ${formatAge(sample.timestamp - peer.last_handshake)} ago`
+  }));
+}
+export function tailnetRates(sample: Sample): string {
+  const per = (key: string, unit: string) => { const value = sample.metrics[key]?.value; return value == null ? null : `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`; };
+  return [per('tailnet.relay_packets_per_second', 'relay packets/s'), per('tailnet.path_discovery_per_second', 'path discovery attempts/s'), per('tailnet.home_relay_changes_per_second', 'home relay changes/s')].filter(Boolean).join(' · ');
+}
