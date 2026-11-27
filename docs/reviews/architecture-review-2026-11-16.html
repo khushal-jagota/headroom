@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for Headroom</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .band { height: 2.75rem; }
+      .diagram { min-height: 18rem; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+      <header class="space-y-6">
+        <p class="text-xs uppercase tracking-wider text-stone-500">Headroom · staging · 16 November 2026</p>
+        <h1 class="font-serif text-4xl tracking-tight">Architecture review</h1>
+        <ul class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-stone-600">
+          <li class="flex items-center gap-2"><span class="inline-block h-3.5 w-3.5 border-2 border-slate-900 bg-white"></span> module</li>
+          <li class="flex items-center gap-2"><span class="inline-block w-8 border-t-2 border-dashed border-slate-900"></span> seam</li>
+          <li class="flex items-center gap-2"><span class="inline-block w-8 border-t-2 border-red-600"></span> leakage</li>
+          <li class="flex items-center gap-2"><span class="deep inline-block h-3.5 w-3.5"></span> deep module</li>
+        </ul>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+        <article id="mac-worker-launchd-custody" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">1 · Collapse Mac Worker launchd custody</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-emerald-800">Strong</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">ports &amp; adapters</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/platform_runtime/darwin/launchd/adapter.ts</li>
+            <li>server/platform_runtime/darwin/launchd/proxy.ts</li>
+            <li>server/platform_runtime/darwin/launchd/entry.ts</li>
+            <li>server/platform_runtime/darwin/launchd/transport.ts</li>
+            <li>server/worker_supervision/contracts.ts</li>
+            <li>server/worker_supervision/service.ts</li>
+            <li>server/worker_supervision/inspection.ts</li>
+            <li>server/executor/mac/platform.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before</p>
+              <div class="diagram flex flex-col justify-between">
+                <div class="grid grid-cols-3 gap-2">
+                  <div class="rounded border-2 border-slate-900 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider">Supervisor</div>
+                  <div class="rounded border-2 border-slate-900 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider">Proxy</div>
+                  <div class="rounded border-2 border-slate-900 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider">Job entry</div>
+                  <div class="rounded border-2 border-slate-900 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider">Transport</div>
+                  <div class="rounded border-2 border-red-600 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider text-red-700">Job primitives</div>
+                  <div class="rounded border-2 border-slate-900 bg-white px-2 py-3 text-center text-[10px] uppercase tracking-wider">Marker scan</div>
+                </div>
+                <svg viewBox="0 0 320 36" class="mt-2 h-9 w-full" aria-hidden="true">
+                  <line x1="40" y1="4" x2="40" y2="28" class="leak" stroke-width="1.5" />
+                  <line x1="160" y1="4" x2="160" y2="28" class="leak" stroke-width="1.5" />
+                  <line x1="280" y1="4" x2="280" y2="28" class="leak" stroke-width="1.5" />
+                  <line x1="40" y1="28" x2="280" y2="28" class="leak" stroke-width="1.5" />
+                </svg>
+                <div class="rounded border border-red-600 bg-red-50 px-3 py-2 text-center text-[10px] uppercase tracking-wider text-red-700">
+                  Shared record · state · launch_revoked · socket directory · running receipt
+                </div>
+                <p class="mt-3 text-xs text-stone-500">Bootstrap is missing from the job interface, so the proxy imports the concrete module.</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After</p>
+              <div class="diagram deep flex flex-col rounded-lg p-4 text-white">
+                <div class="rounded border border-white/50 px-3 py-2 text-xs uppercase tracking-wider">Interface · start · await running · stop</div>
+                <div class="mt-3 flex-1 rounded border border-dashed border-white/30 px-3 py-3 text-[11px] uppercase tracking-wider text-white/55">
+                  Plist · authenticated pipes · bootstrap under the record lock · running receipt · bootout · best-effort marker sweep · transport cleanup
+                </div>
+                <div class="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-wider text-emerald-300">
+                  <span class="inline-block w-8 border-t border-dashed border-emerald-300"></span>
+                  seam · launchctl adapter · kernel marker scan
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> One launchd job’s life is a JSON record written by four modules, and the job interface cannot name bootstrap.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> Deepen custody so callers see start, await running, and stop, with pipes, bootstrap, sweep, and cleanup inside.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: one job life</li>
+            <li>leverage: start, await, stop</li>
+            <li>bootstrap joins the interface</li>
+            <li>tests hit custody outcomes</li>
+            <li>launchctl stays an adapter</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps the recorded rule: one launchd job per Worker, restart waits for absence, the sweep stays best-effort, and historical PID records stay.</p>
+        </article>
+
+        <article id="admit-a-domain-act" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">2 · Admit a domain act</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-emerald-800">Strong</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">in-process</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/core/authority/intake.ts</li>
+            <li>server/core/authority/register.ts</li>
+            <li>server/core/authority/service.ts</li>
+            <li>server/executor/vps_agent_writes.ts</li>
+            <li>server/tickets/logic/admission.ts</li>
+            <li>server/tickets/routes.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before</p>
+              <div class="diagram">
+                <pre class="mermaid">
+flowchart LR
+  http[HTTP routes] --> grammar[route interpreter]
+  exec[Executor writes] -->|fabricated routes| grammar
+  grammar -->|propose returns early| repeat[each transport checks the Worker]
+  classDef leak stroke:#dc2626,stroke-width:2px
+  class grammar,repeat leak
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After</p>
+              <div class="diagram">
+                <pre class="mermaid">
+flowchart LR
+  httpA[HTTP adapter] --> admit[admit an act]
+  execA[Executor adapter] --> admit
+  admit --> rule[stands above]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a
+  class admit deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> The guarded-write rule is a route-string interpreter, so the executor fabricates URLs and each transport repeats the Worker propose check.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> Deepen admission to one in-process admit of an act, and keep route grammar in the HTTP adapter.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: one guarded-write rule</li>
+            <li>leverage: HTTP and executor</li>
+            <li>tests admit an act</li>
+            <li>propose check stops leaking</li>
+            <li>route grammar stays an adapter</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps the recorded rule: you may act on anything strictly below you. Own-record, creation, and re-parenting stay inside the implementation.</p>
+        </article>
+
+        <article id="automatic-send-reservation" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">3 · Close the automatic reservation inside one send</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-emerald-800">Strong</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">in-process</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/conversation/start_admission/index.ts</li>
+            <li>server/runtime/worker_step_readiness_loop.ts</li>
+            <li>server/manager_wakes/runtime.ts</li>
+            <li>server/conversation/deploy_interruptions/coordinator.ts</li>
+            <li>server/conversation/runtime/maintenance.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before</p>
+              <div class="diagram">
+                <pre class="mermaid">
+sequenceDiagram
+  participant Caller
+  participant Admission
+  participant Send
+  Caller->>Admission: try_start
+  Caller->>Send: send
+  Send-->>Caller: fate
+  Caller->>Admission: finish, uncertain, or finish_unbound
+  Note over Caller: Worker step, wake, recovery, and lost-task notices repeat this
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After</p>
+              <div class="diagram">
+                <pre class="mermaid">
+sequenceDiagram
+  participant Caller
+  participant Auto as Automatic send
+  Caller->>Auto: automatic_send
+  Note over Auto: reservation and send
+  Auto-->>Caller: fate
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> Four automatic senders each repeat try-start, then finish, uncertain, or finish-unbound around the same send.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> One automatic-send operation owns those reservation transitions and returns the fate.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: reservation in one module</li>
+            <li>leverage: four callers, one operation</li>
+            <li>tests hit one interface</li>
+            <li>claim stays in the loop</li>
+            <li>fate still comes from send</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps the recorded rule: the claim starts work and does not watch the turn. The operation returns a fate.</p>
+        </article>
+
+        <article id="mac-runner-interface" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">4 · Shrink the Mac runner interface</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-emerald-800">Strong</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">local-substitutable</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/executor/mac/runner/index.ts</li>
+            <li>server/executor/mac/runner/lifecycle_contracts.ts</li>
+            <li>server/executor/mac/runner/service.ts</li>
+            <li>server/executor/mac/runner/start_stop.ts</li>
+            <li>server/executor/mac/runner/retirement.ts</li>
+            <li>server/executor/mac/testing/commands_parity.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before · shallow</p>
+              <div class="diagram flex items-end gap-4">
+                <div class="flex h-72 flex-1 flex-col justify-end">
+                  <p class="mb-1 text-[10px] uppercase tracking-wider text-stone-500">Interface</p>
+                  <div class="flex h-[82%] flex-col justify-between rounded border-2 border-slate-900 bg-white p-3 text-[10px] uppercase tracking-wider leading-relaxed">
+                    <span>Mailbox</span><span>Maintenance</span><span>Events</span><span>Lifetime</span><span class="text-red-700">Native children</span><span>Cleanup</span><span>Stop and publish</span><span>Source work</span>
+                  </div>
+                </div>
+                <div class="flex h-72 flex-1 flex-col justify-end">
+                  <p class="mb-1 text-[10px] uppercase tracking-wider text-stone-500">Implementation</p>
+                  <div class="flex h-[88%] flex-col justify-between rounded border-2 border-slate-400 bg-white p-3 text-[10px] uppercase tracking-wider leading-relaxed text-stone-500">
+                    <span>Same collaborators</span><span>wired in the constructor</span><span>and rebuilt by the parity tests</span><span class="text-red-700">which call start and retire directly</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After · deep</p>
+              <div class="diagram flex items-end gap-4">
+                <div class="flex h-72 flex-1 flex-col justify-end">
+                  <p class="mb-1 text-[10px] uppercase tracking-wider text-stone-500">Interface</p>
+                  <div class="flex h-[28%] items-center rounded border-2 border-slate-900 bg-white p-3 text-[10px] uppercase tracking-wider">Run · withdraw · stop · cleanup</div>
+                </div>
+                <div class="flex h-72 flex-1 flex-col justify-end">
+                  <p class="mb-1 text-[10px] uppercase tracking-wider text-stone-500">Implementation</p>
+                  <div class="deep flex h-[92%] flex-col justify-between rounded p-3 text-[10px] uppercase tracking-wider leading-relaxed text-white/70">
+                    <span class="text-white">Child locks</span>
+                    <span>Journal before invoke</span>
+                    <span>Withdrawal before the provider</span>
+                    <span>Stop proof before retire</span>
+                    <span>Scripted journal and child factory stay inside</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> The Mac runner interface republishes its collaborators, and the parity tests call native children directly, so settlement order has no locality.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> Deepen the runner so the mailbox side calls run, withdraw, stop, and cleanup, and the collaborators stay implementation.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>interface shrinks; implementation deepens</li>
+            <li>locality: settlement order concentrates</li>
+            <li>tests drive the runner</li>
+            <li>journal stays substitutable</li>
+            <li>child factory stays substitutable</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps the accepted order: withdrawal before invocation, journal settlement before a stop certificate, uncertain when a join fails.</p>
+        </article>
+
+        <article id="child-session-custody" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">5 · Hide local and remote custody in the child session</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-amber-900">Worth exploring</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">ports &amp; adapters</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/conversation/backends/contracts.ts</li>
+            <li>server/conversation/runtime/delivery.ts</li>
+            <li>server/conversation/system.ts</li>
+            <li>server/conversation/runtime/remote.ts</li>
+            <li>server/executor/vps_remote_child.ts</li>
+            <li>server/executor/mac/runner/start_stop.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before</p>
+              <div class="diagram">
+                <pre class="mermaid">
+flowchart TB
+  flag[stop_outside_lock]
+  flag -.-> delivery[delivery]
+  flag -.-> discard[discard child]
+  flag -.-> remote[remote retirement]
+  mac[Mac runner] -.-> timeout[Claude timeout type]
+  linkStyle 0,1,2,3 stroke:#dc2626,stroke-width:2px
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After</p>
+              <div class="diagram">
+                <pre class="mermaid">
+flowchart TB
+  core[Conversation core] --> session[Child session]
+  session --> local[Local child adapter]
+  session --> remoteA[Remote child adapter]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a
+  class session deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> Custody leaks across the child seam: the core branches on where stop happens, and the Mac runner names a Claude-only timeout.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> Deepen the child session so start and stop return ready, refused, or uncertain, with local proof and remote retirement inside.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>custody stops leaking</li>
+            <li>two adapters justify the seam</li>
+            <li>core sees ready or refused</li>
+            <li>vendor cursor stays inside</li>
+            <li>tests hit start and stop</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps the closed Hermes, Codex, and Claude set. The vendor session id stays inside the session.</p>
+        </article>
+
+        <article id="worker-start-text" class="rounded-2xl border border-stone-200 bg-white p-6 md:p-8 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h2 class="font-serif text-2xl">6 · Put the Worker role text behind one resolver</h2>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-amber-900">Worth exploring</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-xs uppercase tracking-wider text-stone-600">in-process</span>
+            </div>
+          </div>
+          <ul class="font-mono text-sm text-stone-700 space-y-1">
+            <li>server/runtime/logic/conversation_start_resolution.ts</li>
+            <li>server/runtime/conversation_start.ts</li>
+            <li>server/runtime/logic/worker_step_prompt.ts</li>
+            <li>server/runtime/worker_step_readiness_loop.ts</li>
+          </ul>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">Before</p>
+              <div class="diagram flex flex-col justify-center gap-2">
+                <div class="band flex items-center border-l-4 border-slate-400 bg-white px-3 text-xs uppercase tracking-wider">Resolver · “You are a ticket worker”</div>
+                <div class="band flex items-center border-l-4 border-red-600 bg-red-50 px-3 text-xs uppercase tracking-wider text-red-800">Caller appends guide, machine, workspace</div>
+                <div class="band flex items-center border-l-4 border-stone-300 bg-white px-3 text-xs uppercase tracking-wider text-stone-500">Stage opener · a later sentence</div>
+                <p class="pt-2 text-xs text-stone-500">A test of the resolver can pass while the guide never reaches the Conversation.</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="mb-3 text-xs uppercase tracking-wider text-stone-500">After</p>
+              <div class="diagram flex flex-col justify-center gap-2">
+                <div class="deep flex h-36 items-center rounded border-l-8 border-emerald-400 px-4 text-sm uppercase tracking-wider text-white">Role text the child is given · guide, destination, workspace</div>
+                <div class="band flex items-center border-l-4 border-stone-300 bg-white px-3 text-xs uppercase tracking-wider text-stone-500">Stage opener stays outside</div>
+              </div>
+            </div>
+          </div>
+
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Problem</span> The pure start resolver returns role text that ends at the Worker sentence, and the caller appends the guide, destination, and workspace afterwards.</p>
+          <p><span class="text-xs uppercase tracking-wider text-stone-500">Solution</span> The resolver returns the role text the child is given; the Stage opener stays a later sentence from the Worker step.</p>
+          <ul class="list-disc pl-5 text-sm space-y-1">
+            <li>locality: sent role text</li>
+            <li>tests read what is sent</li>
+            <li>opener stays a later sentence</li>
+            <li>overrides stay in the module</li>
+          </ul>
+          <p class="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-950">Keeps only-sent-text, and keeps the accepted split between the launch folder and the worktree path named in the prompt.</p>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-2xl deep p-8 text-white space-y-4">
+        <p class="text-xs uppercase tracking-wider text-emerald-300">Top recommendation</p>
+        <h2 class="font-serif text-3xl"><a class="underline decoration-white/30 underline-offset-4 hover:decoration-white" href="#mac-worker-launchd-custody">Collapse Mac Worker launchd custody</a></h2>
+        <p class="max-w-2xl text-lg text-white/90">It is the stretch of history that keeps changing, the restart fence is written by four modules, and the interface cannot name bootstrap or the running receipt.</p>
+      </section>
+    </main>
+  </body>
+</html>
