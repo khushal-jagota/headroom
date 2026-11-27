@@ -138,6 +138,8 @@ for (const mode of ['idle', 'steer'] as const) {
       expect(frames[index].top, `sent message at frame ${index}`).toBeLessThanOrEqual(frames[index - 1].top + 6);
       expect(Math.abs(frames[index].top - frames[index - 1].top), `step at frame ${index}`).toBeLessThanOrEqual(100);
     }
+    // No creep either: the message never ends a frame more than 8 px below where it first showed.
+    expect(Math.max(...frames.map((frame) => frame.top)) - frames[0].top, 'lowest point after first showing').toBeLessThanOrEqual(8);
     // The pane opened, and the message ends near the top of the thread.
     expect(Math.max(...frames.map((frame) => frame.paneHeight))).toBeGreaterThan(400);
     expect(frames.at(-1)!.fromThreadTop).toBeLessThanOrEqual(40);
