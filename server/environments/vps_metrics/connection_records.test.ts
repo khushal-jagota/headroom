@@ -194,6 +194,9 @@ test('client events are validated, stored beside the stream records and rate lim
     ).status,
   ).toBe(422);
   expect((await post('bad', { version: 1, events: [{ at: 1, kind: 'bogus' }] })).status).toBe(422);
+  expect(
+    (await post('bad', { version: 1, events: [], padding: 'x'.repeat(17 * 1024) })).status,
+  ).toBe(413);
   for (let index = 0; index < 12; index++)
     expect((await post('a', batch('ERR_NETWORK_CHANGED'))).status).toBe(200);
   expect((await post('a', batch('ERR_NETWORK_CHANGED'))).status).toBe(429);
