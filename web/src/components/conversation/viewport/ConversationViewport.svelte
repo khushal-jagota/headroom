@@ -892,6 +892,10 @@
           reader.finishEntry();
         } else if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
+        } else if (waitingForTheDock) {
+          // The send is placed when the dock ends. Until then the thread keeps the newest
+          // line at the card bottom as the pane grows (see the following callback), and the
+          // old answer room must not move it.
         } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
           retirementOwner = intent;
           const from = thread.scrollTop;
