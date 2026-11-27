@@ -6,6 +6,11 @@
  * server must answer the send for the message to change from sending to sent. The test
  * reads the thread on every animation frame across one send, with the server's answer held
  * back and not held back, and reuses the Ticket conversation of the signal host.
+ *
+ * A send from the docked composer also opens the pane, which grows from the dock to the full
+ * height in about 250 ms. The placement of the message must wait for that open, or its
+ * target comes from a thread that is still small, and the message rides down with the pane
+ * and then jumps up. Only real layout and the real dock animation show this.
  */
 import { expect, openPage, test, WAIT_MS } from './support/fixtures.ts';
 import { createTicketConversation, openConversationLayer, post } from './support/conversation.ts';
@@ -63,5 +68,75 @@ for (const [name, width, answerAfterMs] of [['desktop', 1280, 0], ['390 px, slow
     // It ends with the sent message near the top, as the thread has always placed it.
     expect(frames.at(-1)!.sentTop).toBeLessThanOrEqual(40);
     await testInfo.attach('frames.json', { body: JSON.stringify(all), contentType: 'application/json' });
+  });
+}
+
+type DockedFrame = { shown: boolean; top: number; fromThreadTop: number; paneHeight: number };
+
+for (const mode of ['idle', 'steer'] as const) {
+  test(`a send from the docked composer slides up once (${mode})`, async ({ signalServer, newContext }, testInfo) => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 } });
+    const id = `send-motion-docked-${mode}`;
+    const ticket = await createTicketConversation(signalServer, { conversationId: id, title: 'Send motion docked' });
+    const page = await openPage(context, signalServer, `#/workspace/${ticket}`, `[data-screen="ticket"][data-ticket-id="${ticket}"]`);
+    await openConversationLayer(page);
+    const field = page.locator('[data-conversation-input]');
+    const send = async (text: string) => { await field.click(); await field.fill(text); await page.keyboard.press('Enter'); };
+    for (let turn = 1; turn <= 4; turn++) {
+      await send(`History message number ${turn}`);
+      await post(signalServer, `/api/test/signals/${id}/message`, { kind: 'ticket', id: ticket, label: 'Send motion docked', text: `Reply number ${turn}. `.repeat(8) });
+      await post(signalServer, `/api/test/signals/${id}/finish`);
+      await page.waitForTimeout(700);
+    }
+    await page.waitForTimeout(1000);
+    // Hold the conversation at rest, so that the send opens the pane.
+    await page.locator('[data-conversation-collapse]').click();
+    await page.locator('[data-conversation-state="rest"]').waitFor();
+    await page.waitForTimeout(800);
+    if (mode === 'steer') {
+      await post(signalServer, `/api/test/signals/${id}/start`);
+      await page.waitForTimeout(1200);
+      await field.fill('Add this to the running turn.');
+      await page.locator('[data-conversation-send-mode-trigger]').click();
+      await page.locator('[data-conversation-send-mode-choice="steer"]').click();
+      await expect(page.locator('[data-conversation-state="rest"]')).toBeVisible();
+    }
+    await page.evaluate(() => {
+      const frames: DockedFrame[] = [];
+      (window as any).__dockedFrames = frames;
+      const start = performance.now();
+      const read = () => {
+        const thread = document.querySelector('[data-conversation-thread]') as HTMLElement | null;
+        const pane = document.querySelector('[data-conversation-pane]') as HTMLElement | null;
+        const sent = [...(thread?.querySelectorAll('[data-conversation-outgoing]') ?? [])].at(-1);
+        const box = sent?.getBoundingClientRect();
+        const threadTop = thread?.getBoundingClientRect().top ?? 0;
+        frames.push({
+          shown: !!box && box.bottom > 0 && box.top < window.innerHeight,
+          top: box ? box.top : NaN,
+          fromThreadTop: box ? box.top - threadTop : NaN,
+          paneHeight: pane?.getBoundingClientRect().height ?? NaN,
+        });
+        if (performance.now() - start < 3000) requestAnimationFrame(read);
+      };
+      requestAnimationFrame(read);
+    });
+    if (mode === 'idle') await send('Okay, I will do that.');
+    else await page.locator('[data-conversation-send]').click();
+    await page.waitForTimeout(3200);
+    const all: DockedFrame[] = await page.evaluate(() => (window as any).__dockedFrames);
+    await testInfo.attach('frames.json', { body: JSON.stringify(all), contentType: 'application/json' });
+    const first = all.findIndex((frame) => frame.shown);
+    expect(first, 'the sent message shows').toBeGreaterThanOrEqual(0);
+    const frames = all.slice(first);
+    expect(frames.length).toBeGreaterThan(10);
+    // On screen, the message never moves down after it first shows, and no frame moves it far.
+    for (let index = 1; index < frames.length; index++) {
+      expect(frames[index].top, `sent message at frame ${index}`).toBeLessThanOrEqual(frames[index - 1].top + 1);
+      expect(Math.abs(frames[index].top - frames[index - 1].top), `step at frame ${index}`).toBeLessThanOrEqual(100);
+    }
+    // The pane opened, and the message ends near the top of the thread.
+    expect(Math.max(...frames.map((frame) => frame.paneHeight))).toBeGreaterThan(400);
+    expect(frames.at(-1)!.fromThreadTop).toBeLessThanOrEqual(40);
   });
 }

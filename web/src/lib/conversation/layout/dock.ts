@@ -2,6 +2,10 @@ import { conversationMotion, CONVERSATION_CARD_MS } from '../surfaceMotion';
 import { observeVisibleViewport, visibleViewport } from '../../keyboardViewport';
 import { visibleHostBounds } from './geometry';
 
+/** The dock fires this on its host when `data-conversation-dock-transition` is removed, so a
+ *  conversation that held work for the open wakes once, with the final geometry in place. */
+export const DOCK_TRANSITION_END = 'conversation-dock-transition-end';
+
 /** Reserve the dock row, and retain the reader's geometry beneath full conversation. */
 export function conversationDock(host: HTMLElement): { destroy(): void } {
   let pane: HTMLElement | null = null;
@@ -53,6 +57,10 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
       && event.target instanceof Node && layer.contains(event.target)
       && outsideInput(event.target);
     host.toggleAttribute('data-conversation-dock-hover', hovered);
+  }
+  function endTransition(): void {
+    host.removeAttribute('data-conversation-dock-transition');
+    host.dispatchEvent(new CustomEvent(DOCK_TRANSITION_END, { bubbles: true }));
   }
   function releaseReader(): void {
     if (!reader) return;
@@ -126,7 +134,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
           }, CONVERSATION_CARD_MS, () => {
             movingLayer.style.removeProperty('height');
             movingLayer.style.removeProperty('--conversation-dock-line');
-            host.removeAttribute('data-conversation-dock-transition');
+            endTransition();
             if (state !== 'opened') {
               const target = mousePoint ? document.elementFromPoint(mousePoint.x, mousePoint.y) : null;
               hovered = !!target && movingLayer.contains(target) && outsideInput(target);
@@ -191,7 +199,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     stopViewport();
     window.removeEventListener('scroll', schedule, true);
     delete host.dataset.conversationDockState;
-    host.removeAttribute('data-conversation-dock-transition');
+    endTransition();
   } };
 }
 

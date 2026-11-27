@@ -10,6 +10,7 @@
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
+  import { DOCK_TRANSITION_END } from "../../../lib/conversation/layout/dock";
   import type { ConversationState } from "../../../lib/conversation/conversationState";
   import type { ConversationLens } from "../../../lib/conversation/lens";
   import {
@@ -371,6 +372,12 @@
 
   function nobodyIsLookingAtTheTab(): boolean {
     return document.visibilityState === "hidden";
+  }
+
+  /** The dock is growing the pane. A send placed now would measure a thread that is still
+   *  small, so its placement waits for DOCK_TRANSITION_END, with the thread pinned meanwhile. */
+  function dockIsOpening(thread: HTMLElement): boolean {
+    return thread.closest('[data-conversation-dock-state]')?.hasAttribute('data-conversation-dock-transition') === true;
   }
 
   /** Rest and hidden tabs keep dirty work, but never measure an invisible thread. */
@@ -794,7 +801,8 @@
         const accepted = [...thread.querySelectorAll<HTMLElement>(PLACEABLE_SEND)]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!)).at(-1);
         if (accepted !== undefined) supersedeRestorationWithAcceptedSend();
-        if (accepted !== undefined && presentationReady(accepted)) {
+        const waitingForTheDock = accepted !== undefined && dockIsOpening(thread);
+        if (accepted !== undefined && presentationReady(accepted) && !waitingForTheDock) {
           const id = accepted.dataset.conversationOutgoing!;
           if (placement?.destination !== 'sent' || placement.messageId !== id) {
             if (placement) placement.cancelled = true;
@@ -810,7 +818,7 @@
           const wrapper = accepted.closest<HTMLElement>('[data-conversation-view-key]');
           heldSent = { messageId: id, displayKey: wrapper?.dataset.conversationDisplayKey ?? null, rowKey: wrapper?.dataset.conversationViewKey ?? null };
           liveArrivalPixels = 0;
-        } else if (answerRoomMessageId !== null) {
+        } else if (answerRoomMessageId !== null && !waitingForTheDock) {
           const asking = heldSentElement(thread) ?? geometry.sentMessage(answerRoomMessageId);
           if (asking !== null) {
             reservedSpacePixels = geometry.answerRoomPixels(asking);
@@ -1193,6 +1201,10 @@
     if (thread === null || content === null) return;
     previousThreadHeight = thread.clientHeight;
     thread.addEventListener('conversation-text-presentation', onTextPresentation);
+    // The dock marks its host only after its first measure, which can come after this thread
+    // mounts. The event bubbles, so the thread hears the host that holds it, whenever it was marked.
+    const onDockTransitionEnd = (event: Event): void => { if (event.target instanceof Node && event.target.contains(thread)) requestReconciliation(); };
+    window.addEventListener(DOCK_TRANSITION_END, onDockTransitionEnd);
     const stopFollowing = conversationMotion(thread).following(keys => {
       if (!canMeasure()) return;
       const height = thread.clientHeight;
@@ -1236,7 +1248,7 @@
     acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "data-conversation-sending", "aria-busy", "data-markdown-rendering", "data-visible-content-state", "data-visible-content-restoring"]});
     observer.observe(thread);
     observer.observe(content);
-    return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
+    return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); window.removeEventListener(DOCK_TRANSITION_END, onDockTransitionEnd); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
   });
 
   onMount(() => {
