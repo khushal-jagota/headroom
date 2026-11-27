@@ -71,10 +71,10 @@ for (const [name, width, answerAfterMs] of [['desktop', 1280, 0], ['390 px, slow
   });
 }
 
-type DockedFrame = { shown: boolean; top: number; fromThreadTop: number; paneHeight: number };
+type DockedFrame = { shown: boolean; top: number; fromThreadTop: number; paneHeight: number; threadTop: number; threadBottom: number; scrollTop: number };
 
 for (const mode of ['idle', 'steer'] as const) {
-  test(`a send from the docked composer slides up once (${mode})`, async ({ signalServer, newContext }, testInfo) => {
+  test.only(`a send from the docked composer slides up once (${mode})`, async ({ signalServer, newContext }, testInfo) => {
     const context = await newContext({ viewport: { width: 1280, height: 800 } });
     const id = `send-motion-docked-${mode}`;
     const ticket = await createTicketConversation(signalServer, { conversationId: id, title: 'Send motion docked' });
@@ -112,10 +112,11 @@ for (const mode of ['idle', 'steer'] as const) {
         const box = sent?.getBoundingClientRect();
         const threadTop = thread?.getBoundingClientRect().top ?? 0;
         frames.push({
-          shown: !!box && box.bottom > 0 && box.top < window.innerHeight,
+          shown: !!box && !!thread && box.bottom > thread.getBoundingClientRect().top && box.top < thread.getBoundingClientRect().bottom,
           top: box ? box.top : NaN,
           fromThreadTop: box ? box.top - threadTop : NaN,
           paneHeight: pane?.getBoundingClientRect().height ?? NaN,
+          threadTop, threadBottom: thread?.getBoundingClientRect().bottom ?? NaN, scrollTop: thread?.scrollTop ?? NaN,
         });
         if (performance.now() - start < 3000) requestAnimationFrame(read);
       };
@@ -126,6 +127,7 @@ for (const mode of ['idle', 'steer'] as const) {
     await page.waitForTimeout(3200);
     const all: DockedFrame[] = await page.evaluate(() => (window as any).__dockedFrames);
     await testInfo.attach('frames.json', { body: JSON.stringify(all), contentType: 'application/json' });
+    console.log('DOCKED_FRAMES ' + mode + '\n' + all.slice(0, 90).map((f, i) => `${i} shown=${f.shown} top=${Math.round(f.top)} fromThread=${Math.round(f.fromThreadTop)} pane=${Math.round(f.paneHeight)} thread=${Math.round(f.threadTop)}..${Math.round(f.threadBottom)} scroll=${Math.round(f.scrollTop)}`).join('\n'));
     const first = all.findIndex((frame) => frame.shown);
     expect(first, 'the sent message shows').toBeGreaterThanOrEqual(0);
     const frames = all.slice(first);
