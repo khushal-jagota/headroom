@@ -1,7 +1,7 @@
 import { require_recipient_available } from './data/lifecycles.ts';
 import { own_recipient_delivery } from './lifetime.ts';
 /** Resolve a Panels recipient through its canonical conversation send door. */
-import type { Database } from '../core/database/contracts.ts';
+import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { Principal, RequestContext } from '../core/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -26,12 +26,26 @@ import { validate_launch_configuration } from '../managers/launch_settings.ts';
 import { CHIEF_SETTINGS_KEY } from '../worker_settings/service.ts';
 import { MessageRecordedToOwner } from './contracts.ts';
 import type { MessageAdmission, MessageDeliveryResult } from './contracts.ts';
-export function sender_label(ctx: RequestContext): string {
-  if (ctx.principal.kind === 'owner') return 'owner';
-  if (ctx.principal.kind === 'chief') return 'Chief';
-  if (ctx.principal.kind === 'ticket') return `Ticket ${ctx.principal.id}`;
-  if (ctx.principal.kind === 'unidentified') return 'Unidentified caller';
-  return `Manager ${ctx.principal.id}`;
+/**
+ * The label that opens a message. With `detail`, a Ticket or Manager sender also names its title
+ * and Manager, so the recipient knows who wrote and which ID to reply to.
+ */
+export function sender_label(ctx: RequestContext, detail?: ReadSql): string {
+  const sender = ctx.principal;
+  if (sender.kind === 'owner') return 'owner';
+  if (sender.kind === 'chief') return 'Chief';
+  if (sender.kind === 'unidentified') return 'Unidentified caller';
+  if (sender.kind === 'ticket') {
+    if (!detail) return `Ticket ${sender.id}`;
+    const ticket = read_ticket(detail, sender.id);
+    const under =
+      ticket.manager_kind === 'chief'
+        ? 'Chief'
+        : `Manager "${ticket.manager_title}" (manager ${ticket.manager_id})`;
+    return `Worker on "${ticket.title}" (ticket ${sender.id}), under ${under}`;
+  }
+  if (!detail) return `Manager ${sender.id}`;
+  return `Manager "${read_manager(detail, sender.id).item.title}" (manager ${sender.id})`;
 }
 function sender_conversation_id(database: Database, sender: Principal): string | null {
   if (sender.kind === 'ticket')
@@ -105,7 +119,12 @@ async function send_message_owned(
   }
   if (recipient.kind !== 'owner')
     database.read((sql) => require_recipient_available(sql, recipient));
-  const label = system_message ? 'Panels' : sender_label(ctx);
+  // The owner reads short labels in notifications. Agents get the full label.
+  const label = system_message
+    ? 'Panels'
+    : recipient.kind === 'owner'
+      ? sender_label(ctx)
+      : database.read((sql) => sender_label(ctx, sql));
   const content = typeof message === 'string' ? text_message_content(message) : message;
   const runs_under = options.runs_under ?? NO_CONVERSATION_START_OVERRIDES;
   const sender = system_message ? null : caller;
