@@ -13,6 +13,7 @@
   import MachineRows from "../lib/updates/MachineRows.svelte";
   import { performUpdateAction, type UpdateActionRequest } from "../lib/updates/api";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
+  import { CONNECTION_GRACE_MS } from "../lib/updates/config";
 
   let { connectionState, navigationHealth = null, showsSavedSession = false, status, presentation }: {
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth; showsSavedSession?: boolean;
@@ -56,11 +57,20 @@
   // The desktop app opens with the last session's data. Until the server replaces it on
   // screen, the line says so. A navigation warning, when there is one, says more.
   const SAVED_SESSION = { state: "saved_session" } as const;
+  // The navigation feed reconnects on its own after the same kind of reset. Its warning waits
+  // the same grace time, so a self-healing reset shows nothing here either.
+  let settledNavigationHealth = $state.raw<NavigationHealth>(null);
+  $effect(() => {
+    const health = navigationHealth;
+    if (health === null) { settledNavigationHealth = null; return; }
+    const timer = setTimeout(() => { settledNavigationHealth = health; }, CONNECTION_GRACE_MS);
+    return () => clearTimeout(timer);
+  });
   type ShownHealth = NavigationHealth | typeof SAVED_SESSION;
   // An update restarts Panels, which drops navigation for a moment. That is part of the
   // one "Updating…" wait, not a second thing to report.
   const shownHealth = $derived<ShownHealth>((presentation === "updating" || desktop && (presentation === "unreachable" || presentation === "offline")) ? null
-    : navigationHealth ?? (showsSavedSession ? SAVED_SESSION : null));
+    : settledNavigationHealth ?? (showsSavedSession ? SAVED_SESSION : null));
   const statusKey = $derived(presentation ?? (shownHealth ? "navigation" : null));
   let displayedWord = $state<UpdateCardState | "navigation" | null>(null);
   const desktopUnreachable = $derived(desktop && displayedWord === "unreachable");
