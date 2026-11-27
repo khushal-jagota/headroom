@@ -1,4 +1,5 @@
 import { clientFetch } from "../../clientIdentity";
+import {watchStream} from '../../connectionLog';
 import type {ViewFrame,ViewRequest,ViewSnapshot} from '../contracts';
 
 function path(kind:'snapshot'|'events',view:ViewRequest) {
@@ -14,9 +15,11 @@ export function createViewTransport() {
     },
     connect(view:ViewRequest,callbacks:{frame(value:ViewFrame):void;error():void},signal:AbortSignal):()=>void {
       const source=new EventSource(path('events',view));
+      const watch=watchStream('navigation_events');
+      source.onopen=()=>watch.opened();
       const frame=(event:MessageEvent<string>)=>{try{callbacks.frame(JSON.parse(event.data) as ViewFrame);}catch{source.close();callbacks.error();}};
       for(const event of ['snapshot','patch','checkpoint','reset'])source.addEventListener(event,frame as EventListener);
-      source.onerror=()=>{source.close();callbacks.error();};
+      source.onerror=()=>{watch.ended('error_event');source.close();callbacks.error();};
       const close=()=>source.close();signal.addEventListener('abort',close,{once:true});
       return ()=>{signal.removeEventListener('abort',close);close();};
     },

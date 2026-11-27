@@ -6,6 +6,7 @@ export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from 
 import { mutationHeaders } from "../releaseMonitor";
 import { RequestLimitError } from "../requestLimit/limit";
 import { BACKEND_READ_LIMIT_MS, BACKEND_SIGN_IN_LIMIT_MS, BACKEND_UPDATE_LIMIT_MS } from "../requestLimit/config";
+import { watchStream } from "../connectionLog";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -952,6 +953,8 @@ export function openConversationTail(
   const source = new EventSource(
     `${CONVERSATION_BASE}/conversations/${encodeURIComponent(conversationId)}/tail?after=${after}`
   );
+  const watch = watchStream("conversation_tail");
+  source.addEventListener("open", () => watch.opened());
   let closed = false;
   const close = (): void => {
     if (closed) return;
@@ -965,6 +968,7 @@ export function openConversationTail(
     handlers.onLiveFrame(JSON.parse(message.data) as ConversationLiveFrame);
   });
   source.addEventListener("error", () => {
+    watch.ended("error_event");
     close();
     handlers.onTrouble();
   });

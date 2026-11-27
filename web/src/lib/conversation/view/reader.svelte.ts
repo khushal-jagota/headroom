@@ -22,6 +22,7 @@ export function compareItems(a: ConversationViewItem, b: ConversationViewItem): 
 function itemBytes(item: ConversationViewItem): number { const cached = byteSizes.get(item); if (cached !== undefined)
     return cached; const count = item.kind === 'row' && item.body.kind === 'inline' ? encoder.encode(JSON.stringify(item.body.value)).byteLength : 0; byteSizes.set(item, count); return count; }
 export type { ViewReaderAnchor } from './anchorContracts';
+import { watchStream } from '../../connectionLog';
 import type { ViewReaderAnchor, RestorationOutcome } from './anchorContracts';
 export type HeldPage = {
     scope: ViewHistoryScope;
@@ -425,6 +426,8 @@ export class ConversationViewReader {
         return new Promise<'preparing' | 'snapshot-ready' | void>((resolve, reject) => {
             let settled = false;
             const source = new EventSource(this.url('/tail', query));
+            const watch = watchStream('conversation_tail');
+            source.addEventListener('open', () => watch.opened());
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
             const ready = () => { this.preparingHistory = false; this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
@@ -556,6 +559,7 @@ export class ConversationViewReader {
             const probe = new AbortController();
             source.onerror = async () => {
                 if (!active() || this.source !== source) return;
+                watch.ended('error_event');
                 source.close();
                 this.source = null;
                 if (!settled) {

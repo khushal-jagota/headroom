@@ -1,0 +1,56 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+// The log is the only record of why a stream ended, so its bound and its hand-off to the
+// server are checked here. The server and Chromium parts are checked in the real desktop app.
+const store = new Map<string, string>();
+const requests: { body: { version: number; events: { id: string }[] }; headers: Record<string, string> }[] = [];
+let answer = 204;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  store.clear();
+  requests.length = 0;
+  answer = 204;
+  vi.stubGlobal("window", { setInterval, clearInterval, addEventListener: () => {}, removeEventListener: () => {} });
+  vi.stubGlobal("document", { visibilityState: "hidden", querySelector: () => null });
+  vi.stubGlobal("navigator", { onLine: true });
+  vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) });
+  vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    requests.push({ body: JSON.parse(init.body as string), headers: init.headers as Record<string, string> });
+    return new Response(null, { status: answer });
+  }));
+});
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
+
+const log = () => JSON.parse(store.get("panels.connection-events") ?? "[]") as Record<string, unknown>[];
+
+it("records the cause with its context, keeps the newest 200, and sends once a connection returns", async () => {
+  const { watchStream, startConnectionLog, flushConnectionEvents, CONNECTION_LOG_MAX_EVENTS, CONNECTION_LOG_SEND_GAP_MS } = await import("../src/lib/connectionLog");
+  startConnectionLog();
+  const watch = watchStream("changes");
+  watch.opened();
+  await vi.advanceTimersByTimeAsync(4_000);
+  watch.ended("error_event");
+  watch.ended("error_event"); // one stream end is one event
+  expect(log()).toHaveLength(1);
+  expect(log()[0]).toMatchObject({ source: "web", kind: "stream_ended", stream: "changes", reason: "error_event", open_ms: 4_000, online: true, visibility: "hidden", timer_drift_ms: 0 });
+
+  for (let i = 0; i < CONNECTION_LOG_MAX_EVENTS + 5; i++) watchStream("conversation_tail").ended("error_event");
+  expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS);
+
+  // A refused send keeps the events. The next return, after the gap, sends them and clears them.
+  answer = 503;
+  flushConnectionEvents();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(requests).toHaveLength(1);
+  expect(requests[0].body.version).toBe(1);
+  expect(requests[0].body.events).toHaveLength(100);
+  expect(JSON.parse(requests[0].headers["X-Panels-Client"])).toMatchObject({ kind: "browser" });
+  expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS);
+  answer = 204;
+  await vi.advanceTimersByTimeAsync(CONNECTION_LOG_SEND_GAP_MS);
+  flushConnectionEvents();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS - 100);
+});

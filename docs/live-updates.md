@@ -43,6 +43,8 @@ The server looks for navigation index changes on a short timer, so the rail can 
 
 The server counts open live streams for each declared client identity. An unusually high count produces one warning with totals by route. The warning resets after the count falls. This diagnostic does not refuse or end streams.
 
+The page keeps a small log of why its live streams ended: the time, the stream, the reason, how long it was open, whether the browser was online, whether the page was visible, and how late a 1 s timer ran (a late timer shows sleep). The log lives in local storage and holds the newest 200 events. When the change stream opens, the page sends the log to the server in one background batch at `POST /api/client-events`, and nothing on screen waits for it. A refused or failed send keeps the events for the next return.
+
 A few writers commit quietly on purpose: skill history, conversation-only rows, and machine receipts for transient output. The conversation tail delivers that output after acceptance. Shared conversation effects retain the global change signal.
 
 Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).

@@ -4,6 +4,7 @@ import { queryClient } from "./queryClient";
 import { refreshScreen, stopScreenRefresh } from "./resourceVersions/refresh";
 import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
 import { UPDATE_RECOVERY_POLL_MS } from "./updates/config";
+import { flushConnectionEvents, startConnectionLog, stopConnectionLog, watchStream } from "./connectionLog";
 
 // The server sends one contentless "something changed" frame per commit. The
 // browser probes versions for mounted resources and refetches changed bodies.
@@ -19,6 +20,7 @@ export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 
 let stream: EventSource | null = null;
+let watch: ReturnType<typeof watchStream> | null = null;
 let flushTimer: number | null = null;
 let reconnectTimer: number | null = null;
 let started = false;
@@ -48,6 +50,7 @@ export function startChangeStream(): void {
   if (started) return;
   started = true;
   document.addEventListener("visibilitychange", onVisibilityChange);
+  startConnectionLog();
   openStream();
 }
 
@@ -55,8 +58,11 @@ function openStream(): void {
   if (!started) return;
   const source = new EventSource("/api/changes");
   stream = source;
+  const thisWatch = watch = watchStream("changes");
   source.onopen = () => {
     if (stream !== source) return;
+    thisWatch.opened();
+    flushConnectionEvents();
     clearReconnect();
     ensureDebug().sseOpens += 1;
     connectionStatus.set("connected");
@@ -80,6 +86,7 @@ function openStream(): void {
   };
   source.onerror = () => {
     if (stream !== source) return;
+    thisWatch.ended("error_event");
     connectionStatus.set("reconnecting");
     // HTTP 503 can permanently close EventSource. Native retry cannot reopen it.
     if (source.readyState === 2 && reconnectTimer === null) {
@@ -109,6 +116,7 @@ export function stopChangeStream(): void {
   clearReconnect();
   stopScreenRefresh();
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  stopConnectionLog();
   if (flushTimer !== null) {
     window.clearTimeout(flushTimer);
     flushTimer = null;
