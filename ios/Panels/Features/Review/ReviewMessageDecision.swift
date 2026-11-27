@@ -132,7 +132,7 @@ extension APIClient {
         if !loaded {
             composer.conversationID = id
             composer.restore(owner: owner, api: api, draftID: "review-message:\(id)", savedWork: self.saved(LocalStore.server(api.baseURL)))
-            composer.deliveryMode = "queue"
+            composer.deliveryMode = "steer"
         }
         var messages: [ReviewMessageEvent]
         var fromSavedCopy = false
@@ -223,7 +223,7 @@ extension APIClient {
         let messageID = UUID().uuidString
         var message = ConversationSend(conversationId: id, content: content,
             senderMessageId: messageID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: through)
-        message.mode = "queue"
+        message.mode = "steer"
         let work = PendingWork(id: messageID, created: .now, kind: .message, owner: owner, message: message)
         do {
             try Outbox.shared.enqueue(work, api: api)
