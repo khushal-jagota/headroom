@@ -43,6 +43,8 @@ The server looks for navigation index changes on a short timer, so the rail can 
 
 The server counts open live streams for each declared client identity. An unusually high count produces one warning with totals by route. The warning resets after the count falls. This diagnostic does not refuse or end streams.
 
+Each live stream also leaves one record when it closes: the route, the client kind and device, when it opened and closed, the bytes written, the time since the last write, and who closed it. The closer is the peer (including a reset), the server's own shutdown, a write error, or the route itself when it ended the stream. The server prints one `stream_close` journal line and stores the record in the metrics store for 30 days. `panels connection records` reads them back with the events that clients report to `POST /api/client-events`, so a drop at a given minute has a recorded cause. See [Diagnostics](vps.md).
+
 A few writers commit quietly on purpose: skill history, conversation-only rows, and machine receipts for transient output. The conversation tail delivers that output after acceptance. Shared conversation effects retain the global change signal.
 
 Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).
@@ -78,4 +80,4 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 
 An owner update pauses the whole app before the server closes send admission. The pause remains until the server admits writes and compatible screens open. A write that the server explicitly refuses before admission retains its input through screen replacement. A lost reply never triggers an automatic retry. Conversation drafts keep their own storage. Other edited text remains readable after replacement for review, rather than a synthetic edit that can trigger an unintended save. Desktop recovery belongs to the native shell, so failed screens cannot hide its retry action.
 
-_Last verified: 2026-11-25._
+_Last verified: 2026-11-27._

@@ -5,6 +5,7 @@ import type { ResourceProvider } from '../resource_versions/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { UpdateBarrier } from './update_barrier.ts';
 import type { MacUpdateServiceContract } from './updates/mac/contracts.ts';
+import type { StreamCloseSink } from '../core/http/live_streams/records.ts';
 
 /** One server owns updates, metrics readers, Ticket scratch, and environment routes. */
 export interface EnvironmentRuntime {
@@ -23,6 +24,8 @@ export interface EnvironmentRuntime {
   /** The server move notice for one machine's lease reply, or null. */
   server_move_notice?(machine_id: string): ServerMoveNotice | null;
   readonly resourceProviders: readonly ResourceProvider[];
+  /** Where each live stream close is stored. Dropped records never disturb a stream. */
+  readonly stream_close_sink?: StreamCloseSink;
   before_worker_readiness_poll(): boolean;
   start(): void | Promise<void>;
   /** Fence producers immediately and retain pending starts and work until settlement. */

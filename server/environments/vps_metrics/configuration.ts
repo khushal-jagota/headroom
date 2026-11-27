@@ -13,6 +13,7 @@ export interface MetricsConfig {
   minute_seconds: number;
   coarse_seconds: number;
   process_seconds: number;
+  stream_seconds: number;
   metrics_payload_bytes: number;
   process_payload_bytes: number;
   process_snapshot_bytes: number;
@@ -39,6 +40,7 @@ export const DEFAULT_METRICS_CONFIG: Readonly<MetricsConfig> = Object.freeze({
   minute_seconds: 48 * 3600,
   coarse_seconds: 31 * 86400,
   process_seconds: 15 * 60,
+  stream_seconds: 30 * 86400,
   metrics_payload_bytes: 192 * 1024 * 1024,
   process_payload_bytes: 64 * 1024 * 1024,
   process_snapshot_bytes: 4 * 1024 * 1024,

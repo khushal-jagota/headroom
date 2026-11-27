@@ -3,6 +3,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { HttpError } from '../../core/http/errors.ts';
 import { integerQuery, QueryIntegerError, scalarQueries } from '../../list_reads/http.ts';
+import { parse_client_identity } from '../../client_versions/identity.ts';
+import {
+  CLIENT_EVENT_BATCHES_PER_MINUTE,
+  DeviceRateLimit,
+  parse_client_events,
+} from './connection_records.ts';
 import { MetricsOperationalError, QueryLimitError, SnapshotExpiredError } from './contracts.ts';
 import type { Resolution } from './contracts.ts';
 import type { MetricsRuntime } from './runtime.ts';
@@ -110,6 +116,7 @@ export function create_metrics_routes(
     if (!runtime) throw new HttpError(503, 'VPS metrics runtime is unavailable');
     return runtime;
   }
+  const batches = new DeviceRateLimit(CLIENT_EVENT_BATCHES_PER_MINUTE);
   return async (app) => {
     app.get('/vps-metrics/latest', async () => stored(() => current().latest()));
     app.get<{ Querystring: { sequence?: string; offset?: string; limit?: string } }>(
@@ -174,6 +181,61 @@ export function create_metrics_routes(
           query: { signal, entity, start, end, resolution: resolution as Resolution },
         }),
       );
+    });
+    // The records are about streams, so they live in the metrics store but not under its prefix.
+    app.get<{
+      Querystring: { since?: string; until?: string; device_id?: string; limit?: string };
+    }>('/connection-records', async (request) => {
+      const query = scalarQueries(request.query),
+        errors: unknown[] = [];
+      const runtime = current();
+      const until = integer(
+        query.until,
+        'until',
+        Math.round(runtime.wall_clock() * 1000),
+        0,
+        errors,
+      )!;
+      const since = integer(query.since, 'since', until - 86_400_000, 0, errors)!;
+      const limit = integer(query.limit, 'limit', 100, 1, errors)!;
+      const device_id = text(query.device_id, 'device_id', 1, 128, false, errors);
+      if (limit > 500)
+        errors.push(issue('less_than_equal', 'limit', 'Input should be at most 500', limit));
+      if (errors.length) throw new HttpError(422, errors);
+      return stored(() => runtime.connection_records({ since, until, device_id, limit }));
+    });
+    app.post('/client-events', { bodyLimit: 16 * 1024 }, async (request, reply) => {
+      let client;
+      try {
+        client = parse_client_identity(
+          request.headers['x-panels-client'] === undefined
+            ? undefined
+            : [request.headers['x-panels-client']].flat(),
+        );
+      } catch (error) {
+        throw new HttpError(400, (error as Error).message);
+      }
+      if (!client) throw new HttpError(400, 'Send an X-Panels-Client header.');
+      const runtime = current();
+      if (!batches.admit(client.device_id, runtime.wall_clock() * 1000))
+        return reply
+          .code(429)
+          .header('retry-after', '60')
+          .send({
+            error: {
+              code: 'rate_limited',
+              message: 'Too many client event batches for this device.',
+              detail: {},
+            },
+          });
+      let events;
+      try {
+        events = parse_client_events(request.body);
+      } catch (error) {
+        throw new HttpError(422, (error as Error).message);
+      }
+      await stored(async () => runtime.record_client_events(client.device_id, client.kind, events));
+      return { accepted: events.length };
     });
     app.post('/vps-metrics/activity', async () =>
       stored(async () => ({ active_until: await current().renew_activity() })),
