@@ -69,4 +69,28 @@ import XCTest
         preserved.preserve()
         XCTAssertFalse(awake.isAwake)
     }
+
+    func testKeyboardDictationHoldsUntilTheKeyboardLeavesDictation() {
+        let awake = makeAwake()
+        let dictation = DictationAwake(awake: awake, center: NotificationCenter())
+        dictation.inputMode("en-GB")
+        XCTAssertFalse(awake.isAwake, "Typing does not hold the screen")
+        dictation.inputMode("dictation")
+        XCTAssertTrue(awake.isAwake, "Dictation holds the screen")
+        dictation.inputMode("en-GB")
+        XCTAssertFalse(awake.isAwake, "Leaving dictation releases it")
+        dictation.inputMode("dictation")
+        dictation.inputMode(nil)
+        XCTAssertFalse(awake.isAwake, "The keyboard going away releases it")
+    }
+
+    /// The other tests use a stand-in for the idle timer. This one reads the real property.
+    func testRealIdleTimerIsDisabledWhileHeldAndRestoredAfter() {
+        let awake = KeepAwake()
+        let recorder = NSObject()
+        awake.hold(recorder)
+        XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled)
+        awake.release(recorder)
+        XCTAssertFalse(UIApplication.shared.isIdleTimerDisabled)
+    }
 }

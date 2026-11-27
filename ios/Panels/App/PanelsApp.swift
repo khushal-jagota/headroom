@@ -5,6 +5,7 @@ import SwiftUI
     @State private var notifications = NotificationController.shared
     @State private var store = AppStore.configuredBaseURL.map { AppStore(baseURL: $0) }
     @Environment(\.scenePhase) private var scenePhase
+    @State private var dictation = DictationAwake()
     var body: some Scene {
         WindowGroup {
             Group {
