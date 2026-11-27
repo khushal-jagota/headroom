@@ -10,5 +10,3 @@ export const metricsConfig = {
   } as const satisfies Record<WindowId, unknown>
 };
 export const historySignals = ['cpu_percent', 'memory_total_bytes', 'memory_available_bytes', 'load_1', 'filesystem.total_bytes', 'filesystem.available_bytes', 'disk.read_bytes_per_second', 'disk.write_bytes_per_second', 'network.receive_bytes_per_second', 'network.transmit_bytes_per_second'] as const;
-export const tailnetHostSignals = ['tailnet.relay_packets_per_second', 'tailnet.path_discovery_per_second'] as const;
-export const tailnetPeerSignals = ['tailnet.direct', 'tailnet.path_changes'] as const;

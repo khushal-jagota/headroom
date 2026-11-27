@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HistoryPoint, ProcessRecord, Reading, Sample } from '../src/lib/vpsMetrics/contracts';
-import { cpuShare, instruments, processRows, tailnetRows } from '../src/lib/vpsMetrics/presentation';
-import { historyRanges, joinHistory, pathBars, subtractHistory } from '../src/lib/vpsMetrics/logic/history';
+import { cpuShare, instruments, processRows } from '../src/lib/vpsMetrics/presentation';
+import { historyRanges, joinHistory, subtractHistory } from '../src/lib/vpsMetrics/logic/history';
 const reading = (value: number | null): Reading => ({ value, unit: '%', reason: value === null ? 'missing' : null });
 const record = (name: string, cpu: number | null, memory: number | null): ProcessRecord => ({ identity: { boot_id: 'boot', pid: 1, start_ticks: 1 }, parent_pid: 0, uid: 0, name, state: 'S', service: '', metrics: { cpu_percent: reading(cpu), rss_bytes: { ...reading(memory), unit: 'bytes' } } });
 const point = (timestamp: number, value: number | null, boot_id = 'boot'): HistoryPoint => ({ timestamp, end: timestamp + 60, value, boot_id, unit: 'bytes', reason: null, statistics: null });
@@ -41,12 +41,5 @@ describe('retained VPS evidence presentation', () => {
   it('aligns arithmetic by timestamp and boot identity and preserves missing operands', () => {
     const result = subtractHistory(joinHistory([[point(0, 100), point(60, 100), point(120, 100), point(180, null)]]), joinHistory([[point(60, 40), point(120, 30, 'other'), point(180, 10)]]));
     expect(result.map(p => p.value)).toEqual([null, 60, null, null]);
-  });
-  it('names each tailnet path and leaves a hole where the history has none', () => {
-    const peer = (identity: string, path: 'direct' | 'relayed' | 'idle', endpoint: string | null) => ({ identity, name: identity, path, endpoint, relay: 'par', last_handshake: 940, metrics: {} });
-    const sample = { timestamp: 1000, tailnet: { availability: 'available', reason: null, home_relay: 'fra', peers: [peer('mac', 'direct', '86.0.250.169:48077'), peer('phone', 'relayed', null), peer('tv', 'idle', null)] } } as unknown as Sample;
-    expect(tailnetRows(sample).map(row => [row.path, row.direct, row.handshake])).toEqual([['Direct · 86.0.250.169:48077', true, 'handshake 1 min ago'], ['Relayed via par', false, 'handshake 1 min ago'], ['Idle, no path in use', null, 'handshake 1 min ago']]);
-    const bars = pathBars(joinHistory([[point(0, 1), point(60, null), point(120, 0), point(300, 1)]]), 0, 400, 90);
-    expect(bars.map(bar => [bar.x * 400, bar.width * 400, bar.share])).toEqual([[0, 60, 1], [120, 60, 0], [300, 60, 1]]);
   });
 });

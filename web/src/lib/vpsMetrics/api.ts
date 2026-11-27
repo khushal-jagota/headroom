@@ -25,6 +25,6 @@ export function createMetricsApi(): MetricsApi {
       if (sequence !== null) query.set('sequence', String(sequence));
       return fetchJson<ProcessPage>(`/api/vps-metrics/processes?${query}`, { signal });
     }),
-    history: (key, range, signal, entity) => bounded(signal, () => fetchJson<HistoryResponse>(`/api/vps-metrics/history?${new URLSearchParams({ signal: key, ...entity ? { entity } : {}, start: String(range.start), end: String(range.end), resolution: range.resolution })}`, { signal }))
+    history: (key, range, signal) => bounded(signal, () => fetchJson<HistoryResponse>(`/api/vps-metrics/history?${new URLSearchParams({ signal: key, start: String(range.start), end: String(range.end), resolution: range.resolution })}`, { signal }))
   };
 }

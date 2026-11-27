@@ -1,9 +1,9 @@
 import type { HistoryPoint, MetricsApi, MetricsController, ProcessPage, TrendPoint, VpsMetricsState, WindowId } from './contracts';
 import { createMetricsApi } from './api';
-import { historySignals, metricsConfig, tailnetHostSignals, tailnetPeerSignals } from './config';
-import { buildTailnet, buildTrends, historyRanges, joinHistory, tailnetEntity } from './logic/history';
+import { historySignals, metricsConfig } from './config';
+import { buildTrends, historyRanges, joinHistory } from './logic/history';
 export function createMetricsController(api: MetricsApi = createMetricsApi()): MetricsController {
-  let state: VpsMetricsState = { latest: null, tailnet: null, processes: null, window: '5m', history: {}, loading: true, historyLoading: false, failed: false, now: Date.now() / 1000, processError: null, historyError: null };
+  let state: VpsMetricsState = { latest: null, processes: null, window: '5m', history: {}, loading: true, historyLoading: false, failed: false, now: Date.now() / 1000, processError: null, historyError: null };
   const listeners = new Set<(state: VpsMetricsState) => void>();
   let visible = false, destroyed = false, generation = 0, latestFailed = false;
   let cycle: AbortController | null = null, history: AbortController | null = null;
@@ -22,18 +22,15 @@ export function createMetricsController(api: MetricsApi = createMetricsApi()): M
     emit({ historyLoading: true });
     try {
       const series: Record<string, TrendPoint[]> = {};
-      const identities = state.latest?.sample?.tailnet?.peers.map(peer => peer.identity) ?? [];
-      const reads = [...historySignals.map(key => ({ key, entity: undefined })), ...tailnetHostSignals.map(key => ({ key, entity: undefined })), ...identities.flatMap(identity => tailnetPeerSignals.map(key => ({ key, entity: tailnetEntity(identity) })))];
       // The adapter bounds the parallel signal reads to two server workers.
-      await Promise.all(reads.map(async ({ key, entity }) => {
+      await Promise.all(historySignals.map(async key => {
         const chunks: HistoryPoint[][] = [];
-        for (const range of ranges) { const response = await api.history(key, range, request.signal, entity); chunks.push(response.points.filter(point => point.timestamp >= range.start && point.timestamp < range.end)); }
-        series[entity ? `${entity}|${key}` : key] = joinHistory(chunks);
+        for (const range of ranges) { const response = await api.history(key, range, request.signal); chunks.push(response.points.filter(point => point.timestamp >= range.start && point.timestamp < range.end)); }
+        series[key] = joinHistory(chunks);
       }));
       if (request.signal.aborted || token !== generation || requestedWindow !== state.window) return;
       historyBucket = bucket; historySequence = sequence;
-      const gapSeconds = requestedWindow === '5m' ? metricsConfig.rawGapSeconds : config.refreshSeconds * 1.5;
-      emit({ history: buildTrends(series, ranges[0].start, end, gapSeconds), tailnet: buildTailnet(series, identities, ranges[0].start, end, gapSeconds), historyError: null, failed: latestFailed || state.processError !== null });
+      emit({ history: buildTrends(series, ranges[0].start, end, requestedWindow === '5m' ? metricsConfig.rawGapSeconds : config.refreshSeconds * 1.5), historyError: null, failed: latestFailed || state.processError !== null });
     } catch (error) {
       if (!request.signal.aborted && token === generation) { request.abort(); emit({ failed: true, historyError: error instanceof Error ? error.message : 'History unavailable' }); }
     } finally {
@@ -86,7 +83,7 @@ export function createMetricsController(api: MetricsApi = createMetricsApi()): M
   return {
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     setVisible(value) { if (destroyed || visible === value) return; visible = value; cancel(); if (visible) { clock = setInterval(() => emit({ now: Date.now() / 1000 }), metricsConfig.clockMilliseconds); historyBucket = null; historySequence = null; void tick(); } },
-    setWindow(window: WindowId) { if (destroyed || state.window === window) return; cancel(); historyBucket = null; historySequence = null; emit({ window, history: {}, tailnet: null, historyLoading: visible }); if (visible) { clock = setInterval(() => emit({ now: Date.now() / 1000 }), metricsConfig.clockMilliseconds); void tick(); } },
+    setWindow(window: WindowId) { if (destroyed || state.window === window) return; cancel(); historyBucket = null; historySequence = null; emit({ window, history: {}, historyLoading: visible }); if (visible) { clock = setInterval(() => emit({ now: Date.now() / 1000 }), metricsConfig.clockMilliseconds); void tick(); } },
     destroy() { destroyed = true; visible = false; cancel(); listeners.clear(); }
   };
 }

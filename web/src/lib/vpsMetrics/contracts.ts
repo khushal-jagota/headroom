@@ -24,8 +24,6 @@ export interface WorkloadRow { id: string; name: string; count: number; cpu: Rea
 export interface HistoryRange { start: number; end: number; resolution: Resolution }
 export interface TrendPoint { timestamp: number; end: number; value: number | null; boot_id: string }
 export interface Trend { primary: TrendPoint[]; secondary: TrendPoint[]; start: number; end: number; gapSeconds: number }
-/** Per peer: whether the path was direct, and where it changed. `rates` is host-wide: relay packets, with path discovery as the second line. */
-export interface TailnetHistory { peers: Record<string, { direct: TrendPoint[]; changes: TrendPoint[] }>; rates: Trend }
-export interface VpsMetricsState { latest: LatestResponse | null; tailnet: TailnetHistory | null; processes: ProcessPage | null; window: WindowId; history: Partial<Record<InstrumentId, Trend>>; loading: boolean; historyLoading: boolean; failed: boolean; now: number; processError: string | null; historyError: string | null }
-export interface MetricsApi { latest(signal: AbortSignal): Promise<LatestResponse>; activity(signal: AbortSignal): Promise<{ active_until: number }>; processes(sequence: number | null, offset: number, signal: AbortSignal): Promise<ProcessPage>; history(key: string, range: HistoryRange, signal: AbortSignal, entity?: string): Promise<HistoryResponse> }
+export interface VpsMetricsState { latest: LatestResponse | null; processes: ProcessPage | null; window: WindowId; history: Partial<Record<InstrumentId, Trend>>; loading: boolean; historyLoading: boolean; failed: boolean; now: number; processError: string | null; historyError: string | null }
+export interface MetricsApi { latest(signal: AbortSignal): Promise<LatestResponse>; activity(signal: AbortSignal): Promise<{ active_until: number }>; processes(sequence: number | null, offset: number, signal: AbortSignal): Promise<ProcessPage>; history(key: string, range: HistoryRange, signal: AbortSignal): Promise<HistoryResponse> }
 export interface MetricsController { subscribe(listener: (state: VpsMetricsState) => void): () => void; setVisible(visible: boolean): void; setWindow(window: WindowId): void; destroy(): void }
