@@ -19,6 +19,7 @@ import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
 import { is_executor_link_connection } from './executor_link.ts';
 import { ClientLiveStreams, count_live_stream } from './live_streams/index.ts';
+import { track_stream_close, type StreamCloseSink } from './live_streams/records.ts';
 import { SERVER_LOCATION_PATH } from '../../server_link/contracts.ts';
 export interface WorkspaceAdmission {
   readonly starts_closed?: boolean;
@@ -83,6 +84,7 @@ export function installMiddleware(
   lifetime?: HttpRequestScope,
   update_barrier?: UpdateBarrier,
   client_versions?: { database: Database; clock: Clock },
+  stream_close_sink?: StreamCloseSink,
 ): void {
   app.addHook('onRoute', (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
@@ -114,6 +116,11 @@ export function installMiddleware(
   const identities = new WeakMap<FastifyRequest, ClientIdentity>();
   const live_streams = new ClientLiveStreams();
   app.decorateRequest('count_live_stream', null);
+  // The routes that destroy their streams register their own preClose hooks after this one.
+  let shutting_down = false;
+  app.addHook('preClose', async () => {
+    shutting_down = true;
+  });
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
       const path = new URL(request.url, 'http://localhost').pathname;
@@ -165,17 +172,24 @@ export function installMiddleware(
           .send({ error: { code: 'validation', message: (error as Error).message, detail: {} } });
         return;
       }
-      if (client) {
-        identities.set(request, client);
-        let counted = false;
-        request.count_live_stream = () => {
-          if (counted || reply.raw.destroyed || reply.raw.writableEnded) return;
-          counted = true;
-          const close = live_streams.open(client, request.routeOptions.url!);
-          reply.raw.once('finish', close);
-          reply.raw.once('close', close);
-        };
-      }
+      if (client) identities.set(request, client);
+      const identified = client;
+      let counted = false;
+      request.count_live_stream = () => {
+        if (counted || reply.raw.destroyed || reply.raw.writableEnded) return;
+        counted = true;
+        const route = request.routeOptions.url!;
+        track_stream_close(reply, {
+          client: identified,
+          route,
+          sink: stream_close_sink,
+          shutting_down: () => shutting_down,
+        });
+        if (!identified) return;
+        const close = live_streams.open(identified, route);
+        reply.raw.once('finish', close);
+        reply.raw.once('close', close);
+      };
       if (
         client?.kind === 'desktop' &&
         path.startsWith('/api/') &&

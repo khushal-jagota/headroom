@@ -36,6 +36,12 @@ import {
   signals,
 } from '../logic/aggregation.ts';
 import { initialize_metrics_schema } from './schema.ts';
+import type { StreamCloseRecord } from '../../../core/http/live_streams/records.ts';
+import type {
+  ConnectionRecordQuery,
+  ConnectionRecords,
+  ClientEventRecord,
+} from '../connection_records.ts';
 
 function put(sql: TransactionSql, key: string, value: unknown): void {
   sql.run('INSERT OR REPLACE INTO metadata VALUES(?,?)', [key, encode(value)]);
@@ -257,6 +263,12 @@ export class Store implements MetricsStore {
         resolution,
         now - retention - width,
       ]);
+    sql.run('DELETE FROM stream_closes WHERE closed_at<?', [
+      (now - this.config.stream_seconds) * 1000,
+    ]);
+    sql.run('DELETE FROM client_events WHERE received_at<?', [
+      (now - this.config.stream_seconds) * 1000,
+    ]);
     for (const [table, budget_value] of [
       ['snapshots', this.config.process_payload_bytes],
       ['metrics', this.config.metrics_payload_bytes],
@@ -318,6 +330,72 @@ export class Store implements MetricsStore {
       sql.incrementalVacuum(128);
     });
     this.database().checkpoint('PASSIVE', { busyTimeoutMs: 100 });
+  }
+  add_stream_close(record: StreamCloseRecord): void {
+    this.write((sql) => {
+      sql.run(
+        'INSERT INTO stream_closes(closed_at,device_id,client_kind,route,opened_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        [
+          record.closed_at,
+          record.device_id,
+          record.client_kind,
+          record.route,
+          record.opened_at,
+          record.age_ms,
+          record.bytes_written,
+          record.closed_by,
+          record.last_write_ago_ms,
+          record.error_code,
+        ],
+      );
+    });
+  }
+  add_client_events(
+    device_id: string,
+    client_kind: string,
+    received_at: number,
+    events: readonly ClientEventRecord[],
+  ): void {
+    this.write((sql) => {
+      for (const { at, kind, ...detail } of events)
+        sql.run(
+          'INSERT INTO client_events(at,received_at,device_id,client_kind,kind,detail) VALUES(?,?,?,?,?,?)',
+          [at, received_at, device_id, client_kind, kind, JSON.stringify(detail)],
+        );
+    });
+  }
+  /** The newest rows in the window, oldest first, so a reader sees what happened in order. */
+  connection_records(
+    sql: ReadSql,
+    query: ConnectionRecordQuery,
+    deadline?: bigint,
+  ): ConnectionRecords {
+    return this.read(() => {
+      const device = query.device_id === null ? '' : ' AND device_id=?';
+      const extra = query.device_id === null ? [] : [query.device_id];
+      const stream_closes = sql.all<Omit<StreamCloseRecord, never>>(
+        `SELECT * FROM (SELECT route,client_kind,device_id,opened_at,closed_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code FROM stream_closes WHERE closed_at>=? AND closed_at<?${device} ORDER BY closed_at DESC,id DESC LIMIT ?) ORDER BY closed_at,route`,
+        [query.since, query.until, ...extra, query.limit],
+      );
+      const rows = sql.all<{
+        at: number;
+        received_at: number;
+        device_id: string;
+        client_kind: string;
+        kind: string;
+        detail: string;
+      }>(
+        `SELECT * FROM (SELECT id,at,received_at,device_id,client_kind,kind,detail FROM client_events WHERE at>=? AND at<?${device} ORDER BY at DESC,id DESC LIMIT ?) ORDER BY at,id`,
+        [query.since, query.until, ...extra, query.limit],
+      );
+      return {
+        stream_closes,
+        client_events: rows.map(({ detail, ...row }) => ({
+          ...row,
+          ...(JSON.parse(detail) as Record<string, unknown>),
+        })),
+      };
+    }, deadline);
   }
   renew_activity(now: MetricNumber): number {
     return this.write((sql) => {

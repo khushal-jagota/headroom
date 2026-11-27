@@ -100,13 +100,23 @@ describe("the update card resolver", () => {
 
   it("keeps a lost connection inside the update until the deadline, then says Panels is unreachable", () => {
     const updating = at("updating", { deadline_at: new Date(5000).toISOString() });
-    const lost = { ...base, connection: "reconnecting" as const };
+    const lost = { ...base, connection: "unreachable" as const };
     expect(updatePresentation({ ...lost, status: updating, now: 4999 })).toEqual({ state: "updating", dimmed: true });
     expect(updatePresentation({ ...lost, status: updating, now: 5000 })).toEqual({ state: "unreachable", dimmed: true });
     expect(updatePresentation({ ...lost, status: at("updating") })).toEqual({ state: "unreachable", dimmed: true });
     expect(updatePresentation({ ...lost, status: at("available", { deadline_at: new Date(5000).toISOString() }) }))
       .toEqual({ state: "unreachable", dimmed: true });
     expect(updatePresentation({ ...lost, status: undefined })).toEqual({ state: "unreachable", dimmed: true });
+  });
+
+  it("shows no card and no dim while a lost stream recovers, and says the Mac is offline when it is", () => {
+    const recovering = { ...base, connection: "recovering" as const };
+    expect(updatePresentation({ ...recovering, status: undefined })).toEqual({ state: null, dimmed: false });
+    expect(updatePresentation({ ...recovering, status })).toEqual(updatePresentation(base));
+    // A restart during an update still reads as the update.
+    expect(updatePresentation({ ...recovering, status: at("updating") })).toEqual({ state: "updating", dimmed: false });
+    expect(updatePresentation({ ...base, connection: "offline", status: at("updating") })).toEqual({ state: "offline", dimmed: true });
+    expect(updateCard("offline", undefined).word).toBe("This Mac is offline");
   });
 });
 

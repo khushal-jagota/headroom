@@ -35,7 +35,7 @@ These rules hold for all three channels.
 
 ## How it behaves
 
-Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab reads nothing, and its return runs one revision check. A dropped connection shows Reconnecting on the shell status, and the reconnect runs the check. Drafts and outgoing messages live outside the cache, so a re-read never overwrites what the person types. A sent message that got no answer says so on its bubble and offers to send the same words again.
+Passive wakes are gathered into short bursts, so a busy agent's stream of commits does not stampede the browser. A hidden tab reads nothing, and its return runs one revision check. A lost change stream is not shown at first. The page keeps its data, asks the server at once, and the browser reopens the stream after one second (the server's `retry` line). The shell status says "Can't reach Panels" and dims the screen only if the server does not answer for eight seconds. The "Navigation reconnecting" line waits the same eight seconds. If the operating system reports no network, it says "This Mac is offline" at once. The server sends a named heartbeat every 15 seconds, and a stream that is silent for 2.5 times that is closed and reopened. The reconnect runs the check. Drafts and outgoing messages live outside the cache, so a re-read never overwrites what the person types. A sent message that got no answer says so on its bubble and offers to send the same words again.
 
 Model pickers follow revisions of their saved source facts for the selected machine. A revision check calls no machine. A picker body and its revision come from the same saved state, so its own read cannot cause repeated refreshes. [Usage](usage.md) describes discovery and explicit Refresh.
 
@@ -43,7 +43,9 @@ The server looks for navigation index changes on a short timer, so the rail can 
 
 The server counts open live streams for each declared client identity. An unusually high count produces one warning with totals by route. The warning resets after the count falls. This diagnostic does not refuse or end streams.
 
-The page keeps a small log of why its live streams ended: the time, the stream, the reason, how long it was open, whether the browser was online, whether the page was visible, and how late a 1 s timer ran (a late timer shows sleep). The log lives in local storage and holds the newest 200 events. When the change stream opens, the page sends the log to the server in one background batch at `POST /api/client-events`, and nothing on screen waits for it. A refused or failed send keeps the events for the next return.
+Each live stream also leaves one record when it closes: the route, the client kind and device, when it opened and closed, the bytes written, the time since the last write, and who closed it. The closer is the peer (including a reset), the server's own shutdown, a write error, or the route itself when it ended the stream. The server prints one `stream_close` journal line and stores the record in the metrics store for 30 days. `panels connection records` reads them back with the events that clients report to `POST /api/client-events`, so a drop at a given minute has a recorded cause. See [Diagnostics](vps.md).
+
+The page keeps a small log of why its live streams ended: the time, the stream, the reason, how long it was open, whether the browser was online, whether the page was visible, and how late a 1 s timer ran (a late timer shows sleep). The probe that a lost stream starts adds its round-trip time. The log lives in local storage and holds the newest 200 events. When the change stream opens, the page sends the log to the server in one background batch at `POST /api/client-events`, and nothing on screen waits for it. A refused or failed send keeps the events for the next return.
 
 A few writers commit quietly on purpose: skill history, conversation-only rows, and machine receipts for transient output. The conversation tail delivers that output after acceptance. Shared conversation effects retain the global change signal.
 
@@ -80,4 +82,4 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 
 An owner update pauses the whole app before the server closes send admission. The pause remains until the server admits writes and compatible screens open. A write that the server explicitly refuses before admission retains its input through screen replacement. A lost reply never triggers an automatic retry. Conversation drafts keep their own storage. Other edited text remains readable after replacement for review, rather than a synthetic edit that can trigger an unintended save. Desktop recovery belongs to the native shell, so failed screens cannot hide its retry action.
 
-_Last verified: 2026-11-25._
+_Last verified: 2026-11-27._

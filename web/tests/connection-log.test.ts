@@ -26,7 +26,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); 
 const log = () => JSON.parse(store.get("panels.connection-events") ?? "[]") as Record<string, unknown>[];
 
 it("records the cause with its context, keeps the newest 200, and sends once a connection returns", async () => {
-  const { watchStream, startConnectionLog, flushConnectionEvents, CONNECTION_LOG_MAX_EVENTS, CONNECTION_LOG_SEND_GAP_MS } = await import("../src/lib/connectionLog");
+  const { watchStream, recordProbe, startConnectionLog, flushConnectionEvents, CONNECTION_LOG_MAX_EVENTS, CONNECTION_LOG_SEND_GAP_MS } = await import("../src/lib/connectionLog");
   startConnectionLog();
   const watch = watchStream("/api/changes");
   watch.opened();
@@ -35,6 +35,9 @@ it("records the cause with its context, keeps the newest 200, and sends once a c
   watch.ended("error_event"); // one stream end is one event
   expect(log()).toHaveLength(1);
   expect(log()[0]).toMatchObject({ kind: "stream_ended", stream: "/api/changes", reason: "error_event", open_ms: 4_000, online: true, visible: false, drift_ms: 0, at: expect.any(Number) });
+
+  recordProbe(false, 120.4);
+  expect(log()[1]).toMatchObject({ kind: "probe_failed", probe_ms: 120 });
 
   for (let i = 0; i < CONNECTION_LOG_MAX_EVENTS + 5; i++) watchStream("/api/conversation/conversations/:conversation_id/tail").ended("error_event");
   expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS);

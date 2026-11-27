@@ -14,6 +14,7 @@ import { coverage } from '../data/registry.ts';
 import { DELIVERY } from './configuration.ts';
 import { prune } from './retention.ts';
 import { HttpRequestScope } from '../../core/http/lifetime.ts';
+import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
 type Coverage = CurrentViewSnapshot['coverage'];
 interface Notice {
   coverage: Coverage;
@@ -143,7 +144,7 @@ class ScopedStream {
       return;
     }
     response.once('close', () => this.close());
-    void this.send(frame(initial))
+    void this.send(STREAM_RETRY_FRAME + frame(initial))
       .catch((error: unknown) => {
         console.warn('navigation stream initial send failed', error);
         this.close();

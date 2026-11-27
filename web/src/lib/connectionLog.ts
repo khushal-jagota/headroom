@@ -17,14 +17,15 @@ export type EndReason = "error_event" | "silence" | "probe_failure";
 export type ConnectionEvent = {
   /** Epoch milliseconds on this client's clock. */
   at: number;
-  kind: "stream_ended";
-  stream: StreamName;
-  reason: EndReason;
+  kind: "stream_ended" | "probe_ok" | "probe_failed";
+  stream?: StreamName;
+  reason?: EndReason;
   open_ms?: number;
   online: boolean;
   visible: boolean;
   /** The largest gap in a 1 s timer since the last event. A large value shows sleep. */
   drift_ms?: number;
+  /** Round-trip time of the `/api/meta` probe, which a lost stream starts. */
   probe_ms?: number;
 };
 
@@ -96,21 +97,25 @@ export function watchStream(stream: StreamName): { opened(): void; ended(reason:
   };
 }
 
-function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number, probeMs?: number): void {
+function record(event: Pick<ConnectionEvent, "kind" | "stream" | "reason" | "open_ms" | "probe_ms">): void {
   const drift = Math.max(0, Math.round(largestDrift));
   largestDrift = 0;
-  const event: ConnectionEvent = {
+  store([...stored(), {
     at: Date.now(),
-    kind: "stream_ended",
-    stream,
-    reason,
-    open_ms: Math.round(openMs),
+    ...event,
     online: navigator.onLine,
     visible: document.visibilityState !== "hidden",
     ...(tickTimer !== null ? { drift_ms: drift } : {}),
-    ...(probeMs !== undefined ? { probe_ms: Math.round(probeMs) } : {}),
-  };
-  store([...stored(), event].slice(-CONNECTION_LOG_MAX_EVENTS));
+  }].slice(-CONNECTION_LOG_MAX_EVENTS));
+}
+
+function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number): void {
+  record({ kind: "stream_ended", stream, reason, open_ms: Math.round(openMs) });
+}
+
+/** The probe a lost stream starts. Its round-trip time shows whether the server was slow or gone. */
+export function recordProbe(ok: boolean, probeMs: number): void {
+  try { record({ kind: ok ? "probe_ok" : "probe_failed", probe_ms: Math.round(probeMs) }); } catch { /* best effort */ }
 }
 
 /**

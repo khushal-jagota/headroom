@@ -1,11 +1,13 @@
 import type { HistoryQuery, MetricsErrorWire, ProcessQuery } from '../contracts.ts';
 import type { MetricsConfig } from '../configuration.ts';
+import type { ConnectionRecordQuery } from '../connection_records.ts';
 
 /** Strings cross IPC so that JSON float/integer tokens survive the process boundary. */
 export type MetricsRead =
   | { kind: 'latest'; now: number }
   | { kind: 'processes'; now: number; query: ProcessQuery }
-  | { kind: 'history'; query: HistoryQuery };
+  | { kind: 'history'; query: HistoryQuery }
+  | { kind: 'connection_records'; query: ConnectionRecordQuery };
 export interface ReaderBoot {
   incarnation: string;
   path: string;
