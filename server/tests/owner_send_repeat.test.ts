@@ -425,12 +425,18 @@ test('a repeated first message reaches each owner once and the repeat is answere
       message_id: preflight_id,
       conversation_id: null,
       outcome: 'refused',
-      refusal_reason: 'write_to_backend_failed',
-      reason: null,
+      // The stored outcome names the cause, not a backend write.
+      refusal_reason: 'refused_before_acceptance',
+      reason: 'an existing Manager conversation cannot change backend',
     });
     expect(await call('POST', manager_owner.base + '/send', preflight_body)).toEqual({
       status: 200,
-      body: { conversation_id: null, fate: 'refused', refusal_reason: 'write_to_backend_failed' },
+      body: {
+        conversation_id: null,
+        fate: 'refused',
+        refusal_reason: 'refused_before_acceptance',
+        reason: 'an existing Manager conversation cannot change backend',
+      },
     });
     expect(manager_owner.link()).toBeNull();
     expect(prompts(preflight_id)).toEqual([]);

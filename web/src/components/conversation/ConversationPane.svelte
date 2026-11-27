@@ -31,7 +31,6 @@
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { fittedTitle } from "../../lib/conversation/titleFit";
-  import { workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { lastTurnFailedFrom } from "../../lib/conversation/whatHappened";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
@@ -291,7 +290,6 @@
    *  ("Message <role>") already names who does the work. */
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
-  const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
   // A key request blocks on the person as an ask or a question does, so the bar says so too.
   let credentialWaiting = $derived(credentialRequest !== null);
   // A turn that failed, or a message that was not delivered, is said in the bar until the
@@ -314,8 +312,8 @@
       waitingFor: ask !== null ? "approval" as const : userInput !== null ? "answer" as const : credentialWaiting ? "key" as const : waitingOnPage,
       running,
       backgroundWorking,
-      // The dock's words: "Setting up · 1m 35s", never the setup step (owner, A4).
-      settingUp: headSettingUp ? (headSetupElapsed.seconds === null ? "Setting up" : `Setting up · ${formatDuration(headSetupElapsed.seconds)}`) : null,
+      // The dock's words: "Setting up", with no step and no clock.
+      settingUp: headSettingUp ? "Setting up" : null,
       elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds),
       failure: headFailure,
       interrupted: headInterrupted
@@ -323,13 +321,11 @@
   }
   // Said once: the top bar carries only the states the thread has no place for.
   let headStatus = $derived(paneHeadStatus(stateFacts()));
-  /** The dock's line: setting up, working, idle or machine offline. The setup clock leaves the
-   *  setup step out ("Setting up · 1m 35s"). */
+  /** The dock's line: setting up, working, idle or machine offline. */
   let dockStatus = $derived(dockStatusFrom({
     conversation: stateFacts(),
     askWaiting: ask !== null || userInput !== null || credentialWaiting,
     offline: activityUncertain,
-    setupClock: headSetupElapsed.seconds === null ? null : formatDuration(headSetupElapsed.seconds),
     turnClock: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds)
   }));
   let jump = $state<ConversationJump | null>(null);
@@ -502,7 +498,7 @@
       </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->
-        <!-- The shared system line, its mark inline beside the title: "Setting up · 1m 35s"
+        <!-- The shared system line, its mark inline beside the title: "Setting up"
              with a spinner, "Machine offline" with a still dot, the dock's words (A4). -->
         <span class="cv-state" data-conversation-head-status={headStatus.state}
           role="status" title={headStatus.text}>

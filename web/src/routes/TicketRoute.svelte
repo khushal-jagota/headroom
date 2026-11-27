@@ -372,7 +372,7 @@
           <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
                shown, so the decision below is the page's one call to action. -->
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
-            {#snippet leading()}{#if !section.record.value.terminal}<WorkMoveDialog owner={{kind:"ticket",id:stableId}} label={masthead.title} currentMachineId={masthead.machine_id} />{/if}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
+            {#snippet leading()}{#if !section.record.value.terminal}<WorkMoveDialog owner={{kind:"ticket",id:stableId}} currentMachineId={masthead.machine_id} />{/if}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
           </WindowPageRow>
@@ -465,7 +465,7 @@
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
-                  <h2>{ticketSectionHeading(section,currentView)} {fieldLabelFor(lc, currentField)}</h2>
+                  <h2>{ticketSectionHeading(section,currentView)}{ticketSectionHeading(section,currentView)==="Setting up" ? "" : ` ${fieldLabelFor(lc, currentField)}`}</h2>
                   {#if detail.stage !== "needs_brief"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}

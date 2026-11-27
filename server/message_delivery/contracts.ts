@@ -16,6 +16,23 @@ export interface OwnerSendOutcome {
   readonly refusal_reason: string | null;
   readonly reason: string | null;
 }
+/**
+ * Why home refused an owner message before it took custody. Each comes with its sentence in
+ * the outcome's reason. Delivery refusals after custody keep the conversation's own reasons.
+ */
+export const OwnerSendRefusalReason = {
+  /** The send itself was refused, for example a lifecycle fence or an invalid choice. */
+  refused_before_acceptance: 'refused_before_acceptance',
+  /** The recipient or its conversation no longer exists. */
+  recipient_unavailable: 'recipient_unavailable',
+  /** The recipient's machine can never join again: it has no machine credential. */
+  machine_unavailable: 'machine_unavailable',
+  conversation_save_failed: 'conversation_save_failed',
+  home_restarted_before_acceptance: 'home_restarted_before_acceptance',
+  recipient_conversation_replaced: 'recipient_conversation_replaced',
+} as const;
+export type OwnerSendRefusalReason =
+  (typeof OwnerSendRefusalReason)[keyof typeof OwnerSendRefusalReason];
 /** An upload admission writes only through its owning area's write door. */
 export interface MessageAdmission {
   preflight(current_conversation_id: string | null): Promise<MessageDeliveryResult | null>;

@@ -361,7 +361,7 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
     case "injected":
       return "steered into the running turn";
     case "refused":
-      return messageNotDelivered(refusalSentence(fate.refusal_reason));
+      return messageNotDelivered(refusalSentence(fate.refusal_reason, fate.reason));
     case "uncertain":
       return "delivery uncertain · do not resend";
     case "suppressed":

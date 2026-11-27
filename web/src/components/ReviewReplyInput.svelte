@@ -26,6 +26,8 @@
     if(sendDisabled || !hasReply || voiceState.phase!=='idle')return;
     if(preserveHeight)held={box:Math.max(held?.box??0,root?.getBoundingClientRect().height??0),input:Math.max(held?.input??0,input?.getBoundingClientRect().height??0)};
     await onSend();
+    // A sent reply clears the draft: let go of the held size so the box shrinks back. A failed send keeps its text and its size.
+    if(!text && !files.length && !images.length && !uploads.length)held=null;
   }
 
 </script>

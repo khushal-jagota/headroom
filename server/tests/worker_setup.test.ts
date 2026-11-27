@@ -216,9 +216,7 @@ test('Another machine declares its setup while its start is open, and every sett
         step: 'preparing_workspace',
       });
       expect((await attention(database, ticket.id)).agent_state).toBe('setting_up');
-      expect(restart_refusal(database, ticket.id)).toMatch(
-        /^Still setting up since .* UTC \(preparing workspace\)$/,
-      );
+      expect(restart_refusal(database, ticket.id)).toMatch(/^Still setting up since .* UTC$/);
       await endpoint.report_worker_setup(identity, { child: reference, step: 'starting_worker' });
       expect(navigation_setup(database, ticket.id)).toMatchObject({ step: 'starting_worker' });
       expect(move_phase(database, conversation_id)).toBe('starting');

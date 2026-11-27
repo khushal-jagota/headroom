@@ -190,10 +190,18 @@ export interface WebPushAdapter {
     options: { subject: string },
   ): Promise<WebPushResult>;
 }
+/** One push to the Review Live Activity. The token is a start token or an update token. */
+export interface LiveActivityPush {
+  token: string;
+  bundle_id: string;
+  environment: APNsDevice['environment'];
+  payload: Buffer;
+}
 export interface APNsAdapter {
   send(
     delivery: PendingAPNsDelivery,
     options: { server_url: string; now: number },
   ): Promise<APNsResult>;
+  send_live_activity(push: LiveActivityPush, options: { now: number }): Promise<APNsResult>;
   close(): void | Promise<void>;
 }

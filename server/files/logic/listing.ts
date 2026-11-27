@@ -2,7 +2,7 @@ import { readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ArtifactEntry } from '../contracts.ts';
 /** Missing entries read as empty; any other filesystem failure is logged and read as empty. */
-function absent<T>(path: string, fallback: T): (error: unknown) => T {
+export function absent<T>(path: string, fallback: T): (error: unknown) => T {
   return (error) => {
     if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
       console.warn('artifact listing could not read', path, error);

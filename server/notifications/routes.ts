@@ -13,6 +13,7 @@ import type { APNsDevice } from './contracts.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
+import * as live_activity_data from './live_activity_data.ts';
 import { desktop_notification_streams } from './desktop_streams.ts';
 import { SSE_HEARTBEAT_MS } from '../core/config.ts';
 function settings(sql: ReadSql) {
@@ -48,6 +49,12 @@ const deviceBody = {
     bundle_id: { type: 'string', minLength: 1, maxLength: 255, pattern: '^[A-Za-z0-9.-]+$' },
     environment: { type: 'string', enum: ['development', 'production'] },
   },
+};
+const tokenField = {
+  type: ['string', 'null'],
+  minLength: 2,
+  maxLength: 512,
+  pattern: '^(?:[0-9a-f]{2})+$',
 };
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   app.get('/notifications/settings', async () => services.database.read(settings));
@@ -189,4 +196,43 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       removed: apns_data.remove_device(sql, request.body),
     }));
   });
+  // The app reports its Live Activity tokens. A field left out keeps its value and null clears it.
+  app.put<{
+    Body: {
+      device_token: string;
+      bundle_id: string;
+      environment: APNsDevice['environment'];
+      push_to_start_token?: string | null;
+      update_token?: string | null;
+    };
+  }>(
+    '/notifications/apns/live-activity',
+    {
+      schema: {
+        body: {
+          ...deviceBody,
+          properties: {
+            ...deviceBody.properties,
+            push_to_start_token: tokenField,
+            update_token: tokenField,
+          },
+        },
+      },
+    },
+    async (request) => {
+      authenticated_owner(request, services);
+      const { push_to_start_token, update_token, ...device } = request.body;
+      const registered = services.database.write((sql) =>
+        live_activity_data.register_live_activity(
+          sql,
+          device,
+          { push_to_start_token, update_token },
+          services.clock.nowUnix(),
+        ),
+      );
+      if (!registered)
+        throw new PlannerError('not_found', 'register this device for native push first');
+      return { registered: true };
+    },
+  );
 };

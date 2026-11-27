@@ -14,6 +14,29 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// The server's push `content-state` reaches the widget only if these keys decode. A mismatch fails silently on the phone.
+    func testReviewLiveActivityContentStateDecodesTheSharedServerFixture() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "review-live-activity", withExtension: "json", subdirectory: "Fixtures"))
+        let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        func state(_ key: String) throws -> ReviewActivityContentState {
+            try JSONDecoder().decode(ReviewActivityContentState.self, from: JSONSerialization.data(withJSONObject: fixture[key]!))
+        }
+        XCTAssertEqual(try state("update"), ReviewActivityContentState(count: 4, arrivedTitle: "Work move feels live and finishes clearly"))
+        XCTAssertEqual(try state("clear"), ReviewActivityContentState(count: 0, arrivedTitle: nil))
+    }
+
+    /// A token that has not arrived yet must never clear a live one on the server. Only an ended activity sends null.
+    func testLiveActivityReportClearsTheUpdateTokenOnlyWhenTheActivityEnded() throws {
+        func json(_ tokens: LiveActivityTokens) throws -> [String: Any?] {
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(tokens)) as! [String: Any?]
+        }
+        XCTAssertTrue(try json(LiveActivityTokens(pushToStart: nil, update: .unknown)).isEmpty)
+        XCTAssertEqual(try json(LiveActivityTokens(pushToStart: "aa", update: .token("bb"))) as NSDictionary, ["push_to_start_token": "aa", "update_token": "bb"])
+        let ended = try json(LiveActivityTokens(pushToStart: "aa", update: .ended))
+        XCTAssertEqual(ended.keys.sorted(), ["push_to_start_token", "update_token"])
+        XCTAssertTrue(ended["update_token"]! is NSNull)
+    }
+
     @MainActor func testColdLaunchRetainsTapAndRejectsAnotherServer() throws {
         let controller = NotificationController()
         let payload: [AnyHashable: Any] = ["server_url": "https://panels.example:443/", "route": "/#/workspace/t_42"]

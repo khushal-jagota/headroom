@@ -29,8 +29,8 @@ The workspace has these pieces:
 
 Ordinary Managers keep their former Manager IDs and supervisor conversations.
 Workers name Chief or an ordinary manager explicitly. Assignment, Project, approval
-holder, and Chief authority are separate facts. The owner can settle ordinary
-Managers. Chief can never settle. Settlement does not gate Worker continuation.
+holder, and Chief authority are separate facts. The owner and Chief can settle ordinary
+Managers. Chief can never be settled. Settlement does not gate Worker continuation.
 
 Day records and date-range Sprints are removed, including their screens and read commands.
 Managers retain their Item identities and supervisors. Do not recreate calendar planning or replacement recurring reviews.

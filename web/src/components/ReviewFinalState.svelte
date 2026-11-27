@@ -7,15 +7,18 @@
   import type { ReviewSummary } from '../lib/navigation/contracts';
   import { workspaceAddress } from '../lib/workspaceAddress';
 
-  let { summary, runningWorkerCount, returning = false, returnError = null, onReturn }: {
+  let { summary, pending = false, runningWorkerCount, returning = false, returnError = null, onReturn }: {
     summary: ReviewSummary | null;
+    /** The queue view is one request behind. With no summary of its own to keep, the hero stays blank. */
+    pending?: boolean;
     runningWorkerCount: number | null;
     returning?: boolean;
     returnError?: unknown;
     onReturn: () => void;
   } = $props();
   let messageBusy = $state(false);
-  const status = $derived(reviewFinalStatus(summary));
+  const blank = $derived(pending && !summary);
+  const status = $derived(blank ? ['\u00a0','\u00a0'] as const : reviewFinalStatus(summary));
   const count = $derived(summary ? summary.new + summary.skipped : null);
   const returnLabel = $derived(summary?.new ? 'Back to review' : SKIPPED_RETURN_LABEL);
 </script>
@@ -27,7 +30,7 @@
     </div>
   </div>
 </WindowPageRow>
-<div class="review-final" data-review-empty data-review-final-count={count ?? 'unknown'}>
+<div class="review-final" data-review-empty data-review-final-count={blank ? 'pending' : count ?? 'unknown'}>
   <div class="review-final-hero">
     <div class="column">
       <h2 data-review-final-status role="status"><span class="lead">{status[0]}</span> <span class="detail">{status[1]}</span></h2>
