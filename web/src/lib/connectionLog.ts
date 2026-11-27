@@ -1,30 +1,35 @@
-import { clientIdentityHeaders, randomClientId } from "./clientIdentity";
+import { clientIdentityHeaders } from "./clientIdentity";
 
 // A small local log of why this page's live streams ended. It waits in local storage and
 // goes to the server in a batch when the connection returns. The server stores it beside its
 // own record of the stream, so a drop has the page's cause and the server's cause together.
 // Recording never throws and never makes the screen wait.
 
-export type StreamName = "changes" | "navigation_events" | "conversation_tail";
+// The event shape is version 1 of `POST /api/client-events`, owned by the server's design for
+// the stream-close record. The route names a stream, and the server names the client by header.
+export type StreamName =
+  | "/api/changes"
+  | "/api/navigation/view/events"
+  | "/api/conversation/conversations/:id/tail";
 export type EndReason = "error_event" | "silence" | "probe_failure";
 
 export type ConnectionEvent = {
-  id: string;
-  at: string;
-  source: "web";
+  /** Epoch milliseconds on this client's clock. */
+  at: number;
   kind: "stream_ended";
   stream: StreamName;
   reason: EndReason;
   open_ms?: number;
   online: boolean;
-  visibility: "visible" | "hidden";
-  timer_drift_ms?: number;
+  visible: boolean;
+  /** The largest gap in a 1 s timer since the last event. A large value shows sleep. */
+  drift_ms?: number;
   probe_ms?: number;
 };
 
 export const CONNECTION_LOG_KEY = "panels.connection-events";
 export const CONNECTION_LOG_MAX_EVENTS = 200;
-const MAX_BATCH = 100;
+const MAX_BATCH = 50;
 const TICK_MS = 1_000;
 /** The page sends at most one batch in this time. */
 export const CONNECTION_LOG_SEND_GAP_MS = 10_000;
@@ -92,16 +97,14 @@ function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number, 
   const drift = Math.max(0, Math.round(largestDrift));
   largestDrift = 0;
   const event: ConnectionEvent = {
-    id: randomClientId(),
-    at: new Date().toISOString(),
-    source: "web",
+    at: Date.now(),
     kind: "stream_ended",
     stream,
     reason,
     open_ms: Math.round(openMs),
     online: navigator.onLine,
-    visibility: document.visibilityState === "hidden" ? "hidden" : "visible",
-    ...(tickTimer !== null ? { timer_drift_ms: drift } : {}),
+    visible: document.visibilityState !== "hidden",
+    ...(tickTimer !== null ? { drift_ms: drift } : {}),
     ...(probeMs !== undefined ? { probe_ms: Math.round(probeMs) } : {}),
   };
   store([...stored(), event].slice(-CONNECTION_LOG_MAX_EVENTS));
@@ -126,10 +129,10 @@ export function flushConnectionEvents(): void {
         body: JSON.stringify({ version: 1, events: batch }),
         signal: AbortSignal.timeout(SEND_LIMIT_MS),
       });
-      // A 400 can never succeed, so its batch goes like a stored one.
-      if (response.status !== 204 && response.status !== 400) return;
-      const sent = new Set(batch.map((event) => event.id));
-      store(stored().filter((event) => !sent.has(event.id)));
+      // A refused shape (400, 413, 422) can never succeed, so its batch goes like a stored one.
+      if (response.status !== 204 && ![400, 413, 422].includes(response.status)) return;
+      // Newer events may have joined the log during the send. The sent ones are the oldest.
+      store(stored().slice(batch.length));
     } catch {
       // The next return of the connection tries again.
     } finally {

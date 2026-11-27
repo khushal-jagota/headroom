@@ -5,7 +5,6 @@
 // wake and screen lock. Events wait in a file in the app's data folder, so a quit or a crash
 // does not lose them. The server takes the batch at `POST /api/client-events`.
 import { app, netLog, powerMonitor, session } from 'electron';
-import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJson, writeJson } from './stored_json';
@@ -14,20 +13,19 @@ import { desktopIdentityHeaders } from './client_identity';
 
 const EVENTS_FILE = 'connection-events.json';
 const MAX_EVENTS = 200;
-const MAX_BATCH = 100;
+const MAX_BATCH = 50;
 const SEND_DELAY_MS = 5_000;
 const RETRY_MS = 30_000;
 const SEND_LIMIT_MS = 10_000;
 
-type Stream = 'changes' | 'navigation_events' | 'conversation_tail';
+// The event shape is version 1 of `POST /api/client-events`, owned by the server's design for
+// the stream-close record. The server names the client by the identity header.
 type NativeEvent = {
-  id: string;
-  at: string;
-  source: 'desktop_native';
-  kind: 'relay_failed' | 'power';
-  stream?: Stream;
-  error_code?: string;
-  route?: string;
+  /** Epoch milliseconds. */
+  at: number;
+  kind: 'stream_ended' | 'power';
+  stream?: string;
+  reason?: string;
   power?: 'suspend' | 'resume' | 'lock' | 'unlock';
 };
 
@@ -38,9 +36,9 @@ function events(): NativeEvent[] {
   return queue ??= readJson<NativeEvent[]>(EVENTS_FILE) ?? [];
 }
 
-function record(event: Omit<NativeEvent, 'id' | 'at' | 'source'>): void {
+function record(event: Omit<NativeEvent, 'at'>): void {
   const list = events();
-  list.push({ id: randomUUID(), at: new Date().toISOString(), source: 'desktop_native', ...event });
+  list.push({ at: Date.now(), ...event });
   if (list.length > MAX_EVENTS) list.splice(0, list.length - MAX_EVENTS);
   writeJson(EVENTS_FILE, list);
   scheduleSend(SEND_DELAY_MS);
@@ -70,18 +68,18 @@ async function send(): Promise<void> {
     scheduleSend(RETRY_MS);
     return;
   }
-  // A 400 can never succeed, so that batch is dropped like a stored one.
-  if (status !== 204 && status !== 400) { scheduleSend(RETRY_MS); return; }
-  const sent = new Set(batch.map(event => event.id));
-  queue = events().filter(event => !sent.has(event.id));
+  // A refused shape (400, 413, 422) can never succeed, so that batch is dropped like a stored one.
+  if (status !== 204 && ![400, 413, 422].includes(status)) { scheduleSend(RETRY_MS); return; }
+  // Newer events may have joined the queue during the send. The sent ones are the oldest.
+  queue = events().slice(batch.length);
   writeJson(EVENTS_FILE, queue);
   if (queue.length > 0) scheduleSend(SEND_DELAY_MS);
 }
 
-function streamOf(path: string): Stream | undefined {
-  if (path === '/api/changes') return 'changes';
-  if (path === '/api/navigation/view/events') return 'navigation_events';
-  if (/^\/api\/conversation\/conversations\/[^/]+\/tail$/.test(path)) return 'conversation_tail';
+/** The live streams the app relays, named as the server names their routes. */
+function streamOf(path: string): string | undefined {
+  if (path === '/api/changes' || path === '/api/navigation/view/events') return path;
+  if (/^\/api\/conversation\/conversations\/[^/]+\/tail$/.test(path)) return '/api/conversation/conversations/:id/tail';
   return undefined;
 }
 
@@ -92,8 +90,8 @@ function chromiumCode(message: string): string {
 
 /** `forward()` calls this when the server could not be reached at all. */
 export function recordRelayFailure(path: string, error: unknown): void {
-  record({ kind: 'relay_failed', route: path, stream: streamOf(path),
-    error_code: chromiumCode(error instanceof Error ? error.message : String(error)) });
+  const stream = streamOf(path);
+  if (stream) record({ kind: 'stream_ended', stream, reason: chromiumCode(error instanceof Error ? error.message : String(error)) });
 }
 
 /**
@@ -107,9 +105,8 @@ export function startRelayErrorLog(screensHost: string): void {
   session.defaultSession.webRequest.onErrorOccurred({ urls: [`panels://${screensHost}/*`] }, (details) => {
     const code = chromiumCode(details.error);
     if (code === 'ERR_ABORTED' || code === 'ERR_FAILED') return;
-    const url = new URL(details.url);
-    if (!/^\/(api|files)(\/|$)/.test(url.pathname)) return;
-    record({ kind: 'relay_failed', route: url.pathname, stream: streamOf(url.pathname), error_code: code });
+    const stream = streamOf(new URL(details.url).pathname);
+    if (stream) record({ kind: 'stream_ended', stream, reason: code });
   });
 }
 

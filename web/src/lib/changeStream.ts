@@ -58,7 +58,7 @@ function openStream(): void {
   if (!started) return;
   const source = new EventSource("/api/changes");
   stream = source;
-  const thisWatch = watch = watchStream("changes");
+  const thisWatch = watch = watchStream("/api/changes");
   source.onopen = () => {
     if (stream !== source) return;
     thisWatch.opened();

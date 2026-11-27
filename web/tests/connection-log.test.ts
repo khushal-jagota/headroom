@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 // The log is the only record of why a stream ended, so its bound and its hand-off to the
 // server are checked here. The server and Chromium parts are checked in the real desktop app.
 const store = new Map<string, string>();
-const requests: { body: { version: number; events: { id: string }[] }; headers: Record<string, string> }[] = [];
+const requests: { body: { version: number; events: unknown[] }; headers: Record<string, string> }[] = [];
 let answer = 204;
 
 beforeEach(() => {
@@ -28,15 +28,15 @@ const log = () => JSON.parse(store.get("panels.connection-events") ?? "[]") as R
 it("records the cause with its context, keeps the newest 200, and sends once a connection returns", async () => {
   const { watchStream, startConnectionLog, flushConnectionEvents, CONNECTION_LOG_MAX_EVENTS, CONNECTION_LOG_SEND_GAP_MS } = await import("../src/lib/connectionLog");
   startConnectionLog();
-  const watch = watchStream("changes");
+  const watch = watchStream("/api/changes");
   watch.opened();
   await vi.advanceTimersByTimeAsync(4_000);
   watch.ended("error_event");
   watch.ended("error_event"); // one stream end is one event
   expect(log()).toHaveLength(1);
-  expect(log()[0]).toMatchObject({ source: "web", kind: "stream_ended", stream: "changes", reason: "error_event", open_ms: 4_000, online: true, visibility: "hidden", timer_drift_ms: 0 });
+  expect(log()[0]).toMatchObject({ kind: "stream_ended", stream: "/api/changes", reason: "error_event", open_ms: 4_000, online: true, visible: false, drift_ms: 0, at: expect.any(Number) });
 
-  for (let i = 0; i < CONNECTION_LOG_MAX_EVENTS + 5; i++) watchStream("conversation_tail").ended("error_event");
+  for (let i = 0; i < CONNECTION_LOG_MAX_EVENTS + 5; i++) watchStream("/api/conversation/conversations/:id/tail").ended("error_event");
   expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS);
 
   // A refused send keeps the events. The next return, after the gap, sends them and clears them.
@@ -45,12 +45,12 @@ it("records the cause with its context, keeps the newest 200, and sends once a c
   await vi.advanceTimersByTimeAsync(0);
   expect(requests).toHaveLength(1);
   expect(requests[0].body.version).toBe(1);
-  expect(requests[0].body.events).toHaveLength(100);
+  expect(requests[0].body.events).toHaveLength(50);
   expect(JSON.parse(requests[0].headers["X-Panels-Client"])).toMatchObject({ kind: "browser" });
   expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS);
   answer = 204;
   await vi.advanceTimersByTimeAsync(CONNECTION_LOG_SEND_GAP_MS);
   flushConnectionEvents();
   await vi.advanceTimersByTimeAsync(0);
-  expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS - 100);
+  expect(log()).toHaveLength(CONNECTION_LOG_MAX_EVENTS - 50);
 });

@@ -953,7 +953,7 @@ export function openConversationTail(
   const source = new EventSource(
     `${CONVERSATION_BASE}/conversations/${encodeURIComponent(conversationId)}/tail?after=${after}`
   );
-  const watch = watchStream("conversation_tail");
+  const watch = watchStream("/api/conversation/conversations/:id/tail");
   source.addEventListener("open", () => watch.opened());
   let closed = false;
   const close = (): void => {
