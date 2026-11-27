@@ -1,6 +1,7 @@
 /** The six selected-conversation view routes. */
 import { is_record as object } from '../../core/records.ts';
 import { Readable } from 'node:stream';
+import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
 import { readSync } from 'node:fs';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -667,7 +668,13 @@ export function createConversationViewRoutes(
           ranges,
           control,
         );
-        const stream = Readable.from(request.request_lifetime?.iterator(output) ?? output);
+        async function* with_retry() {
+          yield STREAM_RETRY_FRAME;
+          yield* output;
+        }
+        const stream = Readable.from(
+          request.request_lifetime?.iterator(with_retry()) ?? with_retry(),
+        );
         reply.raw.once('close', () => {
           control.close?.();
           stream.destroy();
