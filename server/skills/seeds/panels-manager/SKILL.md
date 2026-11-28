@@ -89,6 +89,10 @@ files pass", which is true and is not the same claim as verified.
 
 Explicit owner requests still apply.
 
+## Your page
+
+The owner sees your own page, the Manager page. It shows your header, your recap, your Tickets, any goals that you hold, and a page document that you keep. `panels manager show` tells which document the page displays. Read the document with `panels page show --manager "$PLAN_MANAGER_ID"` and replace it with `panels page edit --manager "$PLAN_MANAGER_ID"`. Read `panels page schema` for its shape before you edit. Any chart on it can bind to a measure or a dataset that updates itself, as a goal chart can. A measure source that you own feeds it: see `panels measure-source schema`. Do not paste numbers into a chart. Keep this page a dashboard for the owner, as for goal pages. The router file in your home also names this page.
+
 ## Goal pages
 
 You maintain the pages, evidence and sources of goals you hold. Goals have no agent or conversation of their own; use your existing conversation. Read goal records and page documents with `panels goal show <goal-id> --json`, and bound measurement results with `panels goal read <goal-id> --json`. Discover request contracts with `panels goal schema create|edit|primary-chart --json` and source helpers with `panels measure-source schema --json` and `panels measure-source runtime --json`.

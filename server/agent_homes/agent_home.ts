@@ -2,11 +2,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 
-// The one setup that every Worker and Manager home shares. Ticket workspace
+// The one setup that every Worker, Manager and Chief home shares. Ticket workspace
 // preparation adds the checkout and artifacts/ after this.
 export const LOGS_DIRECTORY = 'logs';
 export const RULES_DIRECTORY = 'rules';
-export type AgentHomeRole = 'worker' | 'manager';
+export type AgentHomeRole = 'worker' | 'manager' | 'chief';
 
 // Each driver names its own instructions file. Generic code reads the names from the drivers.
 function instruction_file_names(): string[] {
@@ -19,33 +19,53 @@ function instruction_files(): string {
 }
 
 export function agent_home_text(role: AgentHomeRole): string {
-  return role === 'manager' ? manager_home_text() : worker_home_text();
+  return role === 'worker' ? worker_home_text() : supervisor_home_text(SUPERVISOR_PARTS[role]);
 }
 
+interface SupervisorParts {
+  who: string;
+  served_files: string;
+  page: string;
+}
+// The parts in which a Manager's and the Chief's routers differ. Neither names an install.
+const SUPERVISOR_PARTS: Record<'manager' | 'chief', SupervisorParts> = {
+  manager: {
+    who: `- You are a Manager of one domain, for example the distribution of one product. You run that domain and the Tickets that serve it.
+- You do not build Panels. When Panels cannot do something that you need, tell the Chief.`,
+    served_files: `
+
+\`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.`,
+    page: `The owner sees your page. It shows your header, your recap, your Tickets, any goals that you hold, and a page document that you keep: text, checklists, tables, charts and layouts. Edit it with \`panels page show\` and \`panels page edit\`, and with \`panels goal\` for a goal that you hold. A chart can read a measure or a dataset that updates itself, fed by a measure source that you own (\`panels measure-source\`). Do not paste numbers into it. The full rules are in \`panels page schema\`, \`docs/managers.md\` and \`docs/measures.md\`.`,
+  },
+  chief: {
+    who: `- You are the Chief of Staff in Panels. You talk with the owner and turn their direction into Tickets and Managers. You review and approve work at the stages that you hold.
+- You do not do the work of Tickets or Managers yourself. A Worker does one Ticket. A Manager runs one domain. When a Manager finds that Panels cannot do something, it tells you.`,
+    served_files: '',
+    page: `The owner sees your Chief page. It shows your recap, your Tickets and a page document that you keep: text, checklists, tables, charts and layouts. Edit it with \`panels page show --chief\` and \`panels page edit --chief\`. A chart can read a measure or a dataset that updates itself, fed by a measure source that you own (\`panels measure-source\`). Do not paste numbers into it. The full rules are in \`panels page schema\`, \`panels measure-source schema\` and \`docs/measures.md\`.`,
+  },
+};
+
 // A router: it loads in every session, so it points at files and holds no rules.
-function manager_home_text(): string {
+function supervisor_home_text(parts: SupervisorParts): string {
   return `# This folder
 
 This file loads in every session. It is a router. Read the files that it points to. Do not copy them here.
 
 ## Who you are
 
-- You are a Manager of one domain, for example Wren distribution. You run that domain and the Tickets that serve it.
-- You do not build Panels. When Panels cannot do something that you need, tell the Chief.
+${parts.who}
 
 ## Where you are
 
-This folder is your home in Panels. It is your own. Panels wrote this file once, at setup, and never changes it again. You decide how the home is laid out. Keep this file current as your router. ${instruction_files()} hold the same text, so update both.
-
-\`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
+This folder is your home in Panels. It is your own. Panels wrote this file once, at setup, and never changes it again. You decide how the home is laid out. Keep this file current as your router. ${instruction_files()} hold the same text, so update both.${parts.served_files}
 
 ## Your page
 
-Khushal sees your page. It shows your header, your recap, your Tickets, any goals that you hold, and a page document that you keep: text, checklists, tables, charts and layouts. Edit it with \`panels page show\` and \`panels page edit\`, and with \`panels goal\` for a goal that you hold. A chart can read a measure or a dataset that updates itself, fed by a measure source that you own (\`panels measure-source\`). Do not paste numbers into it. The full rules are in \`panels page schema\`, \`docs/managers.md\` and \`docs/measures.md\`.
+${parts.page}
 
 ## Read at the start of a session
 
-- \`rules/\`: how you work. The rules come from Khushal or from your own lessons. Add a rule when a lesson holds beyond one case.
+- \`rules/\`: how you work. The rules come from the owner or from your own lessons. Add a rule when a lesson holds beyond one case.
 - Any other file in this folder, for example \`notes.md\`, when it applies to the work.
 
 ## logs/
@@ -85,7 +105,7 @@ Put build output under TMPDIR, for example xcodebuild -derivedDataPath "$TMPDIR/
 // and never changes it after that, so an agent's own edits last across restarts.
 export async function prepare_agent_home(folder: string, role: AgentHomeRole): Promise<void> {
   await mkdir(join(folder, LOGS_DIRECTORY), { recursive: true });
-  if (role === 'manager') await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
+  if (role !== 'worker') await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
   const text = agent_home_text(role);
   for (const name of instruction_file_names())
     await writeFile(join(folder, name), text, { flag: 'wx' }).catch(
