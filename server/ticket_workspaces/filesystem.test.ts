@@ -351,14 +351,16 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   },
 );
 
-// Risk: Xcode keeps package clones in DerivedData that borrow objects and origin from a sibling
-// copy by absolute path, so after the checkout moves Git cannot read them and the retired
-// checkout is kept forever. Gap: no fixture nests a shared clone in a checkout. Reuses the
-// real-Git clone fixture of the test above.
+// Risk: Xcode (DerivedData) and SwiftPM (.build) keep package clones that borrow objects and
+// origin from a sibling copy by absolute path, so after the checkout moves Git cannot read them
+// and the retired checkout is kept forever. Gap: no fixture nests a shared clone in a checkout.
+// Reuses the real-Git clone fixture of the test above.
 test.skipIf(!['linux', 'darwin'].includes(process.platform))(
-  'a package clone in DerivedData does not hold back the retired checkout',
+  'package clones in DerivedData and .build do not hold back the retired checkout',
   async () => {
-    const { remote, project } = await published_project({ '.gitignore': '.artifacts/\n' });
+    const { remote, project } = await published_project({
+      '.gitignore': '.artifacts/\n.build/\n',
+    });
     const path = folder(),
       checkout = await prepare_workspace(
         path,
@@ -366,15 +368,24 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
         { repository_url: remote, default_branch: 'main' },
         options,
       );
-    const packages = join(checkout, '.artifacts', 'DerivedData', 'SourcePackages');
-    mkdirSync(join(packages, 'checkouts'), { recursive: true });
-    await command(root, ['clone', '--mirror', project, join(packages, 'repositories', 'Package')]);
-    await command(root, [
-      'clone',
-      '--shared',
-      join(packages, 'repositories', 'Package'),
-      join(packages, 'checkouts', 'Package'),
-    ]);
+    for (const packages of [
+      join(checkout, '.artifacts', 'DerivedData', 'SourcePackages'),
+      join(checkout, 'Packages', 'Library', '.build'),
+    ]) {
+      mkdirSync(join(packages, 'checkouts'), { recursive: true });
+      await command(root, [
+        'clone',
+        '--mirror',
+        project,
+        join(packages, 'repositories', 'Package'),
+      ]);
+      await command(root, [
+        'clone',
+        '--shared',
+        join(packages, 'repositories', 'Package'),
+        join(packages, 'checkouts', 'Package'),
+      ]);
+    }
     const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]);
     const retired = await cleanup_local_workspaces(dirname(path), states, 1, options);
     expect(retired.skipped).toEqual([]);
