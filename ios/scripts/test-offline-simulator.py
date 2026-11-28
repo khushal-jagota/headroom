@@ -516,7 +516,8 @@ def main() -> int:
         }
     if REVIEW_MESSAGES:
         state["slow"] = False
-        tickets = {"offline-1": tickets["offline-1"]}
+        if not REVIEW_LONG:
+            tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     if REVIEW_QUEUE:
         # The Ticket page shows the waiting proposal for its stage's gating field.

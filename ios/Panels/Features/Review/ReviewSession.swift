@@ -40,11 +40,12 @@ struct ReviewSummary: Equatable, Sendable {
     }
     /// The passes the summary offers, new first.
     var passes: [ReviewPass] { (newCount > 0 ? [.new] : []) + (skippedCount > 0 ? [.skipped] : []) }
-    /// The other pass, for the top bar of a card in `pass`.
-    func otherPass(from pass: ReviewPass) -> (pass: ReviewPass, title: String)? {
+    /// The other pass, for the top bar of a card in `pass`. `shortTitle` is for a bar too
+    /// narrow for the title beside the card's own action.
+    func otherPass(from pass: ReviewPass) -> (pass: ReviewPass, title: String, shortTitle: String)? {
         switch pass {
-        case .new: skippedCount > 0 ? (.skipped, "\(Self.skippedPassTitle) (\(skippedCount))") : nil
-        case .skipped: newCount > 0 ? (.new, Self.newPassTitle) : nil
+        case .new: skippedCount > 0 ? (.skipped, "\(Self.skippedPassTitle) (\(skippedCount))", "Skipped (\(skippedCount))") : nil
+        case .skipped: newCount > 0 ? (.new, Self.newPassTitle, Self.newPassTitle) : nil
         }
     }
 }

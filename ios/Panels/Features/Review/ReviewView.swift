@@ -57,11 +57,22 @@ struct ReviewView: View {
     /// The bar's actions: on a card, the other pass and the card's Ticket or conversation;
     /// on the summary, Chief.
     @ViewBuilder private func topBar(_ textEntry: ScreenTextEntryContext) -> some View {
+        // On a narrow phone the full pass title beside "Open conversation" does not fit on
+        // one line; the bar then shows "Skipped (n)", and VoiceOver keeps the full title.
+        ViewThatFits(in: .horizontal) {
+            topBarRow(textEntry, short: false)
+            topBarRow(textEntry, short: true)
+        }
+        .padding(.leading, 72).padding(.trailing, 14)
+        .frame(minHeight: 52)
+    }
+    @ViewBuilder private func topBarRow(_ textEntry: ScreenTextEntryContext, short: Bool) -> some View {
         HStack(spacing: 8) {
-            Spacer()
+            Spacer(minLength: 0)
             if let other = passAction {
-                barButton(other.title) { textEntry.endEditing(); Haptics.selection(); Task { await session.startPass(other.pass, store: store) } }
+                barButton(short ? other.shortTitle : other.title) { textEntry.endEditing(); Haptics.selection(); Task { await session.startPass(other.pass, store: store) } }
                     .disabled(session.startingPass)
+                    .accessibilityLabel(other.title)
                     .accessibilityIdentifier("review.otherPass")
             }
             if let route = barRoute {
@@ -69,11 +80,9 @@ struct ReviewView: View {
                     .accessibilityIdentifier(route.identifier)
             }
         }
-        .padding(.leading, 72).padding(.trailing, 14)
-        .frame(minHeight: 52)
     }
     /// "Review skipped (n)" in the new pass, "Review new" in the skipped pass.
-    private var passAction: (pass: ReviewPass, title: String)? {
+    private var passAction: (pass: ReviewPass, title: String, shortTitle: String)? {
         guard savedWork.key?.server == server, session.shown != nil else { return nil }
         return session.summary.otherPass(from: session.pass)
     }
@@ -87,7 +96,7 @@ struct ReviewView: View {
         return ("Open conversation", .conversation(owner: owner, id: id), "review.openConversation")
     }
     @ViewBuilder private func barButton(_ title: String, action: @escaping () -> Void) -> some View {
-        let button = Button(action: action) { Text(title).panelsScaledFont(size: 13.5, weight: .medium) }
+        let button = Button(action: action) { Text(title).panelsScaledFont(size: 13.5, weight: .medium).lineLimit(1) }
             .foregroundStyle(PanelsTheme.Web.text)
         if #available(iOS 26.0, *) { button.buttonStyle(.glass).buttonBorderShape(.capsule) }
         else { button.buttonStyle(.bordered).buttonBorderShape(.capsule) }
