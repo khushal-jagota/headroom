@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { applyingSkips, dropUnseen, unloadedSkips, isSkipped, limitSkips, parseSkips, skipHistoryKeys, SKIP_LIMIT, stringifySkips, withSkip, type SkipList } from "../src/lib/review/skips";
+import { applyingSkips, dropUnseen, unloadedSkipKeys, isSkipped, limitSkips, parseSkips, skipHistoryKeys, SKIP_LIMIT, stringifySkips, withSkip, type SkipList } from "../src/lib/review/skips";
 import type { NavigationReviewItem } from "../src/lib/navigation/contracts";
 
 const message = (id: string, latest_sequence: number | null = null) =>
@@ -194,8 +194,37 @@ it("a stored list with garbage in it is replaced by the next skip, and lists of 
   expect(storage.has("panels:review-skipped:server-live")).toBe(true);
 });
 
-it("the skips whose cards the page has not loaded are counted, so the tail of the queue is read for them", () => {
+it("the skips whose cards the page has not loaded are named, so the tail of the queue is read for exactly those", () => {
   const list = withSkip(withSkip({}, ticket(1, [], "near"), 1), ticket(1, [], "far"), 2);
-  expect(unloadedSkips(list, new Set([JSON.stringify(["ticket", "near"])]))).toBe(1);
-  expect(unloadedSkips(list, new Set([JSON.stringify(["ticket", "near"]), JSON.stringify(["ticket", "far"])]))).toBe(0);
+  expect(unloadedSkipKeys(list, new Set([JSON.stringify(["ticket", "near"])]))).toEqual([{ kind: "ticket", id: "far" }]);
+  expect(unloadedSkipKeys(list, new Set([JSON.stringify(["ticket", "near"]), JSON.stringify(["ticket", "far"])]))).toEqual([]);
+});
+
+it("the check of the skips gives up after its wait, counted from the first queue read, with the cohort the page knows by then", async () => {
+  vi.useFakeTimers();
+  try {
+    const { createEntryCheck } = await import("../src/lib/review/entryCheck");
+    const settled: unknown[][] = [];
+    const known = [{ kind: "ticket" as const, id: "known" }];
+    const check = createEntryCheck({ waitMs: 3000, knownCohort: () => known, settle: cohort => settled.push(cohort) });
+    // Nothing is read yet: the wait has not begun, however long the page has been open.
+    vi.advanceTimersByTime(60_000);
+    expect(settled).toEqual([]);
+    check.started();
+    check.started();
+    vi.advanceTimersByTime(2999);
+    expect(settled).toEqual([]);
+    vi.advanceTimersByTime(1);
+    // The wait ran out: the page does not keep an empty cohort, and the check settles once.
+    expect(settled).toEqual([known]);
+    check.finish([]);
+    expect(settled).toHaveLength(1);
+
+    // A check that finishes in time cancels its wait.
+    const early = createEntryCheck({ waitMs: 3000, knownCohort: () => known, settle: cohort => settled.push(cohort) });
+    early.started();
+    early.finish([{ kind: "ticket", id: "checked" }]);
+    vi.advanceTimersByTime(10_000);
+    expect(settled).toEqual([known, [{ kind: "ticket", id: "checked" }]]);
+  } finally { vi.useRealTimers(); }
 });

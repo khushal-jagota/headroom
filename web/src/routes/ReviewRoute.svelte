@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from "../components/Button.svelte";
-  import { tick, onDestroy, onMount, untrack, setContext } from "svelte";
+  import { tick, onDestroy, untrack, setContext } from "svelte";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -22,9 +22,10 @@
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,NEW_RETURN_LABEL,SKIPPED_RETURN_LABEL,type ReviewSummaryState} from "../lib/review/return";
-  import {applyingSkips,isSkipped,skipHistoryKeys,skipKey,unloadedSkips} from "../lib/review/skips";
+  import {applyingSkips,isSkipped,skipHistoryKeys,skipKey,unloadedSkipKeys} from "../lib/review/skips";
   import {reviewSkips} from "../lib/review/skipStore.svelte";
   import {REVIEW_PASS_CONTEXT,type ReviewPassAction} from "../lib/review/pass";
+  import {createEntryCheck} from "../lib/review/entryCheck";
   import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey,ReviewSummary} from "../lib/navigation/contracts";
 
@@ -62,36 +63,35 @@
   // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
   let returnCohort=$state<ReviewHistoryKey[]>([]);
   // Skipped cards sit at the tail of the queue. A queue of many windows is read once from the tail, before the first
-  // card shows, so that every skip is checked against its card. The skipped cohort is then fixed, and the order does not move.
+  // card shows, so that every skip is checked against its card. The skipped cohort is then fixed, and the order does not
+  // move during the pass. A pass that starts later reads the tail again (see `startPass`).
+  const TAIL_ROWS=60;
   let tailLimit=$state<number|null>(null);
   let settled=$state(false);
-  onMount(()=>{
-    // Waiting for a queue read of this session is not worth a blank page for long.
-    const timer=setTimeout(()=>{settled=true;tailLimit=null;},3_000);
-    return ()=>clearTimeout(timer);
-  });
+  const entryCheck=createEntryCheck({waitMs:3_000,knownCohort:()=>untrack(()=>skippedHistory),
+    settle:cohort=>{returnCohort=cohort;tailLimit=null;settled=true;}});
+  onDestroy(()=>entryCheck.dispose());
   $effect(()=>{
     if(settled || skipScope===null || !review || !queueWindow)return;
     const stored=untrack(()=>skips);
-    if(!Object.keys(stored).length){settled=true;return;}
+    if(!Object.keys(stored).length){entryCheck.finish([]);return;}
+    // Waiting for a queue read of this session is not worth a blank page for long: the check gives up after a while.
+    entryCheck.started();
     if(!displayed?.runtimeCurrent || displayed.publication.view?.scopeGeneration!==navigation.owner.getRequest().scope_generation)return;
     untrack(()=>{
       if(tailLimit===null){
         reviewSkips.know(skipScope,review!.items);
-        const loaded=new Set(reviewSkips.known(skipScope).keys());
-        const unloaded=unloadedSkips(stored,loaded);
-        if(unloaded && queueWindow!.next){
-          // The skipped cards are last, because the whole list is the cohort until the tail has been read.
-          returnCohort=skipHistoryKeys(stored);
-          tailLimit=Math.min(Object.keys(stored).length,60);
+        const unloaded=unloadedSkipKeys(stored,new Set(reviewSkips.known(skipScope).keys()));
+        if(unloaded.length && queueWindow!.next){
+          // Only the skipped cards that are not loaded go last, so the tail holds exactly those.
+          returnCohort=unloaded;
+          tailLimit=Math.min(unloaded.length,TAIL_ROWS);
           return;
         }
-      } else if(queueWindow!.request.direction!=='before' || queueWindow!.request.limit!==tailLimit) return;
+      } else if(queueWindow!.request.direction!=='before') return;
       else reviewSkips.know(skipScope,review!.items);
       // Every skip that can be checked has been. The cohort holds the skips that still apply.
-      returnCohort=skippedHistory;
-      tailLimit=null;
-      settled=true;
+      entryCheck.finish(skippedHistory);
     });
   });
   // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
@@ -102,7 +102,8 @@
   // last window. Only a queue read this session counts: a copy saved by the last session can be older than a skip.
   $effect(()=>{
     const items=review?.items;
-    if(!items || !displayed?.runtimeCurrent || skipScope===null || !queueWindow || !settled)return;
+    if(!items || !displayed?.runtimeCurrent || skipScope===null || !queueWindow || !settled || queueWindow.request.direction==='before')return;
+    // The tail is not a walk from the top of the queue, so it never says that a card left.
     const publication=displayed.publication.view;
     const current=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation);
     const deadKeysSent=current && publication!.reviewSummary!.skipped<untrack(()=>skippedHistory).length;
@@ -285,19 +286,43 @@
     }
   });
 
+  /**
+   * Checks every skipped card against the queue as it is now, as the page does at entry. A card may have changed
+   * since. The final page stays on screen meanwhile. A queue of one window needs no tail read: its next read holds every card.
+   */
+  async function readTail(): Promise<void> {
+    const count=Object.keys(skips).length;
+    if(skipScope===null || !count || (displayed?.publication.view?.counts.review ?? 0)<=30)return;
+    returnCohort=skipHistoryKeys(skips);
+    tailLimit=Math.min(count,TAIL_ROWS);
+    reviewAnchor=null;
+    try {
+      await tick();
+      updateReviewDemand();
+      await navigation.owner.recover();
+      await tick();
+      const request=navigation.owner.getRequest();
+      if(displayed?.runtimeCurrent && displayed.publication.view?.scopeGeneration===request.scope_generation && queueWindow?.request.direction==='before' && review)
+        reviewSkips.know(skipScope,review.items);
+    } finally {
+      tailLimit=null;
+    }
+  }
+
   /** Start a pass over the new cards or over the skipped ones. The skipped cards go last in the queue either way. */
   async function startPass(next: 'new' | 'skipped'): Promise<void> {
     if (returning) return;
     returning = true;
     returnError = null;
-    pass = next;
-    passKeys = new Set(skippedHistory.map(skipKey));
-    returnCohort = [...skippedHistory];
-    reviewAnchor = null;
-    skipped = {};
-    heldCard = null;
-    pinnedKey = null;
     try {
+      await readTail();
+      pass = next;
+      passKeys = new Set(skippedHistory.map(skipKey));
+      returnCohort = [...skippedHistory];
+      reviewAnchor = null;
+      skipped = {};
+      heldCard = null;
+      pinnedKey = null;
       // Let the reset window demand reach the owner before requesting a fresh view.
       // Keep the composer mounted until that read succeeds, even for an empty result.
       await tick();
