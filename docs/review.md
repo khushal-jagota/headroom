@@ -32,11 +32,15 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 ## Skipped cards
 
-Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way. One store owns the list on a page. It keeps a separate list for each server, so the desktop app never applies one server's skips to another. Several tabs share one list: a skip in one tab reaches the others, and the card a tab is showing stays until that tab acts on it. A list holds at most 500 skips, and the oldest go first. If storage is blocked or holds something this build did not write, the skips last for the visit only.
+Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way.
+
+One store owns the list on a page. It keeps a separate list for each server, named by the server's installation, and has no owner part, because Panels has one owner per server. The desktop app never applies one server's skips to another, and it removes the list of a server that nobody has used for 30 days. Several tabs share one list: a skip in one tab reaches the others, and the card a tab is showing stays until that tab acts on it. A list holds at most 500 skips. If storage is blocked or holds something this build did not write, the skips last for the visit only.
 
 Review then has two passes. Review shows the cards that are not skipped. "Review skipped" shows the skipped ones, so the owner goes back to them on purpose. The button stands in the top band of each card, with the count. In the skipped pass it reads "Review new". The final page offers both buttons when both kinds wait. Each pass keeps its order while the owner goes through it: a skip hides the card and moves nothing.
 
-A skip ends when the card changes: a new proposal revision, a new message, or a new ask. The card is then new again. A second message in a conversation that was already unread does not change it, until it is read. A skip also ends when the card leaves the queue. The page checks this against the queue it read this session, never against a copy saved by an earlier session.
+A skip remembers the parts of the card that were waiting: its proposal revision, the newest message in each conversation, and each ask. It ends when the card shows a part that is newer or new. It never ends because a part is gone, so answering a message, deciding a proposal, or a tab with an older view of the queue does not bring the card back. The page compares against the queue it read this session, never against a copy saved by an earlier session.
+
+A skip for a card that left the queue is removed once the page has loaded every window of the queue. Until then, skips of cards that were never loaded are the first to go if the list is full. The count on "Review skipped" and on the final page comes from the server, which counts the skips of cards in the queue. A changed card past the first 30 is counted until its window loads.
 
 ## Where it shows up
 

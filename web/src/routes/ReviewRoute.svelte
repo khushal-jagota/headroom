@@ -22,7 +22,7 @@
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,NEW_RETURN_LABEL,SKIPPED_RETURN_LABEL,type ReviewSummaryState} from "../lib/review/return";
-  import {isSkipped,skipHistoryKeys,skipKey} from "../lib/review/skips";
+  import {applyingSkips,isSkipped,skipHistoryKeys,skipKey} from "../lib/review/skips";
   import {reviewSkips} from "../lib/review/skipStore.svelte";
   import {REVIEW_PASS_CONTEXT,type ReviewPassAction} from "../lib/review/pass";
   import {shownReviewItem} from "../lib/review/shown";
@@ -56,27 +56,28 @@
   // cards that are not skipped, and "Review skipped" shows these. A skip ends when its card changes.
   const skipScope=$derived(displayed?.publication.authority.permit.installation_id ?? null);
   const skips=$derived(reviewSkips.list(skipScope));
-  let skippedHistory=$derived(skipHistoryKeys(skips));
+  // What the server counts as skipped: the skips that still apply to the cards the page has loaded.
+  let skippedHistory=$derived(skipHistoryKeys(applyingSkips(skips,review?.items ?? [])));
   // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
   let returnCohort=$state<ReviewHistoryKey[]>([]);
   let cohortSeeded=false;
   $effect(()=>{
     if(skipScope===null || cohortSeeded)return;
     cohortSeeded=true;
-    returnCohort=untrack(()=>skipHistoryKeys(skips));
+    returnCohort=untrack(()=>skippedHistory);
   });
   // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
   let pass=$state<'new'|'skipped'>('new');
   let passKeys=$state<ReadonlySet<string>>(new Set());
-  // A skip ends when the card changes. When the whole queue is in view, it also ends when the card has left.
-  // Only a queue read this session counts: a copy saved by the last session can be older than a skip.
+  // The skips of cards that left the queue end once the last window is loaded, which is when every
+  // window has been seen. Only a queue read this session counts: a copy saved by the last session can be older than a skip.
   $effect(()=>{
     const items=review?.items;
     if(!items || !displayed?.runtimeCurrent || skipScope===null)return;
     const publication=displayed.publication.view;
-    const whole=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation
-      && queueWindow && queueWindow.request.anchor===null && !queueWindow.next && publication.reviewSummary.skipped<Object.keys(untrack(()=>skips)).length);
-    untrack(()=>reviewSkips.prune(skipScope,items,whole));
+    const complete=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation
+      && queueWindow && !queueWindow.next && publication.reviewSummary.skipped<untrack(()=>skippedHistory).length);
+    untrack(()=>reviewSkips.observe(skipScope,items,complete));
   });
   // The note and edited text of the proposal on screen. The card and the bar under its
   // artifact are one decision, so they read and write the same draft.
@@ -260,7 +261,7 @@
     returning = true;
     returnError = null;
     pass = next;
-    passKeys = new Set(Object.keys(skips));
+    passKeys = new Set(skippedHistory.map(skipKey));
     returnCohort = [...skippedHistory];
     reviewAnchor = null;
     skipped = {};
