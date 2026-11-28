@@ -14,9 +14,10 @@ import {
 // browser probes versions for mounted resources and refetches changed bodies.
 // A read with no registered revision is read again on each round. The signal stays contentless.
 //
-// A lost stream is `unreachable` at once and the card shows. When the operating system reports
-// no network, it is `offline` at once instead, because the server is not at fault.
-export type ConnectionStatus = "connected" | "unreachable" | "offline";
+// The page is `connecting` until its first stream opens: that is a start, so no card shows. After
+// that, a lost stream is `unreachable` at once and the card shows. When the operating system
+// reports no network, it is `offline` at once instead, because the server is not at fault.
+export type ConnectionStatus = "connecting" | "connected" | "unreachable" | "offline";
 
 // Commits inside one fixed window collapse into one round of refetches. A working agent
 // commits in bursts of dozens, and each round asks the server for everything on screen
@@ -24,7 +25,7 @@ export type ConnectionStatus = "connected" | "unreachable" | "offline";
 // screen stale. An own write starts the same refresh at once, without this delay.
 export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
 
-export const connectionStatus = writable<ConnectionStatus>("unreachable");
+export const connectionStatus = writable<ConnectionStatus>("connecting");
 
 let stream: EventSource | null = null;
 let flushTimer: number | null = null;
@@ -64,7 +65,7 @@ export function startChangeStream(): void {
   startConnectionLog();
   window.addEventListener("offline", onNetworkOffline);
   window.addEventListener("online", onNetworkOnline);
-  connectionStatus.set(navigator.onLine === false ? "offline" : "unreachable");
+  connectionStatus.set(navigator.onLine === false ? "offline" : "connecting");
   openStream();
 }
 
@@ -213,5 +214,5 @@ export function stopChangeStream(): void {
   }
   stream?.close();
   stream = null;
-  connectionStatus.set("unreachable");
+  connectionStatus.set("connecting");
 }

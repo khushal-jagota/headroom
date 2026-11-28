@@ -165,7 +165,7 @@ describe("contentless change stream refresh", () => {
   // Distinct risk: a stream error must show the card at once, with no waiting time, and the
   // open must end it. The operating system's offline word must still win. No other test drives
   // the stream through these states.
-  it("shows the card at once on a stream error and ends it on the next open", async () => {
+  it("shows no card at start, then the card at once on every drop, and ends it on the next open", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     const windowEvents = stubWindowEvents();
@@ -174,6 +174,8 @@ describe("contentless change stream refresh", () => {
     const probe = vi.fn(async () => { throw new Error("no network path"); });
     vi.stubGlobal("fetch", probe);
     startChangeStream();
+    // Before the first open is a start, not a drop: no card.
+    expect(get(connectionStatus)).toBe("connecting");
     ControlledEventSource.current.onopen?.();
     expect(get(connectionStatus)).toBe("connected");
     // The error shows the card in the same tick, and the probe for the record starts at once.
