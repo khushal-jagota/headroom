@@ -1,9 +1,6 @@
 /** Public record encoding and the replay/live HTTP join. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
-import { Readable } from 'node:stream';
-import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
 import { PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS } from './configuration.ts';
-import type { FastifyReply } from 'fastify';
 import {
   ToolCallFinishedEventPayload,
   AgentMessageDeltaFrame,
@@ -17,7 +14,6 @@ import { conversation_event_payload_json_object } from '../record/codec.ts';
 import { readable_tool_call_detail } from '../tool_detail.ts';
 import type { ConversationViewRuntime } from '../views/routes.ts';
 import type { LiveFrame } from '../../live_updates/contracts.ts';
-import { sse_text } from '../../live_updates/frames.ts';
 export function public_event(event: StoredConversationEvent, backend_key: BackendInstanceId) {
   const payload = conversation_event_payload_json_object(event.payload);
   if (event.payload instanceof ToolCallFinishedEventPayload) {
@@ -100,24 +96,4 @@ export function open_event_tail(
     }
   }
   return { frames: frames(), close: () => subscription.close() };
-}
-export function send_event_tail(
-  runtime: ConversationViewRuntime,
-  id: string,
-  backend: BackendInstanceId,
-  after: number,
-  reply: FastifyReply,
-) {
-  const tail = open_event_tail(runtime, id, backend, after);
-  async function* output() {
-    yield STREAM_RETRY_FRAME;
-    for await (const frame of tail.frames) yield frame ? sse_text(frame) : ': keep-alive\n\n';
-  }
-  const source = output();
-  const stream = Readable.from(reply.request.request_lifetime?.iterator(source) ?? source);
-  reply.raw.once('close', () => {
-    tail.close();
-    stream.destroy();
-  });
-  return reply.type('text/event-stream; charset=utf-8').send(stream);
 }

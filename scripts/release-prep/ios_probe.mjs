@@ -1,14 +1,14 @@
 // Drives a private Panels server with requests shaped like the installed iPhone build (INSTALLED_BUILD,
-// default 13, the floor), like the next build (NEXT_BUILD, default 14), and with the build below the
+// default 16, the floor), like the next build (NEXT_BUILD, default 17), and with the build below the
 // floor for the update-required refusal. Run it with run_probe_server.mjs against a server from the live
 // commit and one from the candidate, each on a fresh database, then compare the two JSON files.
-// Usage: [INSTALLED_BUILD=13 NEXT_BUILD=14] node ios_probe.mjs <base_url> <out.json>
+// Usage: [INSTALLED_BUILD=16 NEXT_BUILD=17] node ios_probe.mjs <base_url> <out.json>
 import { writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 const [base, out] = process.argv.slice(2);
-const INSTALLED = Number(process.env.INSTALLED_BUILD ?? 13);
-const NEXT = Number(process.env.NEXT_BUILD ?? 14);
+const INSTALLED = Number(process.env.INSTALLED_BUILD ?? 16);
+const NEXT = Number(process.env.NEXT_BUILD ?? 17);
 const BELOW = INSTALLED - 1;
 const device = randomUUID();
 const native = (build) => ({
@@ -41,58 +41,6 @@ function shape(value) {
   if (value && typeof value === 'object')
     return Object.fromEntries(Object.keys(value).sort().map((k) => [k, shape(value[k])]));
   return value === null ? 'null' : typeof value;
-}
-
-/** First SSE events from a stream, then abort. */
-async function sse(path, build, query, wantEvents = 1, ms = 4000) {
-  const url = new URL(path, base);
-  for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  const events = [];
-  let status = 0;
-  let contentType = '';
-  let body = '';
-  try {
-    const response = await fetch(url, {
-      headers: { ...native(build), Accept: 'text/event-stream' },
-      signal: controller.signal,
-    });
-    status = response.status;
-    contentType = response.headers.get('content-type') ?? '';
-    if (status !== 200) {
-      body = await response.text();
-      return { status, contentType, body, events };
-    }
-    const decoder = new TextDecoder();
-    let buffer = '';
-    for await (const chunk of response.body) {
-      buffer += decoder.decode(chunk, { stream: true });
-      let at;
-      while ((at = buffer.indexOf('\n\n')) >= 0) {
-        const raw = buffer.slice(0, at);
-        buffer = buffer.slice(at + 2);
-        const lines = raw.split('\n');
-        const event = lines.find((l) => l.startsWith('event:'))?.slice(6).trim() ?? 'message';
-        const data = lines.filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
-        if (!data) continue;
-        let parsed = data;
-        try {
-          parsed = JSON.parse(data);
-        } catch {}
-        events.push({ event, data: parsed });
-        if (events.length >= wantEvents) {
-          controller.abort();
-          break;
-        }
-      }
-    }
-  } catch (error) {
-    if (error.name !== 'AbortError') throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-  return { status, contentType, events };
 }
 
 const view = (sections) =>
@@ -203,21 +151,7 @@ for (const [owner, { id, sender_message_id }] of Object.entries(conversations)) 
     fates: receipts.json?.receipts?.map((r) => r.fate) ?? null,
     shape: shape(receipts.json),
   });
-  for (const attempt of ['connect', 'reconnect']) {
-    const tail = await sse(`/api/conversation/conversations/${id}/view/tail`, INSTALLED, { lens: 'full', transcript: 'true' });
-    record(`conversation:${owner}:tail:${attempt}`, {
-      status: tail.status,
-      content_type: tail.contentType,
-      events: tail.events.map((e) => ({ event: e.event, shape: shape(e.data) })),
-    });
-  }
 }
-
-// Navigation and change streams at the installed build.
-const nav = await sse('/api/navigation/view/events', INSTALLED, { view: view([window('review')]) });
-record('stream:navigation_events', { status: nav.status, content_type: nav.contentType, events: nav.events.map((e) => ({ event: e.event, shape: shape(e.data) })) });
-const changes = await sse('/api/changes', INSTALLED, {}, 1, 2500);
-record('stream:changes', { status: changes.status, content_type: changes.contentType, events: changes.events.map((e) => e.event) });
 
 // Review decision (the installed build ReviewApproval, sorted snake_case keys, nils omitted).
 const decision = {
@@ -240,14 +174,12 @@ record('decision:lookup', { status: lookup.status, shape: shape(lookup.json) });
 const approved = (await call('GET', `/api/tickets/${ticket.id}/workspace`, { build: INSTALLED })).json;
 record('decision:after', { stage: approved?.stage, ticket_status: approved?.ticket_status, approvals: approved?.field_approvals?.brief ?? null });
 
-// Unsupported build below the floor: reads, an action and a stream are refused before they run.
+// Unsupported build below the floor: reads and an action are refused before they run.
 const before = await call('GET', `/api/conversation/conversations/${conversations.chief.id}`, { build: INSTALLED });
 const r12read = await call('GET', '/api/tickets', { build: BELOW, query: { detail: 'summary', limit: '30', offset: '0' } });
 record('below_floor:read', { status: r12read.status, code: r12read.json?.error?.code ?? null });
 const r12send = await call('POST', sends.chief, { build: BELOW, body: send('Must not run', conversations.chief.id) });
 record('below_floor:send', { status: r12send.status, code: r12send.json?.error?.code ?? null });
-const r12stream = await sse(`/api/conversation/conversations/${conversations.chief.id}/view/tail`, BELOW, { lens: 'full', transcript: 'true' });
-record('below_floor:tail', { status: r12stream.status, body: r12stream.body ?? null });
 const after = await call('GET', `/api/conversation/conversations/${conversations.chief.id}`, { build: INSTALLED });
 record('below_floor:send_did_not_execute', {
   latest_sequence_before: before.json?.latest_sequence ?? null,

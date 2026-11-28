@@ -9,7 +9,6 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { serverAddress } from './server_address';
 import { desktopIdentityHeaders } from './client_identity';
-import { recordRelayFailure, startRelayErrorLog } from './connection_log';
 import type { ScreenPresentation } from './screens/controller';
 
 // Node gives a URL of a custom scheme the origin "null", so pages are told apart by host.
@@ -70,7 +69,6 @@ export function handleAppScheme(): void {
     return notFound();
   });
   refuseWritesFromOtherSites();
-  startRelayErrorLog(SCREENS_HOST);
 }
 
 function isForwarded(url: URL): boolean {
@@ -169,9 +167,7 @@ export async function forward(request: Request, url: URL): Promise<Response> {
   let response: Response;
   try {
     response = await net.fetch(`${address}${url.pathname}${url.search}`, init);
-  } catch (error) {
-    // A page that closed its own request is not a failure of the connection.
-    if (!request.signal.aborted) recordRelayFailure(url.pathname, error);
+  } catch {
     return Response.error();
   }
   // Preserve Electron's fetch metadata and untouched body so its native relay owns

@@ -143,10 +143,19 @@ test('test_exact_conversation_signals_cross_runtime_stream_and_surfaces', async 
   await page.evaluate(() => {
     const w = window as any;
     w.signalProofEvents = [];
-    w.signalProofStream = new EventSource('/api/changes');
-    w.signalProofStream.onmessage = (event: MessageEvent) => w.signalProofEvents.push(event.data);
+    w.signalProofReady = false;
+    // A second socket on the live endpoint, which counts the change pings the page also hears.
+    const socket = new WebSocket(`${location.origin.replace(/^http/, 'ws')}/api/live`);
+    w.signalProofStream = socket;
+    socket.onopen = () =>
+      socket.send(JSON.stringify({ op: 'hello', client: { kind: 'browser', device_id: 'signal-proof', version: '1' } }));
+    socket.onmessage = (event: MessageEvent) => {
+      const frame = JSON.parse(String(event.data));
+      if (frame.kind === 'ready') w.signalProofReady = true;
+      if (frame.kind === 'change') w.signalProofEvents.push('change');
+    };
   });
-  await page.waitForFunction(() => (window as any).signalProofStream.readyState === 1, undefined, {
+  await page.waitForFunction(() => (window as any).signalProofReady === true, undefined, {
     timeout: WAIT_MS,
   });
   const observations: JsonObject[] = [];

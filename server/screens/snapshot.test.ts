@@ -45,7 +45,6 @@ test('metadata and the digest endpoint share only installed and admitted waiting
       app,
       config,
       buildClock(config),
-      { subscribe: () => () => {}, emit() {} },
       current,
       database,
       () => waiting_root,

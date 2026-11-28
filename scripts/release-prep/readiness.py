@@ -33,11 +33,5 @@ while "chief_view_seconds" not in res and time.time() - launched < 900:
         if status == 409 and b"upgrading" in body:
             res["view_409_upgrading_seen"] += 1
         time.sleep(0.2)
-req = urllib.request.Request(base + f"/api/conversation/conversations/{chief}/view/tail?lens=focus&transcript=true", headers={"accept": "text/event-stream"})
-with urllib.request.urlopen(req, timeout=120) as r:
-    for line in r:
-        if line.startswith(b"event: snapshot"):
-            res["chief_stream_snapshot_seconds"] = time.time() - launched
-            break
 json.dump(res, open(out, "w"), indent=1)
 print(json.dumps(res, indent=1))

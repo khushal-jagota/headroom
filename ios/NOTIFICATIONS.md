@@ -8,8 +8,8 @@ to the official publisher's test and live deployments.
 
 The backend has durable attention edges and a Web Push delivery queue. There is
 no notification history/feed API. An APNs sender now shares those attention edges
-and preferences, with its own durable queue. `/api/changes` is a
-content-free foreground refresh signal, not a notification stream. Polling it
+and preferences, with its own durable queue. The live socket's `change` frame is a
+content-free foreground refresh signal, not a notification stream. It
 cannot wake a suspended iOS app. The native app already follows it while open.
 
 `server/notifications/contracts.ts` defines the notification catalog. Tickets,

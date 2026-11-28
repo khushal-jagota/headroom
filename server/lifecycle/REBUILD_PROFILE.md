@@ -57,7 +57,7 @@ The routes have different gates. It is incorrect to say that all six selected-vi
 | --- | --- |
 | Snapshot `/view` | 409, `Conversation view is upgrading` |
 | Receipts `/view/receipts` | 409 through the coverage gate |
-| Tail `/view/tail` | 409 before opening SSE, through the coverage gate |
+| Live subscription `conversation_view` | Ends at subscribe with 409, through the coverage gate |
 | Pages `/view/pages` | No view-state coverage gate. Missing rows can return a 200 empty page. Old rows can remain readable until atomic replacement. A mismatched cursor can separately return 409. |
 | Body `/view/body` | No blanket upgrading gate. A missing referenced row returns 422. A changed body reference returns 409. Valid live or plan references can remain readable. |
 | Content `/view/body/content` | The same reference-specific behavior as body reads, with streamed content on success. |

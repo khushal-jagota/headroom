@@ -1,10 +1,9 @@
 // A small log of why this app lost its connection, sent to the server in the background.
 //
 // The page records what it saw. This side records what only the native side can see: the
-// Chromium error of a failed relay (for example `ERR_NETWORK_CHANGED`) and the Mac's sleep,
-// wake and screen lock. Events wait in a file in the app's data folder, so a quit or a crash
+// Mac's sleep, wake and screen lock. Events wait in a file in the app's data folder, so a quit or a crash
 // does not lose them. The server takes the batch at `POST /api/client-events`.
-import { app, netLog, powerMonitor, session } from 'electron';
+import { app, netLog, powerMonitor } from 'electron';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJson, writeJson } from './stored_json';
@@ -25,9 +24,7 @@ const SEND_LIMIT_MS = 10_000;
 type NativeEvent = {
   /** Epoch milliseconds. */
   at: number;
-  kind: 'stream_ended' | 'power';
-  stream?: string;
-  reason?: string;
+  kind: 'power';
   power?: 'suspend' | 'resume' | 'lock' | 'unlock';
 };
 
@@ -78,41 +75,6 @@ async function send(): Promise<void> {
   queue = events().slice(batch.length);
   writeJson(EVENTS_FILE, queue);
   if (queue.length > 0) scheduleSend(SEND_DELAY_MS);
-}
-
-/** The live streams the app relays, named as the server names their routes. */
-function streamOf(path: string): string | undefined {
-  if (path === '/api/changes' || path === '/api/navigation/view/events') return path;
-  const tail = /^\/api\/conversation\/conversations\/[^/]+(\/view)?\/tail$/.exec(path);
-  if (tail) return `/api/conversation/conversations/:conversation_id${tail[1] ?? ''}/tail`;
-  return undefined;
-}
-
-/** `net::ERR_NETWORK_CHANGED` becomes `ERR_NETWORK_CHANGED`. */
-function chromiumCode(message: string): string {
-  return /net::(ERR_[A-Z0-9_]+)/.exec(message)?.[1] ?? message.slice(0, 120);
-}
-
-/** `forward()` calls this when the server could not be reached at all. */
-export function recordRelayFailure(path: string, error: unknown): void {
-  const stream = streamOf(path);
-  if (stream) record({ kind: 'stream_ended', stream, reason: chromiumCode(error instanceof Error ? error.message : String(error)) });
-}
-
-/**
- * Record what Chromium reports for a screen request that failed after the server answered,
- * which is how a live stream dies when a network change closes its HTTP/2 connection.
- * `forward()` never sees that error, because the response body belongs to Chromium's relay.
- * `ERR_ABORTED` is the page closing a stream itself. `ERR_FAILED` is `forward()` returning
- * its own network error, which `recordRelayFailure` already recorded with the real code.
- */
-export function startRelayErrorLog(screensHost: string): void {
-  session.defaultSession.webRequest.onErrorOccurred({ urls: [`panels://${screensHost}/*`] }, (details) => {
-    const code = chromiumCode(details.error);
-    if (code === 'ERR_ABORTED' || code === 'ERR_FAILED') return;
-    const stream = streamOf(new URL(details.url).pathname);
-    if (stream) record({ kind: 'stream_ended', stream, reason: code });
-  });
 }
 
 export function startPowerLog(): void {

@@ -1,10 +1,9 @@
 /** The six selected-conversation view routes. */
 import { is_record as object } from '../../core/records.ts';
 import { Readable } from 'node:stream';
-import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
 import { HttpError } from '../../core/http/errors.ts';
 import type { LiveFrame } from '../../live_updates/contracts.ts';
-import { pump_frames, sse_text } from '../../live_updates/frames.ts';
+import { pump_frames } from '../../live_updates/frames.ts';
 import { readSync } from 'node:fs';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -694,26 +693,6 @@ export function createConversationViewRoutes(
           }
           throw error;
         }
-      }),
-    );
-    app.get(
-      path + '/tail',
-      { config: { uncompressed: true } },
-      wrap(async (request, reply) => {
-        const tail = await open_view_tail(getRuntime(), id(request), queries(request));
-        async function* with_retry() {
-          yield STREAM_RETRY_FRAME;
-          for await (const next of tail.frames) yield next ? sse_text(next) : ': keep-alive\n\n';
-        }
-        const stream = Readable.from(
-          request.request_lifetime?.iterator(with_retry()) ?? with_retry(),
-        );
-        reply.raw.once('close', () => {
-          tail.close();
-          stream.destroy();
-        });
-        reply.type('text/event-stream; charset=utf-8');
-        return reply.send(stream);
       }),
     );
     app.get(

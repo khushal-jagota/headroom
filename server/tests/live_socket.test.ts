@@ -13,6 +13,7 @@ import type { StreamCloseRecord } from '../core/http/live_streams/records.ts';
 import { LiveSubscriptions } from '../live_updates/registry.ts';
 import { install_live_socket } from '../live_updates/socket.ts';
 import type { LiveEnvelope } from '../live_updates/contracts.ts';
+import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
 
 // Distinct gap: no test opened a real WebSocket on the real admission, the navigation producer
 // and the close record. This host is the navigation admission test's host plus the live socket.
@@ -35,12 +36,12 @@ const browser = { kind: 'browser', device_id: 'tab-one', version: '1' };
 let app: ReturnType<typeof Fastify>;
 let changes: ChangeSignal;
 let navigation: ReturnType<typeof createSignalNavigationRuntime>;
+let producer: SignalPublicationCoordinator;
 let address: string;
 const closes: StreamCloseRecord[] = [];
 
 beforeEach(async () => {
   closes.length = 0;
-  let producer: SignalPublicationCoordinator | undefined;
   let attached = false;
   const database = fixture({
     commitSteps: [
@@ -149,17 +150,12 @@ test('the first frame decides: a bad one and an old desktop get their named clos
   expect(await old.closed).toBe(4001);
 });
 
-test('a subscription carries the old stream payload, a failed one leaves the socket open, and the close is recorded', async () => {
-  const stream = await fetch(
-    `${address.replace('ws', 'http')}/api/navigation/view/events?view=${encodeURIComponent(view)}`,
+test('a subscription carries the snapshot, a failed one leaves the socket open, and the close is recorded', async () => {
+  const read = await fetch(
+    `${address.replace('ws', 'http')}/api/navigation/view/snapshot?view=${encodeURIComponent(view)}`,
     { headers: headers(), signal: AbortSignal.timeout(5000) },
   );
-  const reader = stream.body!.getReader();
-  let text = '';
-  while (!text.includes('event: snapshot') || !text.endsWith('\n\n'))
-    text += new TextDecoder().decode((await reader.read()).value);
-  await reader.cancel();
-  const old = JSON.parse(text.split('data: ')[1]!);
+  const old = await read.json();
 
   const client = connect();
   await client.hello();
@@ -204,4 +200,28 @@ test('a stopping server closes its sockets with "server restarting"', async () =
   expect(await client.closed).toBe(4002);
   await closing;
   expect(closes.at(-1)).toMatchObject({ closed_by: 'server_pre_close', close_code: 4002 });
+});
+
+// Distinct gap: a permit assertion cannot prove that the real delivery ends. The producer is
+// revoked for real, and the same host then admits a fresh snapshot after reattachment.
+test('revoking the producer ends an open navigation subscription and reattachment admits a fresh snapshot', async () => {
+  const client = connect();
+  await client.hello();
+  await client.next(0);
+  const subscribe = (id: string) =>
+    client.socket.send(
+      JSON.stringify({ op: 'subscribe', id, kind: 'navigation', params: { view } }),
+    );
+  subscribe('before');
+  const old = (await client.next(1)).data as CurrentViewSnapshot;
+  producer.invalidate('detached');
+  expect(await client.next(2)).toMatchObject({ sub: 'before', kind: 'ended' });
+  expect(() => producer.validate(old.authority)).toThrow();
+  navigation.close();
+  navigation.attach();
+  subscribe('after');
+  const fresh = (await client.next(3)).data as CurrentViewSnapshot;
+  expect(fresh.mode).toBe('current');
+  expect(fresh.authority.permit.installation_id).not.toBe(old.authority.permit.installation_id);
+  expect(fresh.authority.delivery_session_id).toBe(old.authority.delivery_session_id);
 });

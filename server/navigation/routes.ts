@@ -1,5 +1,4 @@
 import type { LiveSink } from '../live_updates/contracts.ts';
-import { count_live_stream } from '../core/http/live_streams/index.ts';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
@@ -16,7 +15,6 @@ import { DELIVERY } from './delivery/configuration.ts';
 import { parseView } from './logic/view.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
 import { HttpError, log_server_error } from '../core/http/errors.ts';
-import { SseSink } from '../live_updates/frames.ts';
 import { scalarQueries } from '../list_reads/http.ts';
 import { validateInstallation } from './publication.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
@@ -148,18 +146,6 @@ export function createRoutes(): PreparedAreaRoutes {
     services.live_subscriptions?.register('navigation', (request, sink) => {
       const value = view(request.params);
       return open_events(value, begin_events(), sink);
-    });
-    app.get('/events', async (request, reply) => {
-      const value = view(request.query as Record<string, unknown>);
-      const admitted = begin_events();
-      reply.hijack();
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'X-Accel-Buffering': 'no',
-      });
-      count_live_stream(reply);
-      open_events(value, admitted, new SseSink(reply.raw));
     });
     app.get('/content', async (request, reply) => {
       const value = query(

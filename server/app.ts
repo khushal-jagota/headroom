@@ -22,7 +22,6 @@ import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
 import { LiveSubscriptions } from './live_updates/registry.ts';
 import { install_live_socket } from './live_updates/socket.ts';
-import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
 import { create_executor_routes } from './executor/app_transport.ts';
 import type { VpsExecutorRegistry } from './executor/registry.ts';
@@ -31,6 +30,10 @@ import { PlannerError } from './core/contracts.ts';
 import type { Area } from './core/authority/register.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
+export interface Changes {
+  subscribe(callback: () => void): () => void;
+  emit(): void;
+}
 export interface AppServices {
   /** Publish the real instance before registration can fail or await. */
   own_app?(app: FastifyInstance): void;
@@ -90,7 +93,6 @@ export async function createApp(config: Config, services: AppServices): Promise<
     app,
     config,
     clock,
-    changes,
     root,
     services.database,
     services.waitingScreensRoot,

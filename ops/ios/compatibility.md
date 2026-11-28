@@ -2,7 +2,7 @@
 
 Before publication, check the oldest supported iOS build against the candidate server. Check native reads, an action, conversation output, reconnect, and an unsupported build. Confirm that unsupported requests cannot execute an action. Confirm that drafts survive an update-required response.
 
-The gate uses `X-Panels-iOS-Build`. Native HTTP and SSE requests receive HTTP 426 with `error.code=ios_update_required`. The app presents “Update Panels from TestFlight”. WebSocket handshakes use the same refusal when the server supports denial responses, or close with code 4406. The build header is not authentication.
+The gate uses `X-Panels-iOS-Build`. Native HTTP requests receive HTTP 426 with `error.code=ios_update_required`. The app presents “Update Panels from TestFlight”. WebSocket handshakes use the same refusal when the server supports denial responses, or close with code 4406. The build header is not authentication.
 
 The server floor lives in `server/ios_compatibility/policy.ts`. If the candidate breaks the oldest build, raise `MINIMUM_SUPPORTED_BUILD`. Coordinate a supported TestFlight build before release. A headerless legacy build cannot receive a reliable build-specific refusal.
 
@@ -42,3 +42,13 @@ Publish iPhone build 13 with this server release.
 A send to a conversation whose machine is absent is accepted and waits, instead of HTTP 400. A machine that can never join again still refuses, with the new code `machine_unavailable`. The conversation read adds the optional `machine_waiting_reason`, and a refusal before acceptance names its cause in new refusal codes with a `reason` sentence.
 
 The minimum iPhone build stays **13**. Build 13 ignores the new field, still shows the message as queued, and shows an unknown refusal code as words with Try Again. A newer build names the waiting machine.
+
+## Live socket release
+
+Web, desktop and iPhone follow live updates over the one WebSocket `/api/live`. The routes `/api/changes`, `/api/navigation/view/events`, the conversation `view/tail` and the conversation `tail` are removed.
+
+The minimum iPhone build is **16**, the first build that uses the socket. Builds 13 to 15 followed the removed streams. Their reads and actions receive HTTP 426 `ios_update_required`, and the app asks for a TestFlight update.
+
+The minimum desktop bridge version is **3**, the first bridge that gives the page the server address and the app's identity for its socket. Bridge 2 keeps screens that follow the removed streams. Its API reads and actions receive HTTP 426 `desktop_update_required`.
+
+Raise both floors only after the owner's own iPhone and Mac run the socket builds. Publish iPhone build 16 and the desktop app with bridge 3 with this server release.

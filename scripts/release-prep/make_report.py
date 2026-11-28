@@ -24,7 +24,7 @@ page = f"""<!doctype html><meta charset=utf-8><title>Release rehearsal e40325811
 <tr><td>Snapshot: 3d0c534 stopped full copy and check</td><td>{old_s:.1f}</td><td>3d0c534's own <code>snapshot_main.ts</code>, from a copy of the live release</td></tr>
 <tr><td>Schema steps ts_0017 and ts_0018, with their checks</td><td>{sch['total_seconds']:.2f}</td><td>candidate <code>schema_step_main.ts</code>, timed in-process</td></tr>
 <tr><td>Launch until ready health</td><td>{rd['health_seconds']:.1f}</td><td>sealed candidate, foreground launcher</td></tr>
-<tr><td>Launch until Chief view answers 200 and streams a snapshot</td><td>{rd['chief_stream_snapshot_seconds']:.1f}</td><td>no "Conversation view is upgrading" answer seen</td></tr></table>
+<tr><td>Launch until Chief view answers 200</td><td>{rd['chief_view_seconds']:.1f}</td><td>no "Conversation view is upgrading" answer seen</td></tr></table>
 <p>Startup's conversation reconciliation took 13.7 s, then 13.2 s on the second start, about 325,000 rows each time. The last rehearsal recorded 12.8 s.</p>
 <h2>Schema steps</h2>
 <table><tr><th>Step</th><th>Whole step (ms)</th><th>Apply</th><th>Scoped FK check</th><th>Scoped integrity check</th><th>Seed schema check</th><th>Commit</th></tr>{srows}</table>

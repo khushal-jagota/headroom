@@ -55,16 +55,16 @@ The phone follows the same rules, with one known gap: a Ticket action there stil
 
 ## The live socket
 
-One authenticated WebSocket, `/api/live`, carries the four live feeds: the change signal, the navigation feed, the conversation view tail and the conversation tail. A socket frame wraps each payload in an envelope with its subscription, its kind and a sequence number. The browser, the desktop app and the iPhone app use the socket. The server also keeps the old event streams until "Retire the old live streams" removes them. The frame names, the close codes and the limits are in `server/live_updates/contracts.ts`.
+One authenticated WebSocket, `/api/live`, carries the four live feeds: the change signal, the navigation feed, the conversation view tail and the conversation tail. A socket frame wraps each payload in an envelope with its subscription, its kind and a sequence number. The browser, the desktop app and the iPhone app use the socket, and no other live stream exists for them. An iPhone build below 16 and a desktop bridge below 3 followed the earlier event streams, so the server refuses them with "update needed". The frame names, the close codes and the limits are in `server/live_updates/contracts.ts`.
 
 Why: macOS Chromium closes every HTTP/2 connection when a network interface address changes, and four open streams then die together. A WebSocket runs on its own HTTP/1.1 connection through `tailscale serve` and survived the same event in the Mac 1 proof.
 
 - **One owner in the page.** `web/src/lib/liveSocket.ts` opens the socket, says hello, checks the sequence, watches for silence and routes each frame to its subscriber. In a browser the page uses its own origin. In the desktop app the page asks the native side for the server address and the app's identity (bridge 3), because a socket cannot pass through the `panels://` relay. Each consumer keeps its own recovery: after a drop it is told, and it subscribes again.
 - **Admission.** The Tailscale login at the upgrade is the gate. A present Origin must be the web origin or `panels://app`. A socket with no Origin is a native client. The first frame declares the client's identity in the `X-Panels-Client` shape, because a browser cannot set that header. The identity is a version declaration and gives no authority. The server answers with a ready frame, or closes the socket.
 - **Three named closes.** "Update needed" (the existing minimum desktop bridge or iPhone build), "server restarting" and "bad first frame". Every other close is a drop. On "update needed" the page shows the existing update prompt and does not reopen the socket. Every other close shows the card and reopens it.
-- **Feeds.** Every socket receives the change signal after its ready frame. A client opens a navigation view or a conversation tail with a subscribe frame that carries today's query parameters, and ends it with an unsubscribe frame. A subscription that fails ends by itself with the status that the old route would send, and the socket stays open.
+- **Feeds.** Every socket receives the change signal after its ready frame. A client opens a navigation view or a conversation tail with a subscribe frame that carries its query parameters, and ends it with an unsubscribe frame. A subscription that fails ends by itself with the status that the old route would send, and the socket stays open.
 - **Sequence.** One counter for each socket, starting at 1. A skipped number means a drop. It is not a resume cursor.
-- **After a drop.** Each subscription returns as its stream does today. The conversation tails resume from their own cursors. The change signal and navigation start fresh, and the client runs its revision check. The server adds no replay.
+- **After a drop.** Each subscription returns after a drop. The conversation tails resume from their own cursors. The change signal and navigation start fresh, and the client runs its revision check. The server adds no replay.
 - **Silence.** The server sends a heartbeat frame every 15 seconds and pings clients that it cannot hear. Clients send no pings. A socket that falls too far behind is closed as a drop.
 - **The desktop notification stream stays outside the socket on purpose.** It runs in the desktop main process over Node's own `fetch`, which did not drop in any test. Moving it would change the native side for no measured problem.
 
@@ -85,10 +85,10 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 
 ## Code
 
-- `server/core/changes/`: the signal. `server/core/database/`: the writer that announces commits, and the silent commit. `server/core/routes.ts`: the change stream.
+- `server/core/changes/`: the signal. `server/core/database/`: the writer that announces commits, and the silent commit.
 - `server/resource_versions/`: the revisions that the check reads.
 - `server/navigation/`: the navigation index and its feed.
-- `server/live_updates/`: the socket, its contract, and the frame types that the feeds share with the old streams.
+- `server/live_updates/`: the socket, its contract, and the frame types that the feeds share.
 - `web/src/lib/mutate.ts`: the browser's write door.
 - `web/src/lib/liveSocket.ts`: the browser's one socket. `web/src/lib/changeStream.ts` and `web/src/lib/resourceVersions/`: the change signal's status card and the revision check.
 - `web/src/lib/clientIdentity.ts` and `web/src/lib/requestLimit/`: the browser's fetch boundary and its time limits.

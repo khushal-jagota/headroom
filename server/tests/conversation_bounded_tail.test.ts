@@ -14,7 +14,6 @@ import {
 import { text_message_content } from '../conversation/message_content.ts';
 import { ConversationLiveTail, MAXIMUM_HELD_TAIL_ITEMS } from '../conversation/live_tail.ts';
 import { conversation_view_frames } from '../conversation/views/routes.ts';
-import { sse_text } from '../live_updates/frames.ts';
 import type { ConversationViewRuntime } from '../conversation/views/routes.ts';
 import { ViewBodyChanged } from '../conversation/views/data/storage.ts';
 // The fixture projection cannot prove a subscription across replay, bounded live queues,
@@ -63,10 +62,10 @@ test('replay joins live publication without a hole and bounded tails reset safel
       return { running: true, permissions: [], inputs: [] };
     },
   };
-  // The event stream's text, so that the assertions read the bytes a client receives.
+  // Each frame as text, so that the assertions read what a subscriber receives.
   const frames = (async function* () {
     for await (const frame of conversation_view_frames(runtime, id, 'full', true, null, []))
-      yield frame ? sse_text(frame) : ': keep-alive\n\n';
+      yield frame ? `event: ${frame.event}\ndata: ${frame.data}\n\n` : ': keep-alive\n\n';
   })();
   try {
     const first = await frames.next();

@@ -1,5 +1,4 @@
 import Fastify from 'fastify';
-import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
 import { advance, create, fixture, propose } from './ticket_fixture.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
@@ -25,7 +24,6 @@ const view = encodeURIComponent(
   }),
 );
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
-const streamPath = `/api/navigation/view/events?view=${view}`;
 
 async function setup(
   asking = false,
@@ -139,67 +137,6 @@ test('navigation_snapshot_admission', async () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.json()).toEqual({ detail: 'navigation publication is not ready' });
   } finally {
-    await f.app.close();
-    f.navigation.close();
-  }
-});
-
-async function initialFrame(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<CurrentViewSnapshot> {
-  const decoder = new TextDecoder();
-  let text = '';
-  while (!text.includes('\n\n')) {
-    const result = await reader.read();
-    if (result.done) throw new Error('stream ended before its initial snapshot');
-    text += decoder.decode(result.value, { stream: true });
-  }
-  expect(text).toContain('event: snapshot\n');
-  const data = text.split('\n').find((line) => line.startsWith('data: '));
-  if (!data) throw new Error('stream snapshot has no data');
-  return JSON.parse(data.slice(6)) as CurrentViewSnapshot;
-}
-
-// Distinct gap: a permit assertion cannot prove that actual HTTP delivery closes.
-// Reuse the same application on one ephemeral listener. No browser or new host.
-test('actual producer revocation closes an open HTTP stream and reattachment admits a fresh snapshot', async () => {
-  const started = performance.now();
-  const f = await setup();
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  try {
-    const listening = performance.now();
-    const address = await f.app.listen({ host: '127.0.0.1', port: 0 });
-    const startupMilliseconds = performance.now() - listening;
-    const open = async () => {
-      const response = await fetch(address + streamPath, { signal: AbortSignal.timeout(3000) });
-      expect(response.status).toBe(200);
-      expect(response.headers.get('content-type')).toContain('text/event-stream');
-      if (!response.body) throw new Error('stream body is absent');
-      return response.body.getReader();
-    };
-    reader = await open();
-    const old = await initialFrame(reader);
-    const ended = reader.read();
-    f.producer.invalidate('detached');
-    expect((await ended).done).toBe(true);
-    expect(() => f.producer.validate(old.authority)).toThrow();
-    f.navigation.close();
-    f.navigation.attach();
-    reader = await open();
-    const fresh = await initialFrame(reader);
-    expect(fresh.mode).toBe('current');
-    expect(fresh.authority.permit.installation_id).not.toBe(old.authority.permit.installation_id);
-    expect(fresh.authority.permit.runtime_epoch).toBe(old.authority.permit.runtime_epoch);
-    expect(fresh.authority.delivery_session_id).toBe(old.authority.delivery_session_id);
-    console.info(
-      JSON.stringify({
-        proof: 'actual-publication-http-stream',
-        startupMilliseconds,
-        caseMilliseconds: performance.now() - started,
-      }),
-    );
-  } finally {
-    await reader?.cancel();
     await f.app.close();
     f.navigation.close();
   }

@@ -14,36 +14,36 @@ test('warns at 101 per identity, rearms at 100, and releases each response only 
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const streams = new ClientLiveStreams();
   const client = { device_id: 'desktop-one', kind: 'desktop' as const, version: '1' };
-  const close = Array.from({ length: 100 }, () => streams.open(client, '/changes'));
+  const close = Array.from({ length: 100 }, () => streams.open(client, '/api/live'));
   // Each key component separates clients. Additional version facts do not split one client.
   for (const other of [
     { ...client, device_id: 'desktop-two' },
     { ...client, kind: 'browser' as const },
     { ...client, version: '2' },
   ]) {
-    for (let index = 0; index < 100; index++) streams.open(other, '/changes');
+    for (let index = 0; index < 100; index++) streams.open(other, '/api/live');
   }
   expect(warn).not.toHaveBeenCalled();
-  const tail = streams.open({ ...client, bridge_version: 5 }, '/conversations/:id/tail');
+  const tail = streams.open({ ...client, bridge_version: 5 }, '/notifications/desktop');
   const warning = () => JSON.parse(warn.mock.calls.at(-1)![0].slice('client_live_streams '.length));
   expect(warning()).toEqual({
     client,
     total: 101,
-    routes: { '/changes': 100, '/conversations/:id/tail': 1 },
+    routes: { '/api/live': 100, '/notifications/desktop': 1 },
   });
-  const extra = streams.open(client, '/changes');
+  const extra = streams.open(client, '/api/live');
   tail();
   tail(); // finish followed by close must not decrement twice.
   expect(warn).toHaveBeenCalledTimes(1);
   extra();
-  const again = streams.open(client, '/changes');
+  const again = streams.open(client, '/api/live');
   expect(warn).toHaveBeenCalledTimes(2);
   expect(warning().total).toBe(101);
   again();
   close.forEach((release) => release());
-  for (let index = 0; index < 100; index++) streams.open(client, '/changes');
+  for (let index = 0; index < 100; index++) streams.open(client, '/api/live');
   expect(warn).toHaveBeenCalledTimes(2);
-  streams.open(client, '/changes');
+  streams.open(client, '/api/live');
   expect(warn).toHaveBeenCalledTimes(3);
 });
 
