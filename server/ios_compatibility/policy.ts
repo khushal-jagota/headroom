@@ -1,2 +1,2 @@
 /** Raise this floor when a server change breaks an older native build. */
-export const MINIMUM_SUPPORTED_BUILD = 13;
+export const MINIMUM_SUPPORTED_BUILD = 16;

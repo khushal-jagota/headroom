@@ -183,7 +183,7 @@ test('client events are validated, stored beside the stream records and rate lim
       {
         at: 1_799_999_999_000,
         kind: 'stream_ended',
-        stream: '/api/changes',
+        stream: '/api/live',
         reason,
         open_ms: 5,
         close_code: 1006,
@@ -224,7 +224,7 @@ test('client events are validated, stored beside the stream records and rate lim
       device_id: 'b',
       client_kind: 'browser',
       kind: 'stream_ended',
-      stream: '/api/changes',
+      stream: '/api/live',
       reason: 'ERR_CONNECTION_RESET',
       open_ms: 5,
       close_code: 1006,
@@ -241,7 +241,7 @@ test('records older than 30 days are deleted and the rest read back oldest first
   const now = 1_800_000_000;
   const day = 86_400_000;
   const record = (closed_at: number): StreamCloseRecord => ({
-    route: '/api/changes',
+    route: '/api/live',
     client_kind: 'desktop',
     device_id: 'mac',
     opened_at: closed_at - 1000,

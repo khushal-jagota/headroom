@@ -33,14 +33,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
   const barrier = new UpdateBarrier(join(root, 'barrier'));
   const admission = new WorkspaceAdmission();
   installMiddleware(app, config, admission, undefined, barrier, { database, clock });
-  await registerCoreRoutes(
-    app,
-    config,
-    clock,
-    { subscribe: () => () => {}, emit() {} },
-    root,
-    database,
-  );
+  await registerCoreRoutes(app, config, clock, root, database);
   let writes = 0;
   app.post('/api/write', async () => {
     writes++;
@@ -71,7 +64,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
     kind: 'desktop',
     device_id: 'desktop-one',
     version: '0.0.1',
-    bridge_version: 2,
+    bridge_version: 3,
   };
   const headers = (value: unknown) => ({ 'x-panels-client': JSON.stringify(value) });
   const saved = () =>
@@ -115,7 +108,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
         .statusCode,
     ).toBe(200);
     expect(saved()).toEqual([identity]);
-    const newer = { ...identity, version: '0.0.2', bridge_version: 3 };
+    const newer = { ...identity, version: '0.0.2', bridge_version: 4 };
     expect(
       (await app.inject({ method: 'POST', url: '/api/write', headers: headers(newer) })).statusCode,
     ).toBe(200);
@@ -147,12 +140,12 @@ test('declared versions gate incompatible reads and writes and accepted device v
     expect(
       (await app.inject({ url: '/api/meta', headers: { 'x-panels-client': '{bad' } })).statusCode,
     ).toBe(400);
-    // Old native clients decode strings but misclassify the renamed status (builds 9-10), or
-    // read a send accepted for delivery as final and lose Try Again for a later refusal
-    // (builds 11-12). Refuse both reads and actions before handlers, while desktop metadata
-    // remains usable.
+    // Old native clients decode strings but misclassify the renamed status (builds 9-10), read a
+    // send accepted for delivery as final and lose Try Again for a later refusal (builds 11-12),
+    // or follow live updates over the retired event streams (builds 13-15, desktop bridge 2).
+    // Refuse both reads and actions before handlers, while desktop metadata remains usable.
     const before_old_clients = writes;
-    const old_desktop = headers({ ...identity, bridge_version: 1 });
+    const old_desktop = headers({ ...identity, bridge_version: 2 });
     expect((await app.inject({ url: '/api/ticket-status', headers: old_desktop })).statusCode).toBe(
       426,
     );
@@ -160,7 +153,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
       (await app.inject({ method: 'POST', url: '/api/write', headers: old_desktop })).statusCode,
     ).toBe(426);
     expect((await app.inject({ url: '/api/meta', headers: old_desktop })).statusCode).toBe(200);
-    for (const build of [9, 10, 11, 12]) {
+    for (const build of [9, 10, 11, 12, 13, 14, 15]) {
       const old_ios = { 'x-panels-ios-build': String(build) };
       expect((await app.inject({ url: '/api/ticket-status', headers: old_ios })).statusCode).toBe(
         426,
@@ -172,7 +165,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
     expect(writes).toBe(before_old_clients);
     expect(
       (
-        await app.inject({ url: '/api/ticket-status', headers: { 'x-panels-ios-build': '13' } })
+        await app.inject({ url: '/api/ticket-status', headers: { 'x-panels-ios-build': '16' } })
       ).json(),
     ).toEqual({ ticket_status: 'agent_owned' });
     expect(
@@ -234,7 +227,7 @@ test('declared versions gate incompatible reads and writes and accepted device v
   try {
     expect(
       reopened.read(list_client_versions).filter((identity) => identity.kind === 'desktop'),
-    ).toEqual([{ ...identity, version: '0.0.3', bridge_version: 3 }]);
+    ).toEqual([{ ...identity, version: '0.0.3', bridge_version: 4 }]);
   } finally {
     reopened.close();
     rmSync(root, { recursive: true, force: true });

@@ -11,6 +11,7 @@ import { createDatabase } from '../../core/database/index.ts';
 import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { smoke_worker_token } from './identity.ts';
+import { live_frames } from '../../live_updates/testing/client.ts';
 
 type Json = Record<string, unknown>;
 type Event = ReturnType<typeof public_event>;
@@ -249,40 +250,25 @@ export async function smoke_file_turn(
   const events = await (async () => {
     const lifetime = new AbortController();
     const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(15_000)]);
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let live_reply: Promise<void> | undefined;
     try {
-      const tail = await fetch(new URL(base).origin + conversation + '/tail', {
-        redirect: 'error',
+      const tail = live_frames(
+        new URL(base).origin,
+        { kind: 'conversation_events', conversation_id, params: { after: '0' } },
         signal,
-      });
-      assert.equal(tail.status, 200);
-      assert.ok(tail.headers.get('content-type')?.startsWith('text/event-stream'));
-      assert.ok(tail.body);
-      reader = tail.body.getReader();
-      const owned_reader = reader;
+      );
       live_reply = (async () => {
-        const decoder = new TextDecoder();
-        let pending = '',
-          reply = '';
-        while (true) {
-          const chunk = await owned_reader.read();
-          assert.ok(!chunk.done, 'Live tail ended before the reply');
-          pending += decoder.decode(chunk.value, { stream: true });
-          let boundary: number;
-          while ((boundary = pending.indexOf('\n\n')) >= 0) {
-            const frame = pending.slice(0, boundary);
-            pending = pending.slice(boundary + 2);
-            if (!frame.startsWith('event: conversation-frame\n')) continue;
-            const data = frame.split('\n').find((line) => line.startsWith('data: '));
-            assert.ok(data);
-            const value = JSON.parse(data.slice(6)) as Json;
-            if (value.frame !== 'agent_message_delta') continue;
-            assert.ok(typeof value.text_delta === 'string');
-            reply += value.text_delta;
-            if (reply === options.reply) return;
-          }
+        let reply = '';
+        for await (const frame of tail) {
+          assert.notEqual(frame.kind, 'ended', 'Live tail ended before the reply');
+          if (frame.kind !== 'conversation-frame') continue;
+          const value = frame.data as Json;
+          if (value.frame !== 'agent_message_delta') continue;
+          assert.ok(typeof value.text_delta === 'string');
+          reply += value.text_delta;
+          if (reply === options.reply) return;
         }
+        throw new Error('Live tail ended before the reply');
       })();
       void live_reply.catch(() => {});
       const sent = await api(conversation + '/send', {
@@ -324,8 +310,7 @@ export async function smoke_file_turn(
       return completed.events;
     } finally {
       lifetime.abort();
-      await Promise.allSettled([reader?.cancel(), live_reply]);
-      reader?.releaseLock();
+      await Promise.allSettled([live_reply]);
     }
   })();
   step(

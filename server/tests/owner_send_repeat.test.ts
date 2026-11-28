@@ -16,6 +16,7 @@ import {
   conversation_execution_refusal,
 } from '../tickets/execution_admission.ts';
 import { create_manager } from '../managers/data.ts';
+import { live_frames } from '../live_updates/testing/client.ts';
 import { create, fixture, fixture_path } from './ticket_fixture.ts';
 
 afterEach(() => {
@@ -270,33 +271,20 @@ test('a repeated first message reaches each owner once and the repeat is answere
         body: { conversation_id, held_prompts: [{ sender_label: 'owner' }] },
       });
     }
-    const manager_view =
-      '/api/conversation/conversations/' +
-      owners[2].link() +
-      '/view/tail?lens=full&transcript=true';
     for (const reconnect of [false, true]) {
-      const response = await fetch(server!.address + manager_view, {
-        headers: {
-          accept: 'text/event-stream',
-          'x-panels-ios-build': String(MINIMUM_SUPPORTED_BUILD),
+      const frames = live_frames(
+        server!.address,
+        {
+          kind: 'conversation_view',
+          conversation_id: owners[2].link()!,
+          params: { lens: 'full', transcript: 'true' },
         },
-        signal: AbortSignal.timeout(8000),
-      });
-      expect(response.status, reconnect ? 'reconnect' : 'initial connection').toBe(200);
-      const reader = response.body!.getReader();
-      try {
-        const decoder = new TextDecoder();
-        let stream = '';
-        while (!stream.includes('\n\n')) {
-          const { done, value } = await reader.read();
-          expect(done).toBe(false);
-          stream += decoder.decode(value, { stream: true });
-        }
-        expect(stream).toContain('event: snapshot');
-        expect(stream).toContain('hello manager');
-      } finally {
-        await reader.cancel();
-      }
+        AbortSignal.timeout(8000),
+      );
+      const first = (await frames.next()).value;
+      await frames.return(undefined);
+      expect(first?.kind, reconnect ? 'reconnect' : 'initial connection').toBe('snapshot');
+      expect(JSON.stringify(first?.data)).toContain('hello manager');
     }
     // A missing HTTP response before reset must neither create nor send to a second Chief.
     const chief = owners[0];

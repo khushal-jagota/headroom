@@ -19,16 +19,32 @@ const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await context.addInitScript(() => {
   const log = (window.__streams = []);
-  const Native = window.EventSource;
-  window.EventSource = class extends Native {
-    constructor(url, init) {
-      super(url, init);
-      const entry = { url: String(url), created: performance.now(), open: null, snapshot: null, errors: 0 };
+  // The page's one live socket. `snapshots` holds the time of the latest conversation_view snapshot
+  // for each conversation, found through the subscribe frame that the page sent.
+  const Native = window.WebSocket;
+  window.WebSocket = class extends Native {
+    constructor(url, protocols) {
+      super(url, protocols);
+      const entry = { url: String(url), created: performance.now(), open: null, snapshots: {}, errors: 0 };
+      const subscriptions = {};
       log.push(entry);
       this.__entry = entry;
       this.addEventListener('open', () => { entry.open ??= performance.now(); });
-      this.addEventListener('snapshot', () => { entry.snapshot ??= performance.now(); });
       this.addEventListener('error', () => { entry.errors += 1; });
+      this.addEventListener('message', (event) => {
+        try {
+          const frame = JSON.parse(event.data);
+          if (frame.kind === 'snapshot' && subscriptions[frame.sub]) entry.snapshots[subscriptions[frame.sub]] = performance.now();
+        } catch {}
+      });
+      const send = this.send.bind(this);
+      this.send = (data) => {
+        try {
+          const frame = JSON.parse(data);
+          if (frame.op === 'subscribe' && frame.kind === 'conversation_view') subscriptions[frame.id] = frame.conversation_id;
+        } catch {}
+        return send(data);
+      };
       window.__sources = window.__sources || [];
       window.__sources.push(this);
     }
@@ -82,13 +98,13 @@ for (const t of targets) {
       await pane.locator('[data-conversation-entry="complete"]').waitFor({ state: 'attached', timeout: 60000 });
       r.complete_seconds = (Date.now() - started) / 1000;
       const stream = await page.evaluate((id) => {
-        const e = [...window.__streams].reverse().find((s) => s.url.includes(`/conversations/${id}/view/tail`) && s.created >= window.__mark);
-        return e ? { snapshot_seconds: e.snapshot === null ? null : (e.snapshot - window.__mark) / 1000 } : null;
+        const e = [...window.__streams].reverse().find((s) => s.snapshots[id] >= window.__mark);
+        return e ? { snapshot_seconds: (e.snapshots[id] - window.__mark) / 1000 } : null;
       }, t.conversation_id);
       r.stream_snapshot_seconds = stream?.snapshot_seconds ?? null;
       await page.waitForTimeout(2000);
       const held = await page.evaluate((id) => {
-        const i = [...window.__streams].map((s, n) => [s, n]).reverse().find(([s]) => s.url.includes(`/conversations/${id}/view/tail`));
+        const i = [...window.__streams].map((s, n) => [s, n]).reverse().find(([s]) => s.snapshots[id] !== undefined);
         if (!i) return null;
         return { ready_state: window.__sources[i[1]].readyState, errors: i[0].errors };
       }, t.conversation_id);

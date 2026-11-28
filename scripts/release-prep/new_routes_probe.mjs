@@ -1,5 +1,5 @@
 // Probe the release's new stream framing and routes on a private test host (run via run_probe_server.mjs).
-// Checks: every live stream's first frame is `retry: 1000`; /api/changes heartbeat framing (if seen);
+// Checks: the desktop notification stream's first frame is `retry: 1000`;
 // POST /api/client-events with and without X-Panels-Client; GET /api/connection-records shows the closes.
 // Usage: node new_routes_probe.mjs <base_url> <out.json>
 import { writeFileSync } from 'node:fs';
@@ -45,10 +45,7 @@ const view = JSON.stringify({ projection_version: 7, scope_generation: 0, locale
   review_conversation_ids: [], review_skipped_keys: [], review_priority_keys: [],
   windows: [{ section: 'review', owner: null, group: 'all', child_filter: 'all', anchor: null, direction: 'after', limit: 30 }] });
 const streams = {
-  changes: ['/api/changes', {}, 32000],
-  navigation_events: ['/api/navigation/view/events', { view }],
   notifications_desktop: ['/api/notifications/desktop', {}],
-  ...(cid ? { conversation_view_tail: [`/api/conversation/conversations/${cid}/view/tail`, { lens: 'full', transcript: 'true' }] } : {}),
 };
 for (const [name, [path, query, ms]] of Object.entries(streams)) record(`stream:${name}`, await raw_stream(path, query, ms));
 const ev = { version: 1, events: [{ at: Date.now(), kind: 'probe_ok', probe_ms: 12, stream: 'changes' }] };

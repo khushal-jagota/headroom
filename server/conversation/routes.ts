@@ -16,7 +16,7 @@ import {
   keep_answer_attachments,
   type SentAnswerAttachment,
 } from './http/user_input.ts';
-import { open_event_tail, public_event, send_event_tail } from './http/record.ts';
+import { open_event_tail, public_event } from './http/record.ts';
 import { pump_frames } from '../live_updates/frames.ts';
 import type { ConversationHttpWriteScope } from './http/writes.ts';
 import { readable_tool_call_detail } from './tool_detail.ts';
@@ -483,16 +483,6 @@ export function createConversationRoutes(
             backend_key: record.backend_key,
           }),
         };
-      },
-    );
-    app.get<{ Params: { conversation_id: string } }>(
-      '/conversations/:conversation_id/tail',
-      { config: { uncompressed: true } },
-      async (request, reply) => {
-        const { after } = integer_queries(request.query, ['after']);
-        const id = request.params.conversation_id;
-        const record = require_conversation(runtime, id);
-        return send_event_tail(runtime.record, id, record.backend_key, after ?? 0, reply);
       },
     );
     app.route<{ Params: { conversation_id: string; stored_file_id: string } }>({

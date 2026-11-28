@@ -118,7 +118,6 @@ The test host also supplies ten browser controls: signal `start`, `finish`, `mes
 | GET | `/conversations/:conversation_id/composer-catalog` |
 | GET | `/conversations/:conversation_id/events` |
 | GET | `/conversations/:conversation_id/events/:sequence/detail` |
-| GET | `/conversations/:conversation_id/tail` |
 | POST | `/conversations/:conversation_id/send` |
 | GET, HEAD | `/conversations/:conversation_id/files/:stored_file_id` |
 | POST | `/voice-transcriptions` |
@@ -129,7 +128,7 @@ The test host also supplies ten browser controls: signal `start`, `finish`, `mes
 | POST | `/conversations/:conversation_id/permission-answers` |
 | POST | `/conversations/:conversation_id/user-input-answers` |
 
-The six record-owned `/view`, `/view/pages`, `/view/body`, `/view/tail`, `/view/receipts`, and `/view/body/content` routes remain on that same record runtime, store, and live tail. Startup reconciles once and rotates one epoch. Product routes do not create another store or rerun reconciliation.
+The five record-owned `/view`, `/view/pages`, `/view/body`, `/view/receipts`, and `/view/body/content` routes remain on that same record runtime, store, and live tail. Startup reconciles once and rotates one epoch. Product routes do not create another store or rerun reconciliation.
 
 The event/live tail subscribes before replay, joins at its sequence high-water mark, and emits separate `conversation-event` and `conversation-frame` SSE names. It includes the initial held-line refresh and heartbeat comments, and closes its subscription on disconnect. The selected-view tail remains the record owner's protocol. Event paging caps a page at 100 rows; public tool detail is capped at 1024 Unicode code points, with full readable output available through the detail route.
 
@@ -181,7 +180,7 @@ Service reservations in `core/service_resources.ts` retain each identity once, i
 The setup flight joins late cleanup before database or lock finalizers can run.
 
 Shutdown seals new request/write admission and stops new connections before any wait.
-It closes event streams immediately. Ordinary admitted responses and media work can finish during the shared grace.
+It closes live sockets and event streams immediately. Ordinary admitted responses and media work can finish during the shared grace.
 At grace expiry it logs named pending stages, closes remaining connections, and aborts remaining media work.
 Handlers, hooks, iterator operations, provider work, and native resources remain owned after a connection closes.
 Worker readiness and Manager wakes cancel at stop start. Every independent stop begins before drain waits.

@@ -1,13 +1,9 @@
 import { ScreenSnapshots } from '../screens/snapshot.ts';
 import { client_version_meta } from '../client_versions/meta.ts';
 import type { FastifyInstance } from 'fastify';
-import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
-import { SSE_HEARTBEAT_MS } from './config.ts';
-import { coalesced_change_pings } from '../live_updates/change_pings.ts';
-import { STREAM_RETRY_FRAME } from './http/live_streams/configuration.ts';
 import type { Clock } from './clock.ts';
 import { TestClock } from './clock.ts';
 import { PlannerError } from './contracts.ts';
@@ -16,15 +12,10 @@ import type { Database } from './database/index.ts';
 import { indexHtml, mountStatic, sendFile } from './http/static.ts';
 import type { HomeUpdateTrial } from '../environments/updates/home_trial.ts';
 
-export interface Changes {
-  subscribe(callback: () => void): () => void;
-  emit(): void;
-}
 export async function registerCoreRoutes(
   app: FastifyInstance,
   config: Config,
   clock: Clock,
-  changes: Changes,
   root: string,
   database: Database,
   waiting_screens_root?: () => string | null,
@@ -69,36 +60,6 @@ export async function registerCoreRoutes(
       return { ready: true, app_sha: config.app_sha, prepared_attempt_id };
     }
     return { ready: true, app_sha: config.app_sha };
-  });
-  const streams = new Set<Readable>();
-  app.addHook('preClose', async () => {
-    for (const stream of streams) stream.destroy();
-  });
-  app.get('/api/changes', { config: { uncompressed: true } }, async (_request, reply) => {
-    const pings = coalesced_change_pings(changes, () => stream.push('data: change\n\n'));
-    const stream = new Readable({
-      read() {
-        pings.drained();
-      },
-    });
-    stream.push(STREAM_RETRY_FRAME);
-    const timer = setInterval(() => {
-      if (!stream.destroyed && !pings.busy())
-        stream.push(`event: heartbeat\ndata: ${new Date().toISOString()}\n\n`);
-    }, SSE_HEARTBEAT_MS);
-    timer.unref();
-    streams.add(stream);
-    stream.once('close', () => {
-      clearInterval(timer);
-      pings.stop();
-      streams.delete(stream);
-    });
-    reply.raw.once('close', () => stream.destroy());
-    reply.header('content-type', 'text/event-stream; charset=utf-8');
-    // Node must send headers before the first heartbeat/event.
-    reply.raw.setHeader('content-type', 'text/event-stream; charset=utf-8');
-    reply.raw.flushHeaders();
-    return reply.send(stream);
   });
   app.get('/', async (_request, reply) =>
     reply

@@ -16,9 +16,9 @@ const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await context.addInitScript(() => {
   const log = (window.__streams = []);
-  const Native = window.EventSource;
-  window.EventSource = class extends Native {
-    constructor(url, init) { super(url, init); const e = { url: String(url), source: this, opens: 0, errors: 0 }; log.push(e);
+  const Native = window.WebSocket;
+  window.WebSocket = class extends Native {
+    constructor(url, protocols) { super(url, protocols); const e = { url: String(url), source: this, opens: 0, errors: 0 }; log.push(e);
       this.addEventListener('open', () => { e.opens += 1; }); this.addEventListener('error', () => { e.errors += 1; }); }
   };
 });
@@ -36,9 +36,8 @@ const read = (id) => page.evaluate((id) => {
   const nav = document.querySelector('[data-navigation-health]');
   const main = document.querySelector('main.shell-content');
   const p = document.querySelector(`[data-conversation-pane][data-conversation-id="${id}"]`);
-  const tails = window.__streams.filter((s) => s.url.includes(`/conversations/${id}/view/tail`));
+  const tails = window.__streams.filter((s) => s.url.includes('/api/live'));
   const tail = tails.at(-1);
-  const changes = window.__streams.filter((s) => s.url.includes('/api/changes')).at(-1);
   return {
     card_open: !!slot?.hasAttribute('data-open'),
     connection_state: card?.getAttribute('data-connection-state') ?? null,
@@ -51,7 +50,6 @@ const read = (id) => page.evaluate((id) => {
     pane_connection_mark: p ? p.querySelectorAll('[data-conversation-connection]').length : null,
     pane_entry: p?.querySelector('[data-conversation-entry]')?.getAttribute('data-conversation-entry') ?? null,
     tail_streams: tails.length, tail_ready_state: tail ? tail.source.readyState : null,
-    changes_ready_state: changes ? changes.source.readyState : null,
   };
 }, id);
 const timeline = [];

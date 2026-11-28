@@ -36,6 +36,7 @@ import { createProject } from '../projects/data/index.ts';
 import { start_ready_worker_step } from '../runtime/worker_step_readiness_loop.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { JsonObject } from '../executor/wire.generated.ts';
+import { live_frames } from '../live_updates/testing/client.ts';
 
 const CLI = fileURLToPath(new URL('../cli/main.ts', import.meta.url));
 const PNG =
@@ -127,35 +128,22 @@ async function pending_rows(
 }
 const pending_ids = async (conversation_id: string) =>
   (await pending_rows(conversation_id)).map((row) => row.sender_message_id);
-/** An open pane: the view stream's waiting-messages revision on every frame. */
+/** An open pane: the view subscription's waiting-messages revision on every frame. */
 function open_pane(conversation_id: string) {
   const controller = new AbortController();
   const revisions: number[] = [];
   const reading = (async () => {
-    const response = await fetch(
-      `${server!.address}/api/conversation/conversations/${conversation_id}/view/tail?lens=focus`,
-      { signal: controller.signal },
-    );
-    expect(response.status).toBe(200);
-    const decoder = new TextDecoder();
-    let buffered = '';
-    const reader = response.body!.getReader();
-    for (let read = await reader.read(); !read.done; read = await reader.read()) {
-      buffered += decoder.decode(read.value, { stream: true });
-      for (let end = buffered.indexOf('\n\n'); end >= 0; end = buffered.indexOf('\n\n')) {
-        const data = buffered
-          .slice(0, end)
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5))
-          .join('\n');
-        buffered = buffered.slice(end + 2);
-        if (data) revisions.push(JSON.parse(data).status.waiting_messages_revision);
-      }
+    for await (const frame of live_frames(
+      server!.address,
+      { kind: 'conversation_view', conversation_id, params: { lens: 'focus' } },
+      controller.signal,
+    )) {
+      expect(frame.kind).not.toBe('ended');
+      const status = (frame.data as { status?: { waiting_messages_revision?: number } }).status;
+      if (status?.waiting_messages_revision !== undefined)
+        revisions.push(status.waiting_messages_revision);
     }
-  })().catch((error) => {
-    if (!controller.signal.aborted) throw error;
-  });
+  })();
   return {
     revisions,
     opened: () =>

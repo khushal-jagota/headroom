@@ -249,10 +249,10 @@ test('the screens reach the server through the app, and links leave it', async (
       for (let index = 0; index < 8; index++) {
         const marker = `desktop-close-${index}`;
         await page.evaluate(marker => new Promise<void>((resolve, reject) => {
-          const source = new EventSource(`/api/changes?proof=${marker}`);
+          const source = new EventSource(`/api/notifications/desktop?proof=${marker}`);
           (window as unknown as { proofStream: EventSource }).proofStream = source;
           source.onopen = () => resolve();
-          source.onerror = () => reject(new Error('The forwarded change stream did not open.'));
+          source.onerror = () => reject(new Error('The forwarded notification stream did not open.'));
         }), marker);
         await expect.poll(async () => (await nativeRequests()).some(request => request.url.includes(marker) && !request.ended), { timeout: WAIT_MS }).toBe(true);
         await page.evaluate(() => (window as unknown as { proofStream: EventSource }).proofStream.close());
@@ -285,8 +285,6 @@ test('the screens reach the server through the app, and links leave it', async (
       for (const ticket of tickets) await page.evaluate(id => { location.hash = `#/workspace/${id}`; }, ticket.id);
       const current = tickets.at(-1)!;
       await expect(page.locator('.ticket-title')).toHaveText(current.title, { timeout: WAIT_MS });
-      expect((await nativeRequests()).filter(request =>
-        new URL(request.url).pathname === '/api/navigation/view/events')).toEqual([]);
       const read = await page.evaluate(async () => (await fetch('/api/meta')).status);
       expect(read).toBe(200);
       await api.patch(server, `/api/tickets/${current.id}`, { title: 'Desktop navigation live update' });
@@ -322,7 +320,7 @@ test('the screens reach the server through the app, and links leave it', async (
 
     await test.step('forwarded requests share identity and the server retains it', async () => {
       const forwarded = await desktop.app.evaluate(() => (globalThis as { forwardedRequests?: ForwardedRequest[] }).forwardedRequests ?? []);
-      for (const path of ['/api/meta', '/api/tickets', '/files/missing-client-identity-proof', '/api/changes'])
+      for (const path of ['/api/meta', '/api/tickets', '/files/missing-client-identity-proof', '/api/notifications/desktop'])
         expect(forwarded.some((request) => request.path === path)).toBe(true);
       const identities = forwarded.map((request) => {
         expect(request.origin).toBeNull();
