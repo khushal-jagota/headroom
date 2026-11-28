@@ -11,11 +11,17 @@
  * `panels://recovery` alone.
  */
 
-import type { DesktopClientIdentity } from './client_identity';
-
 export type ServerAddressResult =
   | { ok: true; address: string }
   | { ok: false; problem: string };
+
+/** The desktop wire shape of server/client_versions/contracts.ts. */
+export interface DesktopClientIdentity {
+  kind: 'desktop';
+  device_id: string;
+  version: string;
+  bridge_version: number;
+}
 
 /** What the page needs to open its own WebSocket: the server and who the app is. */
 export interface LiveConnection {

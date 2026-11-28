@@ -2,14 +2,7 @@ import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readJson, writeJson } from './stored_json';
 import { DESKTOP_BRIDGE_VERSION } from './bridge_version';
-
-/** The desktop wire shape of server/client_versions/contracts.ts. */
-export interface DesktopClientIdentity {
-  kind: 'desktop';
-  device_id: string;
-  version: string;
-  bridge_version: number;
-}
+import type { DesktopClientIdentity } from './bridge';
 
 let deviceId: string | null = null;
 
