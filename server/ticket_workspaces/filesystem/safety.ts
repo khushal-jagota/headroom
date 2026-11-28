@@ -64,7 +64,8 @@ export async function workspace_ticket_owners(
   return [...owners].sort();
 }
 /** `discard` is for a deleted Ticket: its own work goes without proof that origin holds it.
- * Only the checks that protect other work remain. */
+ * Only the checks that protect other Tickets' work remain: mixed ownership, a live Ticket's
+ * checkout, and a worktree outside the folder. */
 export type OwnWork = 'protect' | 'discard';
 export async function reason_to_keep(
   root: string,
@@ -123,7 +124,8 @@ async function workspace_safety_problem(
     return `cannot inspect workspace: ${String(error)}`;
   }
   const match = ticket_match.exec(root.split(sep).at(-1)!);
-  if (match && protect)
+  // A checkout that names another Ticket can be that Ticket's work, live on another machine.
+  if (match)
     try {
       if ((await workspace_ticket_owners(root, options)).some((owner) => owner !== match[1]))
         return 'mixed Ticket ownership requires owner review';
