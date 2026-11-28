@@ -473,14 +473,14 @@ test('the Chief and a Manager start in their own homes, with no Ticket step or W
     });
     const served_home = join(served, 'sprint-items', 'm_one');
     mkdirSync(served_home, { recursive: true });
-    writeFileSync(join(served_home, 'CLAUDE.md'), 'written by the server');
     const { localized: local } = await localize(shared, manager);
     expect(local.workspace_folder).toBe(served_home);
     expect((await stat(join(served_home, 'artifacts'))).isDirectory()).toBe(true);
     expect(existsSync(join(served_home, 'logs'))).toBe(true);
     expect(await readFile(join(served_home, 'CLAUDE.md'), 'utf8')).toContain(
-      'You are one Manager.',
+      'You are a Manager of one domain',
     );
+    expect(existsSync(join(served_home, 'rules'))).toBe(true);
     const { localized: chief } = await localize(shared, start([['PLAN_ACTOR', 'chief']]));
     expect(chief.workspace_folder).toBe(join(served, 'chief'));
     expect(existsSync(join(served, 'chief', 'artifacts'))).toBe(false);
