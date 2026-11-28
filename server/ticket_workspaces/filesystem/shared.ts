@@ -155,10 +155,10 @@ export function workspace_identity(
     closeSync(descriptor);
   }
 }
-// Build caches hold copies of other repositories, not work. Xcode's DerivedData keeps package
-// clones whose objects and origin are absolute paths to a sibling copy, so Git cannot read them
-// once their folder moves.
-const BUILD_CACHE_DIRECTORIES = ['.venv', 'node_modules', 'DerivedData'];
+// Build caches hold copies of other repositories, not work. Xcode's DerivedData and SwiftPM's
+// .build keep package clones whose objects and origin are absolute paths to a sibling copy, so
+// Git cannot read them once their folder moves.
+const BUILD_CACHE_DIRECTORIES = ['.venv', 'node_modules', 'DerivedData', '.build'];
 export async function checkouts(root: string): Promise<string[]> {
   const found: string[] = [];
   async function visit(path: string): Promise<void> {
