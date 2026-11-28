@@ -8,6 +8,16 @@ export const LOGS_DIRECTORY = 'logs';
 export const RULES_DIRECTORY = 'rules';
 export type AgentHomeRole = 'worker' | 'manager';
 
+// Each driver names its own instructions file. Generic code reads the names from the drivers.
+function instruction_file_names(): string[] {
+  return [...new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file))];
+}
+function instruction_files(): string {
+  return instruction_file_names()
+    .map((name) => `\`${name}\``)
+    .join(' and ');
+}
+
 export function agent_home_text(role: AgentHomeRole): string {
   return role === 'manager' ? manager_home_text() : worker_home_text();
 }
@@ -25,7 +35,7 @@ This file loads in every session. It is a router. Read the files that it points 
 
 ## Where you are
 
-This folder is your home in Panels. It is your own. Panels wrote this file once, at setup, and never changes it again. You decide how the home is laid out. Keep this file current as your router. \`CLAUDE.md\` and \`AGENTS.md\` hold the same text, so update both.
+This folder is your home in Panels. It is your own. Panels wrote this file once, at setup, and never changes it again. You decide how the home is laid out. Keep this file current as your router. ${instruction_files()} hold the same text, so update both.
 
 \`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
 
@@ -73,7 +83,7 @@ export async function prepare_agent_home(folder: string, role: AgentHomeRole): P
   await mkdir(join(folder, LOGS_DIRECTORY), { recursive: true });
   if (role === 'manager') await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
   const text = agent_home_text(role);
-  for (const name of new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file)))
+  for (const name of instruction_file_names())
     await writeFile(join(folder, name), text, { flag: 'wx' }).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EEXIST') throw error;
