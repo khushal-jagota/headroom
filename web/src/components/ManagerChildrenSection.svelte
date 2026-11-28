@@ -4,6 +4,7 @@
 
   import { railPreview } from "../lib/workspaceRailInteraction";
   import { managerPageGroups } from "../lib/managerPage";
+  import { managerGroupDefaultOpen } from "../lib/managerChildren";
   import { WORK_ITEM_TICKET_GROUPS, workItemTicketOrder, type WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { ManagerPrincipal, ManagerChildFilter } from "../lib/types";
@@ -50,7 +51,7 @@
   // The section first draws when its own windows have all answered. It never draws from
   // rows that another surface happened to load.
   let settled = $derived(scopedWindow!==undefined && (scopedGroups
-    ? groupWindows.every(({definition,window})=>window!==undefined && answered(window,groupOpen[definition.key]??true))
+    ? groupWindows.every(({definition,window})=>window!==undefined && answered(window,groupOpen[definition.key]??managerGroupDefaultOpen(definition.key)))
     : answered(scopedWindow,filter==='active' || sectionOpen)));
   // Grouped sections hold that first draw. Other sections ask for every row up front,
   // so they wait for their window whenever the reader opens them.
@@ -65,7 +66,7 @@
     const windows=[viewWindow('children',scopeOwner,{child_filter:filter,limit:grouped?0:filter==='active'||sectionOpen?(principal.kind==='chief'?30:60):0,anchor,direction})];
     if(grouped)for(const definition of activeDefinitions){
       const known=navigationWindow(shared,'children',scopeOwner,'active',definition.key);
-      windows.push(viewWindow('children',scopeOwner,{child_filter:'active',group:definition.key,limit:(groupOpen[definition.key]??true)&&known?.total?60:0,...groupPages[definition.key]}));
+      windows.push(viewWindow('children',scopeOwner,{child_filter:'active',group:definition.key,limit:(groupOpen[definition.key]??managerGroupDefaultOpen(definition.key))&&known?.total?60:0,...groupPages[definition.key]}));
     }
     navigation?.owner.setDemand(demand,{windows});
   });
@@ -110,14 +111,14 @@
     <ResourceState shape="rows" loading={!ready} hasData={ready} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}
-          <div use:navigationScrollWindow={{window:(groupOpen[group.key]??true)?group.window:undefined,activate:()=>navigation?.owner.prioritizeWindow(group.window?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{groupPages[group.key]={anchor:next,direction:nextDirection};}}}>
+          <div use:navigationScrollWindow={{window:(groupOpen[group.key]??managerGroupDefaultOpen(group.key))?group.window:undefined,activate:()=>navigation?.owner.prioritizeWindow(group.window?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{groupPages[group.key]={anchor:next,direction:nextDirection};}}}>
           <Disclosure variant="manager-group" class="manager-workspace-status" data-workspace-group={group.key}
-            defaultOpen={groupOpen[group.key] ?? true} onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">
+            defaultOpen={groupOpen[group.key] ?? managerGroupDefaultOpen(group.key)} onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">
             {#snippet summary()}
               <span class="manager-workspace-status-label">{group.label}</span>
               <span class="manager-workspace-count" data-group-count>{group.count}</span>
             {/snippet}
-            {#if groupOpen[group.key] ?? true}{@render ticketRows(group.tickets, group.key)}{/if}
+            {#if groupOpen[group.key] ?? managerGroupDefaultOpen(group.key)}{@render ticketRows(group.tickets, group.key)}{/if}
           </Disclosure>
           </div>
         {/each}
