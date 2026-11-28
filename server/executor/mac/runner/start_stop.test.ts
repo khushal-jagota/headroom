@@ -479,8 +479,10 @@ test('the Chief and a Manager start in their own homes, with no Ticket step or W
     expect((await stat(join(served_home, 'artifacts'))).isDirectory()).toBe(true);
     expect(existsSync(join(served_home, 'logs'))).toBe(true);
     expect(await readFile(join(served_home, 'CLAUDE.md'), 'utf8')).toContain(
-      'You are one Manager.',
+      'You are a Manager of one domain',
     );
+    expect(existsSync(join(served_home, 'rules'))).toBe(true);
+    expect(existsSync(join(served_home, 'HOME.md'))).toBe(true);
     const { localized: chief } = await localize(shared, start([['PLAN_ACTOR', 'chief']]));
     expect(chief.workspace_folder).toBe(join(served, 'chief'));
     expect(existsSync(join(served, 'chief', 'artifacts'))).toBe(false);
