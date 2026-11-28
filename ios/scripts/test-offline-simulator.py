@@ -38,6 +38,7 @@ LANE_LOCK = (
     + ".lock"
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
+INSTALLATION_ID = "fixture-" + str(int(time.time() * 1000))
 TABLE_SCROLL_SMOKE = os.environ.get("PANELS_TABLE_SCROLL_SMOKE") == "1"
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1" or TABLE_SCROLL_SMOKE
 REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
@@ -1104,7 +1105,9 @@ def main() -> int:
                 "permit": {
                     "scope": "fixture",
                     "runtime_epoch": "fixture",
-                    "installation_id": "fixture",
+                    # One installation per run: the phone keeps its Review skips per
+                    # installation, so a run never sees an earlier run's skips.
+                    "installation_id": INSTALLATION_ID,
                     "generation": "1",
                 },
             },

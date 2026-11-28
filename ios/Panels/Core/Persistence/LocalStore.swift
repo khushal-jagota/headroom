@@ -127,6 +127,10 @@ import SwiftData
         _ = workRevision
         return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updatedAt)]))
     }
+    /// Every server's rows of one kind.
+    func records(kind: String) throws -> [LocalRecord] {
+        try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == kind }))
+    }
     func record(server: String, kind: String, id: String) throws -> LocalRecord? {
         let key = Self.key(server, kind, id)
         // The cache writer uses another context. A fresh read must not reuse a

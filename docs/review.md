@@ -32,7 +32,7 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 ## Skipped cards
 
-Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way.
+Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way, and skips each of its cards on its own, because it splits a Ticket into cards; see [Review on iOS](../ios/Review.md).
 
 One store owns the list on a page. It keeps a separate list for each server, named by the server's installation. The list has no owner part on purpose: Panels has one owner per server, and the page has no sign-in. The stored shape is versioned, so the key can change if that ever stops being true. The desktop app never applies one server's skips to another, and it removes the list of a server that nobody has used for 30 days. Several tabs share one list: a skip in one tab reaches the others, and the card a tab is showing stays until that tab acts on it. A list holds at most 500 skips. If storage is blocked or holds something this build did not write, the skips last for the visit only.
 

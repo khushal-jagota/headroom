@@ -43,20 +43,27 @@ struct ReviewView: View {
         else if let item = session.shown {
             ReviewCardScreen(item: item, presentation: session.exits, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
                 .id("\(item.id)#\(session.exits)").transition(.identity)
-        } else if session.loaded {
-            ReviewSummaryView(summary: session.summary, workingCount: session.runningWorkerCount, isActive: active) {
+        } else if session.loaded && !session.holding {
+            ReviewSummaryView(summary: session.summary, workingCount: session.runningWorkerCount, isActive: active,
+                              starting: session.startingPass) { pass in
                 Haptics.selection()
-                session.returnToCards(store: store)
+                Task { await session.startPass(pass, store: store) }
             }
         } else {
             ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.pull() }
         }
     }
 
-    /// The bar's one action: the shown card's Ticket or conversation, or Chief from the summary.
+    /// The bar's actions: on a card, the other pass and the card's Ticket or conversation;
+    /// on the summary, Chief.
     @ViewBuilder private func topBar(_ textEntry: ScreenTextEntryContext) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Spacer()
+            if let other = passAction {
+                barButton(other.title) { textEntry.endEditing(); Haptics.selection(); Task { await session.startPass(other.pass, store: store) } }
+                    .disabled(session.startingPass)
+                    .accessibilityIdentifier("review.otherPass")
+            }
             if let route = barRoute {
                 barButton(route.title) { textEntry.endEditingBeforeNavigation { openRoute(route.route) } }
                     .accessibilityIdentifier(route.identifier)
@@ -64,6 +71,11 @@ struct ReviewView: View {
         }
         .padding(.leading, 72).padding(.trailing, 14)
         .frame(minHeight: 52)
+    }
+    /// "Review skipped (n)" in the new pass, "Review new" in the skipped pass.
+    private var passAction: (pass: ReviewPass, title: String)? {
+        guard savedWork.key?.server == server, session.shown != nil else { return nil }
+        return session.summary.otherPass(from: session.pass)
     }
     private var barRoute: (title: String, route: AppRoute, identifier: String)? {
         guard savedWork.key?.server == server else { return nil }

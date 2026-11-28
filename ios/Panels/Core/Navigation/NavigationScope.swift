@@ -2,8 +2,8 @@ import Foundation
 
 /// Mounted screens name the windows they show, like the web owner's setDemand.
 /// The phone's request is their union, bounded the way the web bounds it.
-/// Review's history for one app run, as web/src/routes/ReviewRoute.svelte keeps it:
-/// the entries whose every card was skipped, and the ones "Back to review" sends last.
+/// Review's history, as web/src/routes/ReviewRoute.svelte keeps it: the entries whose every
+/// card is skipped, and the skipped entries the server puts last.
 struct ReviewHistory: Equatable, Sendable {
     var skipped: [RecordKey] = []
     var priority: [RecordKey] = []
@@ -32,15 +32,21 @@ enum NavigationScope {
         return window
     }
     static let maximumWindowRows = 60
+    /// Review's window from the end of the queue, where the server puts the skipped entries.
+    static func reviewTail(_ limit: Int) -> ViewWindowRequest {
+        ViewWindowRequest(section: "review", direction: "before", limit: min(max(1, limit), maximumWindowRows))
+    }
 
     /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists and
     /// Review keep their pages; other windows share what remains one row per window per round.
     /// `selected` is the one owner whose record a detail screen keys its reloads on.
     /// `reviewHistory` is Review's skipped and returned entries, as the web sends them.
-    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, reviewHistory: ReviewHistory = ReviewHistory(), previous: ViewRequest) -> ViewRequest {
+    /// `reviewWindow` replaces Review's window from the top, as the skipped pass reads from the end.
+    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, reviewHistory: ReviewHistory = ReviewHistory(),
+                        reviewWindow: ViewWindowRequest? = nil, previous: ViewRequest) -> ViewRequest {
         var windows: [ViewWindowRequest] = []
         var position: [String: Int] = [:]
-        for window in baseWindows + demands.keys.sorted().flatMap({ demands[$0]! }) {
+        for window in [reviewWindow ?? baseWindows[0]] + demands.keys.sorted().flatMap({ demands[$0]! }) {
             var window = window
             window.limit = min(max(0, window.limit), maximumWindowRows)
             if let index = position[window.identity] { windows[index] = window }
@@ -179,7 +185,11 @@ extension NavigationPresentation {
                 + entry.messages.map(\.item) + (entry.ask.map { [$0.item] } ?? [])
         }
         return ReviewResponse(items: items, runningWorkerCount: snapshot.content.counts.runningConversations,
-                              unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0)
+                              unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0,
+                              serverSkippedCount: snapshot.content.reviewSummary?.skipped,
+                              holdsWholeQueue: window.map { $0.request.direction == "after" && $0.request.anchor == nil && $0.members.count >= $0.total } ?? false,
+                              fromTail: window?.request.direction == "before",
+                              installationId: snapshot.authority.permit.installationId, current: snapshot.mode == "current")
     }
 }
 

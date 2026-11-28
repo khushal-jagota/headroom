@@ -309,11 +309,18 @@ struct ViewReviewConversationContext: Codable, Equatable, Sendable {
     let canonicalAddressId: String?
 }
 
+/// The server's count of Review's entries, from the skipped keys the request sent.
+struct ViewReviewSummary: Codable, Equatable, Sendable {
+    let skipped: Int
+    let new: Int
+}
+
 struct ViewContent: Codable, Sendable {
     var records: [ViewRecord]
     var windows: [ViewWindow]
     var counts: ViewCounts
     var reviewContext: [ViewReviewConversationContext]
+    var reviewSummary: ViewReviewSummary? = nil
 }
 
 /// One coherent bounded view: records, window membership and global counts.
@@ -367,6 +374,7 @@ struct ViewPatch: Codable, Sendable {
     let windows: [ViewWindow]
     let counts: ViewCounts
     let reviewContext: [ViewReviewConversationContext]
+    let reviewSummary: ViewReviewSummary?
 }
 
 struct ViewCheckpoint: Codable, Sendable {

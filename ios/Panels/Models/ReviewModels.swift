@@ -7,6 +7,18 @@ struct ReviewResponse: Sendable {
     let runningWorkerCount: Int
     /// Entries beyond the loaded review window still count toward the badge and the summary.
     var unloadedCount = 0
+    /// The server's count of skipped entries in the whole queue, when the view carries it.
+    var serverSkippedCount: Int? = nil
+    /// The window read the queue from the top, and it holds every entry.
+    var holdsWholeQueue = false
+    /// The window was read from the end of the queue.
+    var fromTail = false
+    /// The server installation the view came from; the phone's skips are kept under it.
+    var installationId: String? = nil
+    /// The view came from the server in this app run, not from the copy saved on the phone.
+    var current = false
+    /// The skipped keys of the request the server answered with this view; nil for a saved copy.
+    var sentSkippedKeys: [RecordKey]? = nil
 }
 
 /// One native card with one purpose: a proposal, one conversation's unread run, or an ask.

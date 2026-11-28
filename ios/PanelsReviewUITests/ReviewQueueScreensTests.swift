@@ -105,11 +105,12 @@ final class ReviewQueueScreensTests: XCTestCase {
         try await proof("review-new-proposal")
         XCTAssertTrue(app.readableText("6 to review.").waitForExistence(timeout: 10))
         XCTAssertEqual(detail.readableContent, "1 new, 5 skipped.")
-        XCTAssertEqual(back.label, "Back to review")
+        XCTAssertEqual(back.label, "Review new")
         try await shot("summary-new-and-skipped")
         back.tap()
 
-        // New work first. Its proposal moves to Chief while on screen: a notice, actions off.
+        // Review new holds only the new work. Its proposal moves to Chief while on screen: a
+        // notice, actions off.
         XCTAssertTrue(app.readableText("Add the summary screen").waitForExistence(timeout: 10))
         try await proof("review-move/offline-new")
         let notice = app.descendants(matching: .any)["review.notice"]
@@ -117,6 +118,10 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertFalse(approve.isEnabled)
         try await shot("card-reviewer-moved")
         skip.tap()
+        // Review skipped brings the skipped cards back.
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        XCTAssertEqual(back.label, "Review skipped")
+        back.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 10))
         skip.tap()
 
@@ -240,6 +245,8 @@ final class ReviewQueueScreensTests: XCTestCase {
 
         // A refused decision that lands online stays on its card when the connection drops.
         try await proof("online")
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        app.openReviewCards()
         XCTAssertTrue(message.waitForExistence(timeout: 10)); skip.tap()
         XCTAssertTrue(proposal.waitForExistence(timeout: 10))
         try await proof("review-refuse-decisions")

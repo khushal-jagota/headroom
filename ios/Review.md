@@ -33,11 +33,30 @@ A card handled here stays hidden until its saved work or the window hides it, so
 never shows again before then; a refusal brings it back. A refusal or a move that
 happens while the owner is elsewhere just waits for the summary screen.
 
-Skip is per card and local, like the web. When every card of one Ticket or one
-conversation is skipped, its key goes to the server in `review_skipped_keys`. The
-return button sends the skipped history as `review_priority_keys` and offers every
-card again, new work first and the skipped entries last, as the web returns. Skips
-last for one app run.
+Skip follows the web's rule (see [Review](../docs/review.md)), with the differences
+below. A skip is saved on the phone, one list per server installation, and survives a
+relaunch. The server never hears of it. Review has two passes. Review new shows the
+cards that are not skipped. Review skipped shows the cards that were skipped when the
+pass began. A skip remembers the part of its card: the proposal revision, the newest
+message in the conversation, or the ask's time. It ends only when that part is newer.
+
+- **Per card.** The phone splits a Ticket into cards, so it skips each card. A new
+  message brings back only its message card. A skipped proposal on the same Ticket
+  stays skipped. An entry's key goes to the server in `review_skipped_keys` only when
+  every one of its cards is skipped.
+- **The end of the queue.** The server puts the skipped entries last, so they often sit
+  past the phone's one window of 30. When the queue is larger than that window, the
+  phone reads the end once with a separate view snapshot, apart from the followed view.
+  It does this at the first window of an app run, for the skips it has not loaded, and at
+  every pass start, for every skip. Those cards only check the skips. They never show and
+  never reach the saved view. The check at the start of a run gives up after 3 seconds
+  from its first fresh window, with the skips it knows. The skipped order
+  (`review_priority_keys`) is fixed at those two moments only.
+- **The skipped pass reads the end.** When one window cannot hold the queue, the skipped
+  pass follows the last 60 entries of the queue instead of the first 30.
+- **Removal.** The skips of entries that left the queue go when a fresh window from the
+  top holds the whole queue. Otherwise the cap of 500 removes unseen entries first. A
+  list untouched for 30 days is removed. A saved view never changes the list.
 
 ## Summary screen
 
@@ -45,23 +64,26 @@ The summary shows at launch, after the last card, and after every tap on Sidebar
 Review. The tap clears Review’s pushed page path and shown card, including a card
 whose exit runs. It does not refresh, change skip history or priority keys, or open
 a card. A notification addressed to Review itself also opens the summary.
-Only Back to review or Review skipped opens the cards. The summary also
+Only Review new or Review skipped opens the cards. The summary also
 shows on a return to the app when the card that was open left the window meanwhile.
 Otherwise leaving and returning to the app keeps the owner on the same card,
 and a page or artifact opened from a card returns to it. Offline, nothing fresh
 arrives, so he stays where he was.
 
-Its counts come from the phone's own cards in the loaded window; entries beyond the
-window count as new. It reads, in two tones at one upper-centre baseline:
+Its counts come from the phone's own cards in the loaded window. Entries beyond the
+window count by the server's skipped count (`review_summary`), less the skipped entries
+the window holds; the rest are new. It reads, in two tones at one upper-centre baseline:
 
-| State | Lines | Button |
+| State | Lines | Buttons |
 | --- | --- | --- |
-| New and skipped | `3 to review.` / `1 new, 2 skipped.` | Back to review |
+| New and skipped | `3 to review.` / `1 new, 2 skipped.` | Review new, Review skipped |
 | Skipped only | `2 skipped.` / `Nothing new.` | Review skipped |
-| New only | `2 new.` / `Ready to review.` | Back to review |
+| New only | `2 new.` / `Ready to review.` | Review new |
 | Clear | `All clear.` / `Nothing to review.` | none |
 
-The button uses the quiet charcoal fill, never the accent. A plain line, `4 agents
+The buttons use the quiet charcoal fill, never the accent. In a card's top bar, beside
+Open ticket, the new pass offers `Review skipped (n)` and the skipped pass offers
+`Review new`. A plain line, `4 agents
 working right now`, sits above the composer when agents are working; without it
 nothing moves. Open Chief sits in the top bar. Message Chief is anchored at the
 bottom and shares Chief's draft text and attachments. A message is saved in the
@@ -215,9 +237,14 @@ Simulator.
   selection and after the open card left while
   away, but not on a plain return or offline; late callbacks after a summary selection,
   including a reopened card with the same identity; per-card skip, the entry keys, the four
-  summary states and the return order; a refusal coming to the front once, including
+  summary states, the counts beyond the window and the two passes; a refusal coming to the front once, including
   one that lands during an exit; the reviewer-move notice; and refusal cards built
   from each proposal's latest saved decision.
+- `ReviewSkipsTests` checks the saved skips: a skip ends only when its card gains a
+  part, the entry keys and the cap, lists per installation across a relaunch, and the
+  session's reads of the end of the queue (only after a fresh window, only the skips not
+  loaded, the wait that gives up with the known skips, a new read at each pass start, and
+  the order fixed for the pass), and removal only on a read of the whole queue.
 - `NavigationViewTests` checks the split against desktop's fixtures: canonical
   addresses with no fallback to a former owner, window order, the native identities,
   exclusion of backlogged, done, settled-owner and agent-held work, asks from live and
@@ -240,9 +267,10 @@ Simulator checks reuse the offline stub (`ios/scripts/test-offline-simulator.py`
 an already booted lane under its lock; `PANELS_OFFLINE_DEVICE` names the lane's UDID.
 The permanent `ReviewMessagesTests/testSplitCardsSkipAndReturn` proves what model
 tests cannot: on the real SwiftUI host the app opens on the summary, the proposal and
-its Ticket's message are separate cards, Skip is per card, an artifact opened from a
-card docks its reply with the card's draft and returns to it, and Review skipped
-brings every card back. The same journey checks Sidebar Review from an open card,
+its Ticket's message are separate cards, Skip is per card, the top bar offers
+`Review skipped (1)`, the summary offers both passes and Review new leaves the skipped
+card out, an artifact opened from a card docks its reply with the card's draft and
+returns to it, and Review skipped brings the skipped cards back. The same journey checks Sidebar Review from an open card,
 from Chief with a card retained, and from the summary itself. Its writes change the fixture, so it runs alone on a fresh
 stub with `PANELS_REVIEW_MESSAGES=1`, `PANELS_REVIEW_SPLIT=1` and
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testSplitCardsSkipAndReturn`.
