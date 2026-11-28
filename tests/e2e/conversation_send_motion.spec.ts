@@ -71,7 +71,7 @@ for (const [name, width, answerAfterMs] of [['desktop', 1280, 0], ['390 px, slow
   });
 }
 
-type DockedFrame = { shown: boolean; top: number; fromThreadTop: number; paneHeight: number; threadTop: number; threadBottom: number; scrollTop: number };
+type DockedFrame = { time: number; shown: boolean; top: number; fromThreadTop: number; paneHeight: number; threadTop: number; threadBottom: number; scrollTop: number };
 
 for (const mode of ['idle', 'steer'] as const) {
   test(`a send from the docked composer slides up once (${mode})`, async ({ signalServer, newContext }, testInfo) => {
@@ -105,20 +105,21 @@ for (const mode of ['idle', 'steer'] as const) {
       const frames: DockedFrame[] = [];
       (window as any).__dockedFrames = frames;
       const start = performance.now();
-      const read = () => {
+      const read = (time: number) => {
         const thread = document.querySelector('[data-conversation-thread]') as HTMLElement | null;
         const pane = document.querySelector('[data-conversation-pane]') as HTMLElement | null;
         const sent = [...(thread?.querySelectorAll('[data-conversation-outgoing]') ?? [])].at(-1);
         const box = sent?.getBoundingClientRect();
         const threadTop = thread?.getBoundingClientRect().top ?? 0;
         frames.push({
+          time,
           shown: !!box && !!thread && box.top >= thread.getBoundingClientRect().top && box.top < thread.getBoundingClientRect().bottom,
           top: box ? box.top : NaN,
           fromThreadTop: box ? box.top - threadTop : NaN,
           paneHeight: pane?.getBoundingClientRect().height ?? NaN,
           threadTop, threadBottom: thread?.getBoundingClientRect().bottom ?? NaN, scrollTop: thread?.scrollTop ?? NaN,
         });
-        if (performance.now() - start < 3000) requestAnimationFrame(read);
+        if (time - start < 3000) requestAnimationFrame(read);
       };
       requestAnimationFrame(read);
     });
@@ -130,6 +131,7 @@ for (const mode of ['idle', 'steer'] as const) {
     const first = all.findIndex((frame) => frame.shown);
     expect(first, 'the sent message shows').toBeGreaterThanOrEqual(0);
     const frames = all.slice(first);
+    console.log('DOCKED_FRAMES ' + mode + ' ' + JSON.stringify(frames.map((frame) => [Math.round(frame.time * 10) / 10, Math.round(frame.top * 10) / 10, Math.round(frame.paneHeight)])));
     expect(frames.length).toBeGreaterThan(10);
     // On screen, the message stays at the bottom while the pane opens, then slides up. It never
     // moves down after it first shows, except for the few pixels that the sent message's own top

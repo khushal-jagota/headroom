@@ -63,6 +63,13 @@ test('test_deck_move_keeps_the_leaving_card_where_it_was', async ({ railServer, 
   await expect(title).toContainText(/Card [AB]/);
   const shownFirst = (await title.innerText()).trim();
 
+  // The page enters with a short slide. Where a card stands is only fixed once that has ended.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const running = document.getAnimations().filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    await Promise.all(running.map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
   // Where a card stands when it is at the top of the scroll area.
   const resting = await first.evaluate((node) => {
     const box = node.getBoundingClientRect();
