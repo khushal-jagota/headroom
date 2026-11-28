@@ -16,7 +16,11 @@ final class NotificationTests: XCTestCase {
 
     /// The server's push `content-state` reaches the widget only if these keys decode. A mismatch fails silently on the phone.
     func testReviewLiveActivityContentStateDecodesTheSharedServerFixture() throws {
+#if SWIFT_PACKAGE
         let url = try XCTUnwrap(Bundle.module.url(forResource: "review-live-activity", withExtension: "json", subdirectory: "Fixtures"))
+#else
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "review-live-activity", withExtension: "json"))
+#endif
         let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         func state(_ key: String) throws -> ReviewActivityContentState {
             try JSONDecoder().decode(ReviewActivityContentState.self, from: JSONSerialization.data(withJSONObject: fixture[key]!))

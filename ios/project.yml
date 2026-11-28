@@ -11,6 +11,7 @@ settings:
     DEVELOPMENT_TEAM: ''
     CODE_SIGNING_ALLOWED: NO
     IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+    PANELS_APP_BUNDLE_IDENTIFIER: com.khushaljagota.panels
 targets:
   Panels:
     type: application
@@ -24,7 +25,6 @@ targets:
           enabled: true
     settings:
       base:
-        PANELS_APP_BUNDLE_IDENTIFIER: com.khushaljagota.panels
         DEVELOPMENT_TEAM: FB99BBDJBA
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: '0.1'
@@ -55,7 +55,7 @@ targets:
     sources: [PanelsLiveActivity, LiveActivity]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.khushaljagota.panels.LiveActivity
+        PRODUCT_BUNDLE_IDENTIFIER: $(PANELS_APP_BUNDLE_IDENTIFIER).LiveActivity
         DEVELOPMENT_TEAM: FB99BBDJBA
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: '0.1'

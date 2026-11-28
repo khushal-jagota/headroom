@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+[ -d web/node_modules ] || (cd web && npm ci)
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-offline-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 touch "$build/.metadata_never_index"
