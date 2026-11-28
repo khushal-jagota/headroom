@@ -27,6 +27,10 @@ final class WorkerScreenTests: XCTestCase {
         XCTAssertEqual(WorkerGroup.classify(try worker(["agent_state": "idle", "ticket_status": "empty", "awaiting_agent_approval": true])), .agentApproval)
     }
 
+    func testOnlyGroupsThatNeedTheOwnerStartOpen() {
+        XCTAssertEqual(WorkerGroup.allCases.filter(\.initiallyExpanded), [.approval, .answer, .yours])
+    }
+
     // The canonical wire name must retain ownership when no live turn supplies it.
     // The existing priority cases do not pin the status independently of the fixture.
     func testAgentOwnedStatusKeepsAnIdleWorkerInItsGroup() throws {
