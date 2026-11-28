@@ -316,6 +316,66 @@ final class ConversationOperationTests: XCTestCase {
         app.terminate()
     }
 
+    /// A recording started on the page keeps going into the page's own conversation, and
+    /// leaving the screen finishes it into the draft instead of dropping it. The fixture
+    /// hears one sentence as soon as recording starts.
+    @MainActor func testVoiceRecordingFollowsIntoTheConversationAndSurvivesLeaving() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_CONVERSATION_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-fixture-speech"]
+        let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
+        let line = app.buttons["conversation-line"]
+        let record = app.buttons["Record voice input"].firstMatch
+        let stop = app.buttons["Stop recording"]
+        let heard = "Keep the newest message in view."
+        app.launch()
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        XCTAssertEqual(input.value as? String ?? "", "")
+
+        record.tap()
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        line.tap()
+        XCTAssertTrue(app.backButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "The recording stopped when the conversation opened")
+        capture(app, "voice-recording-continues-in-conversation")
+        app.backButton.tap()
+        XCTAssertTrue(line.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "The recording stopped on Back")
+        line.tap()
+        XCTAssertTrue(app.backButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        stop.tap()
+        let landed = NSPredicate { _, _ in MainActor.assumeIsolated { (input.value as? String)?.contains(heard) == true } }
+        await fulfillment(of: [expectation(for: landed, evaluatedWith: nil)], timeout: 5)
+        capture(app, "voice-words-in-conversation-composer")
+        app.backButton.tap()
+        XCTAssertTrue(line.waitForExistence(timeout: 5))
+        await fulfillment(of: [expectation(for: landed, evaluatedWith: nil)], timeout: 5)
+
+        // Leaving the screen mid-recording keeps the words heard so far.
+        record.tap()
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        XCTAssertFalse(stop.exists)
+        let twice = NSPredicate { _, _ in
+            MainActor.assumeIsolated { (input.value as? String)?.components(separatedBy: heard).count == 3 }
+        }
+        await fulfillment(of: [expectation(for: twice, evaluatedWith: nil)], timeout: 5)
+        capture(app, "voice-words-kept-after-leaving")
+
+        // Leave the shared persisted draft empty for the next walk.
+        let draft = input.value as? String ?? ""
+        // The draft wraps: the bottom-right corner puts the cursor after its last word.
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.9)).tap()
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: draft.count))
+        XCTAssertEqual(input.value as? String, "")
+        app.terminate()
+    }
+
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)

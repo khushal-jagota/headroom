@@ -12,22 +12,28 @@ enum ConversationLayout {
     static let surfaceTopPadding: CGFloat = 8
 }
 
-/// Each page's docked conversation model, by owner. The full conversation opened from
-/// that page uses the same model, so the draft, the outbox state, the transcript and
-/// the read point stay one. Held weakly: the page owns its model. While the full page
-/// is open, the page's own docked surface rests, so one model follows one tail.
+/// Each page's docked conversation model and voice recorder, by owner. The full conversation
+/// opened from that page uses the same model, so the draft, the outbox state, the transcript
+/// and the read point stay one, and the same recorder, so a recording keeps going into it.
+/// Held weakly: the page owns both. While the full page is open, the page's own docked
+/// surface rests, so one model follows one tail.
 @MainActor @Observable final class ConversationModelShelf {
-    private final class Entry { weak var model: ConversationModel?; init(_ model: ConversationModel) { self.model = model } }
+    private final class Entry {
+        weak var model: ConversationModel?
+        weak var speech: ConversationSpeech?
+        init(_ model: ConversationModel, _ speech: ConversationSpeech) { self.model = model; self.speech = speech }
+    }
     @ObservationIgnored private var entries: [ConversationOwner: Entry] = [:]
     private(set) var openPages: Set<ConversationOwner> = []
     func setPageOpen(_ open: Bool, for owner: ConversationOwner) {
         if open { openPages.insert(owner) } else { openPages.remove(owner) }
     }
-    func register(_ model: ConversationModel, for owner: ConversationOwner) {
+    func register(_ model: ConversationModel, speech: ConversationSpeech, for owner: ConversationOwner) {
         entries = entries.filter { $0.value.model != nil }
-        entries[owner] = Entry(model)
+        entries[owner] = Entry(model, speech)
     }
     func model(for owner: ConversationOwner) -> ConversationModel? { entries[owner]?.model }
+    func speech(for owner: ConversationOwner) -> ConversationSpeech? { entries[owner]?.speech }
 }
 
 extension EnvironmentValues {
@@ -71,10 +77,10 @@ struct ConversationNavigation: ViewModifier {
                     Color.clear.frame(height: surfaceHeight).accessibilityHidden(true)
                 }
             }
-            .onAppear { pageVisible = true; conversationModels?.register(model, for: owner) }
-            .onDisappear { pageVisible = false; speech.cancel() }
+            .onAppear { pageVisible = true; conversationModels?.register(model, speech: speech, for: owner) }
+            .onDisappear { pageVisible = false }
             .onChange(of: store.baseURL) { _, _ in
-                speech.cancel(); model = ConversationModel(); conversationModels?.register(model, for: owner)
+                speech.cancel(); model = ConversationModel(); conversationModels?.register(model, speech: speech, for: owner)
             }
     }
 
@@ -95,10 +101,14 @@ struct ConversationScreen: View {
     /// from the page docks its own composer, which registers a second model for the owner and
     /// is gone once the artifact closes; the page stays on the model it opened with.
     @State private var sharedModel: ConversationModel?
-    @State private var speech = ConversationSpeech()
+    @State private var ownSpeech = ConversationSpeech()
+    /// The docked recorder this page first shared, kept like the model, so a recording
+    /// started on the page keeps going here.
+    @State private var sharedSpeech: ConversationSpeech?
     @Environment(AppStore.self) private var store
     @Environment(\.conversationModels) private var conversationModels
     private var model: ConversationModel { linked ? ownModel : sharedModel ?? conversationModels?.model(for: owner) ?? ownModel }
+    private var speech: ConversationSpeech { linked ? ownSpeech : sharedSpeech ?? conversationModels?.speech(for: owner) ?? ownSpeech }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in
@@ -127,9 +137,10 @@ struct ConversationScreen: View {
             guard !linked else { return }
             conversationModels?.setPageOpen(true, for: owner)
             if sharedModel == nil { sharedModel = model }
+            if sharedSpeech == nil { sharedSpeech = speech }
         }
-        .onDisappear { speech.cancel(); if !linked { conversationModels?.setPageOpen(false, for: owner) } }
-        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel(); sharedModel = nil }
+        .onDisappear { if !linked { conversationModels?.setPageOpen(false, for: owner) } }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel(); sharedModel = nil; sharedSpeech = nil }
     }
 }
 
@@ -238,8 +249,7 @@ private struct ConversationSurface: View {
             // A saved message can be held by the server; its queue lives in the configuration.
             if active, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel(); model.saveDisplay(force: true) } }
-        .onDisappear { speech.cancel() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { model.saveDisplay(force: true) } }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
 

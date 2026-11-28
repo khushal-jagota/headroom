@@ -43,8 +43,9 @@ struct ConversationComposer: View {
             if capturing { textEntry?.endEditing() }
             onCaptureChanged?(capturing)
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
-        .onDisappear { speech.cancel() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { speech.finish() } }
+        .onAppear { speech.shown(by: inputID) }
+        .onDisappear { speech.hidden(by: inputID) }
     }
 
     @ViewBuilder private var feedback: some View {
