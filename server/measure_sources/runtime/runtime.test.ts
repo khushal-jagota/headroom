@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { createServer } from 'node:http';
+import { generateKeyPairSync, verify } from 'node:crypto';
 import type { RequestListener } from 'node:http';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +20,8 @@ import { read_source, read_failure_episode } from '../data.ts';
 import { request_run, claim_run, complete_run } from '../run_actions.ts';
 import { prepare_admission } from '../admission.ts';
 import { create_measure } from '../../measures/actions.ts';
+import { DatabaseCredentialResolver, FileCredentialCipher } from '../../credentials/store.ts';
+import { SIGNED_TOKEN_EXAMPLE } from '../guidance.ts';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 test('source JSON preserves exact integers and approximate numeric types', () => {
@@ -323,6 +326,80 @@ test('credential use crosses private IPC from an encrypted temporary store to a 
     ),
   ).toEqual({ value: 12.5, run_id: collected.completed.run.id });
   db.close();
+});
+// Risk: a fields credential does not reach the script, or the published App Store Connect
+// example signs a token Apple rejects (DER in place of raw ES256, wrong claims). The bearer
+// test above covers only header credentials. This runs the guidance example itself.
+test('a fields credential reaches the script, which signs its own App Store Connect token', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-source-fields-'));
+  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  const key_path = join(root, 'key');
+  const db = fixture();
+  cleanup.push(() => db.close());
+  const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const private_key = pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  db.write((sql) =>
+    create_credential_in_transaction(
+      sql,
+      {
+        reference: { scheme: 'local', name: 'synthetic-app-store-connect' },
+        auth_kind: 'fields',
+        secret: {
+          kind: 'fields',
+          fields: { key_id: 'SYNTHKEY01', issuer_id: 'synthetic-issuer', private_key },
+        },
+      },
+      { principal: OWNER, now: 1800000000, key_path },
+    ),
+  );
+  const credentials: CredentialResolver = {
+    resolve: (reference) =>
+      db.read((sql) =>
+        new DatabaseCredentialResolver(sql, new FileCredentialCipher(key_path, true)).resolve(
+          reference,
+        ),
+      ),
+  };
+  let token = '';
+  const url = await provider((request, response) => {
+    token = (request.headers.authorization ?? '').replace(/^Bearer /, '');
+    response.setHeader('Content-Type', 'application/json');
+    response.end('{"data":[{"id":"1"},{"id":"2"}]}');
+  });
+  const script = SIGNED_TOKEN_EXAMPLE.replace('https://api.appstoreconnect.apple.com', url).replace(
+    'example-app-store-connect',
+    'synthetic-app-store-connect',
+  );
+  const result = await new Runtime().execute(admission(script), credentials);
+  expect(result.failure).toBeNull();
+  expect(result.observations.map((o) => [o.measure_id, numeric_value(o.value)])).toEqual([
+    ['measure-test', 2],
+  ]);
+  const [header, payload, signature] = token.split('.');
+  const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString());
+  expect(decode(header!)).toEqual({ alg: 'ES256', kid: 'SYNTHKEY01', typ: 'JWT' });
+  const claims = decode(payload!);
+  expect(claims).toMatchObject({ iss: 'synthetic-issuer', aud: 'appstoreconnect-v1' });
+  expect(claims.exp - claims.iat).toBeLessThanOrEqual(20 * 60);
+  expect(
+    verify(
+      'sha256',
+      Buffer.from(header + '.' + payload),
+      { key: pair.publicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(signature!, 'base64url'),
+    ),
+  ).toBe(true);
+  // request() has no header form for named fields, so it refuses one by name.
+  const refused = await new Runtime().execute(
+    admission(
+      module(
+        `await request(${JSON.stringify(url)},{credential_ref:'synthetic-app-store-connect'});`,
+      ),
+    ),
+    credentials,
+  );
+  expect(refused.failure).toMatchObject({ code: 'credential_unavailable' });
+  expect(JSON.stringify([result, refused])).not.toContain('PRIVATE KEY');
 });
 // A detached descendant can retain stdout after the owned child exits. Its exact
 // recorded PID is test-owned and is always killed, including assertion failures.

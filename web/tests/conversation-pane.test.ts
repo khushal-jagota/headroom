@@ -15,7 +15,7 @@ const userInput = { requestId: "q-1", questions: [
 ] };
 const keyRequest: CredentialRequestRowBody = {
   kind: "credential_request", request_id: "r-1", name: "SENTRY_AUTH_TOKEN", provider: "Sentry",
-  use: "Upload dSYMs from CI.", auth_kind: "bearer", header_name: null, help: null, help_url: null,
+  use: "Upload dSYMs from CI.", auth_kind: "bearer", header_name: null, fields: null, help: null, help_url: null,
   replacement: null, state: "pending", credential: null, delivery: null
 };
 

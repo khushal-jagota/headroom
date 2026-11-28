@@ -41,23 +41,54 @@
   });
   $effect(() => {
     if (request.state !== 'pending') {
-      draft.secret = ''; draft.revealed = false; draft.helpOpen = false;
+      draft.clearSecret(); draft.helpOpen = false;
       if (draft.local?.state === 'pending') draft.local = null;
     }
     if (request === previousRequest) return;
     if (request.request_id !== previousRequest.request_id) {
-      draft.name = request.name; draft.secret = ''; draft.revealed = false; draft.helpOpen = false;
+      draft.name = request.name; draft.clearSecret(); draft.helpOpen = false;
       draft.error = ''; draft.invalid = null; draft.stale = false; draft.saveFailed = false; draft.reviewed = false;
     }
     previousRequest = request;
     draft.local = null;
     if (request.state !== 'pending') {
-      draft.secret = ''; draft.revealed = false; draft.helpOpen = false;
+      draft.clearSecret(); draft.helpOpen = false;
     }
   });
   const replacement = $derived(current.replacement !== null);
+  /** A fields request asks for several named values in place of one key. */
+  const requestedFields = $derived(current.auth_kind === 'fields' ? current.fields ?? [] : null);
+  const hasSecret = $derived(requestedFields
+    ? requestedFields.every((field) => !!draft.fields[field.name]?.trim())
+    : !!draft.secret.trim());
   /** Save goes once there is a key to save, as a question's Next goes once there is an answer. */
-  const canSave = $derived(!!draft.secret.trim() && (replacement || !!draft.name.trim()));
+  const canSave = $derived(hasSecret && (replacement || !!draft.name.trim()));
+  function enterField(name: string, value: string): void {
+    draft.fields = { ...draft.fields, [name]: value };
+    corrected('secret', value);
+  }
+  /** A file field reads the file here and keeps only its text in memory, never in storage. */
+  async function chooseFile(name: string, input: HTMLInputElement): Promise<void> {
+    const target = draft;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    // The server keeps at most 16384 characters per field; a larger file is not a key.
+    const text = file.size > 65536 ? null : await file.text();
+    // A save, decline or another request can settle while the file reads.
+    if (target !== draft || target.busy || current.state !== 'pending') return;
+    if (text === null || Array.from(text).length > 16384) {
+      target.error = 'That file is too large for a key.'; target.invalid = 'secret'; return;
+    }
+    target.files = { ...target.files, [name]: file.name };
+    enterField(name, text);
+  }
+  /** The one key input, or the first field that still needs a value. */
+  function focusSecret(): void {
+    if (!requestedFields) { secretInput?.focus(); return; }
+    const empty = requestedFields.find((field) => !draft.fields[field.name]?.trim()) ?? requestedFields[0];
+    if (empty) root?.querySelector<HTMLElement>(`[data-credential-field="${empty.name}"]`)?.focus();
+  }
   /** The record says what the person did, in the button's word: Decline is "Declined". */
   const outcome = $derived(current.state === 'rejected' ? 'Declined' : current.state === 'replaced' ? 'Replaced' : 'Saved');
   function ownsFocus(): boolean { return !!root?.contains(document.activeElement); }
@@ -68,7 +99,9 @@
   }
   async function invalidField(field: 'name' | 'secret', message: string): Promise<void> {
     draft.invalid = field; draft.error = message; draft.saveFailed = false;
-    await tick(); (field === 'name' ? nameInput : secretInput)?.focus();
+    await tick();
+    if (field === 'name') nameInput?.focus();
+    else focusSecret();
   }
   function inputKey(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void submit(); }
@@ -77,21 +110,25 @@
     const submittingDraft = draft;
     if (readOnly || submittingDraft.busy || submittingDraft.stale || current.state !== 'pending') return;
     if (!submittingDraft.name.trim()) return invalidField('name', 'Enter a key name.');
-    if (!submittingDraft.secret.trim()) return invalidField('secret', 'Paste the API key.');
+    if (!hasSecret) return invalidField('secret', requestedFields ? 'Enter every field.' : 'Paste the API key.');
+    const fields = requestedFields;
+    const value = fields
+      ? Object.fromEntries(fields.map((field) => [field.name, submittingDraft.fields[field.name] ?? '']))
+      : submittingDraft.secret;
     const ownedBefore = ownsFocus();
     submittingDraft.busy = true; submittingDraft.error = ''; submittingDraft.invalid = null; submittingDraft.saveFailed = false;
     try {
       const resolved = await mutateCredentialRequest(current.request_id, 'save', {
-        name: replacement ? current.name : submittingDraft.name.trim(), value: submittingDraft.secret,
+        name: replacement ? current.name : submittingDraft.name.trim(), value,
         expected_revision: current.replacement?.revision ?? null
       });
       const focus = ownsFocus() || ownedBefore && document.activeElement === document.body;
-      submittingDraft.local = resolved; submittingDraft.secret = ''; submittingDraft.revealed = false; submittingDraft.helpOpen = false;
+      submittingDraft.local = resolved; submittingDraft.clearSecret(); submittingDraft.helpOpen = false;
       if (focus) await focusResult();
     } catch (reason) {
       if (reason instanceof CredentialRequestWireError && reason.stale) {
         const focus = ownsFocus() || ownedBefore && document.activeElement === document.body;
-        submittingDraft.secret = ''; submittingDraft.revealed = false; submittingDraft.stale = true; submittingDraft.busy = false;
+        submittingDraft.clearSecret(); submittingDraft.stale = true; submittingDraft.busy = false;
         submittingDraft.error = 'This key changed. Review it before you replace it. Your replacement was not saved.';
         await tick(); if (focus) reviewButton?.focus();
       } else { submittingDraft.error = reason instanceof Error ? reason.message : 'Could not save. Try again.'; submittingDraft.saveFailed = true; }
@@ -107,10 +144,10 @@
       const focus = ownsFocus() || ownedBefore && document.activeElement === document.body;
       submittingDraft.local = response; submittingDraft.busy = false;
       if (kind === 'review') {
-        submittingDraft.secret = ''; submittingDraft.revealed = false; submittingDraft.stale = false; submittingDraft.saveFailed = false; submittingDraft.reviewed = true;
-        await tick(); if (focus) secretInput?.focus();
+        submittingDraft.clearSecret(); submittingDraft.stale = false; submittingDraft.saveFailed = false; submittingDraft.reviewed = true;
+        await tick(); if (focus) focusSecret();
       } else {
-        submittingDraft.secret = ''; submittingDraft.revealed = false; submittingDraft.helpOpen = false;
+        submittingDraft.clearSecret(); submittingDraft.helpOpen = false;
         if (focus) await focusResult();
       }
     } catch (reason) { submittingDraft.error = reason instanceof Error ? reason.message : 'The request could not be completed.'; }
@@ -162,7 +199,23 @@
           {#if replacement}<span class="fixed-name">{current.name}</span>
           {:else}<input bind:this={nameInput} bind:value={draft.name} class="key-name" aria-label="Key name" placeholder="KEY_NAME" autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'name' ? 'true' : undefined} aria-describedby={draft.invalid === 'name' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('name', event.currentTarget.value)} />{/if}
         </div>
-        {#if !draft.stale}
+        {#if !draft.stale && requestedFields}
+          <!-- A fields request: one private input per named value; a file field takes a file. -->
+          {#each requestedFields as field (field.name)}
+            <div class="field">
+              <span class="field-label" aria-hidden="true">{field.name}</span>
+              {#if field.file}
+                <div class="file-input">
+                  <input type="file" hidden data-credential-field-file={field.name} disabled={draft.busy} onchange={(event) => void chooseFile(field.name, event.currentTarget)} />
+                  <button type="button" class="cv-button cv-button--secondary cv-button--small" data-credential-field={field.name} aria-label={`Choose a file for ${field.name}`} aria-describedby={draft.invalid === 'secret' ? `${uid}-error` : undefined} disabled={draft.busy} onclick={(event) => (event.currentTarget.previousElementSibling as HTMLInputElement | null)?.click()}>{draft.files[field.name] ? 'Choose another file' : 'Choose file'}</button>
+                  <span class="file-name">{draft.files[field.name] ?? 'No file chosen'}</span>
+                </div>
+              {:else}
+                <div class="private-input"><input type="password" value={draft.fields[field.name] ?? ''} data-credential-field={field.name} aria-label={field.name} autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'secret' && !draft.fields[field.name]?.trim() ? 'true' : undefined} aria-describedby={draft.invalid === 'secret' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => enterField(field.name, event.currentTarget.value)} /></div>
+              {/if}
+            </div>
+          {/each}
+        {:else if !draft.stale}
           <div class="field">
             <span class="field-label" aria-hidden="true">{replacement ? 'New API key' : 'API key'}</span>
             <div class="private-input"><input bind:this={secretInput} bind:value={draft.secret} type={draft.revealed ? 'text' : 'password'} aria-label={replacement ? 'New API key' : 'API key'} placeholder={replacement ? 'Paste the new key' : 'Paste the key'} autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'secret' ? 'true' : undefined} aria-describedby={draft.invalid === 'secret' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('secret', event.currentTarget.value)} />
@@ -204,6 +257,8 @@
   .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:38px;padding:0 var(--cv-s3);border:0;background:transparent;color:var(--cv-t1);font:var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font)}
   .private-input input:focus{outline:none}
   .reveal-button{margin-right:6px}
+  .file-input{display:flex;flex-wrap:wrap;align-items:center;gap:var(--cv-s2);min-width:0}
+  .file-name{min-width:0;overflow-wrap:anywhere;color:var(--cv-t2);font:var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono)}
   .help{display:grid;gap:var(--cv-s2);justify-items:start}
   /* A link, and reads as one: t1 with the soft underline every conversation link wears. */
   .help-toggle{display:inline-flex;align-items:center;gap:2px;min-height:24px;padding:0;border:0;border-radius:var(--cv-r-sm);background:transparent;color:var(--cv-t1);font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);text-decoration:underline;text-decoration-color:var(--cv-link-underline);text-underline-offset:3px;cursor:pointer}

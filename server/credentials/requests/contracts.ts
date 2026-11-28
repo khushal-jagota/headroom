@@ -4,6 +4,7 @@ export type {
   CredentialRequestRowBody,
   RequestReplacement,
   RequestCredential,
+  RequestField,
   RequestDelivery,
   RequestDeliveryStatus,
 } from '../../../web/src/lib/conversation/view/contracts.ts';
@@ -15,6 +16,7 @@ export type CreateCredentialRequestBody = Pick<
   | 'use'
   | 'auth_kind'
   | 'header_name'
+  | 'fields'
   | 'help'
   | 'help_url'
   | 'replacement'

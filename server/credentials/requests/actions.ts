@@ -46,8 +46,7 @@ export function origin_conversation(sql: ReadSql, ctx: RequestContext): string {
   return origin;
 }
 export function public_credential(metadata: CredentialMetadata): RequestCredential {
-  if (metadata.auth_kind !== 'bearer' && metadata.auth_kind !== 'header')
-    throw invalid('credential authentication type differs');
+  if (metadata.auth_kind === 'basic') throw invalid('credential authentication type differs');
   return {
     id: metadata.id,
     reference: { scheme: metadata.reference.scheme, name: metadata.reference.name },
@@ -121,14 +120,27 @@ export function create(
     if (existing !== null) {
       if (existing.auth_kind !== requested.auth_kind)
         throw invalid('credential authentication type differs');
-      if (requested.auth_kind === 'header') {
+      if (requested.auth_kind === 'header' || requested.auth_kind === 'fields') {
         const resolver = new DatabaseCredentialResolver(
           tx,
           new FileCredentialCipher(options.key_path, true),
         );
-        const saved = resolver.resolve(existing.reference);
-        if (saved.secret.kind !== 'header' || saved.secret.header_name !== requested.header_name)
+        const saved = resolver.resolve(existing.reference).secret;
+        if (
+          requested.auth_kind === 'header' &&
+          (saved.kind !== 'header' || saved.header_name !== requested.header_name)
+        )
           throw invalid('saved credential header differs. Request an explicit replacement');
+        if (
+          requested.auth_kind === 'fields' &&
+          (saved.kind !== 'fields' ||
+            Object.keys(saved.fields).sort().join() !==
+              requested
+                .fields!.map((field) => field.name)
+                .sort()
+                .join())
+        )
+          throw invalid('saved credential fields differ. Request an explicit replacement');
       }
       credential = public_credential(existing);
     }
@@ -160,6 +172,26 @@ export function create(
   const delivery = credential !== null ? attempt(tx, body, options.now) : null;
   return { value: [body, delivery], payloads: [data.update(tx, body, options.now)] };
 }
+/** A fields save supplies exactly the requested names. Errors never echo a value. */
+function requested_secret(body: CredentialRequestRowBody, value: unknown): CredentialSecret {
+  if (body.auth_kind === 'bearer') return { kind: 'bearer', token: text(value) };
+  if (body.auth_kind === 'header')
+    return { kind: 'header', header_name: body.header_name || '', value: text(value) };
+  const names = (body.fields ?? []).map((field) => field.name);
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join() !== [...names].sort().join()
+  )
+    throw invalid('enter every requested field');
+  return {
+    kind: 'fields',
+    fields: Object.fromEntries(
+      names.map((name) => [name, (value as Record<string, unknown>)[name]]),
+    ),
+  } as CredentialSecret;
+}
 export function save(
   tx: TransactionSql,
   request_id: string,
@@ -174,7 +206,7 @@ export function save(
   const body = data.read(tx, request_id);
   if (body.state !== 'pending') return { value: [body, null], payloads: [] };
   const name = text(options.name, 200).trim();
-  const value = text(options.value);
+  const secret = requested_secret(body, options.value);
   const replacement = body.replacement;
   const expected_revision = numeric_value(options.expected_revision);
   if (replacement !== null) {
@@ -189,10 +221,6 @@ export function save(
       throw invalid('a replacement keeps the current credential name');
   } else if (options.expected_revision !== null)
     throw invalid('new credentials do not have a replacement revision');
-  const secret: CredentialSecret =
-    body.auth_kind === 'bearer'
-      ? { kind: 'bearer', token: value }
-      : { kind: 'header', header_name: body.header_name || '', value };
   let metadata: CredentialMetadata;
   if (replacement === null) {
     metadata = credential_actions.create_credential_in_transaction(

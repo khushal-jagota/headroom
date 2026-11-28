@@ -1,10 +1,14 @@
 /** Bounded public request metadata and the existing canonical snapshot decoder. */
 import { is_record as object } from '../../../core/records.ts';
 import { isIP } from 'node:net';
-import { invalid, text } from '../../logic/validation.ts';
+import { invalid, text, validate_field_names } from '../../logic/validation.ts';
 import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
 export { credentialSnapshot as decode_snapshot } from '../../../conversation/record/codec.ts';
-import type { CreateCredentialRequestBody, RequestReplacement } from '../contracts.ts';
+import type {
+  CreateCredentialRequestBody,
+  RequestField,
+  RequestReplacement,
+} from '../contracts.ts';
 function exact_keys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }
@@ -52,26 +56,39 @@ function require_https_url(value: string): void {
   if (scheme?.[1]?.toLowerCase() !== 'https' || !hostname || userinfo.replace(':', ''))
     throw invalid('credential help links require an HTTPS URL');
 }
+function request_fields(value: unknown): RequestField[] {
+  if (!Array.isArray(value)) throw invalid('a fields request lists its fields');
+  const fields = value.map((field) => {
+    if (!object(field) || !exact_keys(field, ['name', 'file']) || typeof field.file !== 'boolean')
+      throw invalid('invalid credential field');
+    return { name: field.name, file: field.file };
+  });
+  validate_field_names(fields.map((field) => field.name));
+  return fields as RequestField[];
+}
 export function validate_request(value: unknown): CreateCredentialRequestBody {
-  if (
-    !object(value) ||
-    !exact_keys(value, [
-      'request_id',
-      'name',
-      'provider',
-      'use',
-      'auth_kind',
-      'header_name',
-      'help',
-      'help_url',
-      'replacement',
-    ])
-  )
+  const keys = [
+    'request_id',
+    'name',
+    'provider',
+    'use',
+    'auth_kind',
+    'header_name',
+    'help',
+    'help_url',
+    'replacement',
+  ];
+  // A client from before fields credentials sends no fields key.
+  if (!object(value) || !(exact_keys(value, keys) || exact_keys(value, [...keys, 'fields'])))
     throw invalid('invalid credential request metadata');
   const request_id = uuid(text(value.request_id, 36));
   const kind = value.auth_kind;
-  if (kind !== 'bearer' && kind !== 'header')
-    throw invalid('API key requests support bearer and header credentials');
+  if (kind !== 'bearer' && kind !== 'header' && kind !== 'fields')
+    throw invalid('API key requests support bearer, header, and fields credentials');
+  const raw_fields = value.fields ?? null;
+  let fields: RequestField[] | null = null;
+  if (kind === 'fields') fields = request_fields(raw_fields);
+  else if (raw_fields !== null) throw invalid('only a fields request lists fields');
   const header = value.header_name;
   if (kind === 'header') {
     if (
@@ -81,7 +98,7 @@ export function validate_request(value: unknown): CreateCredentialRequestBody {
       /[^!#$%&'*+.^_`|~0-9A-Za-z-]/.test(header)
     )
       throw invalid('a header request needs its header name');
-  } else if (header !== null) throw invalid('bearer requests do not name a header');
+  } else if (header !== null) throw invalid('only a header request names a header');
   const hint = value.help === null ? null : text(value.help, 1000).trim();
   const url = value.help_url === null ? null : text(value.help_url, 2000).trim();
   if (url !== null) require_https_url(url);
@@ -104,6 +121,8 @@ export function validate_request(value: unknown): CreateCredentialRequestBody {
     use: text(value.use, 2000).trim(),
     auth_kind: kind,
     header_name: header as string | null,
+    // Only a fields request carries the key, so a bearer or header request keeps its old form.
+    ...(fields === null ? {} : { fields }),
     help: hint,
     help_url: url,
     replacement,

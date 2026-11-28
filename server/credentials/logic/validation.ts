@@ -1,5 +1,10 @@
 import { PlannerError } from '../../core/contracts.ts';
-import { MAX_NAME_LENGTH } from '../configuration.ts';
+import {
+  FIELD_NAME_PATTERN,
+  MAX_FIELDS,
+  MAX_FIELD_VALUE_LENGTH,
+  MAX_NAME_LENGTH,
+} from '../configuration.ts';
 import type {
   CredentialAuthKind,
   CredentialEncryptionContext,
@@ -23,9 +28,29 @@ export function text(value: unknown, maximum?: number, allow_empty = false): str
     throw invalid();
   return value;
 }
+/** Field names are a fixed, ordered list. A fields request and its save both use this rule. */
+export function validate_field_names(names: readonly unknown[]): string[] {
+  if (names.length < 1 || names.length > MAX_FIELDS) throw invalid('invalid credential fields');
+  const valid = names.map((name) => {
+    if (typeof name !== 'string' || !FIELD_NAME_PATTERN.test(name))
+      throw invalid('invalid credential field name');
+    return name;
+  });
+  if (new Set(valid).size !== valid.length) throw invalid('credential field names repeat');
+  return valid;
+}
 export function validate_secret(secret: CredentialSecret, kind: CredentialAuthKind): void {
   if (secret.kind !== kind) throw invalid('credential authentication type differs');
-  if (secret.kind === 'basic') {
+  if (secret.kind === 'fields') {
+    if (secret.fields === null || typeof secret.fields !== 'object' || Array.isArray(secret.fields))
+      throw invalid();
+    validate_field_names(Object.keys(secret.fields));
+    for (const value of Object.values(secret.fields)) {
+      // Values can span lines, as a PEM private key does. Other control characters are refused.
+      if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text(value, MAX_FIELD_VALUE_LENGTH)))
+        throw invalid();
+    }
+  } else if (secret.kind === 'basic') {
     text(secret.username, undefined, true);
     text(secret.password, undefined, true);
     if (secret.username.includes(':')) throw invalid();
@@ -49,7 +74,7 @@ export function validate_write(write: CredentialWrite): CredentialWrite {
   return write;
 }
 /** Python json.dumps(sort_keys=True, separators=(',', ':')) uses ensure_ascii=True. */
-function canonical(value: Record<string, string>): Buffer {
+function canonical(value: Record<string, unknown>): Buffer {
   const sorted = Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
   return Buffer.from(
     JSON.stringify(sorted).replace(
@@ -68,7 +93,7 @@ export function associated_data(metadata: CredentialMetadata): Buffer {
 }
 export function encode_secret(secret: CredentialSecret): Buffer {
   validate_secret(secret, secret.kind);
-  return canonical(secret);
+  return canonical(secret as unknown as Record<string, unknown>);
 }
 export function decode_secret(raw: Buffer): CredentialSecret {
   try {
@@ -79,6 +104,7 @@ export function decode_secret(raw: Buffer): CredentialSecret {
       secret = { kind: 'header', header_name: body.header_name, value: body.value };
     else if (body.kind === 'basic')
       secret = { kind: 'basic', username: body.username, password: body.password };
+    else if (body.kind === 'fields') secret = { kind: 'fields', fields: body.fields };
     else throw invalid();
     validate_secret(secret, secret.kind);
     return secret;

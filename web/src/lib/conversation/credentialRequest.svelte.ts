@@ -13,7 +13,13 @@ export class CredentialRequestDraft {
   stale = $state(false);
   reviewed = $state(false);
   local = $state<CredentialRequestRowBody | null>(null);
+  /** A fields request's values by field name. A file field holds the file's text. */
+  fields = $state<Record<string, string>>({});
+  /** The chosen file's name for each file field, shown in place of its text. */
+  files = $state<Record<string, string>>({});
   constructor(name: string) { this.name = name; }
+  /** Forget every entered secret value. */
+  clearSecret(): void { this.secret = ''; this.fields = {}; this.files = {}; this.revealed = false; }
 }
 
 export type CredentialRequestDrafts = Map<string, CredentialRequestDraft>;

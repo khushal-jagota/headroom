@@ -185,6 +185,7 @@ describe("the credential request", () => {
     use: "Upload dSYMs from CI after each TestFlight build.",
     auth_kind: "bearer",
     header_name: null,
+    fields: null,
     help: "Sentry → Settings → Auth Tokens.",
     help_url: "https://docs.sentry.io/account/auth-tokens/",
     replacement: null,
@@ -220,6 +221,25 @@ describe("the credential request", () => {
   it("offers the help as a link-styled disclosure", () => {
     const { body } = render(ConversationCredentialRequestCard, { props: { request } });
     expect(body).toMatch(/class="help-toggle[^"]*"[^>]*aria-expanded="false"[^>]*>How to get a key<svg class="help-chevron/);
+  });
+
+  // Risk: a fields request renders the single API key input, so the owner cannot enter a .p8.
+  it("asks a fields request for each named value, with a file picker for a file field", () => {
+    const { body } = render(ConversationCredentialRequestCard, {
+      props: {
+        request: {
+          ...request,
+          provider: "App Store Connect",
+          auth_kind: "fields",
+          fields: [{ name: "key_id", file: false }, { name: "private_key", file: true }]
+        }
+      }
+    });
+    expect(body).toMatch(/<input[^>]*type="password"[^>]*data-credential-field="key_id"/);
+    expect(body).toMatch(/<input[^>]*type="file"[^>]*hidden[^>]*data-credential-field-file="private_key"/);
+    expect(body).toMatch(/data-credential-field="private_key"[^>]*>Choose file</);
+    expect(body).not.toContain('aria-label="API key"');
+    expect(body).toMatch(/<button[^>]*data-credential-save[^>]*disabled[^>]*>Save key</);
   });
 
   it("keeps a settled request a quiet line, without the ask label", () => {

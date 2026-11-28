@@ -24,6 +24,12 @@ export async function run_credential_command(inv: Invocation): Promise<CommandRe
       }),
       inv,
     );
+  const field_count = (v.field_names as string[]).length + (v.file_field_names as string[]).length;
+  if ((v.auth_kind === 'fields') !== field_count > 0)
+    fail_validation(
+      inv,
+      '--auth-kind fields requires --field or --file-field, and only it takes them',
+    );
   if ((v.replace_id === null) !== (v.expected_revision === null))
     fail_validation(inv, 'replacement requires --replace-id and --expected-revision');
   const body = {
@@ -33,6 +39,15 @@ export async function run_credential_command(inv: Invocation): Promise<CommandRe
     use: v.use_context,
     auth_kind: v.auth_kind,
     header_name: v.header_name,
+    // An older server refuses an unknown key, so only a fields request sends one.
+    ...(v.auth_kind === 'fields'
+      ? {
+          fields: [
+            ...(v.field_names as string[]).map((name) => ({ name, file: false })),
+            ...(v.file_field_names as string[]).map((name) => ({ name, file: true })),
+          ],
+        }
+      : {}),
     help: v.help_hint,
     help_url: v.help_url,
     replacement:

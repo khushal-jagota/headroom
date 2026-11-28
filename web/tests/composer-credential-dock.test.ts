@@ -11,6 +11,7 @@ const request: CredentialRequestRowBody = {
   use: "Upload dSYMs from CI after each TestFlight build.",
   auth_kind: "bearer",
   header_name: null,
+  fields: null,
   help: null,
   help_url: null,
   replacement: null,
