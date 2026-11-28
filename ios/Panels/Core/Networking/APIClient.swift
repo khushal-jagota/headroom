@@ -49,6 +49,8 @@ struct APIClient: Sendable {
     let baseURL: URL
     var session: URLSession = .shared
     var serverConnection: ServerConnection? = nil
+    /// The one live socket of this server. Nil where a client never follows live updates.
+    var live: LiveSocket? = nil
 
     static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
@@ -260,7 +262,7 @@ enum NativeBuildGate {
 }
 
 /// An installation identifier, independent of notification permission and credentials.
-private enum NativeClientIdentity {
+enum NativeClientIdentity {
     private static let deviceID: String = {
         let key = "panels.client.deviceID"
         if let saved = UserDefaults.standard.string(forKey: key) { return saved }

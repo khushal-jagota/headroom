@@ -55,7 +55,7 @@ The phone follows the same rules, with one known gap: a Ticket action there stil
 
 ## The live socket
 
-One authenticated WebSocket, `/api/live`, carries the four live feeds: the change signal, the navigation feed, the conversation view tail and the conversation tail. A socket frame wraps each payload in an envelope with its subscription, its kind and a sequence number. The browser and the desktop app use the socket. The server also keeps the old event streams, which the phone still uses until it moves. The frame names, the close codes and the limits are in `server/live_updates/contracts.ts`.
+One authenticated WebSocket, `/api/live`, carries the four live feeds: the change signal, the navigation feed, the conversation view tail and the conversation tail. A socket frame wraps each payload in an envelope with its subscription, its kind and a sequence number. The browser, the desktop app and the iPhone app use the socket. The server also keeps the old event streams until "Retire the old live streams" removes them. The frame names, the close codes and the limits are in `server/live_updates/contracts.ts`.
 
 Why: macOS Chromium closes every HTTP/2 connection when a network interface address changes, and four open streams then die together. A WebSocket runs on its own HTTP/1.1 connection through `tailscale serve` and survived the same event in the Mac 1 proof.
 
@@ -92,6 +92,7 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 - `web/src/lib/mutate.ts`: the browser's write door.
 - `web/src/lib/liveSocket.ts`: the browser's one socket. `web/src/lib/changeStream.ts` and `web/src/lib/resourceVersions/`: the change signal's status card and the revision check.
 - `web/src/lib/clientIdentity.ts` and `web/src/lib/requestLimit/`: the browser's fetch boundary and its time limits.
+- `ios/Panels/Core/Networking/LiveSocket.swift`: the phone's one socket, the same rules in Swift. A stream ends with an error on a drop, and its owner (`ResourceOwner`, `AppStore`, the conversation tail) reopens it.
 - `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
 

@@ -5,13 +5,16 @@ import SwiftUI
 @MainActor @Observable final class AppStore {
     var baseURL: URL
     private let session: URLSession
+    /// The one live socket of the selected server. `configure` replaces it with the address.
+    @ObservationIgnored private var live: LiveSocket
+    private let liveTransport: (any LiveSocketTransport)?
     @ObservationIgnored lazy var resources = ResourceOwner(api: client)
     /// Unfinished Goal edits survive route pop/reentry for this app session only.
     let goalEdits = PageSessionRoute()
     let updateActions = UpdateActionsState()
     let serverConnection: ServerConnection
     var contentCovered: Bool { serverConnection.isCovered || NativeBuildGate.requiresUpdate(baseURL) }
-    var client: APIClient { APIClient(baseURL: baseURL, session: session, serverConnection: serverConnection) }
+    var client: APIClient { APIClient(baseURL: baseURL, session: session, serverConnection: serverConnection, live: live) }
     /// Workspace rows from the last view that carried the rail windows. A scope
     /// without them, such as Review alone, keeps the last coherent Workspace.
     var managers: [ManagerSummary] = []
@@ -93,9 +96,12 @@ import SwiftUI
     private var viewReading = false
     private var viewReadsStarted = 0
 
-    init(baseURL: URL, session: URLSession = .shared, serverConnection: ServerConnection? = nil) {
+    init(baseURL: URL, session: URLSession = .shared, serverConnection: ServerConnection? = nil, liveTransport: (any LiveSocketTransport)? = nil) {
+        let connection = serverConnection ?? ServerConnection(server: baseURL)
         self.session = session
-        self.serverConnection = serverConnection ?? ServerConnection(server: baseURL)
+        self.serverConnection = connection
+        self.liveTransport = liveTransport
+        self.live = LiveSocket(api: APIClient(baseURL: baseURL, session: session, serverConnection: connection), transport: liveTransport)
         self.baseURL = baseURL
         restore()
     }
@@ -123,6 +129,7 @@ import SwiftUI
         displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
         self.baseURL = baseURL
         serverConnection.configure(server: baseURL)
+        live = LiveSocket(api: APIClient(baseURL: baseURL, session: session, serverConnection: serverConnection), transport: liveTransport)
         updateActions.reset()
         resources.configure(api: client)
         SettingsServerAddress.save(baseURL)

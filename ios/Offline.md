@@ -4,7 +4,7 @@ The phone keeps recently read Review, Ticket, Manager, Chief, and
 conversation display in one SwiftData database in Application Support. The
 navigation view restores admitted display, including reduced patches.
 Conversation display retains bounded history. Saved display remains stale and
-supplies neither stream coverage nor read credit. Fresh streams establish their
+supplies neither subscription coverage nor read credit. Fresh subscriptions establish their
 own authority. Navigation and conversation owners checkpoint during updates and
 on background entry.
 

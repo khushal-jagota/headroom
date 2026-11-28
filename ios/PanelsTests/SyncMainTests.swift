@@ -25,7 +25,7 @@ extension SyncMainTests {
         XCTAssertEqual(identity["build"] as? Int, Int(NativeBuildGate.build))
         XCTAssertNotNil(UUID(uuidString: try XCTUnwrap(identity["device_id"] as? String)))
         let another = APIClient(baseURL: server)
-        let anotherRequest = try another.request(try another.url("/api/changes"))
+        let anotherRequest = try another.request(try another.url("/api/review"))
         let anotherData = try XCTUnwrap(anotherRequest.value(forHTTPHeaderField: "X-Panels-Client")).data(using: .utf8)!
         let anotherIdentity = try XCTUnwrap(JSONSerialization.jsonObject(with: anotherData) as? [String: Any])
         XCTAssertEqual(identity["device_id"] as? String, anotherIdentity["device_id"] as? String)

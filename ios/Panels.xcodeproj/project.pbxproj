@@ -33,6 +33,7 @@
 		2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE13519E521C9A6D6DD3A99A /* ChiefView.swift */; };
 		2C174445A9A5D498960D2A9F /* SidebarOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A190CB7FA35B2B7793CA57 /* SidebarOverlay.swift */; };
 		2D3FB57182FBE92C75D051B5 /* VPSModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AAEB17AE9D48BF59E962F0F /* VPSModels.swift */; };
+		2ECF4E70586A68E41EBAEFB3 /* LiveSocketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F234F4F2045AF0E24386D6F /* LiveSocketTests.swift */; };
 		317406C13248D94562A367D1 /* UpdateModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE03C329D8420DEFF22D5C34 /* UpdateModels.swift */; };
 		31869895964BD44A17E44175 /* NativePushAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ABB750C68D4E90B3A076AD7 /* NativePushAPI.swift */; };
 		345DE70A3823FDB0F0004F7F /* TicketExpandableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC91552267EC6C54DBFE496 /* TicketExpandableText.swift */; };
@@ -146,7 +147,6 @@
 		A241B097CC2661F0E917032B /* ReviewMessageDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8CE03AA64F72CEFC0952C5C /* ReviewMessageDecision.swift */; };
 		A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */; };
 		A4208FFEBA30998FD7DB60E3 /* AgentRecap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443B7885AC12C0E4D6E1481B /* AgentRecap.swift */; };
-		A47892D9718F06729227DA16 /* ChangeStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC948AEFA056E4850619C188 /* ChangeStream.swift */; };
 		A4841231C6ABBBCB32C35413 /* GoalFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 956D0D2B2584948C7D7B92AB /* GoalFlowTests.swift */; };
 		A50CB3925FA62A39D63C95AB /* GoalFilters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B24D7E11E1B5A8A52BB5E3A /* GoalFilters.swift */; };
 		A67B58D0D73FAF0D923A874C /* GoalDateControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F744877D1381D8B372D50AB /* GoalDateControl.swift */; };
@@ -186,6 +186,7 @@
 		D8247F61E1286863878403B6 /* ComposerAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FA2D3FB3905486EFBE4698F /* ComposerAttachmentTests.swift */; };
 		D8759A19CECC7DF6FE887A2F /* manager.json in Resources */ = {isa = PBXBuildFile; fileRef = 84958E18FFD4BF0F350CDDA3 /* manager.json */; };
 		DAB71E6502567CEB994F52D9 /* TicketActionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3163D533EF808D7349FCCF8 /* TicketActionsSheet.swift */; };
+		DD9D526D86B2253F5CEBA5BD /* LiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5621767610EA3533014393CC /* LiveSocket.swift */; };
 		DE4550E09997382CFE236EF6 /* TicketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B65B958CE406314A52A4AB /* TicketTests.swift */; };
 		DF98D89CF003C17DFD2322F9 /* ArtifactViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */; };
 		E35A1895B54E6D5DBF6A4A7B /* TextSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A317523C555E0ECE8986785 /* TextSelectionTests.swift */; };
@@ -297,6 +298,7 @@
 		2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactViewerView.swift; sourceTree = "<group>"; };
 		2E8189870D845B834795C410 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
 		2EA55A2B405C4C5BCFDA2FFE /* SidebarMotionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarMotionTests.swift; sourceTree = "<group>"; };
+		2F234F4F2045AF0E24386D6F /* LiveSocketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSocketTests.swift; sourceTree = "<group>"; };
 		2FFCB07FFB8DF995300C644E /* ArtifactMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactMarkdownView.swift; sourceTree = "<group>"; };
 		303B9337EE98BDDC53CDDA26 /* NotificationContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationContracts.swift; sourceTree = "<group>"; };
 		331D7C1A03D69DC3F34DAFDB /* ReviewSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSummaryView.swift; sourceTree = "<group>"; };
@@ -338,6 +340,7 @@
 		5132416BEB05BE495C8EAE55 /* ReviewDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewDecisionTests.swift; sourceTree = "<group>"; };
 		549448AD09CCEF252F90368A /* ReviewActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewActivityAttributes.swift; sourceTree = "<group>"; };
 		5574028784B1364AC14E4E65 /* Outbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Outbox.swift; sourceTree = "<group>"; };
+		5621767610EA3533014393CC /* LiveSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSocket.swift; sourceTree = "<group>"; };
 		5623D2160B5E97DEE120DA17 /* NotificationRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationRouting.swift; sourceTree = "<group>"; };
 		5719F4EEF90D256872570C2F /* KeepAwake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAwake.swift; sourceTree = "<group>"; };
 		57BE00FDB243317A6CA1FE3E /* review-decision-requests.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "review-decision-requests.json"; sourceTree = "<group>"; };
@@ -429,7 +432,6 @@
 		C99A69BEF25D336DE99BFC97 /* TicketView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketView.swift; sourceTree = "<group>"; };
 		C9FCC523542663A68A3D1496 /* ArtifactPageSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactPageSource.swift; sourceTree = "<group>"; };
 		CC1F9D9C0E32D764BD0CD642 /* OfflineOperationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineOperationTests.swift; sourceTree = "<group>"; };
-		CC948AEFA056E4850619C188 /* ChangeStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeStream.swift; sourceTree = "<group>"; };
 		CCC13A90F93F673E68D167A6 /* OutgoingStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingStorage.swift; sourceTree = "<group>"; };
 		CE03C329D8420DEFF22D5C34 /* UpdateModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateModels.swift; sourceTree = "<group>"; };
 		CE1B412A9A599B433E0ABBBD /* ReviewQueueScreensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewQueueScreensTests.swift; sourceTree = "<group>"; };
@@ -683,6 +685,7 @@
 				C3F7B6E13ED957288433FEA4 /* ConversationTests.swift */,
 				6CC86D0DF4963B3D5F4936D2 /* GoalTests.swift */,
 				6D97682BC11FB23133802D19 /* KeepAwakeTests.swift */,
+				2F234F4F2045AF0E24386D6F /* LiveSocketTests.swift */,
 				2E8189870D845B834795C410 /* ModelDecodingTests.swift */,
 				D9B358E3DE851766D7E556EF /* NavigationViewTests.swift */,
 				17E0FB6A2045DB077EB6CB08 /* NotificationTests.swift */,
@@ -862,7 +865,7 @@
 			isa = PBXGroup;
 			children = (
 				C7D9B0CB8A6B3EA62C937A4E /* APIClient.swift */,
-				CC948AEFA056E4850619C188 /* ChangeStream.swift */,
+				5621767610EA3533014393CC /* LiveSocket.swift */,
 				F885AF972642AA485F0C34D1 /* ResourceDemand.swift */,
 				F4DF6509990131D4AC987B4D /* ResourceOwner.swift */,
 				79018B81134DF732BD330243 /* ResourceRead.swift */,
@@ -1348,6 +1351,7 @@
 				60F17F955EBEC501BC4FE692 /* ConversationTests.swift in Sources */,
 				51C1D877ECD5D6C6625D51B4 /* GoalTests.swift in Sources */,
 				631DEA04916AA0CBB5D47C65 /* KeepAwakeTests.swift in Sources */,
+				2ECF4E70586A68E41EBAEFB3 /* LiveSocketTests.swift in Sources */,
 				56C8379A0AA3BC97F760B875 /* ModelDecodingTests.swift in Sources */,
 				C9E3756E0C8DDF77C58A5E75 /* NavigationViewTests.swift in Sources */,
 				B4243DBDDE811B5F218AD753 /* NotificationTests.swift in Sources */,
@@ -1393,7 +1397,6 @@
 				DF98D89CF003C17DFD2322F9 /* ArtifactViewerView.swift in Sources */,
 				89D67A459D954F01FBB525F3 /* ArtifactWebView.swift in Sources */,
 				C00AAED9CA5A13E363FB3AD7 /* AttachSheet.swift in Sources */,
-				A47892D9718F06729227DA16 /* ChangeStream.swift in Sources */,
 				3CC611801A3DAC67251F8483 /* ChiefAPI.swift in Sources */,
 				E8EB97A1681A6EAEA0322130 /* ChiefModels.swift in Sources */,
 				2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */,
@@ -1435,6 +1438,7 @@
 				1350FA8D85AF214989D52105 /* Haptics.swift in Sources */,
 				A15F871F44698B2EA0B3C85E /* KeepAwake.swift in Sources */,
 				ECBB5F3E16780889C28EC2BB /* LiveActivityTokens.swift in Sources */,
+				DD9D526D86B2253F5CEBA5BD /* LiveSocket.swift in Sources */,
 				9F3946CF3C0EB157000F818D /* LocalStore.swift in Sources */,
 				A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */,
 				31869895964BD44A17E44175 /* NativePushAPI.swift in Sources */,
@@ -1649,7 +1653,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1693,7 +1697,7 @@
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
@@ -1719,7 +1723,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PanelsLiveActivity/Info.plist;
@@ -1772,7 +1776,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1839,7 +1843,7 @@
 			buildSettings = {
 				"CODE_SIGNING_ALLOWED[sdk=iphoneos*]" = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PanelsLiveActivity/Info.plist;
@@ -1884,7 +1888,7 @@
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;

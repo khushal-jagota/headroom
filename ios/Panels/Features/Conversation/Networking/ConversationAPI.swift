@@ -98,41 +98,25 @@ extension APIClient: ConversationServing {
 
 extension APIClient {
     // The subscription declares Full-mode live-output demand to the server. Its frames
-    // carry the window and its changes, decoded here off the main actor; nothing is
+    // carry the window and its changes, decoded off the main actor; nothing is
     // dropped, because a missing change frame is a gap. Cancelling the view task also
-    // cancels this socket.
-    /// Supplying retained ranges requires an admitted cursor. Without `after`, the
-    /// server intentionally starts with a new timeline-only snapshot.
-    func conversationTailRequest(_ id: String, lens: ConversationLens, transcript: Bool, ranges: [ConversationRetainedRange], after: Int?) throws -> URLRequest {
-        var query: [URLQueryItem] = [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))]
-        if let after { query.append(.init(name: "after", value: String(after))) }
+    // ends the subscription.
+    /// The subscription's parameters. Supplying retained ranges requires an admitted cursor.
+    /// Without `after`, the server intentionally starts with a new timeline-only snapshot.
+    func conversationTailParams(lens: ConversationLens, transcript: Bool, ranges: [ConversationRetainedRange], after: Int?) throws -> [String: String] {
+        var params = ["lens": lens.rawValue, "transcript": String(transcript)]
+        if let after { params["after"] = String(after) }
         if !ranges.isEmpty {
             let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
-            query.append(.init(name: "ranges", value: String(decoding: try encoder.encode(ranges), as: UTF8.self)))
+            params["ranges"] = String(decoding: try encoder.encode(ranges), as: UTF8.self)
         }
-        var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: query))
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 120
-        return request
+        return params
     }
     func conversationTail(_ id: String, lens: ConversationLens, transcript: Bool = true, ranges: [ConversationRetainedRange] = [], after: Int? = nil) -> AsyncThrowingStream<ConversationTailFrame, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let request = try conversationTailRequest(id, lens: lens, transcript: transcript, ranges: ranges, after: after)
-                    let (bytes, response, contact) = try await self.bytes(for: request)
-                    try Self.validate(response)
-                    var parser = ConversationTailParser()
-                    for try await line in ServerSentLines(bytes) {
-                        try Task.checkCancellation()
-                        await serverConnection?.answered(contact)
-                        if let frame = try parser.consume(line) { continuation.yield(frame) }
-                    }
-                    continuation.finish()
-                } catch { continuation.finish(throwing: error) }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        let params: [String: String]
+        do { params = try conversationTailParams(lens: lens, transcript: transcript, ranges: ranges, after: after) }
+        catch { return AsyncThrowingStream { $0.finish(throwing: error) } }
+        return liveEvents(kind: "conversation_view", conversationID: id, params: params) { try ConversationTailFrame($0) }
     }
 }
 

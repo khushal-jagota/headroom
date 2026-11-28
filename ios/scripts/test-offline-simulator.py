@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import live_socket_stub
+
 ROOT = Path(__file__).resolve().parents[2]
 DESIGN_REVIEW = os.environ.get("PANELS_DESIGN_REVIEW") == "1"
 ARTIFACT_LINKS_PROOF = os.environ.get("PANELS_ARTIFACT_LINKS_PROOF") == "1"
@@ -1579,51 +1581,33 @@ def main() -> int:
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return
-            if path in ("/api/changes", "/api/navigation/view/events") or path.endswith(
-                "/view/tail"
-            ):
-                # The navigation view and conversation tail send a fresh snapshot frame each
-                # second, so the app follows fixture changes without a change-driven read.
-                view = json.loads(query["view"][0]) if "view" in query else None
-                if REPLACEMENT_SMOKE and path.endswith("/view/tail"):
-                    state["tail_requests"].append(
-                        path.split("/conversations/", 1)[1].split("/", 1)[0]
-                    )
-                    (output / "replacement-tail-requests.json").write_text(
-                        json.dumps(state["tail_requests"])
-                    )
-                # A cold slow load holds the view's first frame as it held the snapshot read.
-                while view is not None and state["slow"] and not state["offline"]:
-                    time.sleep(0.1)
+            if path == "/api/live":
                 if state["offline"]:
                     return
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                try:
-                    while not state["offline"]:
+                # The navigation view and conversation tail send a fresh snapshot frame each
+                # second, so the app follows fixture changes without a change-driven read.
+                def frames(subscription):
+                    # A cold slow load holds the view's first frame as it held the snapshot read.
+                    if subscription["kind"] == "navigation":
+                        if state["slow"]:
+                            return []
                         with lock:
-                            if path == "/api/changes":
-                                frame = b"data: change\n\n"
-                            elif view is not None:
-                                frame = (
-                                    b"event: snapshot\ndata: "
-                                    + json.dumps(view_snapshot(view)).encode()
-                                    + b"\n\n"
-                                )
-                            else:
-                                frame = (
-                                    b"event: snapshot\ndata: "
-                                    + json.dumps(
-                                        conversation_view(path.removesuffix("/tail"))
-                                    ).encode()
-                                    + b"\n\n"
-                                )
-                        self.wfile.write(frame)
-                        self.wfile.flush()
-                        time.sleep(1)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+                            view = json.loads(subscription["params"]["view"])
+                            return [("snapshot", json.dumps(view_snapshot(view)))]
+                    with lock:
+                        return [("snapshot", json.dumps(conversation_view(
+                            f"/api/conversation/conversations/{subscription['conversation_id']}/view")))]
+
+                def recorded(subscription):
+                    if REPLACEMENT_SMOKE and subscription["kind"] == "conversation_view":
+                        state["tail_requests"].append(subscription["conversation_id"])
+                        (output / "replacement-tail-requests.json").write_text(
+                            json.dumps(state["tail_requests"])
+                        )
+
+                live_socket_stub.serve(
+                    self, frames, alive=lambda: not state["offline"], on_subscribe=recorded
+                )
                 return
             while state["slow"]:
                 time.sleep(0.1)

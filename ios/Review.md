@@ -6,7 +6,7 @@ purpose: a proposal, one conversation's unread run, or an agent's ask.
 ## The queue
 
 The queue and badge come from the navigation view's review window, which the phone
-follows over the view's events stream; desktop builds its queue from the same
+follows over the view's socket subscription; desktop builds its queue from the same
 window. The server admits one entry per Ticket (its proposal, unread conversations
 and ask) and one per Manager or Chief conversation (its unread run and ask). The
 phone splits each entry into cards in window order: the proposal, then each unread

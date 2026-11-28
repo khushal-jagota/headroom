@@ -29,11 +29,4 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(artifacts.entries.first?.directory, "artifacts")
         XCTAssertNil(artifacts.entries.first?.href)
     }
-    func testChangeStreamIgnoresHeartbeatsAndRecognizesRefresh() {
-        var parser = ChangeStreamParser()
-        XCTAssertFalse(parser.consume(": keep-alive"))
-        XCTAssertFalse(parser.consume(""))
-        XCTAssertTrue(parser.consume("data: change"))
-        XCTAssertFalse(parser.consume("data: unrelated"))
-    }
 }
