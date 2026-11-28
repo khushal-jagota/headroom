@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { applyingSkips, dropUnseen, isSkipped, limitSkips, parseSkips, skipHistoryKeys, SKIP_LIMIT, stringifySkips, withSkip, type SkipList } from "../src/lib/review/skips";
+import { applyingSkips, dropUnseen, unloadedSkips, isSkipped, limitSkips, parseSkips, skipHistoryKeys, SKIP_LIMIT, stringifySkips, withSkip, type SkipList } from "../src/lib/review/skips";
 import type { NavigationReviewItem } from "../src/lib/navigation/contracts";
 
 const message = (id: string, latest_sequence: number | null = null) =>
@@ -192,4 +192,10 @@ it("a stored list with garbage in it is replaced by the next skip, and lists of 
   expect(Object.keys(parseSkips(storage.get(KEY)!))).toHaveLength(1);
   expect(storage.has("panels:review-skipped:server-old")).toBe(false);
   expect(storage.has("panels:review-skipped:server-live")).toBe(true);
+});
+
+it("the skips whose cards the page has not loaded are counted, so the tail of the queue is read for them", () => {
+  const list = withSkip(withSkip({}, ticket(1, [], "near"), 1), ticket(1, [], "far"), 2);
+  expect(unloadedSkips(list, new Set([JSON.stringify(["ticket", "near"])]))).toBe(1);
+  expect(unloadedSkips(list, new Set([JSON.stringify(["ticket", "near"]), JSON.stringify(["ticket", "far"])]))).toBe(0);
 });

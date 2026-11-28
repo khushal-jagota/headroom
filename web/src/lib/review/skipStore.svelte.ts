@@ -53,27 +53,36 @@ class ReviewSkipStore {
     return (scope && this.#known.get(scope)) || EMPTY;
   }
 
+  /** Cards the page loaded outside a walk, such as the tail of the queue. They count as known, and they say nothing of who left. */
+  know(scope: string, items: readonly NavigationReviewItem[]): void {
+    this.#remember(scope, items);
+  }
+
   /**
    * One window of the queue the page has loaded. `first` says it is the window at the top of the queue, which
    * starts a walk. `last` says that no window follows. When the walk that began at the top reaches the last
    * window, every card of the queue has been seen: a skip for a card in none of them is for a card that left.
    */
   observe(scope: string, items: readonly NavigationReviewItem[], position: { first: boolean; last: boolean }): void {
-    let known = this.#known.get(scope);
-    if (!known) this.#known.set(scope, known = new Map());
     const walk = this.#walks.get(scope) ?? { started: false, keys: new Set<string>() };
     this.#walks.set(scope, walk);
     if (position.first) { walk.started = true; walk.keys.clear(); }
+    this.#remember(scope, items);
+    for (const item of items) walk.keys.add(skipKey(reviewHistoryKey(item)));
+    if (position.last && walk.started) this.#change(scope, list => dropUnseen(list, walk.keys));
+  }
+
+  #remember(scope: string, items: readonly NavigationReviewItem[]): void {
+    let known = this.#known.get(scope);
+    if (!known) this.#known.set(scope, known = new Map());
     let changed = false;
     for (const item of items) {
       const key = skipKey(reviewHistoryKey(item));
       const before = known.get(key);
       if (!before || JSON.stringify(skipMarks(before)) !== JSON.stringify(skipMarks(item))) changed = true;
       known.set(key, item);
-      walk.keys.add(key);
     }
     if (changed) this.#version += 1;
-    if (position.last && walk.started) this.#change(scope, list => dropUnseen(list, walk.keys));
   }
 
   #change(scope: string, change: (list: SkipList) => SkipList): void {

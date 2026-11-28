@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from "../components/Button.svelte";
-  import { tick, onDestroy, untrack, setContext } from "svelte";
+  import { tick, onDestroy, onMount, untrack, setContext } from "svelte";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -22,7 +22,7 @@
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,NEW_RETURN_LABEL,SKIPPED_RETURN_LABEL,type ReviewSummaryState} from "../lib/review/return";
-  import {applyingSkips,isSkipped,skipHistoryKeys,skipKey} from "../lib/review/skips";
+  import {applyingSkips,isSkipped,skipHistoryKeys,skipKey,unloadedSkips} from "../lib/review/skips";
   import {reviewSkips} from "../lib/review/skipStore.svelte";
   import {REVIEW_PASS_CONTEXT,type ReviewPassAction} from "../lib/review/pass";
   import {shownReviewItem} from "../lib/review/shown";
@@ -40,7 +40,7 @@
     navigation.owner.setDemand('review',{
       review_skipped_keys:skippedHistory,review_priority_keys:returnCohort,
       review_conversation_ids:heldCard ? heldCard.review_item_type==='message' ? [heldCard.conversation_id] : heldCard.messages.map(message=>message.conversation_id) : [],
-      windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]});
+      windows:[viewWindow('review',null,tailLimit===null ? {anchor:reviewAnchor,limit:30} : {anchor:null,direction:'before',limit:tailLimit})]});
     reviewRequest=navigation.owner.getRequest();
   }
   $effect(()=>{try {updateReviewDemand();} catch(error) {
@@ -61,11 +61,38 @@
   let skippedHistory=$derived(skipHistoryKeys(applyingSkips(skips,[...loadedCards.values(),...(review?.items ?? [])])));
   // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
   let returnCohort=$state<ReviewHistoryKey[]>([]);
-  let cohortSeeded=false;
+  // Skipped cards sit at the tail of the queue. A queue of many windows is read once from the tail, before the first
+  // card shows, so that every skip is checked against its card. The skipped cohort is then fixed, and the order does not move.
+  let tailLimit=$state<number|null>(null);
+  let settled=$state(false);
+  onMount(()=>{
+    // Waiting for a queue read of this session is not worth a blank page for long.
+    const timer=setTimeout(()=>{settled=true;tailLimit=null;},3_000);
+    return ()=>clearTimeout(timer);
+  });
   $effect(()=>{
-    if(skipScope===null || cohortSeeded)return;
-    cohortSeeded=true;
-    returnCohort=untrack(()=>skippedHistory);
+    if(settled || skipScope===null || !review || !queueWindow)return;
+    const stored=untrack(()=>skips);
+    if(!Object.keys(stored).length){settled=true;return;}
+    if(!displayed?.runtimeCurrent || displayed.publication.view?.scopeGeneration!==navigation.owner.getRequest().scope_generation)return;
+    untrack(()=>{
+      if(tailLimit===null){
+        reviewSkips.know(skipScope,review!.items);
+        const loaded=new Set(reviewSkips.known(skipScope).keys());
+        const unloaded=unloadedSkips(stored,loaded);
+        if(unloaded && queueWindow!.next){
+          // The skipped cards are last, because the whole list is the cohort until the tail has been read.
+          returnCohort=skipHistoryKeys(stored);
+          tailLimit=Math.min(Object.keys(stored).length,60);
+          return;
+        }
+      } else if(queueWindow!.request.direction!=='before' || queueWindow!.request.limit!==tailLimit) return;
+      else reviewSkips.know(skipScope,review!.items);
+      // Every skip that can be checked has been. The cohort holds the skips that still apply.
+      returnCohort=skippedHistory;
+      tailLimit=null;
+      settled=true;
+    });
   });
   // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
   let pass=$state<'new'|'skipped'>('new');
@@ -75,20 +102,11 @@
   // last window. Only a queue read this session counts: a copy saved by the last session can be older than a skip.
   $effect(()=>{
     const items=review?.items;
-    if(!items || !displayed?.runtimeCurrent || skipScope===null || !queueWindow)return;
+    if(!items || !displayed?.runtimeCurrent || skipScope===null || !queueWindow || !settled)return;
     const publication=displayed.publication.view;
     const current=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation);
     const deadKeysSent=current && publication!.reviewSummary!.skipped<untrack(()=>skippedHistory).length;
     untrack(()=>reviewSkips.observe(skipScope,items,{first:queueWindow.request.anchor===null,last:!queueWindow.next && deadKeysSent}));
-  });
-  // A card the walk has loaded and found changed is no longer a skipped card, so it leaves the cohort that the server
-  // orders last. It then takes its place by age. The cohort never gains a card here, so the order does not move otherwise.
-  $effect(()=>{
-    const keep=new Set(skippedHistory.map(skipKey));
-    const next=untrack(()=>returnCohort).filter(key=>keep.has(skipKey(key)));
-    if(next.length===untrack(()=>returnCohort).length)return;
-    returnCohort=next;
-    reviewAnchor=null;
   });
   // The note and edited text of the proposal on screen. The card and the bar under its
   // artifact are one decision, so they read and write the same draft.
@@ -217,7 +235,8 @@
     }
     return true;
   }
-  let reviewReady = $derived(Boolean(review));
+  // Not while the tail of the queue is on screen: it is read to check the skips, and no card of it is shown.
+  let reviewReady = $derived(Boolean(review) && settled && queueWindow?.request.direction!=='before');
   let currentItem = $derived.by<ReviewItem | null>(() => {
     if (!reviewReady) return null;
     if(heldCard && !skipped[itemKey(heldCard)]) {

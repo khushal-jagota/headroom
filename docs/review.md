@@ -42,7 +42,7 @@ A skip remembers the parts of the card that were waiting: its proposal revision,
 
 The queue loads one window of 30 cards at a time, and the page remembers every card it has loaded. A skip for a card that left the queue is removed when a walk from the top of the queue reaches the last window, because the page then has seen every card. If the list is full before that, skips of cards the page has not seen go first. A card that leaves and comes back before such a walk, with nothing new on it, is still skipped.
 
-The server counts the skips of cards in the queue. The page tells it only the skips that still apply to the cards loaded so far, and it asks the server to place those cards last. A changed card in a window that has not loaded yet still counts as skipped and sits among the skipped cards. When its window loads, the page drops it from both, and it takes its place by age.
+The server counts the skips of cards in the queue, and it orders the skipped cards last. The page tells it only the skips that still apply. Skipped cards sit at the tail of the queue, so when the queue holds more than one window and some skipped cards have not loaded, the page reads the tail once, up to 60 cards, before the first card shows. It checks every skipped card against it. A skipped card that changed is then new: the count leaves it out, and it takes its place by age. This is the only time the skipped order is fixed. The order does not move during a pass. With more than 60 skips, a changed card outside that tail counts as skipped, and sits among the skipped cards, until the pass reaches it.
 
 ## Where it shows up
 

@@ -33,7 +33,7 @@
     <div class="review-eyebrow review-eyebrow--decisions">
       <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
         <ReviewPassButton />
-    <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
+        <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
         <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>
     </div>
