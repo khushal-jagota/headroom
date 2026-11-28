@@ -82,7 +82,7 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
     await expect.poll(() => downloads.some((entry) => entry.digest === copies.B.digest), { timeout: 30_000 }).toBe(true);
     await expect(page.locator('h1')).toHaveText('Screen A');
     for (const entry of downloads) {
-      expect(JSON.parse(entry.identity ?? '{}')).toMatchObject({ kind: 'desktop', bridge_version: 2 });
+      expect(JSON.parse(entry.identity ?? '{}')).toMatchObject({ kind: 'desktop', bridge_version: 3 });
       expect(entry.origin).toBeUndefined();
     }
 

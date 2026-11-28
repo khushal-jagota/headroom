@@ -342,8 +342,11 @@ test('the screens reach the server through the app, and links leave it', async (
         return JSON.parse(request.identity!);
       });
       const nativeIdentity = identities[0];
-      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 2, device_id: expect.any(String) });
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 3, device_id: expect.any(String) });
       for (const identity of identities) expect(identity).toEqual(nativeIdentity);
+      // The bridge hands the page the same address and identity, for its own WebSocket.
+      expect(await page.evaluate(() => (window as unknown as { panels: { liveConnection(): Promise<unknown> } }).panels.liveConnection()))
+        .toEqual({ address: server.base, identity: nativeIdentity });
       // The server received and retained these facts, independent of the observation above.
       expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
         "SELECT identity_json FROM client_versions WHERE kind='desktop' AND device_id=?", [nativeIdentity.device_id],

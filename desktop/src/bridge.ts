@@ -11,9 +11,18 @@
  * `panels://recovery` alone.
  */
 
+import type { DesktopClientIdentity } from './client_identity';
+
 export type ServerAddressResult =
   | { ok: true; address: string }
   | { ok: false; problem: string };
+
+/** What the page needs to open its own WebSocket: the server and who the app is. */
+export interface LiveConnection {
+  address: string;
+  /** Send it in the socket's first frame. The server reads it as it reads `X-Panels-Client`. */
+  identity: DesktopClientIdentity;
+}
 
 export interface PanelsBridge {
   /** Native recovery page only: retry the rejected screen copy. */
@@ -24,6 +33,11 @@ export interface PanelsBridge {
   returnToServer(): Promise<void>;
   /** The server address the app holds, or null before the first one. Read-only in the app and setup. */
   storedServerAddress(): Promise<string | null>;
+  /**
+   * The server address and the app's identity, read together, or null before the first address.
+   * The page opens its own WebSocket with them: a socket cannot pass through the `panels://` relay.
+   */
+  liveConnection(): Promise<LiveConnection | null>;
   /** Check that a Panels server answers at the address, store it, and open the screens. Address page only. */
   useServerAddress(address: string): Promise<ServerAddressResult>;
 }
