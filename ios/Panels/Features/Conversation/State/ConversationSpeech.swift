@@ -21,7 +21,8 @@ import Observation
     init(awake: KeepAwake = .shared) { self.awake = awake }
 
     func start(update: @escaping @MainActor @Sendable (String) -> Void) async {
-        guard !recording, !starting, !transcribing else { return }
+        // A composer that left before this task ran must not open the microphone.
+        guard !recording, !starting, !transcribing, !shownBy.isEmpty else { return }
         starting = true
         insert = update
         let currentGeneration = capture.begin()
@@ -95,12 +96,26 @@ import Observation
             self?.complete()
         }
     }
-    private func complete() {
+    private func complete(reportsSilence: Bool = true) {
         let words = capture.finish(generation: capture.generation) ?? ""
         let callback = insert
         cancel()
-        if words.isEmpty { error = "No speech heard. Try again." }
+        if words.isEmpty { if reportsSilence { error = "No speech heard. Try again." } }
         else { callback?(words) }
+    }
+    /// Leaving keeps what was heard: the words so far go into the draft, as Stop puts them.
+    /// Only Cancel discards them.
+    func finish() {
+        if recording || transcribing { complete(reportsSilence: false) } else { cancel() }
+    }
+    /// The composers that show this recorder now. The page and its own full conversation
+    /// share one recorder, so it keeps going while either shows it. When the last composer
+    /// goes, the recording finishes and keeps its words.
+    @ObservationIgnored private var shownBy = Set<UUID>()
+    func shown(by composer: UUID) { shownBy.insert(composer) }
+    func hidden(by composer: UUID) {
+        shownBy.remove(composer)
+        if shownBy.isEmpty { finish() }
     }
     func cancel() {
         let hadSession = request != nil || engine != nil

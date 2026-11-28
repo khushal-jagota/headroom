@@ -629,8 +629,11 @@ their filename and system preview. Video intake belongs to the composer upload f
 Opening finds the first unread owner
 message, loading earlier pages if necessary, or returns to the latest line.
 Speech starts on an explicit tap after permission. Words are held until recording
-ends, then appear as an editable draft. Cancel discards recognition results. Nothing
-sends automatically. Reduce Motion removes the composer shape animation. Navigation transitions follow
+ends, then appear as an editable draft. A page and its own full conversation share one
+recorder, so a recording keeps going when you open that conversation or go Back.
+Leaving every composer that shows the recorder, or the app leaving the screen, ends
+the recording and keeps the words heard so far in the draft. Only Cancel discards
+them. Nothing sends automatically. Reduce Motion removes the composer shape animation. Navigation transitions follow
 the system accessibility setting.
 
 `ios/scripts/test-conversation.sh` runs the Foundation host checks.
