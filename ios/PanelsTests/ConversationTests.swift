@@ -305,18 +305,11 @@ import UniformTypeIdentifiers
         func ordered(_ id: String, _ sequence: Int, _ text: String) -> [String: Any] {
             var item = Self.item(id, kind: "agent_message", text: text); item["order"] = ["sequence": sequence, "slot": 0]; return item
         }
-        var parser = ConversationTailParser()
-        // Bytes as the server writes them: CRLF line ends and U+2028 left unescaped in text.
+        // A socket frame as the server writes it: U+2028 is left unescaped in the text.
         func frame(_ event: String, _ value: [String: Any]) async throws -> ConversationTailFrame {
             let json = String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self).replacingOccurrences(of: "\\u2028", with: "\u{2028}")
-            let bytes = AsyncStream<UInt8> { continuation in
-                for byte in Data(": heartbeat\r\n\r\nevent: \(event)\r\ndata: \(json)\r\n\r\n".utf8) { continuation.yield(byte) }
-                continuation.finish()
-            }
-            var frames: [ConversationTailFrame] = []
-            for try await line in ServerSentLines(bytes) { if let frame = try parser.consume(line) { frames.append(frame) } }
-            XCTAssertEqual(frames.count, 1)
-            return try XCTUnwrap(frames.first)
+            let envelope = try LiveEnvelope.parse(#"{"seq":1,"sub":"s1","kind":"\#(event)","data":\#(json)}"#)
+            return try XCTUnwrap(try ConversationTailFrame(LiveEvent(kind: envelope.kind, data: try XCTUnwrap(envelope.data))))
         }
         var snapshot = try JSONSerialization.jsonObject(with: Data(Self.snapshot([ordered("a", 1, "First"), ordered("b", 2, "Second")]).utf8)) as! [String: Any]
         snapshot["coverage"] = ["through_sequence": 2]
@@ -1021,12 +1014,8 @@ import UniformTypeIdentifiers
         XCTAssertEqual(model.items.map(\.key), ["fresh"])
         XCTAssertEqual(model.tailAfterSequence(transcript: true), 31)
         XCTAssertTrue(model.scopeReaderReady)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ConversationRequestStub.self]
-        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
-        for try await _ in api.conversationTail("conv_1", lens: .focus, transcript: false) {}
-        let query = URLComponents(url: try XCTUnwrap(ConversationRequestStub.request?.url), resolvingAgainstBaseURL: false)?.queryItems
-        XCTAssertEqual(query?.first { $0.name == "transcript" }?.value, "false")
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!)
+        XCTAssertEqual(try api.conversationTailParams(lens: .focus, transcript: false, ranges: [], after: nil)["transcript"], "false")
     }
 
     func testOwnerReplacementClearsOldDisplayAndKeepsUnsentWorkAndRecordedDestination() async throws {
@@ -1341,10 +1330,9 @@ import UniformTypeIdentifiers
         XCTAssertEqual(after, 8)
         model.beginTail(resuming: true)
         let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!)
-        let request = try api.conversationTailRequest("conv_1", lens: .full, transcript: true, ranges: model.retainedRanges, after: after)
-        let query = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
-        XCTAssertEqual(query.first { $0.name == "after" }?.value, "8")
-        let encodedRanges = try XCTUnwrap(query.first { $0.name == "ranges" }?.value)
+        let params = try api.conversationTailParams(lens: .full, transcript: true, ranges: model.retainedRanges, after: after)
+        XCTAssertEqual(params["after"], "8")
+        let encodedRanges = try XCTUnwrap(params["ranges"])
         let ranges = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encodedRanges.utf8)) as? [[String: Any]])
         XCTAssertEqual(Set(ranges.compactMap { ($0["scope"] as? [String: Any])?["kind"] as? String }), ["timeline", "turn", "work_group"])
         let timelineScope = try XCTUnwrap(ranges.compactMap { $0["scope"] as? [String: Any] }.first { $0["kind"] as? String == "timeline" })

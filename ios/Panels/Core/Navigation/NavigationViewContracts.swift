@@ -410,17 +410,6 @@ extension ViewFrame {
     }
 }
 
-/// One server-sent frame per `data:` line. URLSession's line sequence omits the blank
-/// separator lines; `event:` names repeat the frame's own `event` field and heartbeat
-/// comments carry nothing.
-enum NavigationViewEventParser {
-    static func data(_ line: String) -> String? {
-        guard line.hasPrefix("data:") else { return nil }
-        let payload = line.dropFirst(5)
-        return String(payload.first == " " ? payload.dropFirst() : payload)
-    }
-}
-
 extension APIClient {
     private func navigationViewURL(_ path: String, _ request: ViewRequest) throws -> URL {
         var components = URLComponents(url: try url(path), resolvingAgainstBaseURL: false)!
@@ -447,38 +436,20 @@ extension APIClient {
         return (snapshot, data)
     }
 
-    /// The scope's events stream: a snapshot first, then patch, checkpoint and reset
+    /// The scope's navigation subscription: a snapshot first, then patch, checkpoint and reset
     /// frames. Each frame comes with its raw body, so a snapshot is saved as it was read.
-    /// The server ends the stream instead of sending a frame when its source changes.
+    /// The server ends the subscription instead of sending a frame when its source changes.
     /// Frames are decoded off the main actor and none is dropped: each patch follows the last.
     func navigationViewEvents(_ request: ViewRequest) -> AsyncThrowingStream<(ViewFrame, Data), Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/events", request))
-                    urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
-                    // An idle limit that each server heartbeat (every 15 s) resets: two
-                    // missed heartbeats and a margin, so a silent socket is replaced.
-                    urlRequest.timeoutInterval = 35
-                    let (bytes, response, contact) = try await self.bytes(for: urlRequest)
-                    try Self.validate(response)
-                    let decoder = Self.decoder()
-                    for try await line in ServerSentLines(bytes) {
-                        try Task.checkCancellation()
-                        await serverConnection?.answered(contact)
-                        guard let payload = NavigationViewEventParser.data(line) else { continue }
-                        let data = Data(payload.utf8)
-                        let frame = try decoder.decode(ViewFrame.self, from: data)
-                        if case .snapshot(let snapshot) = frame, !Self.supported(snapshot) {
-                            throw APIError(status: 0, message: "The server sent an unsupported navigation view.")
-                        }
-                        continuation.yield((frame, data))
-                    }
-                    continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+        let view: String
+        do { view = try request.encoded() } catch { return AsyncThrowingStream { $0.finish(throwing: error) } }
+        let decoder = Self.decoder()
+        return liveEvents(kind: "navigation", params: ["view": view]) { event in
+            let frame = try decoder.decode(ViewFrame.self, from: event.data)
+            if case .snapshot(let snapshot) = frame, !Self.supported(snapshot) {
+                throw APIError(status: 0, message: "The server sent an unsupported navigation view.")
             }
-            continuation.onTermination = { _ in task.cancel() }
+            return (frame, event.data)
         }
     }
 }

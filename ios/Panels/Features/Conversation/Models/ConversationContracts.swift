@@ -454,21 +454,13 @@ enum ConversationTailFrame: Sendable {
     case changes(ConversationTailChanges)
     case reset
 }
-/// URLSession's line sequence omits blank lines, so a frame is its `event:` line
-/// followed by one `data:` line. Comments are heartbeats; unknown events are ignored.
-struct ConversationTailParser {
-    private var event = "message"
-    mutating func consume(_ line: String) throws -> ConversationTailFrame? {
-        if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces); return nil }
-        guard line.hasPrefix("data:") else { return nil }
-        defer { event = "message" }
-        var payload = line.dropFirst(5)
-        if payload.first == " " { payload = payload.dropFirst() }
-        let data = Data(payload.utf8)
-        switch event {
-        case "snapshot": return .snapshot(try APIClient.decoder().decode(ConversationSnapshot.self, from: data))
-        case "changes": return .changes(try APIClient.decoder().decode(ConversationTailChanges.self, from: data))
-        case "reset": return .reset
+extension ConversationTailFrame {
+    /// A subscription payload by its event name. Unknown events are ignored.
+    init?(_ event: LiveEvent) throws {
+        switch event.kind {
+        case "snapshot": self = .snapshot(try APIClient.decoder().decode(ConversationSnapshot.self, from: event.data))
+        case "changes": self = .changes(try APIClient.decoder().decode(ConversationTailChanges.self, from: event.data))
+        case "reset": self = .reset
         default: return nil
         }
     }

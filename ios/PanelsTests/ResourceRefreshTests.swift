@@ -131,7 +131,7 @@ import XCTest
     /// not, and a recovered read clears it.
     func testUnreachableReadsKeepSavedViewAndClearOnRecovery() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         await store.refresh()
         XCTAssertNotNil(store.review)
         RefreshProtocol.state.withLock { $0.failure = .cannotFindHost }
@@ -154,7 +154,7 @@ import XCTest
     // the URLProtocol host and the real shared resource read, with no connected server.
     func testSharedMachineReadPublishesRenameWithoutTicketReload() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         await store.readSettings(probing: false)
         XCTAssertEqual(TicketMachine.name("macos", machineId: "mac", machines: store.machines), "Mac 1")
         let handle = store.resources.handle(ChiefResources.machines)
@@ -168,7 +168,7 @@ import XCTest
 
     func testHealthFailureDoesNotCoverSuccessfulOrdinaryReads() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.healthFailure = .cannotFindHost }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         await store.refresh()
         XCTAssertNotNil(store.chief)
         XCTAssertTrue(store.errors.isEmpty)
@@ -198,7 +198,7 @@ import XCTest
 
     func testRefreshReadsOneScopedViewAndSettingsFollowVersions() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         let chief = store.resources.handle(ChiefResources.settings)
         let updates = store.updateResource
         chief.acquire(); updates.acquire()
@@ -251,7 +251,7 @@ import XCTest
     /// it, and a record's reload identity must move only with that record.
     func testViewStreamAppliesPatchesResnapshotsAfterGapAndFollowsScope() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         let run = Task { await store.run() }
         defer { run.cancel() }
         let original = try RefreshFixture.records(working: false, ticketBUpdated: 1)
@@ -267,7 +267,7 @@ import XCTest
         // Persist the reduced patch, not the initial frame. Restoration grants no runtime authority.
         await store.saveNavigationDisplay()
         await LocalStore.shared.flushCache()
-        let restored = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let restored = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         XCTAssertEqual(restored.view?.contentVersion, "2")
         XCTAssertEqual(restored.presentation?.ticketsById["B"]?.title, "B\u{2028}two")
         XCTAssertNil(restored.presentation?.ticketsById["A"]?.signal.working)
@@ -316,7 +316,7 @@ import XCTest
     /// an hour later. A checkpoint on the active stream refreshes the time.
     func testCheckpointKeepsTheViewFresh() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.checkpointStreams = true }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         let run = Task { await store.run() }
         defer { run.cancel() }
         try await until { store.view?.contentVersion == "1" && store.view?.mode == "current" }
@@ -329,7 +329,7 @@ import XCTest
     /// address changes. The old run's exit must not stop the new run from opening streams.
     func testCancelledRunUnwindingAfterNewRunKeepsItFollowing() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.holdCancellationStreams = true }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         let old = Task { await store.run() }
         defer { old.cancel() }
         // Keep the first stream open, so its own reconnect cannot race the new run.
@@ -359,7 +359,7 @@ import XCTest
         var time: TimeInterval = 0
         let url = URL(string: "https://refresh.invalid")!
         let connection = ServerConnection(server: url, now: { time })
-        let store = AppStore(baseURL: url, session: RefreshProtocol.session, serverConnection: connection)
+        let store = AppStore(baseURL: url, session: RefreshProtocol.session, serverConnection: connection, liveTransport: RefreshProtocol.live)
         let run = Task { await store.run() }
         defer { run.cancel() }
         func open() -> Int { RefreshProtocol.state.withLock { $0.openStreams } }
@@ -410,7 +410,7 @@ import XCTest
     /// next open trusts a stream that is gone, and a refresh does not reconnect.
     func testEndedRunClosesItsStreamAndNoLongerReadsAsFollowing() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
-        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session, liveTransport: RefreshProtocol.live)
         let run = Task { await store.run() }
         defer { run.cancel() }
         try await until { store.connection == "Following changes" }
@@ -418,39 +418,6 @@ import XCTest
         await run.value
         XCTAssertEqual(store.connection, "Connecting")
         try await until { RefreshProtocol.state.withLock { $0.openStreams } == 0 }
-    }
-
-    /// Risk: an earlier test's delayed close can corrupt the new fixture's count,
-    /// so a closed stream appears open forever or an open stream appears closed.
-    func testStreamCountsIgnoreCallbacksFromEarlierFixtures() throws {
-        func stream() throws -> RefreshProtocol {
-            var url = URLComponents(string: "https://refresh.invalid/api/navigation/view/events")!
-            url.queryItems = [URLQueryItem(name: "view", value: "{\"scope_generation\":0,\"windows\":[]}")]
-            var request = URLRequest(url: try XCTUnwrap(url.url))
-            request.setValue(RefreshProtocol.state.withLock { $0.token }, forHTTPHeaderField: "X-Refresh-Fixture")
-            return RefreshProtocol(request: request, cachedResponse: nil, client: nil)
-        }
-        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
-        let earlier = try stream()
-        let lateStart = try stream()
-        earlier.startLoading()
-        defer { earlier.stopLoading(); lateStart.stopLoading() }
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1)
-
-        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
-        let current = try stream()
-        current.startLoading()
-        defer { current.stopLoading() }
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1)
-
-        lateStart.startLoading()
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1, "An earlier fixture cannot admit a new stream")
-        earlier.stopLoading()
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 1, "Earlier callbacks do not close the current stream")
-        current.stopLoading()
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 0)
-        current.stopLoading()
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.openStreams }, 0, "A stream closes only once")
     }
 
     private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
@@ -628,6 +595,8 @@ private struct RefreshFixture {
 }
 private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     static let state = OSAllocatedUnfairLock(initialState: RefreshFixture())
+    /// Live frames come from the fixture's own fake socket, since `URLProtocol` cannot carry one.
+    static var live: RefreshLiveTransport { RefreshLiveTransport(token: state.withLock { $0.token }) }
     static var session: URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RefreshProtocol.self]
@@ -639,41 +608,6 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     private let stopped = OSAllocatedUnfairLock(initialState: false)
     override func startLoading() {
         let url = request.url!
-        let ok = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"])!
-        // Streams stay open until the client cancels them.
-        if url.path == "/api/changes" {
-            client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
-            return
-        }
-        if url.path == "/api/navigation/view/events" {
-            do {
-                let events = try countedStream.withLock { counted in
-                    let events: (schedule: [(delay: Double, chunks: [Data])], finish: Bool)? = try Self.state.withLock { fixture in
-                        guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == fixture.token else { return nil }
-                        fixture.paths.append(url.path)
-                        let events = try fixture.events(url)
-                        fixture.openStreams += 1; fixture.maxOpenStreams = max(fixture.maxOpenStreams, fixture.openStreams)
-                        return events
-                    }
-                    if events != nil { counted = true }
-                    return events
-                }
-                // A stream from another test's store stays open, silent and uncounted.
-                guard let (schedule, finish) = events else {
-                    client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
-                    return
-                }
-                client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
-                for (index, step) in schedule.enumerated() {
-                    DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
-                        guard !stopped.withLock({ $0 }) else { return }
-                        for chunk in step.chunks { client?.urlProtocol(self, didLoad: chunk) }
-                        if finish, index == schedule.count - 1 { client?.urlProtocolDidFinishLoading(self) }
-                    }
-                }
-            } catch { client?.urlProtocol(self, didFailWithError: error) }
-            return
-        }
         do {
             let data = try Self.state.withLock { try $0.response(url) }
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
@@ -685,16 +619,7 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    private let countedStream = OSAllocatedUnfairLock(initialState: false)
-    override func stopLoading() {
-        stopped.withLock { $0 = true }
-        if countedStream.withLock({ counted in defer { counted = false }; return counted }) {
-            Self.state.withLock { fixture in
-                guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == fixture.token else { return }
-                fixture.openStreams -= 1
-            }
-        }
-    }
+    override func stopLoading() { stopped.withLock { $0 = true } }
 }
 
 /// These cases exercise shared admission, not a second HTTP host. The controlled
@@ -1141,5 +1066,91 @@ private actor OwnerTransport {
         if let revision { first?.resume(returning: ResourceRead(data: Data("\"\(revision)\"".utf8), epoch: "epoch", revision: revision)) }
         else if let saved { first?.resume(returning: saved) }
         first = nil; saved = nil
+    }
+}
+
+
+/// The fixture's socket. A store from an earlier test holds that test's token, so its
+/// subscriptions stay silent and uncounted. Each navigation subscription plays the
+/// fixture's schedule of old stream chunks as envelopes.
+private struct RefreshLiveTransport: LiveSocketTransport {
+    let token: String
+    func connect(_ request: URLRequest) -> any LiveSocketConnection { RefreshLiveConnection(token: token) }
+}
+private final class RefreshLiveConnection: LiveSocketConnection, @unchecked Sendable {
+    private struct Open { var sequence = 0; var counted: Set<String> = []; var closed = false }
+    private let token: String
+    private let open = OSAllocatedUnfairLock(initialState: Open())
+    private let frames = AsyncStream<String>.makeStream()
+    private var iterator: AsyncStream<String>.Iterator
+    init(token: String) { self.token = token; iterator = frames.stream.makeAsyncIterator() }
+
+    func receive() async throws -> String {
+        guard let frame = await iterator.next() else { throw URLError(.cancelled) }
+        return frame
+    }
+    func send(_ text: String) async throws {
+        let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        switch frame["op"] as? String {
+        case "hello": emit(sub: nil, kind: "ready", data: #"{"heartbeat_ms":15000}"#)
+        case "subscribe": try subscribe(frame)
+        case "unsubscribe": release(frame["id"] as! String)
+        default: break
+        }
+    }
+    func close() {
+        let counted = open.withLock { state -> Set<String> in
+            state.closed = true
+            defer { state.counted = [] }
+            return state.counted
+        }
+        for _ in counted { RefreshProtocol.state.withLock { $0.openStreams -= 1 } }
+        frames.continuation.finish()
+    }
+
+    private func emit(sub: String?, kind: String, data: String) {
+        open.withLock { state in
+            guard !state.closed else { return }
+            state.sequence += 1
+            let sub = sub.map { "\"\($0)\"" } ?? "null"
+            frames.continuation.yield(#"{"seq":\#(state.sequence),"sub":\#(sub),"kind":"\#(kind)","data":\#(data)}"#)
+        }
+    }
+    private func release(_ id: String) {
+        if open.withLock({ $0.counted.remove(id) != nil }) { RefreshProtocol.state.withLock { $0.openStreams -= 1 } }
+    }
+    private func subscribe(_ frame: [String: Any]) throws {
+        let id = frame["id"] as! String
+        var query = URLComponents(string: "https://refresh.invalid/api/navigation/view/events")!
+        query.queryItems = [URLQueryItem(name: "view", value: (frame["params"] as? [String: String])?["view"])]
+        let components = query
+        let plan: (schedule: [(delay: Double, chunks: [Data])], finish: Bool)?? = try RefreshProtocol.state.withLock { fixture in
+            guard fixture.token == token else { return .some(nil) }
+            if fixture.failStreams {
+                _ = try? fixture.events(components.url!)
+                return nil
+            }
+            let plan = try fixture.events(components.url!)
+            fixture.openStreams += 1; fixture.maxOpenStreams = max(fixture.maxOpenStreams, fixture.openStreams)
+            return .some(plan)
+        }
+        // A refused subscription fails by itself, and the socket stays open.
+        guard let plan else { return emit(sub: id, kind: "ended", data: #"{"status":503,"detail":"offline"}"#) }
+        // An earlier test's store stays silent.
+        guard let (schedule, finish) = plan else { return }
+        open.withLock { _ = $0.counted.insert(id) }
+        for (index, step) in schedule.enumerated() {
+            DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
+                guard open.withLock({ $0.counted.contains(id) }) else { return }
+                for chunk in step.chunks {
+                    let text = String(decoding: chunk, as: UTF8.self)
+                    guard let event = text.range(of: "event: "), let data = text.range(of: "\r\ndata: ") else { continue }
+                    let name = String(text[event.upperBound..<data.lowerBound])
+                    let json = text[data.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                    emit(sub: id, kind: name, data: json)
+                }
+                if finish, index == schedule.count - 1 { emit(sub: id, kind: "ended", data: #"{"reason":"closed"}"#) }
+            }
+        }
     }
 }

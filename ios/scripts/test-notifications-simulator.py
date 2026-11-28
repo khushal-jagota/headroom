@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import live_socket_stub
+
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = os.environ.get("PANELS_PUSH_BUNDLE", "app.panels.ios.pios-notify")
 # The owned lane, by name. Another task names its own booted lane here.
@@ -219,26 +221,14 @@ def main():
                     record()
                     self.respond(state)
                 return
-            if path in {"/api/changes", "/api/navigation/view/events"}:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                try:
-                    while True:
-                        frame = (
-                            (
-                                "data: "
-                                + json.dumps(view_snapshot(json.loads(query["view"][0])))
-                                + "\n\n"
-                            )
-                            if "view" in query
-                            else ": heartbeat\n\n"
-                        )
-                        self.wfile.write(frame.encode())
-                        self.wfile.flush()
-                        time.sleep(1)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+            if path == "/api/live":
+                live_socket_stub.serve(
+                    self,
+                    lambda subscription: [
+                        ("snapshot", json.dumps(view_snapshot(json.loads(subscription["params"]["view"]))))
+                    ],
+                    changes=False,
+                )
                 return
             with lock:
                 if path == "/api/notifications/settings":

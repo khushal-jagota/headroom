@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import live_socket_stub
+
 ROOT = Path(__file__).resolve().parents[2]
 DEVICE = os.environ.get("PANELS_CONVERSATION_DEVICE", "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6")
 LANE = os.environ.get("PANELS_CONVERSATION_LANE", "PanelsLaneA")
@@ -492,24 +494,25 @@ def main() -> int:
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
-            if path in {"/api/navigation/view/snapshot", "/api/navigation/view/events"}:
-                request = json.loads(parse_qs(urlparse(self.path).query)["view"][0])
-                snapshot = navigation_snapshot(request)
-                if path.endswith("/snapshot"):
-                    self.respond(snapshot)
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                try:
-                    while not stub.offline:
-                        self.wfile.write(
-                            b"event: snapshot\ndata: " + json.dumps(snapshot).encode() + b"\n\n"
-                        )
-                        self.wfile.flush()
-                        time.sleep(1)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+            if path == "/api/live":
+                def frames(subscription):
+                    if subscription["kind"] == "navigation":
+                        return [("snapshot", json.dumps(
+                            navigation_snapshot(json.loads(subscription["params"]["view"]))))]
+                    # The app applies tail frames instead of reading /view again. A snapshot
+                    # frame may arrive at any point, so the stub sends its current view.
+                    full = subscription["params"].get("lens") == "full"
+                    with stub.lock:
+                        stub.tick()
+                        return [("snapshot", json.dumps(self.conversation_view(full)))]
+                live_socket_stub.serve(
+                    self, frames, periods={"navigation": 1, "conversation_view": 0.5},
+                    changes=False, alive=lambda: not stub.offline,
+                )
+                return
+            if path == "/api/navigation/view/snapshot":
+                snapshot = navigation_snapshot(json.loads(parse_qs(urlparse(self.path).query)["view"][0]))
+                self.respond(snapshot)
                 return
             if path == "/api/goals":
                 self.respond({
@@ -685,24 +688,6 @@ def main() -> int:
                     self.respond({"error": {"message": "Unknown driver"}}, 404)
                 else:
                     self.respond_bytes(*icon)
-                return
-            if path.endswith("/view/tail"):
-                # The app applies tail frames instead of reading /view again. A snapshot
-                # frame may arrive at any point, so the stub sends its current view.
-                full = parse_qs(urlparse(self.path).query).get("lens") == ["full"]
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                try:
-                    while not stub.offline:
-                        with stub.lock:
-                            stub.tick()
-                            frame = json.dumps(self.conversation_view(full))
-                        self.wfile.write(b"event: snapshot\ndata: " + frame.encode() + b"\n\n")
-                        self.wfile.flush()
-                        time.sleep(0.5)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
                 return
             with stub.lock:
                 stub.tick()

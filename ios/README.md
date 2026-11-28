@@ -35,25 +35,31 @@ supplies Ticket and Review controls, stage names and approval gates. The nullabl
 
 ## Refresh work
 
-While the app is in the foreground it follows one navigation view stream for
-what is on screen, as desktop does: a snapshot first, then patches. Review is
+While the app is in the foreground it follows one navigation view subscription for
+what is on screen, as desktop does: a snapshot first, then patches. It rides the
+app's one WebSocket to `/api/live` (`LiveSocket`), which also carries the change
+signal and each open conversation's tail. Review is
 always in that scope, for its badge, and so is the Manager list the Sidebar shows.
 A detail page adds its own record (and, for Chief and orchestrators, a children
-window). A new demand opens a stream for the new scope beside the current one, as
-the web does. The current stream keeps the view live until the new snapshot lands,
-and then it closes, so two streams are open only during that wait. A demand the
-running stream already carries, as for a Ticket opened from Review, waits for the
-next stream. Leaving a screen only narrows the next stream. Review's skipped
-entries ride the next stream; its return order opens one at once. One coherent view replaces the
+window). A new demand opens a subscription for the new scope beside the current one, as
+the web does. The current one keeps the view live until the new snapshot lands,
+and then it ends, so two are open only during that wait. A demand the
+running subscription already carries, as for a Ticket opened from Review, waits for the
+next one. Leaving a screen only narrows the next subscription. Review's skipped
+entries ride the next one; its return order opens one at once. One coherent view replaces the
 earlier Review, manager and ticket list reads; the phone no longer reads
 `/api/review`. A launch shows the last saved view at once, if it is less than seven
-days old. A pull on Review opens a fresh stream the same way, and the
+days old. A pull on Review opens a fresh subscription the same way, and the
 pull ends when its snapshot lands. A return from the background, a dropped connection,
-a gap, a reset or a closed stream all start a
-fresh stream, whose first frame is a fresh snapshot. A brief inactive moment, such as
-Control Center or a notification pull-down, keeps the streams. A stream with no bytes
-for 35 seconds fails; the server's heartbeat every 15 seconds keeps a good one open.
-A stream that was current
+a gap, a reset or an ended subscription all start a
+fresh subscription, whose first frame is a fresh snapshot. A brief inactive moment, such as
+Control Center or a notification pull-down, keeps the socket. The socket closes when no
+stream is left to follow, as in the background. Every frame, a heartbeat too, is contact
+with the server. A socket with no frame for 35 seconds is replaced; the server's heartbeat
+every 15 seconds keeps a good one open. A skipped sequence number or any close except
+"update needed" is a drop: every open stream ends with an error and its owner reopens it
+with its own cursor and backoff, and the server replays nothing. "Update needed" sets the
+same update latch as a refused request. A subscription that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
 then 8 seconds. Short interruptions stay quiet. A sustained loss of server contact shows the native full-screen cover described in [Saved data and interrupted connections](Offline.md). Then saved work drains, as before.
 
@@ -319,7 +325,7 @@ rate, delivery through APNs, or every navigation route.
 | Folder | Owner / integration surface |
 | --- | --- |
 | `Panels/App` | Shared shell and `AppRoute`; coordinate additions with integration owner |
-| `Panels/Core/Networking` | Shared `APIClient`, GET endpoints, SSE change stream |
+| `Panels/Core/Networking` | Shared `APIClient`, GET endpoints, `LiveSocket` (the one live WebSocket) |
 | `Panels/Core/State` | Shared observable `AppStore` and foreground refresh lifecycle |
 | `Panels/Core/Theme` | Shared web-derived tokens, Dynamic Type, `Haptics` |
 | `Panels/Core/Components` | Shared deployment strip, retry state, `ConversationPlaceholder` slot |
@@ -335,8 +341,8 @@ rate, delivery through APNs, or every navigation route.
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
 Inject `AppStore` through SwiftUI's environment. Use `store.client` for detail
-reads. The shell owns `store.run()`, keyed on `AppStore.follows(scenePhase)`. It follows the view stream and the change
-stream, cancels both in background and reconnects after disconnect. Pull to refresh on
+reads. The shell owns `store.run()`, keyed on `AppStore.follows(scenePhase)`. It follows the view subscription and the change
+signal over the one socket, closes it in background and reconnects after disconnect. Pull to refresh on
 view-backed screens calls `store.pull()`; refreshes after confirmed writes call `store.refresh()`. Screens state
 their windows with `store.setNavigationDemand`; detail pages use `.navigationDemand`
 and key reloads with `.reload(onChangeOf:)` on `store.ticketStamp`,
