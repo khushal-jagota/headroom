@@ -177,7 +177,7 @@ test('test_a_dropped_live_socket_shows_the_card_at_once_and_the_screen_follows_a
     `section[data-screen="ticket"][data-ticket-id="${ticketId}"]`,
   );
   expect(sockets).toHaveLength(1);
-  const card = page.locator('[data-connection-status]');
+  const card = page.locator('.status-card[data-connection-status]');
   await sockets[0]!.close({ code: 1012, reason: 'cut by the test' });
   await expect(card).toHaveAttribute('data-status-state', 'unreachable', { timeout: 2_000 });
   await expect(card).toContainText("Can't reach Panels");

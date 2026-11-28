@@ -1,9 +1,8 @@
 import { LIVE_CLOSE_CODES, LIVE_SOCKET_PATH } from "../../../server/live_updates/contracts";
 import type { LiveClientFrame, LiveEnvelope, LiveSubscriptionKind } from "../../../server/live_updates/contracts";
-import { desktopBridge } from "../desktop/bridge";
+import type { PanelsBridge } from "../../../desktop/src/bridge";
 import { browserClientIdentity } from "./clientIdentity";
 import { watchStream, type EndReason } from "./connectionLog";
-import { isDesktopWindow } from "./desktopWindow/windowState.svelte";
 import { STREAM_SILENCE_MS, UPDATE_RECOVERY_POLL_MS } from "./updates/config";
 
 // One WebSocket carries every live feed of the page: the change signal and each subscription
@@ -128,8 +127,10 @@ function ensureSocket(): void {
 
 /** The server address and who the app is. The desktop page cannot use its own origin for this. */
 async function target(): Promise<{ url: string; identity: LiveClientFrame & { op: "hello" } } | null> {
-  if (isDesktopWindow()) {
-    const connection = await desktopBridge().liveConnection();
+  // The desktop app's preload gives the page its bridge. A browser has none.
+  const bridge = (globalThis as { panels?: PanelsBridge }).panels;
+  if (bridge !== undefined) {
+    const connection = await bridge.liveConnection();
     if (connection === null) return null;
     return { url: socketUrl(connection.address), identity: { op: "hello", client: connection.identity } };
   }

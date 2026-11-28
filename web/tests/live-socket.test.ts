@@ -103,8 +103,7 @@ describe("live socket", () => {
 
   it("opens the desktop socket at the address and with the identity that the bridge gives", async () => {
     const identity = { kind: "desktop", device_id: "d1", version: "1.2.3", bridge_version: 3 };
-    vi.stubGlobal("document", stubPageDocument({ documentElement: { hasAttribute: (name: string) => name === "data-desktop-window" } }));
-    vi.stubGlobal("window", Object.assign(globalThis, { panels: { liveConnection: async () => ({ address: "https://panels-vps.example.ts.net", identity }) } }));
+    vi.stubGlobal("panels", { liveConnection: async () => ({ address: "https://panels-vps.example.ts.net", identity }) });
     vi.stubGlobal("location", { href: "panels://app/index.html" });
     const { socket } = await open();
     expect(socket.url).toBe("wss://panels-vps.example.ts.net/api/live");

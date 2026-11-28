@@ -9,6 +9,7 @@
  */
 import { expect, test, WAIT_MS } from './support/fixtures.ts';
 import { createTicketConversation, openConversationLayer, post } from './support/conversation.ts';
+import { refuseLiveSubscriptions } from './support/live_socket.ts';
 
 for (const laterNoteDuringOutage of [false, true]) {
   test(`the disconnected note leaves when the open recovers${laterNoteDuringOutage ? ', but a later refusal stays' : ''}`, async ({ signalServer, newContext }) => {
@@ -21,28 +22,8 @@ for (const laterNoteDuringOutage of [false, true]) {
 
     const page = await context.newPage();
     let upgrading = true;
-    // The page's socket carries the view tail. While `upgrading`, answer its subscribe with a refusal
-    // instead of passing it on, and number the frames that follow so that the sequence stays whole.
-    await page.routeWebSocket(/\/api\/live$/, (socket) => {
-      const server = socket.connectToServer();
-      let injected = 0;
-      let last = 0;
-      server.onMessage((message) => {
-        const frame = JSON.parse(String(message));
-        frame.seq += injected;
-        last = frame.seq;
-        socket.send(JSON.stringify(frame));
-      });
-      socket.onMessage((message) => {
-        const frame = JSON.parse(String(message));
-        if (upgrading && frame.op === 'subscribe' && frame.kind === 'conversation_view') {
-          injected += 1;
-          socket.send(JSON.stringify({ seq: ++last, sub: frame.id, kind: 'ended', data: { status: 503, detail: 'The tail was refused.' } }));
-          return;
-        }
-        server.send(message);
-      });
-    });
+    // The page's socket carries the view tail, so refuse its subscribe while `upgrading`.
+    await refuseLiveSubscriptions(page, 'conversation_view', () => upgrading);
     await page.route('**/interrupt', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"The stop was refused."}' }));
     await page.goto(`${signalServer.base}/#/workspace/${ticket}`);
     await page.waitForSelector(`[data-screen="ticket"][data-ticket-id="${ticket}"]`, { timeout: WAIT_MS });

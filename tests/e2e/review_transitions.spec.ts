@@ -21,6 +21,7 @@ import {
 } from './support/fixtures.ts';
 import type { Page } from '@playwright/test';
 import { post } from './support/conversation.ts';
+import { refuseLiveSubscriptions } from './support/live_socket.ts';
 
 interface Frame {
   status: string | null;
@@ -138,10 +139,14 @@ test('test_review_final_page_still_says_unavailable_when_the_queue_cannot_load',
   const server = signalServer;
   await waitingMessages(server, 1);
   const context = await newContext();
+  let refusing = false;
+  await refuseLiveSubscriptions(context, 'navigation', () => refusing);
   const page = await openPage(context, server, '#/review', '[data-review-card][data-review-loaded="true"]');
   page.setDefaultTimeout(WAIT_MS);
   await page.waitForTimeout(800);
   await context.route(/\/api\/navigation/, (route) => route.abort());
+  // The navigation feed is a subscription on the page's socket, so refuse the next one as well.
+  refusing = true;
   await page.locator(`${FRONT} button`, { hasText: /^Skip$/ }).first().click();
   await expect(page.locator('[data-review-final-status]')).toContainText('Unavailable', { timeout: 30_000 });
 });
