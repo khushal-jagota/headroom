@@ -21,7 +21,7 @@ final class ReviewQueueTests: XCTestCase {
         let all = [proposal, ticketMessage, chiefMessage, ask]
         reconcile(&queue, all)
         XCTAssertNil(queue.shown, "The app opens on the summary")
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         XCTAssertEqual(queue.shown?.id, proposal.id)
         // A later window that inserts older work leaves the shown card in place.
         let older = ReviewItem(reviewItemType: "message", title: "Older", waitingSince: 0, conversationId: "older", ownerKind: "chief", ownerId: "chief")
@@ -55,12 +55,12 @@ final class ReviewQueueTests: XCTestCase {
     func testSummarySelectionAndAfterTheOpenCardLeftWhileAway() {
         var queue = ReviewQueue()
         let all = [proposal, chiefMessage]
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         XCTAssertEqual(queue.shown?.id, proposal.id)
         queue.showSummary(); reconcile(&queue, all)
         XCTAssertNil(queue.shown, "An explicit Review selection shows the summary")
 
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         queue.leaveApp(session: 4)
         reconcile(&queue, [chiefMessage], fresh: 4)
         XCTAssertEqual(queue.shown?.id, chiefMessage.id, "The old session's window is not the return")
@@ -73,7 +73,7 @@ final class ReviewQueueTests: XCTestCase {
         reconcile(&queue, [proposal], fresh: 6)
         XCTAssertNil(queue.shown, "The card left while away: the summary")
         // A card handled after the return is not "left while away" when the stream reconnects.
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         queue.leaveApp(session: 6)
         queue.resolve(proposal); queue.finishExit(proposal); reconcile(&queue, [chiefMessage])
         reconcile(&queue, [chiefMessage], fresh: 7)
@@ -82,42 +82,70 @@ final class ReviewQueueTests: XCTestCase {
 
     /// Risk: skip keys and the summary disagree with what the phone shows. Skip is per
     /// card; an entry's key is sent only once all its cards are skipped; the summary
-    /// counts cards, entries beyond the window count as new, and the return puts skipped
-    /// entries last.
-    func testSkipKeysSummaryStatesAndReturnOrder() {
+    /// counts cards, and entries beyond the window by the server's skipped count. The new
+    /// pass leaves saved skips out, and the skipped pass holds only them.
+    func testSkipKeysSummaryStatesAndPasses() {
         var queue = ReviewQueue()
         let all = [proposal, ticketMessage, chiefMessage]
-        queue.returnToCards(); reconcile(&queue, all)
-        queue.skip(proposal, in: all); reconcile(&queue, all)
+        queue.startPass(.new, cohort: []); reconcile(&queue, all)
+        // The session saves each skip; here the queue holds them as the session gives them.
+        func skip(_ item: ReviewItem) {
+            queue.saved = queue.saved.skipping(item, at: 1, whole: queue.skipsWholeEntry(item, in: all))
+            queue.skip(item, in: all); reconcile(&queue, all)
+        }
+        skip(proposal)
         XCTAssertTrue(queue.history.skipped.isEmpty, "The Ticket's message still waits")
         XCTAssertEqual(queue.shown?.id, ticketMessage.id)
-        queue.skip(ticketMessage, in: all); reconcile(&queue, all)
+        skip(ticketMessage)
         XCTAssertEqual(queue.history.skipped, [RecordKey(kind: "ticket", id: "a")])
-        queue.skip(chiefMessage, in: all); reconcile(&queue, all)
+        skip(chiefMessage)
         XCTAssertEqual(queue.history.skipped, [RecordKey(kind: "ticket", id: "a"), RecordKey(kind: "conversation", id: "chief")])
         XCTAssertNil(queue.shown)
 
         let skippedOnly = queue.counts(all, unloaded: 0)
-        XCTAssertEqual([skippedOnly.headline, skippedOnly.detail, skippedOnly.returnTitle], ["3 skipped.", "Nothing new.", "Review skipped"])
+        XCTAssertEqual([skippedOnly.headline, skippedOnly.detail], ["3 skipped.", "Nothing new."])
+        XCTAssertEqual(skippedOnly.passes, [.skipped])
         let both = queue.counts(all, unloaded: 2)
-        XCTAssertEqual([both.headline, both.detail, both.returnTitle], ["5 to review.", "2 new, 3 skipped.", "Back to review"])
+        XCTAssertEqual([both.headline, both.detail], ["5 to review.", "2 new, 3 skipped."])
+        XCTAssertEqual(both.passes, [.new, .skipped])
+        XCTAssertEqual(both.otherPass(from: .new)?.title, "Review skipped (3)")
+        XCTAssertEqual(both.otherPass(from: .skipped)?.title, "Review new")
+        // Beyond the window, the server's count of skipped entries, less those the window holds.
+        let beyond = queue.counts(all, unloaded: 4, serverSkipped: 3, windowEntries: Set(all.map(\.historyKey)))
+        XCTAssertEqual([beyond.newCount, beyond.skippedCount], [3, 4])
+        // Only the keys the server counted come off its count: a skip it has not heard of yet does not.
+        let unheard = queue.counts(all, unloaded: 4, serverSkipped: 1, windowEntries: Set(all.map(\.historyKey)), sentSkipped: [])
+        XCTAssertEqual([unheard.newCount, unheard.skippedCount], [3, 4])
+        // A card skipped in this pass that then changed counts as new, though the pass still hides it.
+        var changed = chiefMessage; changed.latestOwnerMessageSequence = 5
+        let afterChange = [proposal, ticketMessage, changed]
+        XCTAssertEqual(queue.counts(afterChange, unloaded: 0).newCount, 1)
+        XCTAssertTrue(queue.hidden(changed))
         let fresh = ReviewQueue().counts([proposal, ask], unloaded: 0)
-        XCTAssertEqual([fresh.headline, fresh.detail, fresh.returnTitle], ["2 new.", "Ready to review.", "Back to review"])
+        XCTAssertEqual([fresh.headline, fresh.detail], ["2 new.", "Ready to review."])
+        XCTAssertEqual(fresh.passes, [.new]); XCTAssertNil(fresh.otherPass(from: .new))
         let clear = ReviewQueue().counts([], unloaded: 0)
-        XCTAssertEqual(clear.headline, "All clear."); XCTAssertEqual(clear.detail, "Nothing to review."); XCTAssertNil(clear.returnTitle)
+        XCTAssertEqual(clear.headline, "All clear."); XCTAssertEqual(clear.detail, "Nothing to review."); XCTAssertTrue(clear.passes.isEmpty)
 
-        // A replaced proposal is a new card even though the old one was skipped.
+        // A replaced proposal is new although the old one was skipped.
         let replaced = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "plan", title: "A", waitingSince: 1, proposalRevision: 2)
         let newer = ReviewItem(reviewItemType: "proposal", ticketId: "b", field: "plan", title: "B", waitingSince: 5, proposalRevision: 1)
         let window = [replaced, ticketMessage, chiefMessage, newer]
         XCTAssertEqual(queue.counts(window, unloaded: 0).newCount, 2)
-        // The return offers every card again, new work first and skipped entries last.
-        queue.returnToCards()
-        XCTAssertEqual(queue.history.priority, queue.history.skipped)
+        // The new pass shows only what is not skipped, with the skipped entries last.
+        queue.startPass(.new, cohort: queue.history.skipped)
         reconcile(&queue, window)
         XCTAssertEqual(queue.cards(window, refusals: []).map(\.id), [newer.id, replaced.id, ticketMessage.id, chiefMessage.id])
         XCTAssertEqual(queue.shown?.id, newer.id)
-        XCTAssertEqual(queue.counts(window, unloaded: 0).skippedCount, 0)
+        XCTAssertEqual(window.filter { !queue.hidden($0) }.map(\.id), [replaced.id, newer.id])
+        // The skipped pass holds the cards skipped when it began, and a skip in it moves on.
+        queue.startPass(.skipped, cohort: queue.history.skipped); reconcile(&queue, window)
+        XCTAssertEqual(window.filter { !queue.hidden($0) }.map(\.id), [ticketMessage.id, chiefMessage.id])
+        XCTAssertEqual(queue.shown?.id, ticketMessage.id)
+        let order = queue.history.priority
+        queue.skip(ticketMessage, in: window); reconcile(&queue, window)
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        XCTAssertEqual(queue.history.priority, order, "A skip in a pass leaves the skipped order as the pass began")
     }
 
     /// Risk: a refused decision disappears when its proposal left the window for a reason
@@ -125,7 +153,7 @@ final class ReviewQueueTests: XCTestCase {
     func testRefusalComesBackToTheFrontOnce() {
         var queue = ReviewQueue()
         let gone = ReviewItem(reviewItemType: "proposal", ticketId: "z", field: "plan", title: "Z", waitingSince: 9, proposalRevision: 3)
-        queue.returnToCards(); reconcile(&queue, [chiefMessage, ask])
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
         let refusal = ReviewRefusal(item: gone, note: "Not sent · the reviewer changed.", refusalID: "op-1")
         reconcile(&queue, [chiefMessage, ask], refusals: [refusal])
@@ -156,7 +184,7 @@ final class ReviewQueueTests: XCTestCase {
     /// ask flashing back when its answer settles before the window drops it (fault 6).
     func testHandledCardsStayHiddenUntilSavedWorkOrTheWindowCatchesUp() {
         var queue = ReviewQueue()
-        queue.returnToCards()
+        queue.startPass(.new, cohort: queue.history.skipped)
         let refusal = ReviewRefusal(item: chiefMessage, note: "Refused", refusalID: "read@1")
         queue.reconcile([chiefMessage, ask], refusals: [refusal], moved: { _ in nil }, freshSession: nil)
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
@@ -185,7 +213,9 @@ final class ReviewQueueTests: XCTestCase {
     /// with a new card stays "skipped", or one whose last unskipped card was handled is missed.
     func testSkippedKeysFollowTheCurrentCards() {
         var queue = ReviewQueue()
-        queue.returnToCards(); reconcile(&queue, [proposal, ticketMessage, chiefMessage])
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, [proposal, ticketMessage, chiefMessage])
+        // The session saves the skip; the entry keys come from the saved skips.
+        queue.saved = queue.saved.skipping(proposal, at: 1, whole: false)
         queue.skip(proposal, in: [proposal, ticketMessage, chiefMessage]); reconcile(&queue, [proposal, ticketMessage, chiefMessage])
         XCTAssertTrue(queue.history.skipped.isEmpty)
         // The Ticket's message is read elsewhere: its entry is now fully skipped.
@@ -202,7 +232,7 @@ final class ReviewQueueTests: XCTestCase {
     /// window, and Skip moves on.
     func testReviewerMoveKeepsTheProposalAsANotice() {
         var queue = ReviewQueue()
-        queue.returnToCards(); reconcile(&queue, [proposal, chiefMessage])
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, [proposal, chiefMessage])
         reconcile(&queue, [chiefMessage], moved: [proposal.id: "Chief of Staff"])
         XCTAssertEqual(queue.shown?.id, proposal.id)
         XCTAssertEqual(queue.notice, ReviewNotice(item: proposal, reviewer: "Chief of Staff"))
@@ -214,7 +244,7 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
         // Decided elsewhere: nothing waits, so no notice.
         var decided = ReviewQueue()
-        decided.returnToCards(); reconcile(&decided, [proposal, chiefMessage])
+        decided.startPass(.new, cohort: []); reconcile(&decided, [proposal, chiefMessage])
         reconcile(&decided, [chiefMessage])
         XCTAssertNil(decided.notice)
         XCTAssertEqual(decided.shown?.id, chiefMessage.id)
@@ -290,7 +320,7 @@ final class ReviewQueueTests: XCTestCase {
     func testACardLeavingWhenTheAppGoesAwayFinishesItsExitOnTheReturn() {
         var queue = ReviewQueue()
         let all = [proposal, ticketMessage, chiefMessage]
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         XCTAssertEqual(queue.shown?.id, proposal.id)
         queue.resolve(proposal)
         queue.leaveApp(session: 4)
@@ -307,7 +337,7 @@ final class ReviewQueueTests: XCTestCase {
     func testSummarySelectionAbandonsTheExitAndIgnoresLateCallbacks() {
         var queue = ReviewQueue()
         let all = [proposal, ticketMessage, chiefMessage]
-        queue.returnToCards(); reconcile(&queue, all)
+        queue.startPass(.new, cohort: queue.history.skipped); reconcile(&queue, all)
         queue.skip(proposal, in: all); reconcile(&queue, all)
         queue.resolve(ticketMessage); reconcile(&queue, all)
         let skipped = queue.skipped
@@ -329,16 +359,16 @@ final class ReviewQueueTests: XCTestCase {
 
     /// Risk: the same card opens again before its old exit callback runs. Identity alone
     /// cannot distinguish the new presentation from the abandoned one.
-    @MainActor func testSummarySelectionInvalidatesTheReopenedCardPresentation() {
+    @MainActor func testSummarySelectionInvalidatesTheReopenedCardPresentation() async {
         let store = AppStore(baseURL: URL(string: "http://127.0.0.1:1")!)
         store.review = ReviewResponse(items: [proposal, chiefMessage], runningWorkerCount: 0)
         let session = ReviewSession()
         session.update(store: store, savedWork: ReviewSavedWork(), freshSession: nil)
-        session.returnToCards(store: store)
+        await session.startPass(.new, store: store)
         let oldPresentation = session.exits
         XCTAssertTrue(session.presents(proposal, at: oldPresentation))
         session.showSummary()
-        session.returnToCards(store: store)
+        await session.startPass(.new, store: store)
         XCTAssertEqual(session.shown?.id, proposal.id)
         XCTAssertFalse(session.presents(proposal, at: oldPresentation))
         XCTAssertTrue(session.presents(proposal, at: session.exits))
@@ -350,7 +380,7 @@ final class ReviewQueueTests: XCTestCase {
     /// the card back or end the next card's exit.
     func testASavedReplySeenByTwoSurfacesLeavesOnce() {
         var queue = ReviewQueue()
-        queue.returnToCards()
+        queue.startPass(.new, cohort: queue.history.skipped)
         reconcile(&queue, [ticketMessage, chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, ticketMessage.id)
         // The card saves the reply and starts its exit; the artifact's dock sees the same save.
@@ -374,7 +404,7 @@ final class ReviewQueueTests: XCTestCase {
         let timeless = ReviewItem(reviewItemType: "ask", title: "Manager", waitingSince: ReviewItem.unknownAskTime,
                                   conversationId: "manager", ownerKind: "manager", ownerId: "m")
         var queue = ReviewQueue()
-        queue.returnToCards()
+        queue.startPass(.new, cohort: queue.history.skipped)
         queue.reconcile([timeless], refusals: [], moved: { _ in nil }, freshSession: nil)
         queue.resolve(timeless); queue.finishExit(timeless)
         // The answer is sent; the window still carries an ask under the same identity.

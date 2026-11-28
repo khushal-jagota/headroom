@@ -15,6 +15,10 @@ from urllib.parse import parse_qs, urlparse
 
 import live_socket_stub
 
+# One installation per run: the phone keeps its Review skips per installation, so a run
+# never sees an earlier run's skips.
+INSTALLATION_ID = "fixture-" + str(int(time.time() * 1000))
+
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = os.environ.get("PANELS_PUSH_BUNDLE", "app.panels.ios.pios-notify")
 # The owned lane, by name. Another task names its own booted lane here.
@@ -134,7 +138,7 @@ def main():
                 permit=dict(
                     scope="fixture",
                     runtime_epoch="fixture",
-                    installation_id="fixture",
+                    installation_id=INSTALLATION_ID,
                     generation="1",
                 ),
             ),

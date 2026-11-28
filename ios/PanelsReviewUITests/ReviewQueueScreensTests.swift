@@ -105,11 +105,12 @@ final class ReviewQueueScreensTests: XCTestCase {
         try await proof("review-new-proposal")
         XCTAssertTrue(app.readableText("6 to review.").waitForExistence(timeout: 10))
         XCTAssertEqual(detail.readableContent, "1 new, 5 skipped.")
-        XCTAssertEqual(back.label, "Back to review")
+        XCTAssertEqual(back.label, "Review new")
         try await shot("summary-new-and-skipped")
         back.tap()
 
-        // New work first. Its proposal moves to Chief while on screen: a notice, actions off.
+        // Review new holds only the new work. Its proposal moves to Chief while on screen: a
+        // notice, actions off.
         XCTAssertTrue(app.readableText("Add the summary screen").waitForExistence(timeout: 10))
         try await proof("review-move/offline-new")
         let notice = app.descendants(matching: .any)["review.notice"]
@@ -117,6 +118,10 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertFalse(approve.isEnabled)
         try await shot("card-reviewer-moved")
         skip.tap()
+        // Review skipped brings the skipped cards back.
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        XCTAssertEqual(back.label, "Review skipped")
+        back.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 10))
         skip.tap()
 
@@ -152,6 +157,75 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertEqual(detail.readableContent, "Nothing to review.")
         XCTAssertFalse(back.exists)
         try await shot("summary-all-clear")
+    }
+
+    /// One-off walk over skips at the end of a queue longer than one window. Run with
+    /// PANELS_REVIEW_LONG=1 and PANELS_OFFLINE_TEST=ReviewQueueScreensTests/testSkipsAtTheEndOfALongQueue.
+    /// It skips the 20 oldest of 37 cards, then fifteen older proposals arrive and one skipped
+    /// proposal gains a revision. After a relaunch the skips are saved, five of them sit past
+    /// the first window, and the counts must come from the read of the end of the queue.
+    /// Review skipped then follows the end of the queue.
+    @MainActor func testSkipsAtTheEndOfALongQueue() async throws {
+        guard ProcessInfo.processInfo.environment["PANELS_REVIEW_LONG"] == "1" else {
+            throw XCTSkip("Run with the long Review fixture")
+        }
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        func proof(_ name: String) async throws {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + name)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, name)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        let headline = app.readableText("review.summary.headline")
+        let detail = app.readableText("review.summary.detail")
+        let back = app.buttons["review.return"]
+        let skip = app.buttons["review.skip"]
+        let otherPass = app.buttons["review.otherPass"]
+
+        XCTAssertTrue(headline.waitForExistence(timeout: 15))
+        XCTAssertEqual(headline.readableContent, "37 new.")
+        back.tap()
+        // The Chief's message and the 19 oldest proposals, one at a time.
+        for count in 1...20 {
+            XCTAssertTrue(skip.waitForExistence(timeout: 10))
+            skip.tap()
+            XCTAssertTrue(app.buttons["Review skipped (\(count))"].waitForExistence(timeout: 10), "Skip \(count)")
+        }
+        // The history message: a two-digit count beside Open conversation.
+        XCTAssertTrue(app.readableText("Historical message").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["review.openConversation"].exists)
+        XCTAssertEqual(otherPass.label, "Review skipped (20)")
+        XCTAssertTrue(otherPass.isHittable && app.buttons["review.openConversation"].isHittable)
+        capture("long-top-bar-two-digit-count")
+
+        try await proof("review-long-older")
+        try await proof("review-long-change/offline-19")
+        app.terminate(); app.launch()
+        // Saved skips: 19 still apply, five of them past the first window; the changed one is new.
+        XCTAssertTrue(headline.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.readableText("33 new, 19 skipped.").waitForExistence(timeout: 15), "Counts after the read of the end")
+        XCTAssertEqual(headline.readableContent, "52 to review.")
+        XCTAssertEqual(back.label, "Review new")
+        capture("long-summary-after-relaunch")
+
+        app.buttons["review.returnSkipped"].tap()
+        XCTAssertTrue(app.readableText("First unread message").waitForExistence(timeout: 15), "The oldest skipped card, from the end of the queue")
+        XCTAssertEqual(otherPass.label, "Review new")
+        capture("long-skipped-pass")
+        skip.tap()
+        XCTAssertTrue(app.readableText("Approve offline").waitForExistence(timeout: 10))
+        otherPass.tap()
+        XCTAssertTrue(app.readableText("Older 1").waitForExistence(timeout: 15), "Review new starts at the oldest new card")
+        XCTAssertEqual(otherPass.label, "Review skipped (19)")
+        capture("long-new-pass")
     }
 
     /// The card kinds on a bad connection. Each card is read once online, then the stub
@@ -240,6 +314,8 @@ final class ReviewQueueScreensTests: XCTestCase {
 
         // A refused decision that lands online stays on its card when the connection drops.
         try await proof("online")
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        app.openReviewCards()
         XCTAssertTrue(message.waitForExistence(timeout: 10)); skip.tap()
         XCTAssertTrue(proposal.waitForExistence(timeout: 10))
         try await proof("review-refuse-decisions")

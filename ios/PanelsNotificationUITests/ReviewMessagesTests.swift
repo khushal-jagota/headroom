@@ -4,7 +4,8 @@ import XCTest
 final class ReviewMessagesTests: XCTestCase {
     /// Act on a Review item and return to skipped work. One Ticket holds a proposal and an
     /// unread message: each is its own card, Skip is per card, an artifact opened from a
-    /// card docks the card's reply and returns to it, and the summary brings skipped cards back.
+    /// card docks the card's reply and returns to it. Review new leaves skipped cards out, and
+    /// Review skipped, on the summary or in a card's top bar, brings them back.
     @MainActor func testSplitCardsSkipAndReturn() async throws {
         guard ProcessInfo.processInfo.environment["PANELS_REVIEW_SPLIT"] == "1" else {
             throw XCTSkip("Run alone with the split fixture")
@@ -22,7 +23,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(summary.waitForExistence(timeout: 12))
         XCTAssertEqual(summary.readableContent, "3 new.")
         let back = app.buttons["review.return"]
-        XCTAssertEqual(back.label, "Back to review")
+        XCTAssertEqual(back.label, "Review new")
         back.tap()
         // The proposal is its own card, with Skip, Return and Approve in one row.
         let approve = app.buttons["review.approve"]
@@ -66,7 +67,23 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "An inert Review tap must end editing")
         let skip = app.buttons["review.skip"]
         skip.tap()
-        // The Ticket's message card, with its reply composer and Mark read.
+        // The Ticket's message card, with its reply composer and Mark read. Its top bar
+        // offers the skipped pass with its count.
+        XCTAssertTrue(message.waitForExistence(timeout: 12))
+        XCTAssertFalse(approve.exists)
+        let otherPass = app.buttons["review.otherPass"]
+        XCTAssertTrue(otherPass.waitForExistence(timeout: 5))
+        XCTAssertEqual(otherPass.label, "Review skipped (1)")
+        capture(app, "review-top-bar-skipped-pass")
+        // The summary offers both passes. Review new leaves the skipped proposal out.
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertEqual(summary.readableContent, "3 to review.")
+        XCTAssertEqual(app.readableText("review.summary.detail").readableContent, "2 new, 1 skipped.")
+        XCTAssertEqual(back.label, "Review new")
+        XCTAssertEqual(app.buttons["review.returnSkipped"].label, "Review skipped")
+        capture(app, "review-summary-both-passes")
+        back.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 12))
         XCTAssertFalse(approve.exists)
         let reply = app.textFields["conversation-input"].firstMatch
@@ -92,14 +109,18 @@ final class ReviewMessagesTests: XCTestCase {
         let historical = app.readableText("Historical message")
         XCTAssertTrue(historical.waitForExistence(timeout: 8))
         skip.tap()
-        // Every card skipped: the summary offers them again.
+        // Every card skipped: the summary offers the skipped pass.
         XCTAssertTrue(summary.waitForExistence(timeout: 8))
         XCTAssertEqual(summary.readableContent, "3 skipped.")
         XCTAssertEqual(app.readableText("review.summary.detail").readableContent, "Nothing new.")
         XCTAssertEqual(back.label, "Review skipped")
+        XCTAssertFalse(app.buttons["review.returnSkipped"].exists)
+        capture(app, "review-summary-skipped-only")
         back.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         XCTAssertEqual(note.value as? String, "Keep this decision note")
+        XCTAssertFalse(otherPass.exists, "Nothing new: the skipped pass offers no other pass")
+        capture(app, "review-skipped-pass")
         approve.tap()
         // The fixture advances to Done, so Approve resolves in one tap; the next card follows.
         XCTAssertTrue(message.waitForExistence(timeout: 8))

@@ -72,6 +72,8 @@ import SwiftUI
     private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
     private var demands: [String: [ViewWindowRequest]] = [:]
     private var reviewHistory = ReviewHistory()
+    /// Review's window when it reads from the end of the queue; nil reads from the top.
+    private var reviewWindow: ViewWindowRequest?
     /// Detail screens that named a selected owner, most recent last.
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
@@ -138,6 +140,7 @@ import SwiftUI
         errors = [:]
         // Review's history names one server's Tickets and conversations.
         reviewHistory = ReviewHistory()
+        reviewWindow = nil
         updateScope(opening: false)
         restore()
     }
@@ -161,7 +164,7 @@ import SwiftUI
                   let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: record.payload),
                   snapshot.wireVersion == NavigationViewVersion.wire,
                   snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
-            admit(snapshot.savedDisplay, persist: false)
+            admit(snapshot.savedDisplay, persist: false, request: nil)
             viewFreshAt = record.updated
         }
     }
@@ -231,6 +234,30 @@ import SwiftUI
         updateScope(opening: reordered)
     }
 
+    /// Review's window: from the end of the queue for the skipped pass, nil for the top.
+    /// The window changes what the view holds, so it opens a stream.
+    func setReviewWindow(_ window: ViewWindowRequest?) {
+        guard window != reviewWindow else { return }
+        reviewWindow = window
+        updateScope(opening: true)
+    }
+
+    /// One read of the end of Review's queue, apart from the followed view: its cards check the
+    /// phone's skips and never reach the screen or the saved view. `cohort` goes last, so the
+    /// end holds exactly those entries. Nil when the answer is not a read from the end.
+    func readReviewTail(limit: Int, cohort: [RecordKey], skipped: [RecordKey]) async throws -> [ReviewItem]? {
+        var request = viewRequest
+        request.windows = [NavigationScope.reviewTail(limit)]
+        request.selected = nil
+        request.selectedConversationId = nil
+        request.reviewPriorityKeys = cohort
+        request.reviewSkippedKeys = skipped
+        let api = client
+        let (snapshot, _) = try await api.navigationViewSnapshot(request)
+        guard api.baseURL == baseURL, snapshot.window("review")?.request.direction == "before" else { return nil }
+        return NavigationPresentation(snapshot.content.records).reviewQueue(in: snapshot).items
+    }
+
     /// A detail screen names the one record it keys its reloads on, so the view carries
     /// it wherever the screen was opened from. The most recent screen's owner wins. When
     /// the current stream already carries that record and those windows, as for a Ticket
@@ -256,7 +283,7 @@ import SwiftUI
 
     private func updateScope(opening: Bool) {
         let next = NavigationScope.request(demands: demands, selected: selections.last?.owner,
-            reviewHistory: reviewHistory, previous: viewRequest)
+            reviewHistory: reviewHistory, reviewWindow: reviewWindow, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
         guard running, opening else { return }
@@ -302,7 +329,10 @@ import SwiftUI
         activeStream = nil; pendingStream = nil
     }
 
-    private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
+    /// `request` is the request the server answered; nil for the copy saved on the phone.
+    private func admit(_ snapshot: ViewSnapshot, persist: Bool = true, request: ViewRequest?) {
+        var snapshot = snapshot
+        if let request { snapshot.sentReviewSkippedKeys = request.reviewSkippedKeys }
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
             self.managers = managers; self.tickets = tickets; workspaceLoaded = true; workspaceView = snapshot
@@ -312,6 +342,7 @@ import SwiftUI
         if let settled = presentation.workspaceSettledManagers(in: snapshot) { workspaceSettled = settled }
         chiefSignal = presentation.chief?.signal.conversationSignal
         review = presentation.reviewQueue(in: snapshot)
+        review?.sentSkippedKeys = snapshot.sentReviewSkippedKeys
         counts = snapshot.content.counts
         let stamps = Dictionary(snapshot.content.records.compactMap { record in record.stamp.map { (record.key, $0) } }, uniquingKeysWith: { _, latest in latest })
         if stamps != recordStamps { recordStamps = stamps }
@@ -481,14 +512,14 @@ import SwiftUI
                 }
                 guard activeStream?.id == stream else { continue }
                 if case .snapshot = frame {
-                    admit(next)
+                    admit(next, request: request)
                     admitted = true
                     lastSnapshotStream = max(lastSnapshotStream, stream)
                     if connection == "Reconnecting" { connectionSession += 1 }
                     connection = "Following changes"
                     errors["Navigation"] = nil
                     Task { await Outbox.shared.drain(api: api) }
-                } else { admit(next) }
+                } else { admit(next, request: request) }
                 // A page that waited for the next stream was carried by another screen's
                 // window. Once its record leaves this stream, open one with it selected.
                 if let owner = selections.last?.owner, request.selected != owner,
@@ -587,7 +618,7 @@ import SwiftUI
             let (snapshot, _) = try await api.navigationViewSnapshot(request)
             guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
             guard snapshot.scopeGeneration == request.scopeGeneration else { throw APIError(status: 0, message: "The navigation view answered another scope.") }
-            admit(snapshot)
+            admit(snapshot, request: request)
             errors["Navigation"] = nil
         } catch {
             guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }

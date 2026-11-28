@@ -309,11 +309,18 @@ struct ViewReviewConversationContext: Codable, Equatable, Sendable {
     let canonicalAddressId: String?
 }
 
+/// The server's count of Review's entries, from the skipped keys the request sent.
+struct ViewReviewSummary: Codable, Equatable, Sendable {
+    let skipped: Int
+    let new: Int
+}
+
 struct ViewContent: Codable, Sendable {
     var records: [ViewRecord]
     var windows: [ViewWindow]
     var counts: ViewCounts
     var reviewContext: [ViewReviewConversationContext]
+    var reviewSummary: ViewReviewSummary? = nil
 }
 
 /// One coherent bounded view: records, window membership and global counts.
@@ -328,6 +335,9 @@ struct ViewSnapshot: Codable, Sendable {
     let mode: String
     let authority: ViewAuthority
     var content: ViewContent
+    /// The skipped keys of the request the server answered, kept with a saved copy: its
+    /// `review_summary` was counted against them. Nil from the server itself.
+    var sentReviewSkippedKeys: [RecordKey]? = nil
 
     func window(_ section: String, owner: ViewOwner? = nil) -> ViewWindow? {
         content.windows.first { $0.request.section == section && $0.request.owner == owner && $0.request.group == "all" && $0.request.childFilter == "all" }
@@ -348,7 +358,8 @@ extension ViewSnapshot {
         }
         return ViewSnapshot(wireVersion: wireVersion, projectionVersion: projectionVersion, viewId: viewId,
             scopeGeneration: scopeGeneration, orderingGeneration: orderingGeneration, coverage: coverage,
-            contentVersion: contentVersion, mode: "saved", authority: authority, content: snapshot.content)
+            contentVersion: contentVersion, mode: "saved", authority: authority, content: snapshot.content,
+            sentReviewSkippedKeys: sentReviewSkippedKeys)
     }
 
 }
@@ -367,6 +378,7 @@ struct ViewPatch: Codable, Sendable {
     let windows: [ViewWindow]
     let counts: ViewCounts
     let reviewContext: [ViewReviewConversationContext]
+    let reviewSummary: ViewReviewSummary?
 }
 
 struct ViewCheckpoint: Codable, Sendable {

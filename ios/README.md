@@ -46,7 +46,8 @@ the web does. The current one keeps the view live until the new snapshot lands,
 and then it ends, so two are open only during that wait. A demand the
 running subscription already carries, as for a Ticket opened from Review, waits for the
 next one. Leaving a screen only narrows the next subscription. Review's skipped
-entries ride the next one; its return order opens one at once. One coherent view replaces the
+entries ride the next one; its skipped order and the switch of its window to the end of
+the queue open one at once. One coherent view replaces the
 earlier Review, manager and ticket list reads; the phone no longer reads
 `/api/review`. A launch shows the last saved view at once, if it is less than seven
 days old. A pull on Review opens a fresh subscription the same way, and the

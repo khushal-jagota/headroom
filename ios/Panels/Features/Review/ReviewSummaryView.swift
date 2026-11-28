@@ -1,13 +1,15 @@
 import SwiftUI
 
 /// The summary screen: what waits, in two tones at one upper-centre baseline, the quiet
-/// return button, and Message Chief anchored below. The app opens on it.
+/// pass buttons, and Message Chief anchored below. The app opens on it.
 struct ReviewSummaryView: View {
     let summary: ReviewSummary
     /// Agents working right now; the line is left out at zero, with no layout shift.
     let workingCount: Int
     let isActive: Bool
-    let onReturn: () -> Void
+    /// A pass is starting: its buttons wait.
+    var starting = false
+    let onPass: (ReviewPass) -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.screenTextEntry) private var textEntry
 
@@ -21,11 +23,16 @@ struct ReviewSummaryView: View {
                     Text(summary.detail).textSelection(.enabled).panelsScaledFont(size: 31, relativeTo: .largeTitle, weight: .semibold)
                         .foregroundStyle(PanelsTheme.Web.heroMuted).padding(.top, 2)
                         .accessibilityIdentifier("review.summary.detail")
-                    if let title = summary.returnTitle {
-                        Button(title) { textEntry?.endEditing(); onReturn() }
-                            .buttonStyle(ReviewQuietButtonStyle())
-                            .padding(.top, 24)
-                            .accessibilityIdentifier("review.return")
+                    if !summary.passes.isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(summary.passes, id: \.self) { pass in
+                                Button(pass == .new ? ReviewSummary.newPassTitle : ReviewSummary.skippedPassTitle) { textEntry?.endEditing(); onPass(pass) }
+                                    .buttonStyle(ReviewQuietButtonStyle())
+                                    .disabled(starting)
+                                    .accessibilityIdentifier(Self.identifier(pass, in: summary))
+                            }
+                        }
+                        .padding(.top, 24)
                     }
                 }
                 .tracking(-0.9).monospacedDigit()
@@ -56,7 +63,15 @@ struct ReviewSummaryView: View {
     }
 }
 
-/// The summary's return button: the quiet matte charcoal of Skip and Return, never the accent.
+extension ReviewSummaryView {
+    /// The first button is `review.return`, whichever pass it starts; the skipped pass beside
+    /// "Review new" is `review.returnSkipped`.
+    static func identifier(_ pass: ReviewPass, in summary: ReviewSummary) -> String {
+        pass == summary.passes.first ? "review.return" : "review.returnSkipped"
+    }
+}
+
+/// The summary's pass buttons: the quiet matte charcoal of Skip and Return, never the accent.
 struct ReviewQuietButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

@@ -22,6 +22,10 @@ from urllib.parse import parse_qs, urlparse
 
 import live_socket_stub
 
+# One installation per run: the phone keeps its Review skips per installation, so a run
+# never sees an earlier run's skips.
+INSTALLATION_ID = "fixture-" + str(int(time.time() * 1000))
+
 ROOT = Path(__file__).resolve().parents[2]
 DEVICE = os.environ.get("PANELS_CONVERSATION_DEVICE", "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6")
 LANE = os.environ.get("PANELS_CONVERSATION_LANE", "PanelsLaneA")
@@ -431,7 +435,7 @@ def main() -> int:
                 "delivery_session_id": "fixture",
                 "availability": {"state": "current", "generation": "1", "reason": None},
                 "permit": {"scope": "fixture", "runtime_epoch": "fixture",
-                    "installation_id": "fixture", "generation": "1"},
+                    "installation_id": INSTALLATION_ID, "generation": "1"},
             }, "content": content,
         }
 
