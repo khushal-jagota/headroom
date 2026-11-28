@@ -232,6 +232,46 @@ final class ReviewSkipsTests: XCTestCase {
         XCTAssertEqual(session.shown?.id, chief.id)
     }
 
+    /// Risk: the window a pass asked for never arrives, as offline, and the pass waits forever.
+    /// After the wait of a read it picks from what it has.
+    @MainActor func testAPassStopsWaitingForItsWindowAfterTheWait() async throws {
+        let saved = Saved(), reads = Reads()
+        reads.answer = nil
+        saved.lists["install"] = ReviewSkipList().skipping(proposal, at: 1, whole: true)
+        let chief = message("chief", owner: "x", since: 3, latest: 1)
+        let session = session(saved, reads, wait: .milliseconds(50)), app = store([proposal, chief], unloaded: 38, total: 40, whole: false)
+        session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
+        await session.startPass(.skipped, store: app)
+        XCTAssertTrue(session.holding)
+        XCTAssertNil(session.shown)
+        for _ in 0..<100 where session.holding { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(session.holding)
+        XCTAssertEqual(session.shown?.id, proposal.id, "The skipped card the top window holds")
+    }
+
+    /// Risk: a Sidebar Review selection made while a pass start reads the end of the queue is
+    /// undone when the read ends, and the cards open over the summary.
+    @MainActor func testASummarySelectionDuringThePassReadKeepsTheSummary() async throws {
+        let saved = Saved(), reads = Reads()
+        reads.hang = true
+        saved.lists["install"] = ReviewSkipList().skipping(proposal, at: 1, whole: true)
+        let chief = message("chief", owner: "x", since: 3, latest: 1)
+        let session = session(saved, reads, wait: .milliseconds(200)), app = store([proposal, chief], unloaded: 38, total: 40, whole: false)
+        session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
+        await settle()
+        let order = session.queue.history.priority
+        let start = Task { await session.startPass(.new, store: app) }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(session.startingPass)
+        session.showSummary()
+        await start.value
+        XCTAssertNil(session.shown)
+        XCTAssertTrue(session.queue.summary)
+        XCTAssertFalse(session.holding)
+        XCTAssertEqual(session.queue.history.priority, order)
+        XCTAssertEqual(app.viewRequest.windows.first, NavigationScope.baseWindows[0])
+    }
+
     /// Risk: a skip of a card that left the queue is kept forever, or one that is still
     /// there is dropped. Only a read of the whole queue from the top in this run, where the
     /// server counted fewer skips than it was sent, drops it.

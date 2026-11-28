@@ -45,13 +45,16 @@ REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
 # Review's other card kinds beside the message fixture: a worker question, a permission
 # ask, a refused decision and a reviewer move, for the one-off Review screen walk.
 REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
+# A queue longer than one Review window of 30, for the walk over skips that sit at its end:
+# 35 Tickets beside the message fixture, the history message later than 19 of them.
+REVIEW_LONG = os.environ.get("PANELS_REVIEW_LONG") == "1"
 # The docks under an opened artifact, and the one Markdown display, for the one-off walk:
 # a proposal and a message that link artifacts, and a long conversation with block Markdown.
 ARTIFACT_DOCK_SMOKE = os.environ.get("PANELS_ARTIFACT_DOCK_SMOKE") == "1"
 FADE_REVIEW = os.environ.get("PANELS_FADE_REVIEW") == "1"
 REVIEW_MESSAGES = (
     os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
-    or ARTIFACT_DOCK_SMOKE
+    or ARTIFACT_DOCK_SMOKE or REVIEW_LONG
 )
 DOCK_MARKDOWN = (
     "## Evidence table\n\n"
@@ -89,11 +92,12 @@ def main() -> int:
     if MACHINE_NAMES_SMOKE:
         base_ticket.update(locale="macos", machine_id="mac-names-proof")
     tickets = {}
-    for index in range(1, 4):
+    for index in range(1, 36 if REVIEW_LONG else 4):
         ticket = copy.deepcopy(base_ticket)
         ticket.update(
             id=f"offline-{index}",
-            title=["Approve offline", "Send back offline", "Record offline"][index - 1],
+            title=(["Approve offline", "Send back offline", "Record offline"][index - 1]
+                   if index <= 3 else f"Long queue {index}"),
             recap="Offline recovery proof",
             conversation_id="stub",
             field_values={},
@@ -897,7 +901,7 @@ def main() -> int:
                     "chief",
                     "history",
                     False,
-                    None if state["historical_read"] else 5,
+                    None if state["historical_read"] else 20 if REVIEW_LONG else 5,
                 ),
             ]
             conversations = [
@@ -985,9 +989,30 @@ def main() -> int:
             cards,
             key=lambda key: (cards[key], "message" if key[0] == "address" else "ticket", key[1]),
         )
+
+        def history_members(keys: list[dict[str, str]]) -> set[tuple[str, str]]:
+            # As the server keys Review history: a Ticket, or a conversation's address.
+            found = set()
+            for key in keys:
+                if key["kind"] == "ticket":
+                    found.add(("ticket", key["id"]))
+                    continue
+                for record in records.values():
+                    if record["kind"] == "address" and record["value"]["conversation_id"] == key["id"]:
+                        found.add(("address", record["id"]))
+            return found & set(order)
+
+        # The server puts the skipped entries the phone names last, and counts the skipped ones.
+        last = history_members(request.get("review_priority_keys") or [])
+        order = [key for key in order if key not in last] + [key for key in order if key in last]
+        review_skipped = len(history_members(request.get("review_skipped_keys") or []))
         windows = []
         for window in request["windows"]:
-            members = order[: window["limit"]] if window["section"] == "review" else []
+            members = []
+            if window["section"] == "review":
+                # A window from the end holds the last rows, in queue order.
+                members = (order[-window["limit"]:] if window["limit"] else []) \
+                    if window.get("direction") == "before" else order[: window["limit"]]
             if (
                 DESIGN_REVIEW and window["section"] == "rail_tickets"
                 and window["owner"]["kind"] == "chief"
@@ -1080,7 +1105,7 @@ def main() -> int:
                 else 0,
             },
             "review_context": review_context,
-            "review_summary": {"skipped": 0, "new": len(order)},
+            "review_summary": {"skipped": review_skipped, "new": len(order) - review_skipped},
         }
         version = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
         return {
@@ -1487,6 +1512,21 @@ def main() -> int:
                     with lock:
                         ticket = tickets[name.split("/", 1)[1]]
                         ticket["ceiling_holder"] = {"kind": "chief", "id": "chief"}
+                        ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                elif REVIEW_LONG and name == "review-long-older":
+                    # Fifteen proposals older than every card arrive, so the skipped cards no
+                    # longer fit the first window from the top.
+                    with lock:
+                        for index in range(1, 16):
+                            older = copy.deepcopy(tickets["offline-4"])
+                            older.update(id=f"older-{index}", title=f"Older {index}")
+                            older["pending_proposal"].update(created_at=index / 100, revision=1)
+                            tickets[older["id"]] = older
+                elif REVIEW_LONG and name.startswith("review-long-change/"):
+                    # A newer revision of a skipped proposal: it is new again.
+                    with lock:
+                        ticket = tickets[name.split("/", 1)[1]]
+                        ticket["pending_proposal"]["revision"] += 1
                         ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
                 elif REVIEW_QUEUE and name == "review-refuse-decisions":
                     state["refuse_decisions"] = True
@@ -2351,6 +2391,7 @@ def main() -> int:
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
     env["TEST_RUNNER_PANELS_REVIEW_SPLIT"] = os.environ.get("PANELS_REVIEW_SPLIT", "0")
     env["TEST_RUNNER_PANELS_REVIEW_QUEUE"] = "1" if REVIEW_QUEUE else "0"
+    env["TEST_RUNNER_PANELS_REVIEW_LONG"] = "1" if REVIEW_LONG else "0"
     control = None
     # The update review drops the listener during an expected restart, as the reachability
     # review does, so PANELS_UPDATES_SMOKE=1 starts the same connection control.
