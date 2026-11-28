@@ -21,7 +21,9 @@
   import { reviewMessageHref, unreadOwnerMessages } from "../lib/review/messages";
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
-  import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,type ReviewSummaryState} from "../lib/review/return";
+  import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,NEW_RETURN_LABEL,SKIPPED_RETURN_LABEL,type ReviewSummaryState} from "../lib/review/return";
+  import {isSkipped,loadSkips,pruneSkips,saveSkips,skipHistoryKeys,skipKey,withSkip,type SkipList} from "../lib/review/skips";
+  import {REVIEW_PASS_CONTEXT,type ReviewPassAction} from "../lib/review/pass";
   import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey,ReviewSummary} from "../lib/navigation/contracts";
 
@@ -47,9 +49,30 @@
     finalLatched=true;
   }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
+  // Cards skipped on this visit. They stay hidden until the visit ends, even if the card changes.
   let skipped = $state<Record<string, boolean>>({});
-  let skippedHistory=$state<ReviewHistoryKey[]>([]);
-  let returnCohort=$state<ReviewHistoryKey[]>([]);
+  // Cards this device skipped on any visit. Review shows the new cards, and "Review skipped"
+  // shows these. A skip ends when its card changes. The server never hears of it.
+  const savedSkips=loadSkips();
+  let skips=$state<SkipList>(savedSkips);
+  let skippedHistory=$derived(skipHistoryKeys(skips));
+  // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
+  let returnCohort=$state<ReviewHistoryKey[]>(skipHistoryKeys(savedSkips));
+  // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
+  let pass=$state<'new'|'skipped'>('new');
+  let passKeys=$state<ReadonlySet<string>>(new Set());
+  $effect(()=>saveSkips(skips));
+  // A skip ends when the card changes. When the whole queue is in view, it also ends when the card has left.
+  $effect(()=>{
+    const items=review?.items;
+    if(!items || !displayed?.runtimeCurrent)return;
+    const list=skips;
+    const publication=displayed.publication.view;
+    const whole=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation
+      && queueWindow && queueWindow.request.anchor===null && !queueWindow.next && publication.reviewSummary.skipped<Object.keys(list).length);
+    const next=pruneSkips(list,items,whole);
+    if(next!==list)skips=next;
+  });
   // The note and edited text of the proposal on screen. The card and the bar under its
   // artifact are one decision, so they read and write the same draft.
   let proposalDraft=$state<{identity:string;text:string;editedBody?:string}|null>(null);
@@ -66,6 +89,16 @@
   // card mounted by another screen at the same time can never be the one a Review
   // keystroke reaches.
   let screenElement = $state<HTMLElement | null>(null);
+  // The other pass, offered in each card's top band. The count is the last known one, so it does not blink while a skip reaches the server.
+  let lastSummary = $state.raw<ReviewSummary | null>(null);
+  $effect(() => { if (finalSummaryState.kind==='known') lastSummary = finalSummaryState.summary; });
+  const passAction = $derived.by((): ReviewPassAction | null => {
+    const summary = lastSummary;
+    if (!summary) return null;
+    if (pass==='new') return summary.skipped>0 ? {label:`${SKIPPED_RETURN_LABEL} (${summary.skipped})`,run:()=>void startPass('skipped'),disabled:returning||messageBusy} : null;
+    return summary.new>0 ? {label:NEW_RETURN_LABEL,run:()=>void startPass('new'),disabled:returning||messageBusy} : null;
+  });
+  setContext(REVIEW_PASS_CONTEXT, { action: () => passAction });
   // The deck: the one thing on screen moves out and the next moves in. See lib/review/deckMotion.
   const deck = new Deck();
   setContext(DECK_CONTEXT, deck);
@@ -79,6 +112,15 @@
 
   function itemKey(item: ReviewItem): string {
     return item.review_item_type === 'ticket' ? `ticket:${item.ticket_id}` : item.review_item_type === 'ask' ? `ask:${askKey(item)}` : `message:${item.conversation_id}`;
+  }
+  /** The card as the queue holds it. A skip remembers this, not a card shown with part of it already answered. */
+  function queueItem(item: ReviewItem): ReviewItem {
+    return (review?.items ?? []).find(candidate=>itemKey(candidate)===itemKey(item)) ?? item;
+  }
+  /** Not part of this pass: skipped on this visit, or, in the new pass, skipped before; in the skipped pass, not skipped when the pass began. */
+  function hidden(item: ReviewItem): boolean {
+    if(skipped[itemKey(item)])return true;
+    return pass==='skipped' ? !passKeys.has(skipKey(reviewHistoryKey(item))) : isSkipped(skips,queueItem(item));
   }
   /** One ask, not its conversation: a second ask in the same turn is a new card, not the answered one. */
   function askKey(ask: ReviewAskItem): string { return `${ask.conversation_id}:${ask.waiting_since}`; }
@@ -133,7 +175,7 @@
   let pinnedKey=$state<string|null>(null);
   function advancePast(item:ReviewItem):void {
     const key=itemKey(item);
-    const next=items.find(candidate=>itemKey(candidate)!==key && !skipped[itemKey(candidate)]);
+    const next=items.find(candidate=>itemKey(candidate)!==key && !hidden(candidate));
     pinnedKey=next ? itemKey(next) : null;
   }
   function messageEligible(message:import('../lib/types').ReviewMessageItem):boolean {
@@ -172,7 +214,7 @@
         }
       }
     }
-    const waiting=items.filter(item=>!skipped[itemKey(item)]);
+    const waiting=items.filter(item=>!hidden(item));
     return shownReviewItem(waiting,pinnedKey,itemKey).item;
   });
   let messageBusy = $derived(conversationsOf(currentItem).some(id=>busyConversations[id]));
@@ -200,15 +242,18 @@
   });
 
   $effect(()=>{
-    if(reviewReady && !showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
+    if(reviewReady && !showFinal && queueWindow?.next && items.length && items.every(hidden)) {
       reviewAnchor=queueWindow.next;
     }
   });
 
-  async function backToReview(): Promise<void> {
+  /** Start a pass over the new cards or over the skipped ones. The skipped cards go last in the queue either way. */
+  async function startPass(next: 'new' | 'skipped'): Promise<void> {
     if (returning) return;
     returning = true;
     returnError = null;
+    pass = next;
+    passKeys = new Set(Object.keys(skips));
     returnCohort = [...skippedHistory];
     reviewAnchor = null;
     skipped = {};
@@ -224,7 +269,7 @@
       const request=navigation.owner.getRequest();
       if (displayed?.runtimeCurrent && displayed.publication.view?.scopeGeneration===request.scope_generation
         && sameReviewHistory(request.review_priority_keys,returnCohort) && sameReviewHistory(request.review_skipped_keys,skippedHistory)
-        && queueWindow?.request.anchor === null && currentItem) finalLatched = false;
+        && queueWindow?.request.anchor === null && (currentItem || next==='skipped')) finalLatched = false;
     } catch (error) {
       returnError = error;
     } finally {
@@ -237,8 +282,7 @@
     // A skip made under the artifact finishes the item: the artifact goes with it.
     if (heldFile) { deck.layerExit='left'; artifact.close(); }
     advancePast(item);
-    const key=reviewHistoryKey(item);
-    if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
+    skips=withSkip(skips,queueItem(item));
     skipped = { ...skipped, [itemKey(item)]: true };
     heldCard=null;
   }
@@ -489,7 +533,7 @@
         <ReviewDeck {deck} view={viewKey} final={showFinal} bind:element={deckItemElement}>
           {#key coverEpoch}
           {#if showFinal}
-            <ReviewFinalState summary={finalSummary} pending={finalSummaryState.kind==='pending'} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
+            <ReviewFinalState summary={finalSummary} pending={finalSummaryState.kind==='pending'} {runningWorkerCount} {returning} {returnError} onReturn={next => void startPass(next)} />
           {:else if currentItem}
             {#if currentItem.review_item_type === "message"}
               {@const message = currentItem}

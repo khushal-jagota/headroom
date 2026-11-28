@@ -183,7 +183,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
     const message:import('../types').ReviewMessageItem={review_item_type:'message',conversation_id:address.conversation_id,address_id:record.id,
       owner_kind:address.owner_kind,owner_id:address.owner_id,title:'title' in owner ? owner.title : owner.label,
-      waiting_since:conversation.first_unread_owner_message_at,recap:'recap' in owner ? owner.recap : '',
+      waiting_since:conversation.first_unread_owner_message_at,latest_sequence:conversation.latest_owner_message_sequence ?? null,recap:'recap' in owner ? owner.recap : '',
       recap_reference:'recap_reference' in owner ? owner.recap_reference as ViewContentReference|null : null};
     if(address.owner_kind==='ticket') {
       let card=reviewTickets.get(address.owner_id);

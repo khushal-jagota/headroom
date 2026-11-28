@@ -3,7 +3,7 @@
   import ErrorLine from './ErrorLine.svelte';
   import Button from './Button.svelte';
   import WindowPageRow from './desktopWindow/WindowPageRow.svelte';
-  import { reviewFinalStatus, SKIPPED_RETURN_LABEL } from '../lib/review/return';
+  import { reviewFinalStatus, NEW_RETURN_LABEL, SKIPPED_RETURN_LABEL } from '../lib/review/return';
   import type { ReviewSummary } from '../lib/navigation/contracts';
   import { workspaceAddress } from '../lib/workspaceAddress';
 
@@ -14,13 +14,12 @@
     runningWorkerCount: number | null;
     returning?: boolean;
     returnError?: unknown;
-    onReturn: () => void;
+    onReturn: (pass: 'new' | 'skipped') => void;
   } = $props();
   let messageBusy = $state(false);
   const blank = $derived(pending && !summary);
   const status = $derived(blank ? ['\u00a0','\u00a0'] as const : reviewFinalStatus(summary));
   const count = $derived(summary ? summary.new + summary.skipped : null);
-  const returnLabel = $derived(summary?.new ? 'Back to review' : SKIPPED_RETURN_LABEL);
 </script>
 
 <WindowPageRow>
@@ -36,7 +35,8 @@
       <h2 data-review-final-status role="status"><span class="lead">{status[0]}</span> <span class="detail">{status[1]}</span></h2>
       {#if count !== null && count > 0}
         <div class="review-final-return">
-          <Button variant="secondary" class="review-final-return-button" data-review-return disabled={returning || messageBusy} onclick={onReturn}>{returnLabel}</Button>
+          {#if summary?.new}<Button variant="secondary" class="review-final-return-button" data-review-return="new" disabled={returning || messageBusy} onclick={() => onReturn('new')}>{NEW_RETURN_LABEL}</Button>{/if}
+          {#if summary?.skipped}<Button variant="secondary" class="review-final-return-button" data-review-return="skipped" disabled={returning || messageBusy} onclick={() => onReturn('skipped')}>{SKIPPED_RETURN_LABEL}</Button>{/if}
         </div>
       {/if}
       {#if returnError}<div class="review-final-error"><ErrorLine error={returnError} /></div>{/if}
@@ -63,7 +63,7 @@
   h2 span { display:block; }
   .lead { color:var(--tone-strong); font-weight:700; }
   .detail { color:var(--tone-tertiary); font-weight:600; }
-  .review-final-return { margin-top:var(--space-5); }
+  .review-final-return { margin-top:var(--space-5); display:flex; flex-wrap:wrap; gap:var(--space-3); }
   .review-final-return :global(.review-final-return-button) { height:var(--button-main-height); padding-inline:calc(var(--space-3) * 1.5); }
   .review-final-error { margin-top:var(--space-3); }
   .review-final-dock { flex:none; padding-bottom:var(--space-5); }
