@@ -46,7 +46,8 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         case .done: "Done"
         }
     }
-    var initiallyExpanded: Bool { self != .backlogged && self != .done }
+    // Only the groups that wait on the owner start open; the reader's choice then holds for the visit.
+    var initiallyExpanded: Bool { self == .approval || self == .answer || self == .yours }
 
     static func classify(_ ticket: some GroupedWorker) -> Self {
         if ticket.integrityError != nil { return .errored }
