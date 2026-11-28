@@ -41,6 +41,12 @@ class ScriptFailure extends Error {
     this.detail = detail;
   }
 }
+type CredentialRef = string | { scheme: string; name: string };
+function credential(credential_ref: CredentialRef): Promise<Record<string, unknown>> {
+  const reference =
+    typeof credential_ref === 'string' ? { scheme: 'local', name: credential_ref } : credential_ref;
+  return call('credential', { reference }) as Promise<Record<string, unknown>>;
+}
 function call(op: string, values: Record<string, unknown>): Promise<unknown> {
   const id = ++sequence;
   return new Promise((resolve, reject) => {
@@ -72,6 +78,12 @@ async function execute(config: Record<string, unknown>): Promise<void> {
   const helpers = {
     context: freeze(config.context),
     latest: (measure_id: string) => call('latest', { measure_id }),
+    /** The named values of a fields credential, for a script that signs its own token. */
+    async credential_fields(credential_ref: CredentialRef) {
+      const secret = await credential(credential_ref);
+      if (secret.kind !== 'fields') throw new ScriptFailure(failure('credential_unavailable'));
+      return freeze({ ...(secret.fields as Record<string, string>) });
+    },
     record: (
       measure_id: string,
       date: string,
@@ -107,7 +119,7 @@ async function execute(config: Record<string, unknown>): Promise<void> {
     async request(
       url: string,
       options: {
-        credential_ref?: string | { scheme: string; name: string };
+        credential_ref?: CredentialRef;
         method?: string;
         json_body?: unknown;
         headers?: Record<string, string>;
@@ -121,11 +133,7 @@ async function execute(config: Record<string, unknown>): Promise<void> {
           options.credential_ref !== undefined ||
           [...headers.keys()].some((name) => !public_headers.has(name));
         if (options.credential_ref !== undefined) {
-          const reference =
-            typeof options.credential_ref === 'string'
-              ? { scheme: 'local', name: options.credential_ref }
-              : options.credential_ref;
-          const secret = (await call('credential', { reference })) as {
+          const secret = (await credential(options.credential_ref)) as {
             kind: string;
             token?: string;
             username?: string;
@@ -139,7 +147,9 @@ async function execute(config: Record<string, unknown>): Promise<void> {
               'Authorization',
               `Basic ${Buffer.from(`${secret.username}:${secret.password}`).toString('base64')}`,
             );
-          else headers.set(secret.header_name!, secret.value!);
+          else if (secret.kind === 'header') headers.set(secret.header_name!, secret.value!);
+          // A fields credential has no header form. The script reads it with credential_fields.
+          else throw new ScriptFailure(failure('credential_unavailable'));
         }
         requests++;
         let response: Response;

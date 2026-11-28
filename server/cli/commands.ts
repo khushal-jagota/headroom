@@ -158,8 +158,19 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('name', '--name <TEXT>', text, { required: true }),
     option('provider', '--provider <TEXT>', text, { required: true }),
     option('use_context', '--use <TEXT>', text, { required: true }),
-    option('auth_kind', '--auth-kind <CHOICE>', choice(['bearer', 'header']), { required: true }),
+    option('auth_kind', '--auth-kind <CHOICE>', choice(['bearer', 'header', 'fields']), {
+      required: true,
+    }),
     option('header_name', '--header-name <TEXT>', text, {}),
+    option('field_names', '--field <NAME>', text, {
+      description: 'A named value for --auth-kind fields. Repeat for each field.',
+      repeat: true,
+    }),
+    option('file_field_names', '--file-field <NAME>', text, {
+      description:
+        'A named value the owner enters from a file, such as a .p8 key. Repeat for each.',
+      repeat: true,
+    }),
     option('help_hint', '--help-text <TEXT>', text, {}),
     option('help_url', '--help-url <TEXT>', text, {}),
     option('replace_id', '--replace-id <TEXT>', text, {}),

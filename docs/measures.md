@@ -25,6 +25,8 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 
 A source runs its script as a JavaScript module in its own Node child process, with a filtered environment and a scratch folder. The owner chose trusted scripts and simple secrets over a sandbox. The script has files and network access. Naming credentials by key avoids embedding secrets in code, and is not a security boundary.
 
+A script names a credential, and `request()` adds its header. For an API that needs a signed or exchanged token, the script reads a named-fields credential with `credential_fields()`, makes the token, and passes it as a header. The guidance has an App Store Connect example.
+
 The script emits dated values through runtime helpers. Printed output creates nothing. Headroom checks only that numbers are finite, dates valid, and outputs owned by the source. Meaning belongs to the script: signs, units, and whether a period is finished.
 
 A source runs daily at a server-local time, or when someone requests it. After downtime, Headroom catches up only the latest fresh occurrence for each source. Older missed occurrences stay skipped. A test run returns candidates without changing anything. A collection run overwrites each date it supplies, including corrections to past dates, and keeps all other dates.
@@ -53,4 +55,4 @@ There is no measures screen. Values appear on goal pages, and manual controls si
 - `server/measure_sources/`: sources, the script runtime, scheduling, failure notices.
 - `server/datasets/` and `server/credentials/`.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-28._

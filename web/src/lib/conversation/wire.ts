@@ -625,7 +625,7 @@ export class CredentialRequestWireError extends Error {
 export async function mutateCredentialRequest(
   requestId: string,
   action: 'save' | 'reject' | 'review' | 'retry-delivery',
-  body?: { name: string; value: string; expected_revision: number | null }
+  body?: { name: string; value: string | Record<string, string>; expected_revision: number | null }
 ): Promise<import('./view/contracts').CredentialRequestRowBody> {
   let response: Response;
   try {

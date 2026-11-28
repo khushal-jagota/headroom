@@ -16,6 +16,7 @@ import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts
 import { decode_snapshot, validate_request } from '../credentials/requests/logic/validation.ts';
 import { setup } from './conversation_core_fixture.ts';
 import { create } from './ticket_fixture.ts';
+import { DatabaseCredentialResolver, FileCredentialCipher } from '../credentials/store.ts';
 
 const metadata = (request_id: string) => ({
   request_id,
@@ -40,14 +41,14 @@ test('snapshot validation rejects a nonfinite nullable member without JSON coerc
   expect(() => decode_snapshot({ ...snapshot, replacement: Infinity })).toThrow(
     'invalid credential request snapshot',
   );
+  // A request saved before fields credentials has no fields key.
+  expect(decode_snapshot(snapshot).fields).toBeNull();
 });
 
-// Ordinary HTTP comparisons cannot seal the shared write scope at a pending dispatch.
-// Reuse the real core and record fixture without starting a child or listening host.
-test('a sealed shared write scope refuses late requests and drains an admitted save through dispatch', async () => {
+/** The real core and record fixture behind the credential request routes, with no child or host. */
+async function credential_routes(conversation_id: string) {
   const f = setup();
   const ticket = create(f.database);
-  const conversation_id = 'credential-shutdown';
   await f.core.start_conversation(
     new ConversationStartRequest({
       conversation_id,
@@ -77,6 +78,21 @@ test('a sealed shared write scope refuses late requests and drains an admitted s
     key_path: f.database_path + '.credential-key',
     now: () => 100,
   });
+  const app = await createApp(
+    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: f.database_path }),
+    {
+      database: f.database,
+      areas: [{ prefix: '/api', routes: createCredentialRequestRoutes(operations) }],
+    },
+  );
+  const headers = { Authorization: `Bearer ${issue_launch_token(f.database, conversation_id)}` };
+  return { f, writes, operations, app, headers };
+}
+
+// Ordinary HTTP comparisons cannot seal the shared write scope at a pending dispatch.
+// Reuse the real core and record fixture without starting a child or listening host.
+test('a sealed shared write scope refuses late requests and drains an admitted save through dispatch', async () => {
+  const { f, writes, operations, app, headers } = await credential_routes('credential-shutdown');
   const entered = new Deferred<void>();
   const released = new Deferred<void>();
   const dispatch = operations.dispatch.bind(operations);
@@ -88,14 +104,6 @@ test('a sealed shared write scope refuses late requests and drains an admitted s
     return await dispatch(...args);
   });
   const sent = vi.spyOn(f.core, 'send').mockResolvedValue(new PromptDeliveryStarted());
-  const app = await createApp(
-    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: f.database_path }),
-    {
-      database: f.database,
-      areas: [{ prefix: '/api', routes: createCredentialRequestRoutes(operations) }],
-    },
-  );
-  const headers = { Authorization: `Bearer ${issue_launch_token(f.database, conversation_id)}` };
   const request_id = '19000000-0000-4000-8000-000000000010';
   const pending = await app.inject({
     method: 'POST',
@@ -183,4 +191,62 @@ test('credential metadata refuses a hexadecimal UUID prefix', () => {
   expect(() => validate_request(metadata('0x000000000000000000000000000001'))).toThrow(
     'request_id must be a UUID',
   );
+});
+
+// Risk: a fields save stores a partial or different set of values, or a refused save echoes
+// one. The shutdown test above covers only a bearer value. This reuses its route fixture.
+test('a fields request saves exactly its named values and refuses a partial set without echo', async () => {
+  const { f, operations, app, headers } = await credential_routes('credential-fields');
+  vi.spyOn(f.core, 'send').mockResolvedValue(new PromptDeliveryStarted());
+  const request_id = '19000000-0000-4000-8000-000000000012';
+  const fields = [
+    { name: 'key_id', file: false },
+    { name: 'private_key', file: true },
+  ];
+  const private_key = '-----BEGIN PRIVATE KEY-----\nsynthetic-only\n-----END PRIVATE KEY-----\n';
+  const save = (value: unknown) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/credentials/requests/${request_id}/save`,
+      payload: { name: 'Synthetic fields key', value, expected_revision: null },
+    });
+  try {
+    const requested = await app.inject({
+      method: 'POST',
+      url: '/api/credentials/requests',
+      headers,
+      payload: { ...metadata(request_id), auth_kind: 'fields', fields },
+    });
+    expect(requested.statusCode).toBe(200);
+    expect(requested.json()).toMatchObject({ state: 'pending', auth_kind: 'fields', fields });
+    const partial = await save({ key_id: 'synthetic-key-id' });
+    expect(partial.statusCode).toBe(400);
+    expect(partial.body).not.toContain('synthetic-key-id');
+    const extra = await save({ key_id: 'synthetic-key-id', private_key, other: 'x' });
+    expect(extra.statusCode).toBe(400);
+    expect(
+      f.database.read((sql) =>
+        sql.get<{ count: number }>('SELECT count(*) AS count FROM credentials'),
+      )?.count,
+    ).toBe(0);
+    const saved = await save({ key_id: 'synthetic-key-id', private_key });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ state: 'saved', credential: { auth_kind: 'fields' } });
+    expect(saved.body).not.toContain('synthetic-key-id');
+    expect(saved.body).not.toContain('synthetic-only');
+    const stored = f.database.read((sql) =>
+      new DatabaseCredentialResolver(
+        sql,
+        new FileCredentialCipher(f.database_path + '.credential-key', true),
+      ).resolve({ scheme: 'local', name: 'Synthetic fields key' }),
+    );
+    expect(stored.secret).toEqual({
+      kind: 'fields',
+      fields: { key_id: 'synthetic-key-id', private_key },
+    });
+  } finally {
+    await operations.settled();
+    await app.close();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

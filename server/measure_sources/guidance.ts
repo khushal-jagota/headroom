@@ -19,6 +19,30 @@ export const SCALAR_EXAMPLE = `export default async function ({context, request,
 }
 `;
 
+/** App Store Connect: the script signs its own short-lived ES256 token from a fields credential. */
+export const SIGNED_TOKEN_EXAMPLE = `import { sign } from 'node:crypto';
+
+const base64url = (value) => Buffer.from(value).toString('base64url');
+
+export default async function ({context, request, credential_fields, record}) {
+  const {key_id, issuer_id, private_key} = await credential_fields('example-app-store-connect');
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned =
+    base64url(JSON.stringify({alg: 'ES256', kid: key_id, typ: 'JWT'})) + '.' +
+    base64url(JSON.stringify({iss: issuer_id, iat: now, exp: now + 300, aud: 'appstoreconnect-v1'}));
+  // Apple needs the raw signature encoding, not Node's default DER.
+  const signature = sign('sha256', Buffer.from(unsigned), {key: private_key, dsaEncoding: 'ieee-p1363'});
+  // Sign once and reuse the token for every request in this run.
+  const token = unsigned + '.' + signature.toString('base64url');
+  const response = await request('https://api.appstoreconnect.apple.com/v1/apps', {
+    headers: {Authorization: 'Bearer ' + token},
+  });
+  response.raise_for_status();
+  const output = context.required_outputs[0];
+  await record(output.measure_id, output.required_date, (await response.json()).data.length);
+}
+`;
+
 /** Helper, context, example, and note fields for CLI guidance. */
 export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
   return {
@@ -34,6 +58,15 @@ export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
           'A different origin causes transport_failure before the next request. The error message names only the refused origin. ' +
           'Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain. ' +
           'method, json_body, and headers support provider requests and pagination.',
+      },
+      credential_fields: {
+        signature: 'await credential_fields(credential_ref) -> {field: value}',
+        notes:
+          'Returns the frozen named values of a fields credential through the same private channel as request. ' +
+          'Use it when an API needs a token the script must sign or exchange, such as App Store Connect, ' +
+          'a Google service account, or per-request signing. Pass the result as headers to request. ' +
+          'request with credential_ref refuses a fields credential. Another kind fails with credential_unavailable. ' +
+          'Keep the values in memory: never record, write, or send them anywhere except to the provider.',
       },
       record: {
         signature:
@@ -76,14 +109,17 @@ export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
         'null or {first_date, last_date}, the requested inclusive ISO date window. ' +
         'The runtime does not fetch provider history or fill missing dates automatically.',
     },
-    examples: { scalar_request: SCALAR_EXAMPLE },
+    examples: { scalar_request: SCALAR_EXAMPLE, signed_token_request: SIGNED_TOKEN_EXAMPLE },
     notes: [
       'Write an ES module with exactly one export: export default async function ' +
-        '({context, request, latest, record, record_dataset}). The context is deeply frozen. ' +
+        '({context, request, credential_fields, latest, record, record_dataset}). The context is deeply frozen. ' +
         'Await all helpers. The return value is unused. Printing JSON does not emit dated outputs.',
       "Use credential_ref: 'reusable-name' or {scheme: 'local', name: 'reusable-name'}. " +
         'Source Project and account are metadata, not credential scopes. ' +
         'Never embed secrets in scripts, output, or errors.',
+      'The signed_token_request example needs a fields credential with key_id, issuer_id, and private_key (the .p8 text). ' +
+        'Request one with panels credential request --auth-kind fields --field key_id --field issuer_id --file-field private_key. ' +
+        'App Store Connect refuses a token that expires more than 20 minutes after it is issued.',
       'The scalar_request example requires an existing owned taken measure and a matching named credential. ' +
         'Replace its provider URL and credential name. The example supplies no coverage facts or complete-period claim.',
       'required_date suggests a local collection date. It does not require every output or restrict valid ISO dates. ' +

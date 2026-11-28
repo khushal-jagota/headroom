@@ -125,7 +125,7 @@ export function credentialSnapshot(value: unknown): CredentialRequestRowBody {
       return optionalText(row, key);
     };
     const authKind = (value: unknown) =>
-      choice(value, { bearer: 'bearer', header: 'header' } as const, 'auth_kind');
+      choice(value, { bearer: 'bearer', header: 'header', fields: 'fields' } as const, 'auth_kind');
     // Snapshot integer fields accept integral numbers and numeric strings.
     const revision = (fields: ObjectValue) => {
       const value = required(fields, 'revision');
@@ -152,6 +152,16 @@ export function credentialSnapshot(value: unknown): CredentialRequestRowBody {
       use: text(row, 'use'),
       auth_kind: authKind(required(row, 'auth_kind')),
       header_name: stringOrNull('header_name'),
+      // Requests saved before fields credentials have no fields key.
+      fields:
+        row.fields === undefined || row.fields === null
+          ? null
+          : sequence(row, 'fields').map((value) => {
+              const field = record(value);
+              const file = required(field, 'file');
+              if (typeof file !== 'boolean') throw new Error('file');
+              return { name: text(field, 'name'), file };
+            }),
       help: stringOrNull('help'),
       help_url: stringOrNull('help_url'),
       replacement: nullable('replacement', (value) => {

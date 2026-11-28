@@ -193,10 +193,18 @@ export interface CredentialReferenceBody {
   name: string;
 }
 
+export type CredentialRequestAuthKind = "bearer" | "header" | "fields";
+
+/** One named value a fields request asks for. A file field takes a file's text, such as a .p8 key. */
+export interface RequestField {
+  name: string;
+  file: boolean;
+}
+
 export interface RequestCredential {
   id: string;
   reference: CredentialReferenceBody;
-  auth_kind: "bearer" | "header";
+  auth_kind: CredentialRequestAuthKind;
   revision: number;
 }
 
@@ -214,8 +222,10 @@ export interface CredentialRequestRowBody {
   name: string;
   provider: string;
   use: string;
-  auth_kind: "bearer" | "header";
+  auth_kind: CredentialRequestAuthKind;
   header_name: string | null;
+  /** The named values a fields request asks for, in order. Absent or null for bearer and header requests. */
+  fields?: RequestField[] | null;
   help: string | null;
   help_url: string | null;
   replacement: RequestReplacement | null;

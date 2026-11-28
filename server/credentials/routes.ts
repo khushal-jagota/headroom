@@ -53,6 +53,12 @@ function secret(value: unknown, kind: CredentialAuthKind): CredentialSecret {
     const raw = body(value, ['header_name', 'value']);
     return { kind, header_name: text(raw.header_name), value: text(raw.value) };
   }
+  if (kind === 'fields') {
+    const raw = body(value, ['fields']);
+    if (raw.fields === null || typeof raw.fields !== 'object' || Array.isArray(raw.fields))
+      throw invalid();
+    return { kind, fields: raw.fields as Record<string, string> };
+  }
   const raw = body(value, ['username', 'password']);
   return {
     kind,
@@ -104,7 +110,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     if (
       raw.scheme !== 'local' ||
       typeof raw.auth_kind !== 'string' ||
-      !['bearer', 'header', 'basic'].includes(raw.auth_kind)
+      !['bearer', 'header', 'basic', 'fields'].includes(raw.auth_kind)
     )
       throw invalid('unsupported credential type');
     const write: CredentialWrite = {

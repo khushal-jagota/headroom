@@ -147,6 +147,9 @@
     "ts_0019_live_activities": [
       "ts_0018_backup_failed_preference"
     ],
+    "ts_0020_credential_fields": [
+      "ts_0019_live_activities"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

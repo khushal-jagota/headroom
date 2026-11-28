@@ -4,7 +4,7 @@ A credential is a named API key that Headroom keeps for scripts that call outsid
 
 ## What it is made of
 
-- **The store.** Encrypted values in the database, sealed with a separate local key file. A key can be a bearer token, a named header, or basic authentication.
+- **The store.** Encrypted values in the database, sealed with a separate local key file. A key can be a bearer token, a named header, basic authentication, or named fields. Named fields are several values under one name, such as an App Store Connect key ID, issuer ID and .p8 private key.
 - **The name.** Each credential has a descriptive, reusable name such as `Panels_posthog_production`. The name says what the key is for. It is not owned by a Project, and a matching name can serve any source.
 - **The resolver.** The host-only lookup that turns a name into a secret at the moment a script asks for it. There is no environment-variable fallback.
 - **Requests.** An agent's ask, inside its own conversation, for a key it needs. The ask appears as an inline card in that conversation.
@@ -24,7 +24,7 @@ A credential is a named API key that Headroom keeps for scripts that call outsid
 
 ## How a request works
 
-An agent requests a key by name, provider, and purpose, with optional help for finding it. The server binds the request to the agent's exact current conversation, taken from its identity, so a request cannot be aimed anywhere else and a retired conversation cannot redirect one into its replacement. If a saved key already has that name and kind, the request is satisfied at once and nothing is asked.
+An agent requests a key by name, provider, and purpose, with optional help for finding it. A request for named fields also lists the field names, and marks the fields that the owner enters from a file. The card shows one private input for each field. The server binds the request to the agent's exact current conversation, taken from its identity, so a request cannot be aimed anywhere else and a retired conversation cannot redirect one into its replacement. If a saved key already has that name and kind, the request is satisfied at once and nothing is asked.
 
 Otherwise the owner answers on the card. Saving a new key, replacing an existing one, and rejecting are owner-only. The secret goes through a private owner path, never through a question answer or the conversation. The save, the request's outcome, and the intent to tell the agent commit together.
 
@@ -37,6 +37,7 @@ The agent then learns the outcome through an ordinary prompt that names the requ
 - Replacement and rename name the revision they started from, so a stale edit fails instead of overwriting newer work.
 - The database and its key file belong together. A missing or wrong key is a real failure. Headroom does not reset encrypted records to recover.
 - Names hide the secret from scripts' source, not from the running script. Resolution is key indirection, not a sandbox. See [Project measures](measures.md).
+- Panels knows no provider's token rules. Some APIs need a short-lived token that is signed or exchanged from stored values: App Store Connect, Google service accounts, AWS request signing. The script reads the named fields and makes that token itself. A new provider needs a script, not a Panels change.
 
 ## Code
 
@@ -44,4 +45,4 @@ The agent then learns the outcome through an ordinary prompt that names the requ
 - `server/credentials/requests/`: requests, owner answers, and result delivery.
 - `web/src/components/conversation/ConversationCredentialRequestCard.svelte`: the card.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-28._
