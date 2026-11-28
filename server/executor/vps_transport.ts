@@ -272,11 +272,12 @@ export class VpsExecutor {
             identity.executor_incarnation,
             this.machine_id,
           );
-          for (const ticket_id of request.ticket_ids)
-            if (sql.get('SELECT 1 FROM ticket_workspace_lifecycle WHERE ticket_id=?', [ticket_id]))
-              this.require_ticket_owner(sql, ticket_id);
+          // Each Ticket is answered on its own. A deleted Ticket reads as deleted, so its
+          // folder goes. Another machine's live Ticket is left out, and only its folder waits.
           return {
-            states: read_workspace_states_for_tickets(sql, request.ticket_ids),
+            states: read_workspace_states_for_tickets(sql, request.ticket_ids).filter(
+              (state) => state.deleted || this.owns_ticket(sql, state.ticket_id),
+            ),
             at_vps_ms: this.clock.nowUnix() * 1000,
           };
         }),
@@ -390,19 +391,20 @@ export class VpsExecutor {
             identity.executor_incarnation,
             this.machine_id,
           );
-          this.require_ticket_owner(tx, state.ticket_id);
-          // Both checks name the Ticket's folder by its Ticket and physical data tree, not by
-          // its workspace id. Clearing the checkout gives the folder a new id that no
-          // conversation registered, and the rest of the folder still goes seven days later.
+          // A deleted Ticket has no owner left to check. Its folder on this machine's disk goes.
+          if (!read_workspace_states_for_tickets(tx, [state.ticket_id])[0]?.deleted)
+            this.require_ticket_owner(tx, state.ticket_id);
+          // The physical data tree is this machine's disk when machine code of this machine
+          // registered any workspace in it. The check names the data tree, not the workspace
+          // id: clearing the checkout gives the folder a new id, and a folder that the server
+          // registered before the switch to machine code has no machine-code registration.
           const proof = tx.get(
             'SELECT 1 FROM ticket_workspace_conversations w ' +
               'JOIN executor_child_assignments a ON a.conversation_id=w.conversation_id ' +
               'JOIN executor_incarnations i ON i.executor_incarnation=a.executor_incarnation ' +
-              'WHERE w.ticket_id=? AND w.machine_id=? AND i.machine_id=? LIMIT 1',
-            [state.ticket_id, workspace.machine_id, this.machine_id],
+              'WHERE w.machine_id=? AND i.machine_id=? LIMIT 1',
+            [workspace.machine_id, this.machine_id],
           );
-          // The Ticket is this machine's. A workspace that the server registered before
-          // the switch to machine code stays with the server's own cleanup.
           if (proof === undefined) return { authorized: false };
           // An adopted workspace can still hold a process that the server started before the
           // switch. Its record must be retired before the folder goes.
@@ -425,6 +427,10 @@ export class VpsExecutor {
     );
   }
   private require_ticket_owner(sql: ReadSql, ticket_id: string): void {
+    if (!this.owns_ticket(sql, ticket_id))
+      throw new PlannerError('agent_forbidden', 'Ticket belongs to another machine');
+  }
+  private owns_ticket(sql: ReadSql, ticket_id: string): boolean {
     const owned = sql.get(
       'SELECT 1 FROM tickets WHERE id=? AND machine_id=? UNION ALL ' +
         'SELECT 1 FROM executor_child_assignments a JOIN executor_incarnations i ' +
@@ -432,8 +438,7 @@ export class VpsExecutor {
         'AND i.machine_id=? LIMIT 1',
       [ticket_id, this.machine_id, ticket_id, this.machine_id],
     );
-    if (owned === undefined)
-      throw new PlannerError('agent_forbidden', 'Ticket belongs to another machine');
+    return owned !== undefined;
   }
   refuse_old_websocket(): Promise<void> {
     return this.owned_work(() => this.presence.refuse_old_websocket());

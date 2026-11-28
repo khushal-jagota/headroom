@@ -265,10 +265,11 @@ if (spec.mode === 'machines') {
     const states = {
       historical: await first.workspace_states(current, historical),
       current: await second.workspace_states(other, current_request),
+      // Another machine's live Ticket is left out of the answer instead of refusing the batch.
+      foreign: await first.workspace_states(current, current_request),
     };
     const historical_states = [states.historical, await second.workspace_states(other, historical)];
     const refusals = [
-      await refused(() => first.workspace_states(current, current_request)),
       await refused(() =>
         second.register_workspace(
           { ...other, executor_incarnation: references[1]!.executor_incarnation },

@@ -189,6 +189,7 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
     signal: options.signal,
     admit_path: options.admit_path,
     git_execution: options.git_execution,
+    own_work: record.deleted ? 'discard' : 'protect',
   });
 }
 export async function retry_retired_workspaces(
@@ -297,6 +298,10 @@ async function cleanup_pass(
         reason = 'only logs remain';
       else if (!state) reason = 'Ticket owner or end date is unknown; owner review required';
       else if (active.has(ticket_id!) || state.ended_at === null) reason = 'Ticket is active';
+      // Delete just deletes: the whole folder goes now, without proof that origin holds the
+      // work. Only the checks that protect other Tickets' work remain.
+      else if (state.deleted)
+        reason = await reason_to_keep(path, states, active, options, 'discard');
       else {
         const checkout = join(path, WORKTREE_DIRECTORY);
         const checkout_only = now < state.ended_at + RETENTION_SECONDS;
@@ -316,12 +321,17 @@ async function cleanup_pass(
         path,
         ticket_id,
         ended_at: state?.ended_at ?? null,
-        eligible_at: state?.ended_at == null ? null : state.ended_at + RETENTION_SECONDS,
+        eligible_at:
+          state?.ended_at == null ? null : state.ended_at + (state.deleted ? 0 : RETENTION_SECONDS),
         allocated_bytes: options.measure_size ? await allocated_bytes(path) : null,
         preservation_reason: reason,
       });
       if (reason) result.skipped.push({ path, reason });
-      else eligible.push({ path, checkout_only: now < state!.ended_at! + RETENTION_SECONDS });
+      else
+        eligible.push({
+          path,
+          checkout_only: !state!.deleted && now < state!.ended_at! + RETENTION_SECONDS,
+        });
     }
   }
   await write_json(
