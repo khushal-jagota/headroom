@@ -3,12 +3,13 @@
  *
  * The risk is the note "Conversation disconnected" staying in the composer after the reader's
  * own retry has drawn the transcript, which makes a healthy conversation look broken. Only a
- * real EventSource against a refusing server shows it: after a release the server answers the
- * tail with 409 while it upgrades a stored view. A note that came from something else, such as
+ * real live socket against a refusing server shows it: while the server upgrades a stored view it refuses
+ * the tail subscription. A note that came from something else, such as
  * a refused stop, is not the open's to clear.
  */
 import { expect, test, WAIT_MS } from './support/fixtures.ts';
 import { createTicketConversation, openConversationLayer, post } from './support/conversation.ts';
+import { refuseLiveSubscriptions } from './support/live_socket.ts';
 
 for (const laterNoteDuringOutage of [false, true]) {
   test(`the disconnected note leaves when the open recovers${laterNoteDuringOutage ? ', but a later refusal stays' : ''}`, async ({ signalServer, newContext }) => {
@@ -21,10 +22,8 @@ for (const laterNoteDuringOutage of [false, true]) {
 
     const page = await context.newPage();
     let upgrading = true;
-    await page.route('**/view/tail?*', async (route) => {
-      if (upgrading) await route.fulfill({ status: 409, contentType: 'application/json', body: '{"detail":"Conversation view is upgrading"}' });
-      else await route.continue();
-    });
+    // The page's socket carries the view tail, so refuse its subscribe while `upgrading`.
+    await refuseLiveSubscriptions(page, 'conversation_view', () => upgrading);
     await page.route('**/interrupt', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"The stop was refused."}' }));
     await page.goto(`${signalServer.base}/#/workspace/${ticket}`);
     await page.waitForSelector(`[data-screen="ticket"][data-ticket-id="${ticket}"]`, { timeout: WAIT_MS });

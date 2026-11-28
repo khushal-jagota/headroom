@@ -3,19 +3,16 @@ import { ensureDebug } from "./debug";
 import { queryClient } from "./queryClient";
 import { refreshScreen, stopScreenRefresh } from "./resourceVersions/refresh";
 import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
-import {
-  CONNECTION_PROBE_TIMEOUT_MS, STREAM_SILENCE_MS, UPDATE_RECOVERY_POLL_MS
-} from "./updates/config";
-import {
-  flushConnectionEvents, recordProbe, startConnectionLog, stopConnectionLog, watchStream
-} from "./connectionLog";
+import { CONNECTION_PROBE_TIMEOUT_MS, UPDATE_RECOVERY_POLL_MS } from "./updates/config";
+import { flushConnectionEvents, recordProbe, startConnectionLog, stopConnectionLog } from "./connectionLog";
+import { retryLiveSocket, startLiveSocket, stopLiveSocket } from "./liveSocket";
 
-// The server sends one contentless "something changed" frame per commit. The
+// The server sends one contentless "something changed" frame per commit over the live socket. The
 // browser probes versions for mounted resources and refetches changed bodies.
 // A read with no registered revision is read again on each round. The signal stays contentless.
 //
-// The page is `connecting` until its first stream opens: that is a start, so no card shows. After
-// that, a lost stream is `unreachable` at once and the card shows. When the operating system
+// The page is `connecting` until its socket is ready: that is a start, so no card shows. After
+// that, a lost socket is `unreachable` at once and the card shows. When the operating system
 // reports no network, it is `offline` at once instead, because the server is not at fault.
 export type ConnectionStatus = "connecting" | "connected" | "unreachable" | "offline";
 
@@ -27,15 +24,10 @@ export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
 
 export const connectionStatus = writable<ConnectionStatus>("connecting");
 
-let stream: EventSource | null = null;
 let flushTimer: number | null = null;
-let reconnectTimer: number | null = null;
 let probeTimer: number | null = null;
 let probing = false;
-let silenceTimer: number | null = null;
 let started = false;
-/** The record of the open stream, so that silence can name its cause. */
-let streamWatch: ReturnType<typeof watchStream> | null = null;
 
 function reconcileResources(): Promise<void> {
   ensureDebug().flushes += 1;
@@ -66,76 +58,39 @@ export function startChangeStream(): void {
   window.addEventListener("offline", onNetworkOffline);
   window.addEventListener("online", onNetworkOnline);
   connectionStatus.set(navigator.onLine === false ? "offline" : "connecting");
-  openStream();
-}
-
-function openStream(): void {
-  if (!started) return;
-  const source = new EventSource("/api/changes");
-  stream = source;
-  const thisWatch = streamWatch = watchStream("/api/changes");
-  source.onopen = () => {
-    if (stream !== source) return;
-    thisWatch.opened();
-    flushConnectionEvents();
-    clearReconnect();
-    clearRecovery();
-    ensureDebug().sseOpens += 1;
-    connectionStatus.set("connected");
-    // A connection just opened, so anything that changed while it was down is
-    // still unseen: reconcile by refetching what is on screen.
-    if (document.visibilityState === "hidden") return;
-    void reconcileResources().then(() => {
-      if (stream !== source) return;
-      ensureDebug().sseReconciliations += 1;
-    });
-  };
-  source.onmessage = () => {
-    if (stream !== source) return;
-    watchSilence(source);
-    // A hidden tab has nothing on screen to bring up to date, and refetching everything
-    // for it is the whole cost with none of the point. One round when it comes back
-    // answers everything that landed while it was away, however much that was.
-    if (document.visibilityState === "hidden") return;
-    if (flushTimer === null) {
-      flushTimer = window.setTimeout(flush, INVALIDATE_DEBOUNCE_MS);
-    }
-  };
-  // The server's own heartbeat, a named frame because the page cannot see comment lines. It
-  // starts the silence watch: an older server sends none, and a stream with no heartbeat to
-  // expect is never judged silent.
-  source.addEventListener("heartbeat", () => {
-    if (stream !== source) return;
-    watchSilence(source);
+  startLiveSocket({
+    ready: () => {
+      flushConnectionEvents();
+      clearRecovery();
+      ensureDebug().sseOpens += 1;
+      connectionStatus.set("connected");
+      // A connection just opened, so anything that changed while it was down is
+      // still unseen: reconcile by refetching what is on screen.
+      if (document.visibilityState === "hidden") return;
+      void reconcileResources().then(() => {
+        ensureDebug().sseReconciliations += 1;
+      });
+    },
+    change: () => {
+      // A hidden tab has nothing on screen to bring up to date, and refetching everything
+      // for it is the whole cost with none of the point. One round when it comes back
+      // answers everything that landed while it was away, however much that was.
+      if (document.visibilityState === "hidden") return;
+      if (flushTimer === null) {
+        flushTimer = window.setTimeout(flush, INVALIDATE_DEBOUNCE_MS);
+      }
+    },
+    lost: socketLost,
+    // The server answered, so Panels is reachable. The existing update prompt reads the status.
+    updateNeeded: () => {
+      connectionStatus.set("connected");
+      void queryClient.refetchQueries({ queryKey: ["updates"] });
+    },
   });
-  source.onerror = () => {
-    if (stream !== source) return;
-    thisWatch.ended("error_event");
-    streamLost();
-    // HTTP 503 can permanently close EventSource. Native retry cannot reopen it.
-    if (source.readyState === 2 && reconnectTimer === null) {
-      reconnectTimer = window.setTimeout(retryChangeStream, UPDATE_RECOVERY_POLL_MS);
-    }
-  };
 }
 
-/** Each frame moves the silence deadline. A stream that goes quiet is closed and reopened. */
-function watchSilence(source: EventSource): void {
-  if (silenceTimer !== null) window.clearTimeout(silenceTimer);
-  silenceTimer = window.setTimeout(() => {
-    silenceTimer = null;
-    if (stream !== source) return;
-    streamWatch?.ended("silence");
-    source.close();
-    streamLost();
-    retryChangeStream();
-  }, STREAM_SILENCE_MS);
-}
-
-/** A lost stream shows the card at once. The page asks the server now, for the connection record. */
-function streamLost(): void {
-  if (silenceTimer !== null) window.clearTimeout(silenceTimer);
-  silenceTimer = null;
+/** A lost socket shows the card at once. The page asks the server now, for the connection record. */
+function socketLost(): void {
   connectionStatus.set(navigator.onLine === false ? "offline" : "unreachable");
   if (navigator.onLine === false) {
     clearRecovery();
@@ -182,37 +137,25 @@ function onNetworkOnline(): void {
   retryChangeStream();
 }
 
-function clearReconnect(): void {
-  if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-}
-
 /** The same recovery path serves the timer and the owner's Try now action. */
 export function retryChangeStream(): void {
   if (!started) return;
-  clearReconnect();
-  stream?.close();
-  stream = null;
   void queryClient.refetchQueries({ queryKey: ["updates"] });
-  openStream();
+  retryLiveSocket();
 }
 
 export function stopChangeStream(): void {
   started = false;
-  clearReconnect();
   stopScreenRefresh();
   document.removeEventListener("visibilitychange", onVisibilityChange);
   stopConnectionLog();
   window.removeEventListener("offline", onNetworkOffline);
   window.removeEventListener("online", onNetworkOnline);
   clearRecovery();
-  if (silenceTimer !== null) window.clearTimeout(silenceTimer);
-  silenceTimer = null;
   if (flushTimer !== null) {
     window.clearTimeout(flushTimer);
     flushTimer = null;
   }
-  stream?.close();
-  stream = null;
+  stopLiveSocket();
   connectionStatus.set("connecting");
 }

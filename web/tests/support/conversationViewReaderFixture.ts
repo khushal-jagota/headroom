@@ -27,7 +27,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   let deferredExpired=false;
   const delayedBody=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:'Late diagnostic body must disappear.'}]});
   let completeBody: (()=>void)|null=null;
-  const sources:EventTarget[]=[];
+  const sources:object[]=[];
   const folds=new URLSearchParams(search).has('folds');
   const liveStream=new URLSearchParams(search).has('live-stream');
   const visual=new URLSearchParams(search).has('visual');
@@ -228,26 +228,42 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     if(url.pathname.endsWith('/owner-read'))return Response.json({owner_read_through_sequence:JSON.parse(String(init?.body)).through_sequence});
     return Response.json({conversation_id:previewClock?url.pathname.split('/')[4]:id,backend_key:'codex',supports_steer:true,model:previewClock?(url.pathname.includes('/preview-chief')?'gpt-6.1-terra':previewModel):null,reasoning_effort:previewClock?'medium':null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:previewClock?status.turn_running===true:false,held_prompts:[],pending_messages:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
   };
-  class Source extends EventTarget{
-    onerror:null|(()=>void)=null;closed=false;
-    constructor(readonly raw:string){super();sources.push(this);calls.push(raw);const url=new URL(raw,baseUrl);queueMicrotask(()=>{
+  // The page's live socket is a fake that serves the view tail of the open conversation.
+  class Source{
+    closed=false;
+    constructor(readonly raw:string,private socket:LiveSocket,readonly id:string){sources.push(this);calls.push(raw);const url=new URL(raw,baseUrl);queueMicrotask(()=>{
       if(this.closed)return;
       const result=page(url);if(url.searchParams.get('transcript')==='false')result.items=[];
       const after=url.searchParams.get('after');
       const value=after===null?{page:result,coverage:{through_sequence:sequence},status}:{kind:'changes',conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens:result.lens,from_sequence:Number(after),coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status};
-      this.dispatchEvent(new MessageEvent(after===null?'snapshot':'changes',{data:JSON.stringify(value)}));
+      this.emit(after===null?'snapshot':'changes',value);
     });}
-    close(){this.closed=true;}
+    emit(name:string,value:unknown){if(!this.closed)this.socket.serve(this.id,name,value);}
+  }
+  class LiveSocket{
+    static OPEN=1;
+    readyState=0;sequence=0;
+    onopen:null|(()=>void)=null;onmessage:null|((message:{data:string})=>void)=null;onclose:null|((event:{code:number})=>void)=null;
+    private beat=setInterval(()=>this.serve(null,'heartbeat','now'),15_000);
+    constructor(readonly url:string){queueMicrotask(()=>{this.readyState=1;this.onopen?.();});}
+    serve(sub:string|null,kind:string,data?:unknown){this.onmessage?.({data:JSON.stringify({seq:++this.sequence,sub,kind,data})});}
+    send(text:string){
+      const frame=JSON.parse(text);
+      if(frame.op==='hello')this.serve(null,'ready',{heartbeat_ms:15_000});
+      else if(frame.op==='subscribe'&&frame.kind==='conversation_view')new Source(`/api/conversation/conversations/${frame.conversation_id}/view/tail?${new URLSearchParams(frame.params)}`,this,frame.id);
+      else if(frame.op==='unsubscribe'){const source=sources.find(held=>(held as Source).id===frame.id) as Source|undefined;if(source)source.closed=true;}
+    }
+    close(){this.readyState=3;clearInterval(this.beat);}
   }
   (window as any).__streamProbe={append:(text:string)=>{
     liveText+=text;liveVersion++;
     status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:liveVersion,byte_count:liveText.length,reference:{body_id:'live:fixture',version:String(liveVersion),byte_count:liveText.length,media_type:'text/markdown'}};
     const before=sequence;sequence++;status.revision=sequence;
-    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,baseUrl).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
+    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,baseUrl).searchParams.get('lens');(source as Source).emit('changes',{kind:'changes',conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status});}
   }};
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;
-    for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL((source as Source).raw,baseUrl)),coverage:{through_sequence:sequence},status})}));}
+    for(const source of sources){if((source as Source).closed)continue;(source as Source).emit('snapshot',{page:page(new URL((source as Source).raw,baseUrl)),coverage:{through_sequence:sequence},status});}
   };
   (window as any).__expireDeferred=()=>{deferredExpired=true;(window as any).__expireDiagnostics();};
   (window as any).__completeDiagnosticBody=()=>completeBody?.();
@@ -256,7 +272,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     previewBodies.set(++sequence,{kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:now,content:[{piece:'text',text}]});
     previewBodies.set(++sequence,{kind:'agent_message',to_owner:true,content:[{piece:'text',text:'This is a local sample reply. Your message stays in this preview.'}]});
     for(const source of sources){if((source as Source).closed)continue;
-      source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL((source as Source).raw,baseUrl)),coverage:{through_sequence:sequence},status})}));}
+      (source as Source).emit('snapshot',{page:page(new URL((source as Source).raw,baseUrl)),coverage:{through_sequence:sequence},status});}
   };
   if(previewClock)(window as any).__previewActivity=(activity:string)=>{
     status.pending_permission=activity==='permission'?{kind:'permission',request_id:'preview-permission',row_key:'permission:1',source_sequence:1}:null;
@@ -267,9 +283,9 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     const before=sequence;sequence++;status.revision=sequence;
     for(const source of sources){if((source as Source).closed)continue;
       const lens=new URL((source as Source).raw,baseUrl).searchParams.get('lens');
-      source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:new URL((source as Source).raw,baseUrl).pathname.split('/')[4],
+      (source as Source).emit('changes',{kind:'changes',conversation_id:new URL((source as Source).raw,baseUrl).pathname.split('/')[4],
         protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,from_sequence:before,
-        coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
+        coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status});}
   };
-  window.EventSource=Source as unknown as typeof EventSource;
+  window.WebSocket=LiveSocket as unknown as typeof WebSocket;
 }

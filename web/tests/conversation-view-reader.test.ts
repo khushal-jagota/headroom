@@ -4,22 +4,34 @@ import { viewSnapshot, viewChanges } from './support/conversation/view-fixture';
 import type { FixtureEvent } from './support/conversation/view-fixture';
 import type { ViewBodyReference } from '../src/lib/conversation/view/contracts';
 
+// The live socket is replaced by a fake that hands out one `Source` for each subscription. The
+// socket's own frames, sequence and closes are proved in live-socket.test.ts.
 class Source {
   static all: Source[] = [];
-  handlers = new Map<string, (event: { data: string }) => void>();
   closed = false;
-  onerror: (() => void) | null = null;
-  constructor(readonly url: string) { Source.all.push(this); }
-  addEventListener(name: string, handler: (event: { data: string }) => void) { this.handlers.set(name, handler); }
+  readonly url: string;
+  constructor(feed: { params?: Record<string, string> }, private subscriber: { frame(event: string, data: unknown): void; lost(refusal: { status: number; detail: unknown } | null): void }) {
+    this.url = `/tail?${new URLSearchParams(feed.params)}`;
+    Source.all.push(this);
+  }
   close() { this.closed = true; }
-  send(name: string, value: unknown) { this.handlers.get(name)?.({ data: JSON.stringify(value) }); }
+  send(name: string, value: unknown) { this.subscriber.frame(name, value); }
+  /** The subscription ended without a status: a drop or a plain end. */
+  onerror = () => this.subscriber.lost(null);
+  refuse(status: number, detail: unknown) { this.subscriber.lost({ status, detail }); }
 }
+vi.mock('../src/lib/liveSocket', () => ({
+  subscribeLive: (feed: { params?: Record<string, string> }, subscriber: ConstructorParameters<typeof Source>[1]) => {
+    const source = new Source(feed, subscriber);
+    return () => source.close();
+  },
+}));
 const rows: FixtureEvent[] = [{ conversation_id: 'c', sequence: 1, kind: 'message_to_owner', created_at: 1, payload: { text: 'original' } }];
 const snapshot = () => viewSnapshot('c', 'focus', rows);
 const readers: ConversationViewReader[] = [];
 afterEach(() => { for (const reader of readers) reader.close(); readers.length = 0; Source.all = []; vi.useRealTimers(); });
 async function start(initial = snapshot()) {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const reader = new ConversationViewReader('c', 'focus', true); readers.push(reader);
   const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', initial); await ready;
   return reader;
@@ -29,7 +41,7 @@ async function start(initial = snapshot()) {
 // was drawn before it was placed. It must enter hidden like a first open, and following the
 // bottom asks for no restoration history.
 it('keeps a reader made at the bottom hidden until its snapshot is placed, without a history read', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const reader = new ConversationViewReader('c', 'full', true, () => {}, { key: 'e1', order: { sequence: 1, slot: 0 }, offset: 0, following: true });
   readers.push(reader);
@@ -327,7 +339,7 @@ it('returns false for failed, invalid, canceled, and disposed admission', async 
 });
 
 it('retains actual newest on fresh entry without reading a watermark-based history window', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const fetch = vi.fn(async () => new Response(JSON.stringify(snapshot().page)));
   vi.stubGlobal('fetch', fetch);
   const initial = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 2000 }]);
@@ -345,16 +357,16 @@ it('retains actual newest on fresh entry without reading a watermark-based histo
 
 it('waits for an archived history and opens it automatically once the server catches up', async () => {
   vi.useFakeTimers();
-  vi.stubGlobal('EventSource', Source);
-  const probe = vi.fn(async () => Response.json({ detail: 'Conversation view is upgrading' }, { status: 409 }));
-  vi.stubGlobal('fetch', probe);
+ 
+  const read = vi.fn();
+  vi.stubGlobal('fetch', read);
   const reader = new ConversationViewReader('c', 'focus', true);
   readers.push(reader);
   const connected = reader.connect();
-  // The native stream conceals the HTTP refusal. Only the ordinary snapshot explains it.
-  Source.all[0].onerror?.();
+  // The refusal names the upgrade, so no status read is needed.
+  Source.all[0].refuse(409, 'Conversation view is upgrading');
   await vi.advanceTimersByTimeAsync(0);
-  expect(probe.mock.calls[0]).toEqual([expect.stringContaining('/c/view?lens=focus&transcript=false'), expect.anything()]);
+  expect(read).not.toHaveBeenCalled();
   expect(reader.preparingHistory).toBe(true);
   expect(reader.trouble).toBe(false);
   expect(reader.entryPhase).toBe('loading');
@@ -368,7 +380,7 @@ it('waits for an archived history and opens it automatically once the server cat
 
 it.each([false, true])('reopens once when archive preparation finishes before diagnosis (tail still fails: %s)', async (stillFails) => {
   vi.useFakeTimers();
-  vi.stubGlobal('EventSource', Source);
+ 
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot())));
   const reader = new ConversationViewReader('c', 'focus', true);
   readers.push(reader);
@@ -394,7 +406,7 @@ it.each([false, true])('reopens once when archive preparation finishes before di
 });
 
 it.each([409, 403, 0])('recovers the initial entry gate after a failed stream connection (%s)', async (status) => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const reader = new ConversationViewReader('c', 'focus', true);
   readers.push(reader);
   vi.stubGlobal('fetch', vi.fn(async () => {
@@ -416,7 +428,7 @@ it.each([409, 403, 0])('recovers the initial entry gate after a failed stream co
 });
 
 it('does not publish an initial snapshot after its reader closes', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const reader = new ConversationViewReader('c', 'focus', true);
   readers.push(reader);
   void reader.connect();
@@ -427,7 +439,7 @@ it('does not publish an initial snapshot after its reader closes', async () => {
 });
 
 it('releases placement when the newer half fails and retries the original context', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const anchorPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
   anchorPage.newer = cursor(11);
   const newerPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
@@ -457,7 +469,7 @@ it('releases placement when the newer half fails and retries the original contex
 });
 
 it('retires timed-out restoration history without canceling unrelated demand or accepting late pages', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const oldPage = viewSnapshot('c', 'focus', [{...rows[0],sequence:11}]).page;
   const {pending} = holdPages();
   const anchor = {key:oldPage.items[0].key,order:oldPage.items[0].order,offset:-17,following:false};
@@ -498,7 +510,7 @@ it('retires timed-out restoration history without canceling unrelated demand or 
 });
 
 it('preserves an ordinary caller that shares the exact restoration history request', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const oldPage = viewSnapshot('c','focus',[{...rows[0],sequence:11}]).page;
   const {pending} = holdPages();
   const anchor = {key:oldPage.items[0].key,order:oldPage.items[0].order,offset:-17,following:false};
@@ -518,7 +530,7 @@ it('preserves an ordinary caller that shares the exact restoration history reque
 });
 
 it('ignores a restoration read after cancellation and leaves ordinary history reads active', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const oldPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
   const { pending } = holdPages();
   const anchor = { key: oldPage.items[0].key, order: oldPage.items[0].order, offset: -17, following: false };
@@ -543,7 +555,7 @@ it('ignores a restoration read after cancellation and leaves ordinary history re
 it('retains the original saved target within the shared bound and releases it for a new destination', async () => {
   const page = snapshot().page;
   const anchor = { key: page.items[0].key, order: page.items[0].order, offset: -17, following: false };
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const reader = new ConversationViewReader('c', 'focus', true, undefined, anchor);
   readers.push(reader);
   const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', snapshot()); await ready;
@@ -566,7 +578,7 @@ it('retains the original saved target within the shared bound and releases it fo
 });
 
 it('reports a missing direct text piece after body admission, including after a settled address changes', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const page = snapshot().page;
   const anchor = {key:page.items[0].key,order:page.items[0].order,offset:-17,following:false,content:{pieceIndex:1,lineOffset:0,text:{contentIdentity:{algorithm:'sha256' as const,digest:'exact',utf16Length:4},blockIndex:0,textLeafPath:[0],utf16Offset:0}}};
   const reader = new ConversationViewReader('c','focus',true,undefined,anchor); readers.push(reader);
@@ -822,7 +834,7 @@ it('keeps newest evidence when older rows leave retention and freezes it when ex
 });
 
 it('grants no transcript credit to a status-only reader', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const reader = new ConversationViewReader('c', 'focus', false); readers.push(reader);
   const ready = reader.connect();
   Source.all.at(-1)!.send('snapshot', viewSnapshot('c', 'focus', rows, false));
@@ -878,7 +890,7 @@ it.each(['abort', 'stale', 'fetch-failure'] as const)('grants no read credit to 
 });
 
 it('retires an expired saved target without credit and credits only valid newest recovery after admission', async () => {
-  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  vi.useFakeTimers();
   const initial = readSnapshot(100);
   const item = initial.page.items[0];
   const anchor = {key:item.key,order:item.order,offset:-17,following:false};

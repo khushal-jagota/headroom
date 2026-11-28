@@ -6,7 +6,7 @@ export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from 
 import { mutationHeaders } from "../releaseMonitor";
 import { RequestLimitError } from "../requestLimit/limit";
 import { BACKEND_READ_LIMIT_MS, BACKEND_SIGN_IN_LIMIT_MS, BACKEND_UPDATE_LIMIT_MS } from "../requestLimit/config";
-import { watchStream } from "../connectionLog";
+import { subscribeLive } from "../liveSocket";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -940,37 +940,33 @@ export type ConversationTailHandlers = {
 
 /** Open the live tail from a position and return the way to close it.
  *
- * The browser's own EventSource would reconnect by itself from the position this tail
- * opened at, which would replay the whole conversation over again. So trouble closes
- * this one and is reported: reconnecting is a fetch from where the reader actually got
- * to, followed by a fresh tail, and that is the caller's business rather than this one's.
+ * A tail that ends, for any reason, is closed and reported: reconnecting is a fetch from where
+ * the reader actually got to, followed by a fresh tail, and that is the caller's business
+ * rather than this one's. Resuming from the position this tail opened at would replay the
+ * whole conversation over again.
  */
 export function openConversationTail(
   conversationId: string,
   after: number,
   handlers: ConversationTailHandlers
 ): () => void {
-  const source = new EventSource(
-    `${CONVERSATION_BASE}/conversations/${encodeURIComponent(conversationId)}/tail?after=${after}`
-  );
-  const watch = watchStream("/api/conversation/conversations/:conversation_id/tail");
-  source.addEventListener("open", () => watch.opened());
   let closed = false;
-  const close = (): void => {
-    if (closed) return;
+  const stop = subscribeLive(
+    { kind: "conversation_events", conversationId, params: { after: String(after) } },
+    {
+      frame: (event, data) => {
+        if (event === COMMITTED_EVENT_STREAM_NAME) handlers.onCommittedEvent(data as ConversationEvent);
+        else if (event === LIVE_FRAME_STREAM_NAME) handlers.onLiveFrame(data as ConversationLiveFrame);
+      },
+      lost: () => {
+        if (closed) return;
+        closed = true;
+        handlers.onTrouble();
+      }
+    }
+  );
+  return () => {
     closed = true;
-    source.close();
+    stop();
   };
-  source.addEventListener(COMMITTED_EVENT_STREAM_NAME, (message: MessageEvent<string>) => {
-    handlers.onCommittedEvent(JSON.parse(message.data) as ConversationEvent);
-  });
-  source.addEventListener(LIVE_FRAME_STREAM_NAME, (message: MessageEvent<string>) => {
-    handlers.onLiveFrame(JSON.parse(message.data) as ConversationLiveFrame);
-  });
-  source.addEventListener("error", () => {
-    watch.ended("error_event");
-    close();
-    handlers.onTrouble();
-  });
-  return close;
 }

@@ -149,9 +149,9 @@ async function packedFile(pathname: string, choose: (decoded: string) => string 
 /**
  * Send one screen request to the server and hand back its response as it streams.
  *
- * If the server cannot be reached, answer with a network error, not an HTTP error. A live
- * stream (`EventSource`) closes for good on an HTTP error, but on a network error it
- * reconnects by itself when the server is back.
+ * If the server cannot be reached, answer with a network error, not an HTTP error. The page
+ * reads a network error as "the server is not there" and an HTTP error as "the server answered".
+ * The live feeds do not pass through here: the page opens its own WebSocket.
  */
 export async function forward(request: Request, url: URL): Promise<Response> {
   const address = serverAddress();

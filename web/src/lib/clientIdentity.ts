@@ -26,16 +26,19 @@ function deviceId(): string {
 }
 
 /** These facts describe the loaded screens, not a later server release. */
+export function browserClientIdentity(): ClientIdentity {
+  const version = typeof document === 'undefined'
+    ? 'development'
+    : document.querySelector<HTMLMetaElement>('meta[name="panels-app-sha"]')?.content.trim() || 'development';
+  return { kind: 'browser', device_id: deviceId(), version };
+}
+
 export function clientIdentityHeaders(headers?: HeadersInit): Record<string, string> {
   const result: Record<string, string> = headers instanceof Headers
     ? Object.fromEntries(headers.entries())
     : Array.isArray(headers) ? Object.fromEntries(headers) : { ...headers };
-  const version = typeof document === 'undefined'
-    ? 'development'
-    : document.querySelector<HTMLMetaElement>('meta[name="panels-app-sha"]')?.content.trim() || 'development';
-  const identity: ClientIdentity = { kind: 'browser', device_id: deviceId(), version };
   for (const name of Object.keys(result)) if (name.toLowerCase() === 'x-panels-client') delete result[name];
-  result['X-Panels-Client'] = JSON.stringify(identity);
+  result['X-Panels-Client'] = JSON.stringify(browserClientIdentity());
   return result;
 }
 

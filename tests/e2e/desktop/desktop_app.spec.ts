@@ -280,25 +280,13 @@ test('the screens reach the server through the app, and links leave it', async (
       for (const ticket of tickets) await checkTicket(page, ticket);
       await captureSuccess(page, 'desktop-eight-tickets.png');
 
-      const selectionStream = (request: NativeRequest, id: string) => {
-        const url = new URL(request.url);
-        return url.pathname === '/api/navigation/view/events' &&
-          JSON.parse(url.searchParams.get('view') ?? '{}').selected?.id === id;
-      };
-      // Replace each scope as soon as its upstream request starts, before its body settles.
-      for (const ticket of tickets) {
-        await page.evaluate(id => { location.hash = `#/workspace/${id}`; }, ticket.id);
-        await expect.poll(async () => (await nativeRequests()).some(request =>
-          selectionStream(request, ticket.id) && !request.ended), { timeout: WAIT_MS }).toBe(true);
-      }
+      // The navigation feed is a subscription on the page's own WebSocket, not a forwarded request.
+      // Replace each scope at once, so that every earlier subscription is ended before its snapshot.
+      for (const ticket of tickets) await page.evaluate(id => { location.hash = `#/workspace/${id}`; }, ticket.id);
       const current = tickets.at(-1)!;
       await expect(page.locator('.ticket-title')).toHaveText(current.title, { timeout: WAIT_MS });
-      const retired = tickets.slice(0, -1).map(ticket => ticket.id);
-      await expect.poll(async () => (await nativeRequests()).filter(request =>
-        retired.some(id => selectionStream(request, id)) && !request.ended), { timeout: WAIT_MS }).toEqual([]);
-      await expect.poll(async () => (await nativeRequests()).filter(request =>
-        new URL(request.url).pathname === '/api/navigation/view/events' && !request.ended)
-        .map(request => JSON.parse(new URL(request.url).searchParams.get('view')!).selected?.id), { timeout: WAIT_MS }).toEqual([current.id]);
+      expect((await nativeRequests()).filter(request =>
+        new URL(request.url).pathname === '/api/navigation/view/events')).toEqual([]);
       const read = await page.evaluate(async () => (await fetch('/api/meta')).status);
       expect(read).toBe(200);
       await api.patch(server, `/api/tickets/${current.id}`, { title: 'Desktop navigation live update' });

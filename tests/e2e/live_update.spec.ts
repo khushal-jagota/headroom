@@ -10,7 +10,7 @@
  * Waits are on the browser's own counters (`window.__plannerDebug`) plus the resulting
  * DOM, never on a sleep.
  */
-import type { Page } from '@playwright/test';
+import type { Page, WebSocketRoute } from '@playwright/test';
 import { WAIT_MS, api, cli, expect, openPage, test, type ServerHandle } from './support/fixtures.ts';
 
 const RECAP_SEED = 'Recap as it stood before anyone started typing.';
@@ -147,4 +147,44 @@ test('test_composing_survives_a_change_to_the_same_ticket', async ({ server, new
   expect(state.text).toBe(RECAP_SEED + FIRST_HALF + SECOND_HALF);
   expect(state.scrollTop).toBe(scrollTop);
   await assertSameDocument(page);
+});
+
+// Distinct risk: the page's one socket decides "Can't reach Panels". Only a real socket, held open by a
+// real server and cut by the browser's own route, shows the card at once and shows the screen
+// follow the server again after the page reopens the socket.
+test('test_a_dropped_live_socket_shows_the_card_at_once_and_the_screen_follows_again', async ({ server, newContext }) => {
+  const ticketId = (
+    await cli(server, ['ticket', 'create', '--input-json', '-'], {
+      stdin: JSON.stringify({
+        worker_type: 'coding',
+        title: 'Socket drop before',
+        brief: 'Agreed brief.',
+        manager: { kind: 'chief', id: 'chief' },
+      }),
+      settleBrief: true,
+    })
+  ).id as string;
+  const context = await newContext();
+  const sockets: WebSocketRoute[] = [];
+  await context.routeWebSocket(/\/api\/live$/, (socket) => {
+    socket.connectToServer();
+    sockets.push(socket);
+  });
+  const page = await openPage(
+    context,
+    server,
+    `#/workspace/${ticketId}`,
+    `section[data-screen="ticket"][data-ticket-id="${ticketId}"]`,
+  );
+  expect(sockets).toHaveLength(1);
+  // The shell draws the card in two places. Either one shows the state.
+  const card = page.locator('.status-card[data-connection-status]').first();
+  await sockets[0]!.close({ code: 1012, reason: 'cut by the test' });
+  await expect(card).toHaveAttribute('data-status-state', 'unreachable', { timeout: 2_000 });
+  await expect(card).toContainText("Can't reach Panels");
+  // The page opens a new socket on its own, and the card goes.
+  await expect(card).not.toHaveAttribute('data-status-state', 'unreachable', { timeout: WAIT_MS });
+  expect(sockets).toHaveLength(2);
+  await api.patch(server, `/api/tickets/${ticketId}`, { title: 'Socket drop after' });
+  await page.locator('.ticket-title', { hasText: 'Socket drop after' }).waitFor({ state: 'visible', timeout: WAIT_MS });
 });
