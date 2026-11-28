@@ -176,7 +176,7 @@ test('the screens reach the server through the app, and links leave it', async (
         };
         return fetchDesktopCompatibility(address);
       }, server.base);
-      expect(compatibility).toEqual({ minimum_bridge_version: 2 });
+      expect(compatibility).toEqual({ minimum_bridge_version: 3 });
     }, { timeout: WAIT_MS * 3 });
 
     await test.step('the native forward identifies API reads and files', async () => {
