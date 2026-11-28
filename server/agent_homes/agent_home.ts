@@ -5,18 +5,48 @@ import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 // The one setup that every Worker and Manager home shares. Ticket workspace
 // preparation adds the checkout and artifacts/ after this.
 export const LOGS_DIRECTORY = 'logs';
+export const RULES_DIRECTORY = 'rules';
 export type AgentHomeRole = 'worker' | 'manager';
 
-const ROLE_LINES: Record<AgentHomeRole, string> = {
-  worker:
-    'You are the Worker for one Ticket. `worktree/` holds the code. `artifacts/` holds the files that a reviewer needs.',
-  manager: 'You are one Manager.',
-};
-
 export function agent_home_text(role: AgentHomeRole): string {
+  return role === 'manager' ? manager_home_text() : worker_home_text();
+}
+
+// A router: it loads in every session, so it points at files and holds no rules.
+function manager_home_text(): string {
   return `# This folder
 
-This folder is your home in Panels. ${ROLE_LINES[role]}
+This file loads in every session. It is a router. Read the files that it points to. Do not copy them here.
+
+## Who you are
+
+- You are a Manager of one domain, for example Wren distribution. You run that domain and the Tickets that serve it.
+- You do not build Panels. When Panels cannot do something that you need, tell the Chief.
+
+## Where you are
+
+This folder is your home in Panels. \`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
+
+## Read at the start of a session
+
+- \`rules/\`: how you work. The rules come from Khushal or from your own lessons. Add a rule when a lesson holds beyond one case.
+- Any other file in this folder, for example \`notes.md\`, when it applies to the work.
+
+## logs/
+
+Write each problem in \`logs/\` the moment that it happens, so that it can be found and fixed later. A problem is anything that went badly: a tool that failed, an instruction that was wrong or not clear, work that you had to do again, or time that you lost.
+
+- Keep one Markdown file for each kind of problem. Give the file a name that tells what it holds, for example \`tools.md\`. Make the file when you first need it.
+- Add one bullet for each problem. Start the bullet with the date. Tell what went badly, with enough detail for a reader who was not there.
+- Add a fix only when the fix is very clear. Record the problem. Do not try to find a solution.
+- Add new bullets at the end of the file. Do not change or delete bullets.
+`;
+}
+
+function worker_home_text(): string {
+  return `# This folder
+
+This folder is your home in Panels. You are the Worker for one Ticket. \`worktree/\` holds the code. \`artifacts/\` holds the files that a reviewer needs.
 
 ## logs/
 
@@ -39,6 +69,7 @@ Put build output under TMPDIR, for example xcodebuild -derivedDataPath "$TMPDIR/
 // change to the text reaches every home at its next start.
 export async function prepare_agent_home(folder: string, role: AgentHomeRole): Promise<void> {
   await mkdir(join(folder, LOGS_DIRECTORY), { recursive: true });
+  if (role === 'manager') await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
   const text = agent_home_text(role);
   for (const name of new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file)))
     await writeFile(join(folder, name), text);
