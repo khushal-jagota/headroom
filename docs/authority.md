@@ -49,7 +49,8 @@ Proposing is the Ticket speaking about its own work, so nobody, including the ow
 
 - **Re-parenting.** Only the owner and Chief may move a Ticket to another Manager. At the moment of the call, the Ticket really is below the Manager trying to hand it away, so the plain rule would allow it. The exception exists so authority cannot be given away by whoever currently holds it.
 - **Creation.** Making a Ticket acts on nothing that exists yet, so the rule cannot refuse it. The pieces it arrives with are checked one at a time instead. You can place it under a Manager in your own chain. Only someone above the new Ticket may set its ceiling and holder.
-- **Doors about who you are.** A small set of routes is not about any target. They ask only what kind of caller this is. Some admit only the owner for actions such as sending a message, answering a permission question, saving a credential, installing an update, and settling a Manager. Others admit the owner or Chief, such as Chief's recap and the defaults for new Managers. These are deliberate and few.
+- **Messages.** A message does not act on its recipient, so the rule does not apply. Any identified caller can message the owner, Chief, any Manager, and any Ticket, in any state, including a Done Ticket. An unidentified caller reaches only Chief.
+- **Doors about who you are.** A small set of routes is not about any target. They ask only what kind of caller this is. Some admit only the owner for actions such as answering a permission question, saving a credential, installing an update, and settling a Manager. Others admit the owner or Chief, such as Chief's recap and the defaults for new Managers. These are deliberate and few.
 
 Who must look at a parked proposal, the holder, is a narrower fact owned by the [Ticket lifecycle](tickets.md). Holding a review grants nothing the rule does not already give.
 
@@ -77,4 +78,4 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `server/core/authority/identity.ts`: turns a request into a caller. Executor self-reads enter through a verified in-process context.
 - `server/agent_identity/`: conversation credentials, hash storage and private launch delivery.
 
-_Last verified: 2026-11-23._
+_Last verified: 2026-11-27._

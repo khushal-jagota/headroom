@@ -13,6 +13,7 @@ export interface MetricsConfig {
   minute_seconds: number;
   coarse_seconds: number;
   process_seconds: number;
+  stream_seconds: number;
   metrics_payload_bytes: number;
   process_payload_bytes: number;
   process_snapshot_bytes: number;
@@ -25,6 +26,8 @@ export interface MetricsConfig {
   history_points: number;
   service_query_seconds: number;
   service_output_bytes: number;
+  tailnet_query_seconds: number;
+  tailnet_output_bytes: number;
   filesystem_path: string;
 }
 export const DEFAULT_METRICS_CONFIG: Readonly<MetricsConfig> = Object.freeze({
@@ -39,6 +42,7 @@ export const DEFAULT_METRICS_CONFIG: Readonly<MetricsConfig> = Object.freeze({
   minute_seconds: 48 * 3600,
   coarse_seconds: 31 * 86400,
   process_seconds: 15 * 60,
+  stream_seconds: 30 * 86400,
   metrics_payload_bytes: 192 * 1024 * 1024,
   process_payload_bytes: 64 * 1024 * 1024,
   process_snapshot_bytes: 4 * 1024 * 1024,
@@ -51,6 +55,8 @@ export const DEFAULT_METRICS_CONFIG: Readonly<MetricsConfig> = Object.freeze({
   history_points: 2000,
   service_query_seconds: 1,
   service_output_bytes: 1024 * 1024,
+  tailnet_query_seconds: 1,
+  tailnet_output_bytes: 1024 * 1024,
   filesystem_path: '/',
 });
 const INTEGER_FIELDS = new Set([
@@ -64,6 +70,7 @@ const INTEGER_FIELDS = new Set([
   'process_page_rows',
   'history_points',
   'service_output_bytes',
+  'tailnet_output_bytes',
 ]);
 export function metrics_config(overrides: Partial<MetricsConfig> = {}): MetricsConfig {
   const config = { ...DEFAULT_METRICS_CONFIG, ...overrides };

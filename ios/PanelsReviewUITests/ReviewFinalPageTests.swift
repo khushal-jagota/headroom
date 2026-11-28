@@ -450,6 +450,8 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         app.buttons["review.openTicket"].tap()
         XCTAssertTrue(ticketActions.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["review.mic"].waitForExistence(timeout: 8), "The Ticket page approval card has a mic")
+        capture(app, "ticket-page-approval-mic")
         app.backButton.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
 

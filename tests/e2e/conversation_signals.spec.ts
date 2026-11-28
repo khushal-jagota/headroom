@@ -393,34 +393,13 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   expect(submitted[0].owner_read_through_sequence).toBe(bound);
   let snapshot = await api.get(server, `/api/conversation/conversations/${conversation}`);
   expect(snapshot.owner_read_through_sequence).toBe(bound);
-  // Acceptance answers before the busy agent's queue holds the reply.
-  await expect
-    .poll(
-      async () =>
-        (await api.get(server, `/api/conversation/conversations/${conversation}`)).held_prompts.some(
-          (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
-        ),
-      { timeout: WAIT_MS },
-    )
-    .toBe(true);
-  // Review clears the editor without a held row or a second copy of the reply.
-  await expect(card.locator('[data-conversation-held-row]')).toHaveCount(0);
+  // The agent is busy. A review reply steers into its running turn, so no queue holds it.
   await expect(card.locator('[data-review-outgoing]')).toHaveCount(0);
   await expect(card.locator('[data-review-reply]')).toHaveValue('');
-  await captureSuccess(page, 'review-reply-queued.png');
-  // The agent's own conversation owns the queue. Keep Review alive in its existing tab.
-  // The dock shows held replies at rest, without marking the newer transcript as read.
-  const agentPage = await openPage(context, server, `#/workspace/${identity}`,
-    '[data-conversation-pane][data-conversation-state="rest"] [data-conversation-held-row]');
-  const heldReply = agentPage.locator('[data-conversation-held-stack] [data-conversation-held-row]')
-    .filter({ hasText: 'The reply reaches this conversation once.' });
-  await expect(heldReply).toBeVisible();
-  await captureSuccess(agentPage, 'conversation-review-reply-held.png');
-  await agentPage.close();
-  await page.bringToFront();
+  expect(snapshot.held_prompts).toEqual([]);
+  await captureSuccess(page, 'review-reply-steered.png');
   await post(server, `/api/test/signals/${conversation}/finish`);
   // The card can now advance to the newer message, which the original receipt did not read.
-  await expect(card.locator('[data-conversation-held-row]')).toHaveCount(0);
   await expect(page.locator('[data-deck-leaving]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(card.locator('.review-message-run')).toHaveText('This newer message stays unread.');
@@ -440,24 +419,14 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   );
   snapshot = await api.get(server, `/api/conversation/conversations/${conversation}`);
   expect(snapshot.owner_read_through_sequence).toBe(bound);
-  // A durable prompt row is admission. This receipt proves backend delivery.
-  const receipts: string[] = await page.evaluate(
-    async ({ conversation, timeout }) => {
-      const deadline = performance.now() + timeout;
-      while (performance.now() < deadline) {
-        const response = await fetch(`/api/test/signals/${conversation}/delivered`);
-        const receipt = await response.json();
-        const reply = 'The reply reaches this conversation once.';
-        if (receipt.texts.some((text: string) => text.includes(reply))) return receipt.texts;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      throw new Error('The exact reply did not reach the scripted backend');
-    },
-    { conversation, timeout: WAIT_MS },
+  // The reply was recorded once, as a steer into the running turn.
+  const events: { kind: string; payload: { sender_message_id?: string; mode?: string } }[] =
+    (await api.get(server, `/api/conversation/conversations/${conversation}/events`)).events;
+  const prompts = events.filter(
+    (event) => event.kind === 'prompt' && event.payload.sender_message_id === submitted[0].sender_message_id,
   );
-  expect(receipts.filter((text) => text.includes('The reply reaches this conversation once.')).length).toBe(
-    1,
-  );
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0].payload.mode).toBe('steer');
   const displayedBound = Number.parseInt(
     (await card.locator('[data-review-message-sequence]').getAttribute('data-review-message-sequence')) ||
       '0',

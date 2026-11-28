@@ -1,7 +1,8 @@
-"""Read-only snapshot of the protected live setup: skill links, live command, routes, health, units."""
+"""Read-only snapshot of the protected live setup: skill links, live command, routes, health, units.
+Usage: LIVE_SHA=<full sha> python3 -I live_snapshot.py OUT_JSON"""
 import hashlib, json, os, shutil, subprocess, sys, urllib.request
 
-LIVE_SHA = "3d0c534e3dcab40dc79185d186ee9724215bcc63"
+LIVE_SHA = os.environ["LIVE_SHA"]  # the full live SHA from the live app manifest
 ROOTS = ["~/.claude/skills", "~/.codex/skills", "~/.agents/skills", "~/.gemini/config/skills"]
 
 def sha(path):

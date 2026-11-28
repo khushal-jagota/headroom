@@ -122,6 +122,25 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     ],
   );
 
+  group('connection', 'Read why live streams and client connections closed.', 'data');
+  command('connection records', 'List live stream closes and client events by time and device.', [
+    option('since', '--since <TIME>', text, {
+      description:
+        'Start of the window: an ISO time with an offset, or an age such as 30m, 24h, 7d. Default: 24h.',
+    }),
+    option('until', '--until <TIME>', text, {
+      description: 'End of the window, in the same forms. Default: now.',
+    }),
+    option('device_id', '--device-id <TEXT>', text, {
+      description: 'Only this device, from the X-Panels-Client identity.',
+    }),
+    option('limit', '--limit <INTEGER>', integer(1, 500), {
+      default: 100,
+      description: 'Newest rows kept for each kind, shown oldest first.',
+    }),
+    json_output(),
+  ]);
+
   group('credential', 'List and request credentials by name, never by secret value.', 'data');
   command('credential list', 'List credential names and metadata without secret values.', [
     option('limit', '--limit <INTEGER>', integer(), { default: 30 }),

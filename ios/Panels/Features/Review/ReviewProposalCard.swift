@@ -116,10 +116,6 @@ struct ReviewProposalDock: View {
     @Environment(AppStore.self) private var store
     @State private var exit = ReviewCardExit()
     @State private var approvalGuidance: DecisionGuidance?
-    @State private var voice = ReviewVoiceCapture()
-    @State private var focusRequest = 0
-    @State private var blurRequest = 0
-    @ScaledMetric(relativeTo: .body) private var microphoneSize: CGFloat = 17
     private var api: APIClient { store.client }
     /// A notice or a refusal of a proposal that no longer waits turns the decision off.
     private var actionable: Bool { notice == nil && decision.ready }
@@ -128,40 +124,19 @@ struct ReviewProposalDock: View {
     private var error: String? { decision.error == refusal || decision.changed ? nil : decision.error }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if voice.phase != .idle { voiceStatus.padding(.horizontal, 20).padding(.top, 8).background(PanelsTheme.Web.surface) }
+        DecisionVoiceNote(isActive: isActive, draftID: decision.revisionDraftID, canRecord: ready && !decision.busy,
+                          savedKey: savedWork.key, savedVoice: savedVoice,
+                          refreshSaved: { savedWork.refresh(LocalStore.server(api.baseURL)) },
+                          reloadDraft: { decision.refreshVoiceDraft() }) { voice in
             DecisionNoteActions(note: $decision.revisionDraft, showsSendBack: decision.proposal?.field != "brief",
                                 canReturn: decision.canReturn || decision.proposal == nil, ready: ready,
                                 busyAction: busyAction, error: error ?? voice.error,
-                                noteEnabled: voice.phase == .idle,
-                                accessory: AnyView(Button {
-                                    Haptics.light(); blurRequest += 1
-                                    Task { await voice.start(api: api, draftID: decision.revisionDraftID) }
-                                } label: {
-                                    Image(systemName: "mic").resizable().scaledToFit()
-                                        .frame(width: min(microphoneSize, 24), height: min(microphoneSize, 24))
-                                        .frame(width: 40, height: 40).contentShape(Rectangle())
-                                }
-                                    .buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
-                                    .accessibilityLabel("Record a note").disabled(!ready || decision.busy || voice.phase != .idle)),
+                                noteEnabled: voice.noteEnabled, accessory: voice.accessory,
                                 attachments: decision.noteAttachments,
-                                focusRequest: focusRequest, blurRequest: blurRequest,
+                                focusRequest: voice.focusRequest, blurRequest: voice.blurRequest,
                                 onSkip: onSkip, skipEnabled: busyAction == nil && !decision.busy,
                                 onApprove: openApproval, onSendBack: { Task { await sendBack() } })
         }
-        .onChange(of: isActive, initial: true) { _, active in
-            guard active else { voice.preserve(); return }
-            savedWork.refresh(LocalStore.server(api.baseURL))
-            decision.refreshVoiceDraft()
-            restoreVoice()
-        }
-        .onChange(of: savedWork.key) { _, _ in
-            let server = LocalStore.server(api.baseURL)
-            guard isActive, savedWork.key == ReviewSavedWork.Key(server: server, revision: LocalStore.shared.outgoingRevision(server)) else { return }
-            decision.refreshVoiceDraft()
-            restoreVoice()
-        }
-        .onDisappear { voice.preserve() }
         // A move to another reviewer turns the decision off, an open sheet included.
         .onChange(of: notice != nil) { _, moved in if moved { sheet = nil } }
         .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
@@ -223,35 +198,7 @@ struct ReviewProposalDock: View {
         if exit.saved(sheetOpen: sheet != nil) { leave() } else { sheet = nil }
     }
     private func leave() { onResolve { busyAction = nil } }
-    private func restoreVoice() {
-        voice.restore(api: api, draftID: decision.revisionDraftID,
-                      savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])
-    }
-    @ViewBuilder private var voiceStatus: some View {
-        HStack(spacing: PanelsTheme.Space.md) {
-            Button { Haptics.selection(); voice.cancel(); focusRequest += 1 } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel recording")
-            Spacer()
-            switch voice.phase {
-            case .recording:
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let elapsed = max(0, Int(context.date.timeIntervalSince(voice.startedAt)))
-                    Text("recording \(elapsed / 60):\(String(format: "%02d", elapsed % 60))").monospacedDigit()
-                }
-                Spacer()
-                Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
-            case .saved:
-                Text(voice.transcribing ? "transcribing" : "saved"); Spacer()
-                if voice.transcribing { RingSpinner() }
-            case .failed:
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not transcribed")
-                Spacer()
-                Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
-            case .idle: EmptyView()
-            }
-        }.foregroundStyle(PanelsTheme.muted)
-    }
-    private func append(_ transcript: String?) {
-        if transcript != nil { decision.refreshVoiceDraft() }
-        focusRequest += 1
+    private func savedVoice() -> [PendingWork] {
+        decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? []
     }
 }

@@ -468,8 +468,8 @@ export class ReviewReplyComposer {
     const content = this.#content([...pendingImagesAsPieces(this.images), ...pendingFilesAsPieces(this.files)]);
     const conversationId = uploads.length ? uploads[0].destination.expected_conversation_id : this.uploadDestination.expected_conversation_id;
     const message = {
-      ...mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'queue' }),
-      queueWhilePending: this.queueView?.is_running === true
+      ...mintOutgoingMessage({ content, senderLabel: 'owner', mode: 'steer' }),
+      queueWhilePending: false
     };
     if (through !== undefined) message.ownerReadThroughSequence = through;
     const entry: ReviewOutgoingReply = { conversationId, message, pendingUploads: uploads, status: 'preparing', note: null };

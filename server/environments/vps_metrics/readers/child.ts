@@ -83,7 +83,9 @@ process.once('message', async (boot: ReaderBoot) => {
               ? store.latest(sql, operation.now, deadline)
               : operation.kind === 'processes'
                 ? store.processes(sql, operation.now, operation.query, deadline)
-                : store.history(sql, operation.query, deadline);
+                : operation.kind === 'history'
+                  ? store.history(sql, operation.query, deadline)
+                  : store.connection_records(sql, operation.query, deadline);
           const encoded = encode(result);
           deadline_check(deadline);
           return encoded;

@@ -2,7 +2,7 @@
 # Start the sealed candidate as a private foreground home on the copy.
 # setsid --fork: own session, survives the tool call. exec: the launcher IS the recorded PID,
 # and the launcher execve's into foreground_main, so that PID is the supervisor we signal.
-# Usage: launch_copy.sh REHEARSAL_ROOT APP PORT
+# Usage: [UNIT_PREFIX=panels-rehearsal-<tag>-] launch_copy.sh REHEARSAL_ROOT APP PORT
 set -eu
 R=$1 APP=$2 PORT=$3
 mkdir -p "$R/home/.codex" "$R/home/.claude" "$R/home/.gemini" "$R/scratch" "$R/workspace" "$R/s" "$R/secrets" "$R/data/logs" "$R/tmp"
@@ -25,7 +25,7 @@ setsid --fork /usr/bin/env -i \
   PLAN_DISPATCHER_LOCK_PATH="$R/data/dispatcher.lock" \
   PLAN_SERVER_CONTROL_SOCKET="$R/s/c.sock" PLAN_SERVER_LIFECYCLE_LEASE_PATH="$R/s/lease.lock" \
   PLAN_UPDATE_TOKEN_FILE="$R/secrets/update-token" \
-  PLAN_WORKER_UNIT_PREFIX=panels-rehearsal-u43p- \
+  PLAN_WORKER_UNIT_PREFIX="${UNIT_PREFIX:-panels-rehearsal-}" \
   PLAN_WORKSPACE_ROOT="$R/workspace" PLAN_TICKET_SCRATCH_ROOT="$R/scratch" PLAN_TICKET_SCRATCH_DATABASE="$R/data/planner.db" \
   PLAN_CREDENTIAL_KEY_PATH="$R/data/credential-secrets/key" \
   /bin/bash -c 'echo $$ > "$0/launcher.pid"; date +%s.%N > "$0/launch.time"; exec "$1/bin/panels-launcher" serve >>"$0/serve.log" 2>&1 </dev/null' "$R" "$APP"

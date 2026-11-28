@@ -14,6 +14,7 @@ import {
 } from '../../../environments/updates/attempts.ts';
 import type { MacRuntimeSelection } from '../../wire.generated.ts';
 import { MACHINE_SERVICE_TRIAL_FILE, MAC_RUNTIME_READY_TIMEOUT_SECONDS } from '../configuration.ts';
+import { WORKER_LAUNCHER_MODE } from '../../../platform_runtime/darwin/launchd/configuration.ts';
 import { MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import {
   installed_machine_service,
@@ -113,7 +114,9 @@ export async function bridge_machine_service(
       previous: await read<MacRuntimeSelection>(join(updates, 'selection.json')),
     } satisfies ServiceTrial;
     atomic_write_json(path, trial);
+    // On Mac the signed Panels app starts Node, so macOS names Panels and not Node.js Foundation.
     await start_machine_coordinator(service, helper, [
+      ...(service.launcher ? [service.launcher, WORKER_LAUNCHER_MODE] : []),
       process.execPath,
       fileURLToPath(new URL('./machine_service_trial_main.ts', import.meta.url)),
       updates,

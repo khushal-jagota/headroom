@@ -5,7 +5,7 @@ import type { UpdateStatus, MachineUpdateState } from "../contracts";
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
   | "check_unavailable" | "available" | "updating" | "refresh_needed"
-  | "failed" | "unreachable" | "machines";
+  | "failed" | "unreachable" | "offline" | "machines";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
 /** What the card's action button does. */
@@ -38,7 +38,10 @@ export function updateConfirmationUntil(status: UpdateStatus | undefined): numbe
 
 /** The server owns update facts. Only the connection and this page's version overlay them. */
 export function updatePresentation({ status, connection, pageIsBehind, starting, now }: UpdatePresentationInput): UpdatePresentation {
-  if (connection !== "connected") {
+  // The operating system has no network. The server is not at fault, and the words say so.
+  if (connection === "offline") return { state: "offline", dimmed: true };
+  // A lost stream shows the card at once.
+  if (connection === "unreachable") {
     // A restart drops the connection. Until the server's deadline that is still the update.
     const deadline = Date.parse(status?.deadline_at ?? "");
     const updating = (starting || status?.state === "updating") && Number.isFinite(deadline) && now < deadline;
@@ -84,6 +87,8 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
     }
     case "unreachable":
       return { word: "Can't reach Panels", tone: "wrong", detail: "Trying again every few seconds", action: { label: "Try now", does: "reconnect" } };
+    case "offline":
+      return { word: "This Mac is offline", tone: "wrong", detail: "Panels reconnects when the network is back", action: { label: "Try now", does: "reconnect" } };
   }
 }
 

@@ -20,6 +20,8 @@ import Observation
     let noteAttachments = ConversationModel()
     private var server: String?
     private var identity: String?
+    /// The note's draft, the same one Review's note for this proposal uses.
+    var noteDraftID: String? { identity.map { $0 + ":guidance" } }
     private var restoring = false
     /// True while the note's pictures and files are prepared for a decision, so an
     /// unrelated outbox change does not unlock the note meanwhile.
@@ -203,25 +205,37 @@ struct TicketDecisionDock: View {
     let proposal: TicketProposal
     @Bindable var decision: TicketDecisionState
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     private var nextStage: String? { presentation.manifest.advance?[presentation.ticket.stage] }
 
+    private var ready: Bool {
+        nextStage != nil && !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client)
+    }
+    private var server: String { LocalStore.server(store.baseURL) }
+
     var body: some View {
-        DecisionNoteActions(note: $decision.guidance, showsSendBack: proposal.field != "brief",
-            canReturn: presentation.ticket.conversationId != nil, ready: nextStage != nil && !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client),
-            busyAction: decision.busyAction, error: decision.error,
-            noteEnabled: !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client),
-            attachments: decision.noteAttachments,
-            onApprove: {
-                let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
-                if presentation.finalApproval {
-                    // The decision shows its own failure on the card.
-                    Task { try? await decision.approve(snapshot) }
-                } else {
-                    decision.sheet = .approve
-                }
-            }, onSendBack: {
-                let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
-                Task { try? await decision.sendBack(snapshot) }
-            })
+        DecisionVoiceNote(isActive: scenePhase == .active, draftID: decision.noteDraftID, canRecord: ready && decision.busyAction == nil,
+                          savedKey: LocalStore.shared.outgoingRevision(server),
+                          savedVoice: { decision.noteDraftID.map { Outbox.shared.entries(server, draftID: $0) } ?? [] },
+                          refreshSaved: {}, reloadDraft: { decision.reloadNote() }) { (voice: DecisionVoiceParts) -> DecisionNoteActions in
+            DecisionNoteActions(note: $decision.guidance, showsSendBack: proposal.field != "brief",
+                canReturn: presentation.ticket.conversationId != nil, ready: ready,
+                busyAction: decision.busyAction, error: decision.error ?? voice.error,
+                noteEnabled: !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client) && voice.noteEnabled, accessory: voice.accessory,
+                attachments: decision.noteAttachments,
+                focusRequest: voice.focusRequest, blurRequest: voice.blurRequest,
+                onApprove: {
+                    let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
+                    if presentation.finalApproval {
+                        // The decision shows its own failure on the card.
+                        Task { try? await decision.approve(snapshot) }
+                    } else {
+                        decision.sheet = .approve
+                    }
+                }, onSendBack: {
+                    let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
+                    Task { try? await decision.sendBack(snapshot) }
+                })
+        }
     }
 }

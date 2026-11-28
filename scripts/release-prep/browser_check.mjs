@@ -33,6 +33,22 @@ await context.addInitScript(() => {
       window.__sources.push(this);
     }
   };
+  // Shell monitor: every 100 ms, keep each change of the status card, navigation-health line,
+  // dimming and any conversation connection mark, with the route at that moment.
+  const shell = (window.__shell = []);
+  let last = null;
+  setInterval(() => {
+    const slot = document.querySelector('[data-shell-status]');
+    const card = document.querySelector('[data-connection-status]');
+    const nav = document.querySelector('[data-navigation-health]');
+    const main = document.querySelector('main.shell-content');
+    const s = { card_open: !!slot?.hasAttribute('data-open'), connection_state: card?.getAttribute('data-connection-state') ?? null,
+      status_state: card?.getAttribute('data-status-state') ?? null, word: card?.querySelector('.status-word')?.textContent?.trim() ?? null,
+      navigation: nav ? nav.textContent.trim() : null, dimmed: !!main?.classList.contains('update-dimmed'),
+      connection_marks: document.querySelectorAll('[data-conversation-connection]').length };
+    const key = JSON.stringify(s);
+    if (key !== last) { shell.push({ t: Date.now(), route: location.hash, ...s }); last = key; }
+  }, 100);
 });
 const page = await context.newPage();
 const responses = [];
@@ -96,7 +112,29 @@ for (const t of targets) {
     await page.evaluate(() => document.querySelectorAll('style').forEach((s) => { if (s.textContent.includes('color:transparent!important')) s.remove(); }));
   }
   results.push(r);
-  console.log(JSON.stringify({ kind: r.kind, id: r.id, pass: r.pass, complete: r.complete_seconds, snapshot: r.stream_snapshot_seconds }));
+  console.log(JSON.stringify({ kind: r.kind, id: r.id, pass: r.pass, complete: r.complete_seconds, snapshot: r.stream_snapshot_seconds, error: r.error, stream_after_2s: r.stream_after_2s, connection_trouble: r.connection_trouble, load_error: r.load_error, upgrading_409: r.upgrading_409, other_api_failures: r.other_api_failures }));
 }
+// Every distinct stream route the app opened (one URL per path): re-open it from the page and read its first bytes.
+const retry_frames = await page.evaluate(async () => {
+  const seen = new Map();
+  for (const s of window.__streams) { const u = new URL(s.url, location.href); const key = u.pathname.replace(/conv_[0-9a-f]+/, ':id'); if (!seen.has(key)) seen.set(key, u.href); }
+  const out = [];
+  for (const [route, href] of seen) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const r = await fetch(href, { headers: { accept: 'text/event-stream' }, signal: controller.signal });
+      const reader = r.body.getReader();
+      let text = '';
+      while (text.length < 13) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); }
+      out.push({ route, status: r.status, first_bytes: text.slice(0, 40), starts_with_retry_1000: text.startsWith('retry: 1000\n\n') });
+    } catch (e) { out.push({ route, error: String(e).slice(0, 200) }); }
+    finally { clearTimeout(timer); controller.abort(); }
+  }
+  return out;
+});
+console.log(JSON.stringify({ retry_frames }));
+const shell_timeline = await page.evaluate(() => window.__shell);
+console.log(JSON.stringify({ shell_timeline }));
 await browser.close();
-writeFileSync(out + '/browser-results.json', JSON.stringify({ app_load_ms, total_seconds: (Date.now() - t0) / 1000, console_errors: consoleErrors.slice(0, 50), results }, null, 1));
+writeFileSync(out + '/browser-results.json', JSON.stringify({ app_load_ms, total_seconds: (Date.now() - t0) / 1000, console_errors: consoleErrors.slice(0, 50), retry_frames, shell_timeline, results }, null, 1));
