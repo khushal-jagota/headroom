@@ -111,6 +111,25 @@ async function command(path: string, args: string[]): Promise<string> {
   return result.stdout.trim();
 }
 
+/** A bare origin and a project whose one commit is pushed to it. */
+async function published_project(files: Record<string, string>) {
+  const remote = join(root, 'origin.git'),
+    project = join(root, 'project');
+  mkdirSync(remote);
+  mkdirSync(project);
+  await command(remote, ['init', '--bare']);
+  await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  await command(project, ['init', '-b', 'main']);
+  await command(project, ['config', 'user.email', 'proof@example.test']);
+  await command(project, ['config', 'user.name', 'Synthetic proof']);
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(project, name), text);
+  await command(project, ['add', '.']);
+  await command(project, ['commit', '-m', 'published']);
+  await command(project, ['remote', 'add', 'origin', remote]);
+  await command(project, ['push', 'origin', 'main']);
+  return { remote, project };
+}
+
 test('the synthetic guard rejects outside paths and symlink escapes before product dispatch', () => {
   expect(() => admit('/home/vps/Deployments/Panels')).toThrow('outside synthetic root');
   expect(() => admit('/home/vps/Deployments/Panels/current/data/files/tickets/' + ticket)).toThrow(
@@ -292,20 +311,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
 test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'independent clones retire their checkout before artifacts and retain their original source',
   async () => {
-    const remote = join(root, 'origin.git'),
-      project = join(root, 'project');
-    mkdirSync(remote);
-    mkdirSync(project);
-    await command(remote, ['init', '--bare']);
-    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-    await command(project, ['init', '-b', 'main']);
-    await command(project, ['config', 'user.email', 'proof@example.test']);
-    await command(project, ['config', 'user.name', 'Synthetic proof']);
-    writeFileSync(join(project, 'tracked.txt'), 'published');
-    await command(project, ['add', '.']);
-    await command(project, ['commit', '-m', 'published']);
-    await command(project, ['remote', 'add', 'origin', remote]);
-    await command(project, ['push', 'origin', 'main']);
+    const { remote, project } = await published_project({ 'tracked.txt': 'published' });
     const path = folder(),
       checkout = await prepare_workspace(
         path,
@@ -352,20 +358,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
 test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'a package clone in DerivedData does not hold back the retired checkout',
   async () => {
-    const remote = join(root, 'origin.git'),
-      project = join(root, 'project');
-    mkdirSync(remote);
-    mkdirSync(project);
-    await command(remote, ['init', '--bare']);
-    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-    await command(project, ['init', '-b', 'main']);
-    await command(project, ['config', 'user.email', 'proof@example.test']);
-    await command(project, ['config', 'user.name', 'Synthetic proof']);
-    writeFileSync(join(project, '.gitignore'), '.artifacts/\n');
-    await command(project, ['add', '.']);
-    await command(project, ['commit', '-m', 'published']);
-    await command(project, ['remote', 'add', 'origin', remote]);
-    await command(project, ['push', 'origin', 'main']);
+    const { remote, project } = await published_project({ '.gitignore': '.artifacts/\n' });
     const path = folder(),
       checkout = await prepare_workspace(
         path,
@@ -386,6 +379,47 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     const retired = await cleanup_local_workspaces(dirname(path), states, 1, options);
     expect(retired.skipped).toEqual([]);
     expect(retired.removed).toContain(checkout);
+    expect(
+      readdirSync(join(dirname(dirname(path)), '.ticket-retired')).filter(
+        (name) => !name.endsWith('.json'),
+      ),
+    ).toEqual([]);
+  },
+);
+
+// Risk: delete must just delete. The ordinary rules keep a deleted Ticket's checkout until origin
+// holds its work and keep its artifacts for seven days. Gap: every cleanup test above uses an
+// ended Ticket. Reuses the real-Git clone fixture.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a deleted Ticket loses its whole folder at once, unpushed work included, except logs',
+  async () => {
+    const { remote } = await published_project({ 'tracked.txt': 'published' });
+    const path = folder(),
+      checkout = await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      );
+    writeFileSync(join(checkout, 'tracked.txt'), 'unpushed');
+    await command(checkout, [
+      '-c',
+      'user.email=proof@example.test',
+      '-c',
+      'user.name=Synthetic proof',
+      'commit',
+      '-am',
+      'unpushed',
+    ]);
+    writeFileSync(join(checkout, 'uncommitted.txt'), 'uncommitted');
+    writeFileSync(join(path, 'artifacts', 'evidence.txt'), 'review evidence');
+    writeFileSync(join(path, 'logs', 'tools.md'), '- a problem');
+    const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: true }]]);
+    const result = await cleanup_local_workspaces(dirname(path), states, 1, options);
+    expect(result.skipped).toEqual([]);
+    expect(result.removed).toEqual([path]);
+    expect(readdirSync(path)).toEqual(['logs']);
+    expect(readFileSync(join(path, 'logs', 'tools.md'), 'utf8')).toBe('- a problem');
     expect(
       readdirSync(join(dirname(dirname(path)), '.ticket-retired')).filter(
         (name) => !name.endsWith('.json'),

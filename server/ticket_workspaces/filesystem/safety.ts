@@ -63,13 +63,18 @@ export async function workspace_ticket_owners(
   }
   return [...owners].sort();
 }
+/** `discard` is for a deleted Ticket: its own work goes without proof that origin holds it.
+ * Only the checks that protect other work remain. */
+export type OwnWork = 'protect' | 'discard';
 export async function reason_to_keep(
   root: string,
   states?: ReadonlyMap<string, WorkspaceState>,
   active_ticket_ids: ReadonlySet<string> = new Set(),
   options: WorkspaceOptions = {},
+  own_work: OwnWork = 'protect',
 ): Promise<string | null> {
-  return (await inspect_workspace_safety(root, states, active_ticket_ids, options)).reason;
+  return (await inspect_workspace_safety(root, states, active_ticket_ids, options, own_work))
+    .reason;
 }
 
 /** Keep the remote evidence from the same safety check for a move's branch proof. */
@@ -78,6 +83,7 @@ export async function inspect_workspace_safety(
   states?: ReadonlyMap<string, WorkspaceState>,
   active_ticket_ids: ReadonlySet<string> = new Set(),
   options: WorkspaceOptions = {},
+  own_work: OwnWork = 'protect',
 ): Promise<WorkspaceSafetyInspection> {
   const advertised_refs = new Map<string, ReadonlyMap<string, string>>();
   const reason = await workspace_safety_problem(
@@ -86,6 +92,7 @@ export async function inspect_workspace_safety(
     active_ticket_ids,
     options,
     advertised_refs,
+    own_work,
   );
   return { reason, advertised_refs };
 }
@@ -96,7 +103,9 @@ async function workspace_safety_problem(
   active_ticket_ids: ReadonlySet<string>,
   options: WorkspaceOptions,
   advertised_refs: Map<string, ReadonlyMap<string, string>>,
+  own_work: OwnWork,
 ): Promise<string | null> {
+  const protect = own_work === 'protect';
   root = admit(root, options);
   if (process.platform !== 'linux' && process.platform !== 'darwin')
     return 'safe removal is not supported on this platform yet';
@@ -105,7 +114,7 @@ async function workspace_safety_problem(
     (await entry_stat(dirname(root)))?.isSymbolicLink()
   )
     return 'workspace path is a symlink';
-  const recorded = await recorded_checkout_problem(root, options);
+  const recorded = protect ? await recorded_checkout_problem(root, options) : null;
   if (recorded) return recorded;
   let found: string[];
   try {
@@ -114,7 +123,7 @@ async function workspace_safety_problem(
     return `cannot inspect workspace: ${String(error)}`;
   }
   const match = ticket_match.exec(root.split(sep).at(-1)!);
-  if (match)
+  if (match && protect)
     try {
       if ((await workspace_ticket_owners(root, options)).some((owner) => owner !== match[1]))
         return 'mixed Ticket ownership requires owner review';
@@ -123,10 +132,12 @@ async function workspace_safety_problem(
     }
   for (const checkout of found)
     try {
-      const tracked = await git(checkout, ['ls-files', '--stage'], options);
-      if (tracked.returncode) return `Git cannot inspect tracked work in ${checkout}`;
-      if (tracked.stdout.split('\n').some((line) => line.startsWith('160000 ')))
-        return `submodules require owner review before cleanup: ${checkout}`;
+      if (protect) {
+        const tracked = await git(checkout, ['ls-files', '--stage'], options);
+        if (tracked.returncode) return `Git cannot inspect tracked work in ${checkout}`;
+        if (tracked.stdout.split('\n').some((line) => line.startsWith('160000 ')))
+          return `submodules require owner review before cleanup: ${checkout}`;
+      }
       if (states) {
         const owners: string[] = [];
         for (const part of [basename(root), ...relative(root, checkout).split(sep)]) {
@@ -144,13 +155,15 @@ async function workspace_safety_problem(
         )
           return `holds a live Ticket worktree in ${checkout}`;
       }
-      const status = await git(
-        checkout,
-        ['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'],
-        options,
-      );
-      if (status.returncode) return `Git cannot read ${checkout}`;
-      if (status.stdout.trim()) return `uncommitted work in ${checkout}`;
+      if (protect) {
+        const status = await git(
+          checkout,
+          ['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'],
+          options,
+        );
+        if (status.returncode) return `Git cannot read ${checkout}`;
+        if (status.stdout.trim()) return `uncommitted work in ${checkout}`;
+      }
       const main = (await entry_stat(checkout + '/.git'))?.isDirectory();
       if (main) {
         const linked = await git(checkout, ['worktree', 'list', '--porcelain'], options);
@@ -159,6 +172,7 @@ async function workspace_safety_problem(
           if (line.startsWith('worktree ') && !path_is_within(root, line.slice(9)))
             return `repository still owns an external worktree: ${line.slice(9)}`;
       }
+      if (!protect) continue;
       const remotes = await git(checkout, ['remote'], options);
       if (remotes.returncode || !remotes.stdout.trim().split('\n').includes('origin'))
         return `no origin copy can be verified for ${checkout}`;
@@ -308,12 +322,19 @@ export async function cleanup_ticket_folder(
     states?: ReadonlyMap<string, WorkspaceState>;
     active_ticket_ids?: ReadonlySet<string>;
     before_remove?: (path: string) => string | null | Promise<string | null>;
+    own_work?: OwnWork;
   } = {},
 ): Promise<string | null> {
   root = admit(root, options);
   const root_identity = await lstat(root),
     parent_identity = await lstat(dirname(root));
-  const reason = await reason_to_keep(root, options.states, options.active_ticket_ids, options);
+  const reason = await reason_to_keep(
+    root,
+    options.states,
+    options.active_ticket_ids,
+    options,
+    options.own_work,
+  );
   if (reason !== null) return reason;
   if (options.before_remove) {
     const reason = await options.before_remove(root);

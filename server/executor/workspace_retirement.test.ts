@@ -9,7 +9,8 @@ import { expect, test } from 'vitest';
 import { TestClock } from '../core/clock.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { delete_ticket_records } from '../tickets/data/index.ts';
 import {
   read_workspace_states_for_tickets,
   register_workspace,
@@ -128,7 +129,8 @@ test('the seven-day removal is authorized after clearing the checkout changed th
       register_workspace(tx, ticket.id, 'worker', registered);
     });
     const state = database.read((sql) => read_workspace_states_for_tickets(sql, [ticket.id]))[0]!;
-    // A folder that only the server's own conversation registered stays with the server's cleanup.
+    // Until machine code of this machine registers a workspace in this data tree, nothing proves
+    // that the folder is on this machine's disk.
     expect(
       await endpoint.retire_workspace(identity, state, {
         ...registered,
@@ -176,6 +178,60 @@ test('the seven-day removal is authorized after clearing the checkout changed th
     });
   } finally {
     rmSync(files, { recursive: true, force: true });
+    await registry.stop({ deadline: performance.now() / 1000 + 2 });
+  }
+});
+
+// Risk: a Ticket that the server ran before the switch to machine code, and that was then
+// deleted, has no owner left on this machine. Its refusal failed the whole state batch, so no
+// Ticket folder on VPS 1 was cleaned from 24 Nov 2026, and the retire proof refused its folder
+// too. Gap: no test asks for a deleted Ticket's state or retires a server-registered folder.
+// Reuses the endpoint setup above.
+test('a deleted server-era Ticket reads as deleted without stopping the batch, and its folder is retired', async () => {
+  const { database, registry, endpoint, ticket } = await machine_code_endpoint();
+  const server_era = create(database, { locale: 'macos', machine_id: ORIGINAL_MAC_MACHINE_ID });
+  const foreign = create(database, { locale: 'vps', machine_id: HOME_MACHINE_ID });
+  const data_tree = '55555555555545558555555555555555';
+  try {
+    database.write((tx) => {
+      for (const [conversation_id, ticket_id, workspace_id] of [
+        ['machine', ticket.id, '66666666666646668666666666666666'],
+        ['server', server_era.id, '88888888888848888888888888888888'],
+      ] as const) {
+        tx.run(
+          "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) VALUES(?,'codex','/','full',0)",
+          [conversation_id],
+        );
+        tx.run(
+          "INSERT INTO conversation_child_custody(conversation_id,generation,state) VALUES(?,'first','retired')",
+          [conversation_id],
+        );
+        register_workspace(tx, ticket_id, conversation_id, { machine_id: data_tree, workspace_id });
+      }
+      // Only machine code's own conversation has an executor assignment.
+      tx.run(
+        "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES(?,'child','machine','ticket',?,0)",
+        [identity.executor_incarnation, ticket.id],
+      );
+      delete_ticket_records(tx, server_era.id, { now });
+    });
+    const reply = await endpoint.workspace_states(identity, {
+      ticket_ids: [foreign.id, server_era.id, ticket.id],
+    });
+    expect(reply.states.map(({ ticket_id, deleted }) => [ticket_id, deleted]).sort()).toEqual(
+      [
+        [server_era.id, true],
+        [ticket.id, false],
+      ].sort(),
+    );
+    const state = reply.states.find((item) => item.ticket_id === server_era.id)!;
+    expect(
+      await endpoint.retire_workspace(identity, state, {
+        machine_id: data_tree,
+        workspace_id: '77777777777747778777777777777777',
+      }),
+    ).toEqual({ authorized: true });
+  } finally {
     await registry.stop({ deadline: performance.now() / 1000 + 2 });
   }
 });
