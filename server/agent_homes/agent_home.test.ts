@@ -10,32 +10,43 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
-// Distinct risk: an existing Manager home keeps notes.md and its rules when Panels
-// writes the new router file over it. No other test covers prepare_agent_home.
-test('a Manager home gets the router and rules/ and keeps what it already holds', async () => {
-  writeFileSync(join(home, 'notes.md'), 'manager notes');
-  writeFileSync(join(home, 'HOME.md'), 'my own layout');
-  writeFileSync(join(home, 'CLAUDE.md'), 'old file');
-  mkdirSync(join(home, 'rules'));
-  writeFileSync(join(home, 'rules', 'distribution.md'), 'a rule');
-
+test('a new home gets the initial files and folders for its role', async () => {
   await prepare_agent_home(home, 'manager');
-  await prepare_agent_home(home, 'manager');
-
-  expect(readFileSync(join(home, 'notes.md'), 'utf8')).toBe('manager notes');
-  expect(readFileSync(join(home, 'HOME.md'), 'utf8')).toBe('my own layout');
-  expect(readFileSync(join(home, 'rules', 'distribution.md'), 'utf8')).toBe('a rule');
-  expect(readdirSync(join(home, 'logs'))).toEqual([]);
-  const text = agent_home_text('manager');
-  expect(readFileSync(join(home, 'CLAUDE.md'), 'utf8')).toBe(text);
-  expect(readFileSync(join(home, 'AGENTS.md'), 'utf8')).toBe(text);
-});
-
-test('a new Manager home gets an empty rules/ folder and a short HOME.md outline', async () => {
-  await prepare_agent_home(home, 'manager');
+  expect(readFileSync(join(home, 'CLAUDE.md'), 'utf8')).toBe(agent_home_text('manager'));
+  expect(readFileSync(join(home, 'AGENTS.md'), 'utf8')).toBe(agent_home_text('manager'));
   expect(readdirSync(join(home, 'rules'))).toEqual([]);
-  expect(readFileSync(join(home, 'HOME.md'), 'utf8')).toContain('The Manager fills it in');
+  expect(readdirSync(join(home, 'logs'))).toEqual([]);
+  const worker = mkdtempSync(join(tmpdir(), 'panels-agent-home-'));
+  try {
+    await prepare_agent_home(worker, 'worker');
+    expect(readdirSync(worker).sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'logs']);
+    expect(readFileSync(join(worker, 'CLAUDE.md'), 'utf8')).toBe(agent_home_text('worker'));
+  } finally {
+    rmSync(worker, { recursive: true, force: true });
+  }
 });
+
+// Distinct risk: Panels starts an agent in its home at every start. A rewrite there
+// would erase the agent's own router and its other files. No other test covers this.
+test.each(['manager', 'worker'] as const)(
+  'a %s home keeps its own CLAUDE.md, AGENTS.md and other files at the next start',
+  async (role) => {
+    writeFileSync(join(home, 'CLAUDE.md'), 'my own router');
+    writeFileSync(join(home, 'AGENTS.md'), 'my own router, for Codex');
+    writeFileSync(join(home, 'notes.md'), 'notes');
+    mkdirSync(join(home, 'rules'));
+    writeFileSync(join(home, 'rules', 'distribution.md'), 'a rule');
+
+    await prepare_agent_home(home, role);
+    await prepare_agent_home(home, role);
+
+    expect(readFileSync(join(home, 'CLAUDE.md'), 'utf8')).toBe('my own router');
+    expect(readFileSync(join(home, 'AGENTS.md'), 'utf8')).toBe('my own router, for Codex');
+    expect(readFileSync(join(home, 'notes.md'), 'utf8')).toBe('notes');
+    expect(readFileSync(join(home, 'rules', 'distribution.md'), 'utf8')).toBe('a rule');
+    expect(readdirSync(join(home, 'logs'))).toEqual([]);
+  },
+);
 
 test('the Manager file is a short router that names its folders and holds no rules', () => {
   const text = agent_home_text('manager');
@@ -44,15 +55,8 @@ test('the Manager file is a short router that names its folders and holds no rul
     '`logs/`',
     '`notes.md`',
     'tell the Chief',
-    'Do not copy them here',
+    'Keep this file current',
   ])
     expect(text).toContain(part);
   expect(text.split('\n').length).toBeLessThan(40);
-});
-
-test('the Worker file has no rules/ folder and no Manager text', async () => {
-  await prepare_agent_home(home, 'worker');
-  expect(readdirSync(home).sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'logs']);
-  expect(agent_home_text('worker')).not.toContain('rules/');
-  expect(agent_home_text('worker')).toContain('You are the Worker for one Ticket.');
 });

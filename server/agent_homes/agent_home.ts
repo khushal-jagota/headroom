@@ -6,12 +6,6 @@ import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 // preparation adds the checkout and artifacts/ after this.
 export const LOGS_DIRECTORY = 'logs';
 export const RULES_DIRECTORY = 'rules';
-// The Manager's own outline of its home. Panels creates it once and never writes it again.
-export const HOME_OUTLINE_FILE = 'HOME.md';
-const HOME_OUTLINE_TEXT = `# Home
-
-This is the outline of this home. The Manager fills it in: how the folders and files are laid out, and what each one is for.
-`;
 export type AgentHomeRole = 'worker' | 'manager';
 
 export function agent_home_text(role: AgentHomeRole): string {
@@ -31,11 +25,12 @@ This file loads in every session. It is a router. Read the files that it points 
 
 ## Where you are
 
-This folder is your home in Panels. \`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
+This folder is your home in Panels. It is your own. Panels wrote this file once, at setup, and never changes it again. You decide how the home is laid out. Keep this file current as your router. \`CLAUDE.md\` and \`AGENTS.md\` hold the same text, so update both.
+
+\`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
 
 ## Read at the start of a session
 
-- \`HOME.md\`: how this home is laid out, and what each folder and file is for. You own it. Panels never changes it. When the structure changes, update it.
 - \`rules/\`: how you work. The rules come from Khushal or from your own lessons. Add a rule when a lesson holds beyond one case.
 - Any other file in this folder, for example \`notes.md\`, when it applies to the work.
 
@@ -72,20 +67,16 @@ Put build output under TMPDIR, for example xcodebuild -derivedDataPath "$TMPDIR/
 `;
 }
 
-// Panels owns each driver's instructions file and writes it each time, so a
-// change to the text reaches every home at its next start.
+// Panels sets a home up once. It creates each file or folder only when it is missing
+// and never changes it after that, so an agent's own edits last across restarts.
 export async function prepare_agent_home(folder: string, role: AgentHomeRole): Promise<void> {
   await mkdir(join(folder, LOGS_DIRECTORY), { recursive: true });
-  if (role === 'manager') {
-    await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
-    // Flag 'wx' writes only a missing file. An existing HOME.md is never touched.
-    await writeFile(join(folder, HOME_OUTLINE_FILE), HOME_OUTLINE_TEXT, { flag: 'wx' }).catch(
+  if (role === 'manager') await mkdir(join(folder, RULES_DIRECTORY), { recursive: true });
+  const text = agent_home_text(role);
+  for (const name of new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file)))
+    await writeFile(join(folder, name), text, { flag: 'wx' }).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EEXIST') throw error;
       },
     );
-  }
-  const text = agent_home_text(role);
-  for (const name of new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file)))
-    await writeFile(join(folder, name), text);
 }
