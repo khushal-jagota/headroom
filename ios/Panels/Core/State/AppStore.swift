@@ -331,6 +331,8 @@ import SwiftUI
 
     /// `request` is the request the server answered; nil for the copy saved on the phone.
     private func admit(_ snapshot: ViewSnapshot, persist: Bool = true, request: ViewRequest?) {
+        var snapshot = snapshot
+        if let request { snapshot.sentReviewSkippedKeys = request.reviewSkippedKeys }
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
             self.managers = managers; self.tickets = tickets; workspaceLoaded = true; workspaceView = snapshot
@@ -340,7 +342,7 @@ import SwiftUI
         if let settled = presentation.workspaceSettledManagers(in: snapshot) { workspaceSettled = settled }
         chiefSignal = presentation.chief?.signal.conversationSignal
         review = presentation.reviewQueue(in: snapshot)
-        review?.sentSkippedKeys = request?.reviewSkippedKeys
+        review?.sentSkippedKeys = snapshot.sentReviewSkippedKeys
         counts = snapshot.content.counts
         let stamps = Dictionary(snapshot.content.records.compactMap { record in record.stamp.map { (record.key, $0) } }, uniquingKeysWith: { _, latest in latest })
         if stamps != recordStamps { recordStamps = stamps }

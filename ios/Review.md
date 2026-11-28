@@ -54,12 +54,18 @@ message in the conversation, or the ask's time. It ends only when that part is n
   (`review_priority_keys`) is fixed at those two moments only.
 - **The skipped pass reads the end.** When the queue holds more than 30 entries, the
   skipped pass follows its last 60 entries instead of the first 30. The queue's size
-  decides, not what the window on screen left out. Until the window a pass asked for
+  decides, not what the window on screen left out. The skipped pass asks the server to
+  put every entry with a skipped card last, also one whose other cards are new. The new
+  pass puts only the wholly skipped entries last. Until the window a pass asked for
   arrives, the pass shows no card and no summary, for at most 3 seconds.
 - **Removal.** The skips of entries that left the queue go when a fresh window from the
   top holds the whole queue and the server counted fewer skips than the phone sent.
   Otherwise the cap of 500 removes unseen entries first. A list untouched for 30 days is
   removed. A saved view never changes the list.
+- **Stored lists.** A stored row that does not read is dropped and the rest are kept. A
+  list written by a later build reads as no skips, and this build never writes over it.
+  When the server's installation changes during a run, Review returns to its summary
+  and starts over with that installation's list.
 - **Counts.** A card counts as skipped by its saved skip alone. A card skipped in this
   pass that then gains a newer part counts as new, though the pass still hides it.
 
@@ -77,7 +83,8 @@ arrives, so he stays where he was.
 
 Its counts come from the phone's own cards in the loaded window. Entries beyond the
 window count by the server's skipped count (`review_summary`), less the skipped entries
-the window holds among the keys that the view's request sent; the rest are new. It reads, in two tones at one upper-centre baseline:
+the window holds among the keys that the view's request sent; the rest are new. A
+saved view keeps the keys that its count was made against. It reads, in two tones at one upper-centre baseline:
 
 | State | Lines | Buttons |
 | --- | --- | --- |

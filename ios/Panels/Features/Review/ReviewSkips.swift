@@ -38,6 +38,13 @@ struct ReviewSkipMarks: Codable, Equatable, Sendable {
     init(proposal: Proposal? = nil, messages: [String: Message] = [:], asks: [String: Double] = [:]) {
         self.proposal = proposal; self.messages = messages; self.asks = asks
     }
+    /// A part missing from a stored entry reads as none.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        proposal = try c.decodeIfPresent(Proposal.self, forKey: .proposal)
+        messages = try c.decodeIfPresent([String: Message].self, forKey: .messages) ?? [:]
+        asks = try c.decodeIfPresent([String: Double].self, forKey: .asks) ?? [:]
+    }
 
     private static func later(_ left: Int?, _ right: Int?) -> Bool {
         guard let left else { return false }
@@ -125,23 +132,30 @@ struct ReviewSkipList: Equatable, Sendable {
         return ReviewSkipList(Dictionary(uniqueKeysWithValues: ranked.prefix(limit).map { ($0.key, $0.value) }))
     }
 
-    private struct Stored: Codable {
-        struct Row: Codable { let kind: String; let id: String; let entry: Entry }
-        let version: Int
-        let entries: [Row]
+    private struct Row: Codable { let kind: String; let id: String; let entry: Entry }
+    private struct Stored: Encodable { let version: Int; let entries: [Row] }
+    /// One stored row, or nil when it does not read: a bad row costs only itself.
+    private struct StoredRow: Decodable {
+        let row: Row?
+        init(from decoder: Decoder) throws { row = try? Row(from: decoder) }
     }
+    private struct StoredList: Decodable { let version: Int; let entries: [StoredRow]? }
     func encoded() -> Data? {
-        try? JSONEncoder().encode(Stored(version: Self.storedVersion, entries: keys.map { Stored.Row(kind: $0.kind, id: $0.id, entry: entries[$0]!) }))
+        try? JSONEncoder().encode(Stored(version: Self.storedVersion, entries: keys.map { Row(kind: $0.kind, id: $0.id, entry: entries[$0]!) }))
     }
-    /// Anything that is not a list this build wrote reads as no skips.
-    init(stored data: Data?) {
-        guard let data, let stored = try? JSONDecoder().decode(Stored.self, from: data), stored.version == Self.storedVersion else { return }
+    /// The stored list. A row that does not read is dropped, the others are kept. Anything
+    /// that is not a list reads as no skips. `newer` says a later build wrote it, so this build
+    /// must not write over it.
+    static func read(_ data: Data?) -> (list: ReviewSkipList, newer: Bool) {
+        guard let data, let stored = try? JSONDecoder().decode(StoredList.self, from: data) else { return (ReviewSkipList(), false) }
+        guard stored.version == storedVersion else { return (ReviewSkipList(), stored.version > storedVersion) }
         var entries: [RecordKey: Entry] = [:]
-        for row in stored.entries where (row.kind == "ticket" || row.kind == "conversation") && row.entry.at.isFinite {
+        for row in (stored.entries ?? []).compactMap(\.row) where (row.kind == "ticket" || row.kind == "conversation") && row.entry.at.isFinite {
             entries[RecordKey(kind: row.kind, id: row.id)] = row.entry
         }
-        self = ReviewSkipList(entries).limited(seen: [])
+        return (ReviewSkipList(entries).limited(seen: []), false)
     }
+    init(stored data: Data?) { self = Self.read(data).list }
 }
 
 /// The one owner of the skip lists on this phone, one per server installation. It reads a
@@ -174,11 +188,17 @@ struct ReviewSkipList: Equatable, Sendable {
         })
     }
 
+    /// Installations whose stored list a later build wrote: this run keeps its skips in memory.
+    private var newer: Set<String> = []
+
     func list(_ installation: String) -> ReviewSkipList {
         forgetAbandoned(installation)
-        return ReviewSkipList(stored: load(installation))
+        let stored = ReviewSkipList.read(load(installation))
+        if stored.newer { newer.insert(installation) }
+        return stored.list
     }
     func write(_ list: ReviewSkipList, for installation: String) {
+        guard !newer.contains(installation) else { return }
         save(installation, list.isEmpty ? nil : list.encoded())
     }
 }

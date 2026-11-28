@@ -76,15 +76,27 @@ final class ReviewSkipsTests: XCTestCase {
         let local = LocalStore(url: directory.appendingPathComponent("skips.store"))
         let list = ReviewSkipList().skipping(message("a-n", latest: nil), at: 1, whole: true)
         ReviewSkipStore.local(server: "https://one", in: local).write(list, for: "install-1")
-        let relaunched = ReviewSkipStore.local(server: "https://one", in: local)
-        XCTAssertEqual(relaunched.list("install-1"), list)
-        XCTAssertTrue(relaunched.list("install-2").isEmpty, "Another installation at the same address")
+        let reopened = ReviewSkipStore.local(server: "https://one", in: local)
+        XCTAssertEqual(reopened.list("install-1"), list)
+        XCTAssertTrue(reopened.list("install-2").isEmpty, "Another installation at the same address")
         XCTAssertTrue(ReviewSkipStore.local(server: "https://two", in: local).list("install-1").isEmpty, "Another server")
-        try local.put(server: "https://one", kind: ReviewSkipStore.kind, id: "install-1", data: Data("{\"version\":9}".utf8))
-        XCTAssertTrue(relaunched.list("install-1").isEmpty, "A list this build did not write reads as no skips")
         XCTAssertTrue(ReviewSkipList(stored: Data("garbage".utf8)).isEmpty)
+        // A row that does not read costs only itself; a part a later build left out reads as none.
+        let rows = """
+        {"version":1,"entries":[{"kind":"ticket","id":"a","entry":{"marks":{"asks":{"c":4}},"at":1,"whole":true}},
+        {"kind":"ticket","id":"b","entry":{"marks":"bad","at":1,"whole":true}}]}
+        """
+        XCTAssertEqual(ReviewSkipList(stored: Data(rows.utf8)).keys, [ticketA])
+        // A list a later build wrote reads as no skips, and this build never writes over it.
+        let later = Data("{\"version\":9,\"entries\":[]}".utf8)
+        try local.put(server: "https://one", kind: ReviewSkipStore.kind, id: "install-1", data: later)
+        let older = ReviewSkipStore.local(server: "https://one", in: local)
+        XCTAssertTrue(older.list("install-1").isEmpty)
+        older.write(list, for: "install-1")
+        XCTAssertEqual(try local.record(server: "https://one", kind: ReviewSkipStore.kind, id: "install-1")?.payload, later)
 
         // Lists untouched for 30 days go, except the one in use.
+        let relaunched = ReviewSkipStore.local(server: "https://one", in: local)
         relaunched.write(list, for: "install-1")
         ReviewSkipStore.local(server: "https://two", in: local).write(list, for: "install-9")
         for row in try local.records(kind: ReviewSkipStore.kind) { row.updatedAt = .now.addingTimeInterval(-31 * 24 * 60 * 60) }
@@ -290,6 +302,73 @@ final class ReviewSkipsTests: XCTestCase {
         XCTAssertEqual(saved.lists["install"]?.keys.count, 2, "The server still counts every key sent")
         session.update(store: store([proposal], serverSkipped: 1, sent: sent), savedWork: ReviewSavedWork(), freshSession: 1)
         XCTAssertEqual(saved.lists["install"]?.keys, [ticketA])
+    }
+
+    /// Risk: in a queue longer than the window from the end, the skipped pass never reaches a
+    /// skipped card whose entry still has a new card, as the server leaves that entry in place.
+    /// The skipped pass puts every entry with a skipped card last; the new pass only the wholly skipped.
+    @MainActor func testTheSkippedPassPutsEveryEntryWithASkippedCardLast() async {
+        let saved = Saved(), reads = Reads()
+        let ticketMessage = message("a-c", latest: 1)
+        let chief = message("chief", owner: "x", since: 3, latest: 1)
+        saved.lists["install"] = ReviewSkipList().skipping(proposal, at: 1, whole: false).skipping(chief, at: 2, whole: true)
+        let session = session(saved, reads), app = store([proposal, ticketMessage, chief], unloaded: 70, total: 72, whole: false)
+        reads.answer = []
+        session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
+        await settle()
+        XCTAssertEqual(session.queue.history.priority, [chief.historyKey], "Only the wholly skipped entry before a pass")
+        await session.startPass(.skipped, store: app)
+        XCTAssertEqual(Set(session.queue.history.priority), [ticketA, chief.historyKey])
+        XCTAssertEqual(session.queue.history.skipped, [chief.historyKey], "The counts still use the wholly skipped entries")
+        await session.startPass(.new, store: app)
+        XCTAssertEqual(session.queue.history.priority, [chief.historyKey])
+    }
+
+    /// Risk: the server's installation changes during a run, and the old list's pass, hidden
+    /// cards and skipped order stay, while the new list's skips are never checked.
+    @MainActor func testANewInstallationStartsOverWithItsOwnList() async {
+        let saved = Saved(), reads = Reads()
+        let far = message("far", owner: "f", since: 8, latest: 1)
+        saved.lists["install"] = ReviewSkipList().skipping(proposal, at: 1, whole: true)
+        saved.lists["install-2"] = ReviewSkipList().skipping(far, at: 1, whole: true)
+        let session = session(saved, reads), app = store([proposal], unloaded: 40, total: 41, whole: false)
+        session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
+        await settle()
+        await session.startPass(.skipped, store: app)
+        XCTAssertEqual(session.pass, .skipped)
+        var next = review([proposal], unloaded: 40, total: 41, whole: false)
+        next.installationId = "install-2"
+        reads.answer = []
+        app.review = next
+        session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
+        await settle()
+        XCTAssertNil(session.shown)
+        XCTAssertTrue(session.queue.summary)
+        XCTAssertEqual(session.pass, .new)
+        XCTAssertEqual(session.queue.saved.keys, [far.historyKey])
+        XCTAssertEqual(reads.calls.last?.cohort, [far.historyKey], "The new list's own check")
+        XCTAssertEqual(session.queue.history.priority, [far.historyKey])
+        XCTAssertEqual(app.viewRequest.windows.first, NavigationScope.baseWindows[0])
+    }
+
+    /// Risk: at launch a saved view's skipped count is set against the phone's current skipped
+    /// keys, not the ones it was counted against. The saved copy keeps them.
+    func testASavedViewKeepsTheSkippedKeysItWasCountedAgainst() throws {
+        let body: [String: Any] = ["event": "snapshot", "wire_version": NavigationViewVersion.wire, "projection_version": NavigationViewVersion.projection,
+            "view_id": "v", "scope_generation": 0, "ordering_generation": "o", "mode": "current", "content_version": "c",
+            "coverage": ["scope": "s", "schema_version": 11, "semantics": "x", "epoch": "e", "revision": "1"],
+            "authority": ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()],
+                          "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]],
+            "content": ["records": [], "windows": [], "review_context": [], "review_summary": ["skipped": 1, "new": 0],
+                        "counts": ["running_conversations": 0, "out_claims": 0, "review": 1, "unread": 0, "settled": 0]]]
+        guard case .snapshot(var snapshot) = try APIClient.decoder().decode(ViewFrame.self, from: JSONSerialization.data(withJSONObject: body))
+        else { return XCTFail("No snapshot") }
+        XCTAssertNil(snapshot.sentReviewSkippedKeys, "The server sends none")
+        snapshot.sentReviewSkippedKeys = [ticketA]
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        let restored = try APIClient.decoder().decode(ViewSnapshot.self, from: encoder.encode(snapshot.savedDisplay))
+        XCTAssertEqual(restored.sentReviewSkippedKeys, [ticketA])
+        XCTAssertEqual(restored.content.reviewSummary?.skipped, 1)
     }
 
     /// Risk (web fault F2): the read of the end is taken for a read of the top, or the check

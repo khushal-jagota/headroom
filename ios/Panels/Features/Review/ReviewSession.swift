@@ -206,6 +206,30 @@ struct ReviewQueue: Equatable, Sendable {
     /// The skipped entries the server puts last, fixed at the start of the app run and at each pass start.
     mutating func fixSkippedOrder(_ cohort: [RecordKey]) { history.priority = cohort }
 
+    /// Every entry with a card the saved skips still cover, also one whose other cards are new.
+    /// The skipped pass puts them all last, so it reaches them from the end of the queue; the
+    /// server counts skips only from the skipped keys, so the counts do not change.
+    func entriesWithSkippedCards(_ cards: [ReviewItem]) -> [RecordKey] {
+        var current: [RecordKey: [ReviewItem]] = [:]
+        for card in cards { current[card.historyKey, default: []].append(card) }
+        return saved.keys.filter { key in
+            guard let known = current[key] ?? known[key], !known.isEmpty else { return true }
+            return known.contains(where: isSkipped)
+        }
+    }
+
+    /// Another skip list replaces this one, as when the server's installation changes: the
+    /// summary shows, and no pass, hidden card or skipped order of the old list stays.
+    mutating func replaceSkips(_ list: ReviewSkipList) {
+        showSummary()
+        saved = list
+        known = [:]
+        skipped = []
+        pass = .new
+        passSkips = ReviewSkipList()
+        history = ReviewHistory()
+    }
+
     mutating func showSummary() {
         summary = true; pinned = nil; notice = nil; away = nil; leaving = nil
     }
@@ -349,7 +373,7 @@ struct ReviewQueue: Equatable, Sendable {
         windowEntries = Set(window.map(\.historyKey))
         if holding, let wantsTail, store.review?.fromTail == wantsTail { endHold() }
         loaded = store.review != nil
-        loadSkips(server: server, installation: store.review?.installationId)
+        loadSkips(server: server, installation: store.review?.installationId, store: store)
         // Only a window read in this run says what a card holds now: a copy saved on the
         // phone can be older than a skip.
         let fresh = freshSession != nil && store.review?.current == true
@@ -366,13 +390,24 @@ struct ReviewQueue: Equatable, Sendable {
     }
 
     /// The server's installation names the list, so one server's skips never apply to another.
-    private func loadSkips(server: String, installation: String?) {
+    private func loadSkips(server: String, installation: String?, store: AppStore) {
         guard let installation, skipScope?.server != server || skipScope?.installation != installation else { return }
+        let replacing = skipScope != nil
         let skipStore = skipStores(server)
         self.skipStore = skipStore
         skipScope = (server, installation)
-        queue.known = [:]
-        queue.saved = skipStore.list(installation)
+        guard replacing else {
+            queue.known = [:]
+            queue.saved = skipStore.list(installation)
+            return
+        }
+        // A new installation mid-run: start over as at launch, with its own list and check.
+        queue.replaceSkips(skipStore.list(installation))
+        entryTask?.cancel(); entryCheck = .waiting
+        holdTask?.cancel(); holdTask = nil; holding = false; wantsTail = nil
+        summarySelections += 1
+        exits += 1
+        store.setReviewWindow(nil)
     }
     private func saveSkips(_ list: ReviewSkipList) {
         let list = list.limited(seen: Set(queue.known.keys))
@@ -396,9 +431,10 @@ struct ReviewQueue: Equatable, Sendable {
         let unknown = queue.saved.keys.filter { queue.known[$0] == nil }
         guard !unknown.isEmpty, unloadedCount > 0 else { settleEntryCheck(store: store); return }
         let skipped = queue.history.skipped, read = readTail, wait = entryWait
+        let address = store.baseURL
         entryTask = Task { [weak self] in
             let tail = await Self.within(wait) { await read(store, min(unknown.count, Self.tailRows), unknown, skipped) }
-            guard let self, self.entryCheck == .running else { return }
+            guard let self, self.entryCheck == .running, store.baseURL == address else { return }
             if let tail { self.learn(tail, wholeQueue: false) }
             self.settleEntryCheck(store: store)
         }
@@ -453,16 +489,20 @@ struct ReviewQueue: Equatable, Sendable {
         defer { startingPass = false }
         entryCheck = .done
         entryTask?.cancel()
-        let selection = summarySelections
+        let selection = summarySelections, address = store.baseURL
         let keys = queue.saved.keys, skipped = queue.history.skipped, read = readTail
         if !keys.isEmpty, unloadedCount > 0,
            let tail = await Self.within(entryWait, { await read(store, min(keys.count, Self.tailRows), keys, skipped) }) {
+            // A read that ends after the server changed belongs to the old one.
+            guard store.baseURL == address else { return }
             learn(tail, wholeQueue: false)
         }
-        // A Sidebar Review selection during the read keeps the summary.
-        guard selection == summarySelections else { return }
+        // A Sidebar Review selection, or another server or installation, during the read keeps the summary.
+        guard selection == summarySelections, store.baseURL == address else { return }
         reconcile()
-        queue.startPass(next, cohort: queue.history.skipped)
+        // The new pass puts the wholly skipped entries last. The skipped pass puts every entry
+        // with a skipped card last, so it reaches each one from the end of the queue.
+        queue.startPass(next, cohort: next == .skipped ? queue.entriesWithSkippedCards(cards) : queue.history.skipped)
         exits += 1
         for item in cards where item.isMessage { messageDecisions.drop(item.id) }
         // The skipped entries sit at the end of the queue. When one window from the top cannot
