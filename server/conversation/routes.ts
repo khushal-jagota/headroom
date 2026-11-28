@@ -16,7 +16,8 @@ import {
   keep_answer_attachments,
   type SentAnswerAttachment,
 } from './http/user_input.ts';
-import { public_event, send_event_tail } from './http/record.ts';
+import { open_event_tail, public_event, send_event_tail } from './http/record.ts';
+import { pump_frames } from '../live_updates/frames.ts';
 import type { ConversationHttpWriteScope } from './http/writes.ts';
 import { readable_tool_call_detail } from './tool_detail.ts';
 import { MessageFileMissing } from './record/message_files.ts';
@@ -336,6 +337,18 @@ export function createConversationRoutes(
   runtime: ConversationHttpRuntime,
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
+    services.live_subscriptions?.register('conversation_events', (request, sink) => {
+      if (request.conversation_id === null) throw new HttpError(422, 'conversation_id is required');
+      const { after } = integer_queries(request.params, ['after']);
+      const record = require_conversation(runtime, request.conversation_id);
+      const tail = open_event_tail(
+        runtime.record,
+        request.conversation_id,
+        record.backend_key,
+        after ?? 0,
+      );
+      return pump_frames(tail.frames, tail.close, sink);
+    });
     app.get<{
       Params: { message_id: string };
       Querystring: { owner_kind?: string; owner_id?: string };

@@ -1,6 +1,7 @@
 import type { UpdateBarrier } from '../../environments/update_barrier.ts';
 import { gzipSync, createGzip } from 'node:zlib';
 import { Transform, Readable } from 'node:stream';
+import type { IncomingMessage } from 'node:http';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
 import { PlannerError } from '../contracts.ts';
@@ -41,14 +42,16 @@ const SEND_PATHS = [
 export const DESKTOP_APP_ORIGIN = 'panels://app';
 const securityHeaders = new Set(['tailscale-user-login', 'origin']);
 const safe = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE']);
-function rawHeaders(request: FastifyRequest): Map<string, string[]> {
+/** Every header as the client sent it, so a duplicated security header stays visible. */
+export function raw_header_map(message: IncomingMessage): Map<string, string[]> {
   const result = new Map<string, string[]>();
-  for (let i = 0; i < request.raw.rawHeaders.length; i += 2) {
-    const key = request.raw.rawHeaders[i]!.toLowerCase();
-    result.set(key, [...(result.get(key) ?? []), request.raw.rawHeaders[i + 1]!.trim()]);
+  for (let i = 0; i < message.rawHeaders.length; i += 2) {
+    const key = message.rawHeaders[i]!.toLowerCase();
+    result.set(key, [...(result.get(key) ?? []), message.rawHeaders[i + 1]!.trim()]);
   }
   return result;
 }
+const rawHeaders = (request: FastifyRequest) => raw_header_map(request.raw);
 function reject(reply: FastifyReply, message: string): void {
   reply.code(403).send({ error: { code: 'agent_forbidden', message, detail: {} } });
 }

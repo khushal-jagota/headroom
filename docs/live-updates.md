@@ -41,9 +41,9 @@ Model pickers follow revisions of their saved source facts for the selected mach
 
 The server looks for navigation index changes on a short timer, so the rail can follow a write by a moment. The conversation tail does not wait for the change signal.
 
-The server counts open live streams for each declared client identity. An unusually high count produces one warning with totals by route. The warning resets after the count falls. This diagnostic does not refuse or end streams.
+The server counts open live streams for each declared client identity, and counts open live sockets the same way, one for each socket. An unusually high count produces one warning with totals by route. The warning resets after the count falls. This diagnostic does not refuse or end streams.
 
-Each live stream also leaves one record when it closes: the route, the client kind and device, when it opened and closed, the bytes written, the time since the last write, and who closed it. The closer is the peer (including a reset), the server's own shutdown, a write error, or the route itself when it ended the stream. The server prints one `stream_close` journal line and stores the record in the metrics store for 30 days. `panels connection records` reads them back with the events that clients report to `POST /api/client-events`, so a drop at a given minute has a recorded cause. See [Diagnostics](vps.md).
+Each live stream also leaves one record when it closes: the route, the client kind and device, when it opened and closed, the bytes written, the time since the last write, and who closed it. The closer is the peer (including a reset), the server's own shutdown, a write error, or the route itself when it ended the stream. A live socket writes the same record. It adds the WebSocket close code and the last sequence number that the server sent. The server prints one `stream_close` journal line and stores the record in the metrics store for 30 days. `panels connection records` reads them back with the events that clients report to `POST /api/client-events`, so a drop at a given minute has a recorded cause. See [Diagnostics](vps.md).
 
 The page keeps a small log of why its live streams ended: the time, the stream, the reason, how long it was open, whether the browser was online, whether the page was visible, and how late a 1 s timer ran (a late timer shows sleep). The probe that a lost stream starts adds its round-trip time. The log lives in local storage and holds the newest 200 events. When the change stream opens, the page sends the log to the server in one background batch at `POST /api/client-events`, and nothing on screen waits for it. A refused or failed send keeps the events for the next return.
 
@@ -52,6 +52,20 @@ A few writers commit quietly on purpose: skill history, conversation-only rows, 
 Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).
 
 The phone follows the same rules, with one known gap: a Ticket action there still waits for a few shell reads before its busy mark ends. It publishes successful reads before replaceable disk writes, and a cache failure does not replace a durable-save error. It saves an outgoing message on the device first and sends it from there, so a send never waits for the network.
+
+## The live socket
+
+One authenticated WebSocket, `/api/live`, carries the four live feeds that the event streams carry today: the change signal, the navigation feed, the conversation view tail and the conversation tail. The server writes the same payloads to the old streams and to the socket, and a socket frame wraps each payload in an envelope with its subscription, its kind and a sequence number. The old streams stay until web, desktop and the phone have moved. The frame names, the close codes and the limits are in `server/live_updates/contracts.ts`.
+
+Why: macOS Chromium closes every HTTP/2 connection when a network interface address changes, and four open streams then die together. A WebSocket runs on its own HTTP/1.1 connection through `tailscale serve` and survived the same event in the Mac 1 proof.
+
+- **Admission.** The Tailscale login at the upgrade is the gate. A present Origin must be the web origin or `panels://app`. A socket with no Origin is a native client. The first frame declares the client's identity in the `X-Panels-Client` shape, because a browser cannot set that header. The identity is a version declaration and gives no authority. The server answers with a ready frame, or closes the socket.
+- **Three named closes.** "Update needed" (the existing minimum desktop bridge or iPhone build), "server restarting" and "bad first frame". Every other close is a drop.
+- **Feeds.** Every socket receives the change signal after its ready frame. A client opens a navigation view or a conversation tail with a subscribe frame that carries today's query parameters, and ends it with an unsubscribe frame. A subscription that fails ends by itself with the status that the old route would send, and the socket stays open.
+- **Sequence.** One counter for each socket, starting at 1. A skipped number means a drop. It is not a resume cursor.
+- **After a drop.** Each subscription returns as its stream does today. The conversation tails resume from their own cursors. The change signal and navigation start fresh, and the client runs its revision check. The server adds no replay.
+- **Silence.** The server sends a heartbeat frame every 15 seconds and pings clients that it cannot hear. Clients send no pings. A socket that falls too far behind is closed as a drop.
+- **The desktop notification stream stays outside the socket on purpose.** It runs in the desktop main process over Node's own `fetch`, which did not drop in any test. Moving it would change the native side for no measured problem.
 
 ## What does not move by itself
 
@@ -73,6 +87,7 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 - `server/core/changes/`: the signal. `server/core/database/`: the writer that announces commits, and the silent commit. `server/core/routes.ts`: the change stream.
 - `server/resource_versions/`: the revisions that the check reads.
 - `server/navigation/`: the navigation index and its feed.
+- `server/live_updates/`: the socket, its contract, and the frame types that the feeds share with the old streams.
 - `web/src/lib/mutate.ts`: the browser's write door.
 - `web/src/lib/changeStream.ts` and `web/src/lib/resourceVersions/`: the browser's stream and revision check.
 - `web/src/lib/clientIdentity.ts` and `web/src/lib/requestLimit/`: the browser's fetch boundary and its time limits.
@@ -82,4 +97,4 @@ Inactive ordinary responses remain only within the cache budget. A screen reconc
 
 An owner update pauses the whole app before the server closes send admission. The pause remains until the server admits writes and compatible screens open. A write that the server explicitly refuses before admission retains its input through screen replacement. A lost reply never triggers an automatic retry. Conversation drafts keep their own storage. Other edited text remains readable after replacement for review, rather than a synthetic edit that can trigger an unintended save. Desktop recovery belongs to the native shell, so failed screens cannot hide its retry action.
 
-_Last verified: 2026-11-27._
+_Last verified: 2026-11-28._

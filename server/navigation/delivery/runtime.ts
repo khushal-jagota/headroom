@@ -1,6 +1,4 @@
 /** Scoped wire-3 delivery over the committed navigation projection. */
-import { once } from 'node:events';
-import type { ServerResponse } from 'node:http';
 import type { Database, ReadSql } from '../../core/database/contracts.ts';
 import type {
   CurrentAuthority,
@@ -14,7 +12,7 @@ import { coverage } from '../data/registry.ts';
 import { DELIVERY } from './configuration.ts';
 import { prune } from './retention.ts';
 import { HttpRequestScope } from '../../core/http/lifetime.ts';
-import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
+import type { LiveFrame, LiveSink } from '../../live_updates/contracts.ts';
 type Coverage = CurrentViewSnapshot['coverage'];
 interface Notice {
   coverage: Coverage;
@@ -91,8 +89,8 @@ export function difference(
     review_summary: content.review_summary,
   };
 }
-function frame(value: object & { event: string }): string {
-  return `event: ${value.event}\ndata: ${compact(value)}\n\n`;
+function frame(value: object & { event: string }): LiveFrame {
+  return { event: value.event, data: compact(value) };
 }
 class ScopedStream {
   private readonly lifetime: HttpRequestScope;
@@ -107,13 +105,13 @@ class ScopedStream {
   private lastSend = Date.now();
   private readonly abort = new AbortController();
   private unwatch: () => void = () => {};
-  private readonly response: ServerResponse;
+  private readonly sink: LiveSink;
   private readonly authority: NavigationAuthority;
   private readonly token: CurrentAuthority;
   private readonly snapshot: () => CurrentViewSnapshot;
   private readonly forget: () => void;
   constructor(
-    response: ServerResponse,
+    sink: LiveSink,
     authority: NavigationAuthority,
     token: CurrentAuthority,
     request: ViewRequest,
@@ -122,7 +120,7 @@ class ScopedStream {
     forget: () => void,
     lifetime: HttpRequestScope,
   ) {
-    this.response = response;
+    this.sink = sink;
     this.lifetime = lifetime;
     this.authority = authority;
     this.token = token;
@@ -143,8 +141,8 @@ class ScopedStream {
       this.unwatch();
       return;
     }
-    response.once('close', () => this.close());
-    void this.send(STREAM_RETRY_FRAME + frame(initial))
+    sink.on_closed(() => this.close());
+    void this.send(frame(initial))
       .catch((error: unknown) => {
         console.warn('navigation stream initial send failed', error);
         this.close();
@@ -154,16 +152,16 @@ class ScopedStream {
         void this.flush();
       });
   }
-  private send(body: string): Promise<void> {
+  private send(body: LiveFrame | null): Promise<void> {
     return this.lifetime.track(() => this.send_owned(body));
   }
-  private async send_owned(body: string): Promise<void> {
+  private async send_owned(body: LiveFrame | null): Promise<void> {
     if (this.closed) return;
     this.authority.validate(this.token);
-    if (!this.response.write(body)) {
+    if (!this.sink.write(body)) {
       const deadline = setTimeout(() => this.abort.abort(), DELIVERY.sendTimeoutMilliseconds);
       try {
-        await once(this.response, 'drain', { signal: this.abort.signal });
+        await this.sink.drain(this.abort.signal);
       } finally {
         clearTimeout(deadline);
       }
@@ -220,7 +218,7 @@ class ScopedStream {
     if (this.closed || this.sending || Date.now() - this.lastSend < DELIVERY.heartbeatMilliseconds)
       return;
     this.sending = true;
-    void this.send(': heartbeat\n\n')
+    void this.send(null)
       .catch((error: unknown) => {
         console.warn('navigation stream heartbeat failed', error);
         this.close();
@@ -236,7 +234,10 @@ class ScopedStream {
     this.abort.abort();
     this.unwatch();
     this.forget();
-    this.response.end();
+    this.sink.end();
+  }
+  get ended(): boolean {
+    return this.closed;
   }
 }
 /** One notice cursor serves all subscriptions. Content reads happen only for affected views. */
@@ -279,17 +280,17 @@ export class ScopedDelivery {
     }
   }
   open(
-    response: ServerResponse,
+    sink: LiveSink,
     authority: NavigationAuthority,
     token: CurrentAuthority,
     request: ViewRequest,
     snapshot: () => CurrentViewSnapshot,
-  ): void {
+  ): { close(): void } {
     let stream: ScopedStream | undefined;
     try {
       const initial = snapshot();
       stream = new ScopedStream(
-        response,
+        sink,
         authority,
         token,
         request,
@@ -300,11 +301,12 @@ export class ScopedDelivery {
         },
         this.lifetime,
       );
-      if (!response.writableEnded) this.streams.add(stream);
+      if (!stream.ended) this.streams.add(stream);
     } catch (error) {
       console.error('navigation stream snapshot failed', error);
-      response.end();
+      sink.end();
     }
+    return { close: () => stream?.close() };
   }
   close(): void {
     clearInterval(this.timer);

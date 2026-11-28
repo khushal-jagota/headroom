@@ -20,6 +20,8 @@ import type { WorkspaceAdmission } from './core/http/middleware.ts';
 import type { StreamCloseSink } from './core/http/live_streams/records.ts';
 import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
+import { LiveSubscriptions } from './live_updates/registry.ts';
+import { install_live_socket } from './live_updates/socket.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
 import { create_executor_routes } from './executor/app_transport.ts';
@@ -140,6 +142,15 @@ export async function createApp(config: Config, services: AppServices): Promise<
       }),
     );
   });
+  const live_subscriptions = new LiveSubscriptions();
+  install_live_socket(app, {
+    config,
+    database: services.database,
+    clock,
+    changes,
+    subscriptions: live_subscriptions,
+    stream_close_sink: services.streamCloseSink,
+  });
   for (const area of services.areas ?? [])
     registerArea(app, area, {
       database: services.database,
@@ -147,6 +158,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
       clock,
       conversationSystem: services.conversationSystem,
       signalAuthority: services.signalAuthority,
+      live_subscriptions,
       changes,
     });
   return app;

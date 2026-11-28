@@ -42,3 +42,11 @@ export function supported_machine_versions(protocol: unknown, outbox: unknown): 
     outbox === CLIENT_COMPATIBILITY.outbox_format
   );
 }
+
+/** A desktop below the bridge minimum or an iPhone below the build minimum must update. */
+export function client_update_required(client: ClientIdentity): boolean {
+  return (
+    (client.kind === 'desktop' && !supported_desktop_bridge(client)) ||
+    (client.kind === 'ios' && !supported_ios_build(client.build))
+  );
+}

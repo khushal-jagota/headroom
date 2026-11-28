@@ -334,7 +334,7 @@ export class Store implements MetricsStore {
   add_stream_close(record: StreamCloseRecord): void {
     this.write((sql) => {
       sql.run(
-        'INSERT INTO stream_closes(closed_at,device_id,client_kind,route,opened_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO stream_closes(closed_at,device_id,client_kind,route,opened_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code,close_code,last_sequence) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
         [
           record.closed_at,
           record.device_id,
@@ -346,6 +346,8 @@ export class Store implements MetricsStore {
           record.closed_by,
           record.last_write_ago_ms,
           record.error_code,
+          record.close_code ?? null,
+          record.last_sequence ?? null,
         ],
       );
     });
@@ -374,7 +376,7 @@ export class Store implements MetricsStore {
       const device = query.device_id === null ? '' : ' AND device_id=?';
       const extra = query.device_id === null ? [] : [query.device_id];
       const stream_closes = sql.all<Omit<StreamCloseRecord, never>>(
-        `SELECT * FROM (SELECT route,client_kind,device_id,opened_at,closed_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code FROM stream_closes WHERE closed_at>=? AND closed_at<?${device} ORDER BY closed_at DESC,id DESC LIMIT ?) ORDER BY closed_at,route`,
+        `SELECT * FROM (SELECT route,client_kind,device_id,opened_at,closed_at,age_ms,bytes_written,closed_by,last_write_ago_ms,error_code,close_code,last_sequence FROM stream_closes WHERE closed_at>=? AND closed_at<?${device} ORDER BY closed_at DESC,id DESC LIMIT ?) ORDER BY closed_at,route`,
         [query.since, query.until, ...extra, query.limit],
       );
       const rows = sql.all<{

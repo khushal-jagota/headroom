@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
 import { SSE_HEARTBEAT_MS } from './config.ts';
+import { coalesced_change_pings } from '../live_updates/change_pings.ts';
 import { STREAM_RETRY_FRAME } from './http/live_streams/configuration.ts';
 import type { Clock } from './clock.ts';
 import { TestClock } from './clock.ts';
@@ -74,40 +75,22 @@ export async function registerCoreRoutes(
     for (const stream of streams) stream.destroy();
   });
   app.get('/api/changes', { config: { uncompressed: true } }, async (_request, reply) => {
-    let changed = false;
-    let owing = false;
-    let scheduled: NodeJS.Immediate | undefined;
+    const pings = coalesced_change_pings(changes, () => stream.push('data: change\n\n'));
     const stream = new Readable({
       read() {
-        owing = false;
-        if (changed) {
-          changed = false;
-          this.push('data: change\n\n');
-        }
+        pings.drained();
       },
     });
     stream.push(STREAM_RETRY_FRAME);
-    const flush = (): void => {
-      scheduled = undefined;
-      if (!owing && !stream.destroyed) {
-        changed = false;
-        owing = !stream.push('data: change\n\n');
-      }
-    };
-    const unsubscribe = changes.subscribe(() => {
-      changed = true;
-      if (!scheduled && !owing) scheduled = setImmediate(flush);
-    });
     const timer = setInterval(() => {
-      if (!stream.destroyed && !changed && !owing)
-        owing = !stream.push(`event: heartbeat\ndata: ${new Date().toISOString()}\n\n`);
+      if (!stream.destroyed && !pings.busy())
+        stream.push(`event: heartbeat\ndata: ${new Date().toISOString()}\n\n`);
     }, SSE_HEARTBEAT_MS);
     timer.unref();
     streams.add(stream);
     stream.once('close', () => {
       clearInterval(timer);
-      if (scheduled) clearImmediate(scheduled);
-      unsubscribe();
+      pings.stop();
       streams.delete(stream);
     });
     reply.raw.once('close', () => stream.destroy());
