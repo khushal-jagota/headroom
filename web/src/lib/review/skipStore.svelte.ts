@@ -1,16 +1,18 @@
-import { dropUnseen, limitSkips, parseSkips, sameSkips, skipKey, stringifySkips, withSkip, type SkipList } from './skips';
+import { dropUnseen, limitSkips, parseSkips, sameSkips, skipKey, skipMarks, stringifySkips, withSkip, type SkipList } from './skips';
 import { reviewHistoryKey } from './return';
 import type { NavigationReviewItem } from '../navigation/contracts';
 
 const KEY_PREFIX = 'panels:review-skipped:';
 const NONE: SkipList = Object.freeze({});
+const EMPTY: ReadonlyMap<string, NavigationReviewItem> = new Map();
 /** A list nobody has touched for this long belongs to a server that is gone. */
 const ABANDONED_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * The one owner of the skipped cards on this device. Each server has its own list, named by the
  * server's installation, so a skip never applies to another server (the desktop app can change
- * servers). Panels has one owner per server, so the list has no owner part.
+ * servers). Panels has one owner per server and the page has no sign-in, so the list has no owner part.
+ * That is accepted on purpose. The stored shape is versioned, so the key can change if an owner ever appears.
  *
  * A list is read from storage once per server. Every change reads storage again first and writes
  * the merged list back, so two tabs do not overwrite each other. A `storage` event brings another
@@ -18,8 +20,10 @@ const ABANDONED_MS = 30 * 24 * 60 * 60 * 1000;
  */
 class ReviewSkipStore {
   #lists = new Map<string, SkipList>();
-  /** The cards this page has seen in the queue, by server. A skip for a card never seen may belong to one that left. */
-  #seen = new Map<string, Set<string>>();
+  /** The newest version of each card this page has loaded from the queue, by server. The queue loads one window at a time. */
+  #known = new Map<string, Map<string, NavigationReviewItem>>();
+  /** The cards of the walk through the queue's windows that is in progress, by server. */
+  #walks = new Map<string, { started: boolean; keys: Set<string> }>();
   #version = $state(0);
 
   constructor() {
@@ -43,26 +47,39 @@ class ReviewSkipStore {
     this.#change(scope, list => withSkip(list, item, Date.now()));
   }
 
-  /**
-   * The queue the page has loaded. `complete` says that its last window is loaded, so every window of
-   * the queue has been seen: a skip for a card in none of them is for a card that left.
-   */
-  observe(scope: string, items: readonly NavigationReviewItem[], complete: boolean): void {
-    const seen = this.#seenIn(scope);
-    for (const item of items) seen.add(skipKey(reviewHistoryKey(item)));
-    if (complete) this.#change(scope, list => dropUnseen(list, seen));
+  /** The cards the page has loaded so far, whichever window held them. Reactive. */
+  known(scope: string | null): ReadonlyMap<string, NavigationReviewItem> {
+    void this.#version;
+    return (scope && this.#known.get(scope)) || EMPTY;
   }
 
-  #seenIn(scope: string): Set<string> {
-    let seen = this.#seen.get(scope);
-    if (!seen) this.#seen.set(scope, seen = new Set());
-    return seen;
+  /**
+   * One window of the queue the page has loaded. `first` says it is the window at the top of the queue, which
+   * starts a walk. `last` says that no window follows. When the walk that began at the top reaches the last
+   * window, every card of the queue has been seen: a skip for a card in none of them is for a card that left.
+   */
+  observe(scope: string, items: readonly NavigationReviewItem[], position: { first: boolean; last: boolean }): void {
+    let known = this.#known.get(scope);
+    if (!known) this.#known.set(scope, known = new Map());
+    const walk = this.#walks.get(scope) ?? { started: false, keys: new Set<string>() };
+    this.#walks.set(scope, walk);
+    if (position.first) { walk.started = true; walk.keys.clear(); }
+    let changed = false;
+    for (const item of items) {
+      const key = skipKey(reviewHistoryKey(item));
+      const before = known.get(key);
+      if (!before || JSON.stringify(skipMarks(before)) !== JSON.stringify(skipMarks(item))) changed = true;
+      known.set(key, item);
+      walk.keys.add(key);
+    }
+    if (changed) this.#version += 1;
+    if (position.last && walk.started) this.#change(scope, list => dropUnseen(list, walk.keys));
   }
 
   #change(scope: string, change: (list: SkipList) => SkipList): void {
     // Storage is read again, so a skip made in another tab since is kept. Blocked storage leaves this page's own list.
     const base = this.#read(scope) ?? this.#lists.get(scope) ?? NONE;
-    const next = limitSkips(change(base), this.#seenIn(scope));
+    const next = limitSkips(change(base), new Set(this.#known.get(scope)?.keys()));
     if (sameSkips(base, next) && sameSkips(this.#lists.get(scope) ?? NONE, next)) return;
     this.#write(scope, next);
     this.#set(scope, next);

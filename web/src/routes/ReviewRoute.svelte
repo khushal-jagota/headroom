@@ -57,7 +57,8 @@
   const skipScope=$derived(displayed?.publication.authority.permit.installation_id ?? null);
   const skips=$derived(reviewSkips.list(skipScope));
   // What the server counts as skipped: the skips that still apply to the cards the page has loaded.
-  let skippedHistory=$derived(skipHistoryKeys(applyingSkips(skips,review?.items ?? [])));
+  const loadedCards=$derived(reviewSkips.known(skipScope));
+  let skippedHistory=$derived(skipHistoryKeys(applyingSkips(skips,[...loadedCards.values(),...(review?.items ?? [])])));
   // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
   let returnCohort=$state<ReviewHistoryKey[]>([]);
   let cohortSeeded=false;
@@ -69,15 +70,25 @@
   // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
   let pass=$state<'new'|'skipped'>('new');
   let passKeys=$state<ReadonlySet<string>>(new Set());
-  // The skips of cards that left the queue end once the last window is loaded, which is when every
-  // window has been seen. Only a queue read this session counts: a copy saved by the last session can be older than a skip.
+  // The queue loads one window at a time. Each window is handed to the store, so the count and the pruning know
+  // every card the walk has loaded. The skips of cards that left the queue end when a walk from the top reaches the
+  // last window. Only a queue read this session counts: a copy saved by the last session can be older than a skip.
   $effect(()=>{
     const items=review?.items;
-    if(!items || !displayed?.runtimeCurrent || skipScope===null)return;
+    if(!items || !displayed?.runtimeCurrent || skipScope===null || !queueWindow)return;
     const publication=displayed.publication.view;
-    const complete=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation
-      && queueWindow && !queueWindow.next && publication.reviewSummary.skipped<untrack(()=>skippedHistory).length);
-    untrack(()=>reviewSkips.observe(skipScope,items,complete));
+    const current=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation);
+    const deadKeysSent=current && publication!.reviewSummary!.skipped<untrack(()=>skippedHistory).length;
+    untrack(()=>reviewSkips.observe(skipScope,items,{first:queueWindow.request.anchor===null,last:!queueWindow.next && deadKeysSent}));
+  });
+  // A card the walk has loaded and found changed is no longer a skipped card, so it leaves the cohort that the server
+  // orders last. It then takes its place by age. The cohort never gains a card here, so the order does not move otherwise.
+  $effect(()=>{
+    const keep=new Set(skippedHistory.map(skipKey));
+    const next=untrack(()=>returnCohort).filter(key=>keep.has(skipKey(key)));
+    if(next.length===untrack(()=>returnCohort).length)return;
+    returnCohort=next;
+    reviewAnchor=null;
   });
   // The note and edited text of the proposal on screen. The card and the bar under its
   // artifact are one decision, so they read and write the same draft.

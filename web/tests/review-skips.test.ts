@@ -140,19 +140,39 @@ it("servers are kept apart, and another tab clearing storage empties the list", 
   expect(tab.ids("server-2")).toEqual([]);
 });
 
-it("a partly answered card stays skipped when the queue refreshes, and a pass that has seen every window drops cards that left", async () => {
+it("a partly answered card stays skipped when the queue refreshes", async () => {
   const tab = await openTab(new Map());
-  const card = ticket(2, [message("c1", 10)], "t1", ask("c1", 7), 3);
-  tab.store.skip("server-1", card);
-  tab.store.skip("server-1", ticket(1, [], "gone"));
-  tab.store.skip("server-1", ticket(1, [], "later"));
-  // The reply is on its way and the refresh removes the message and the ask. Neither the refresh nor a pass drops the skip.
+  tab.store.skip("server-1", ticket(2, [message("c1", 10)], "t1", ask("c1", 7), 3));
+  // The reply is on its way and the refresh removes the message and the ask. Neither the refresh nor a walk drops the skip.
   const refreshed = ticket(2, [], "t1", null, 3);
-  tab.store.observe("server-1", [refreshed], false);
+  tab.store.observe("server-1", [refreshed], { first: true, last: true });
   expect(isSkipped(tab.store.list("server-1"), refreshed)).toBe(true);
-  // The first window held t1. The last window holds "later". "gone" was in neither.
-  tab.store.observe("server-1", [ticket(1, [], "later")], true);
-  expect(tab.ids("server-1")).toEqual(["later", "t1"]);
+  expect(tab.ids("server-1")).toEqual(["t1"]);
+});
+
+it("a walk from the top to the last window drops the skips of cards in no window, and a walk that did not start at the top drops nothing", async () => {
+  const tab = await openTab(new Map());
+  for (const id of ["a", "b", "gone"]) tab.store.skip("server-1", ticket(1, [], id));
+  // The page opened at a later window: it has not seen the top, so it cannot say that a card left.
+  tab.store.observe("server-1", [ticket(1, [], "b")], { first: false, last: true });
+  expect(tab.ids("server-1")).toEqual(["a", "b", "gone"]);
+  tab.store.observe("server-1", [ticket(1, [], "a")], { first: true, last: false });
+  tab.store.observe("server-1", [ticket(1, [], "b")], { first: false, last: true });
+  expect(tab.ids("server-1")).toEqual(["a", "b"]);
+});
+
+it("the page knows every window it has loaded, so a changed card past the first window leaves the count once its window loads", async () => {
+  const tab = await openTab(new Map());
+  for (const id of ["near", "far"]) tab.store.skip("server-1", ticket(1, [], id));
+  tab.store.observe("server-1", [ticket(1, [], "near")], { first: true, last: false });
+  const keys = () => skipHistoryKeys(applyingSkips(tab.store.list("server-1"), [...tab.store.known("server-1").values()])).map(key => key.id);
+  // "far" is in a window that has not loaded: it counts.
+  expect(keys()).toEqual(["far", "near"]);
+  // Its window loads and shows a newer proposal: it no longer counts, though the first window is gone from the page.
+  tab.store.observe("server-1", [ticket(2, [], "far", null, 2)], { first: false, last: false });
+  expect(keys()).toEqual(["near"]);
+  // The entry stays until the card leaves, so a tab with an older view cannot drop it.
+  expect(tab.ids("server-1")).toEqual(["far", "near"]);
 });
 
 it("blocked storage leaves the skips in the page for the visit", async () => {
