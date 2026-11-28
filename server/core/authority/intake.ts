@@ -5,7 +5,6 @@ import type { Principal } from '../contracts.ts';
 import { requestContext } from './identity.ts';
 import {
   chainFacts,
-  isAbove,
   requireAbove,
   requireAboveOrSelf,
   requireInChain,
@@ -49,28 +48,14 @@ function required<T>(value: T | undefined, name: string): T {
   if (!value) throw new Error(`Authority dependency ${name} is not composed`);
   return value;
 }
+/** A message does not act on its recipient, so any identified caller may message anyone. */
 export function admitMessage(sql: AuthoritySql, caller: Principal, recipient: Principal): void {
-  if (caller.kind === 'manager' && recipient.kind === 'manager') {
-    for (const id of [caller.id, recipient.id])
-      if (!sql.get('SELECT 1 FROM managers WHERE id=?', [id]))
-        throw new PlannerError('not_found', 'manager not found', { id });
-    return;
-  }
-  if (recipient.kind === 'owner' || recipient.kind === 'chief') return;
   if (recipient.kind === 'unidentified')
     throw new PlannerError('validation', 'unknown message recipient kind', {
       kind: recipient.kind,
     });
-  const target: Target = { kind: recipient.kind, id: recipient.id };
-  if (isAbove(sql, caller, target)) return;
-  if (
-    caller.kind !== 'owner' &&
-    caller.kind !== 'chief' &&
-    caller.kind !== 'unidentified' &&
-    isAbove(sql, recipient, { kind: caller.kind, id: caller.id })
-  )
-    return;
-  requireAbove(sql, caller, target);
+  if (recipient.kind === 'owner' || recipient.kind === 'chief') return;
+  if (caller.kind === 'unidentified') refuse(caller, { kind: recipient.kind, id: recipient.id });
 }
 function admitSource(sql: AuthoritySql, caller: Principal, responsible: Principal): void {
   if (responsible.kind === 'goal')

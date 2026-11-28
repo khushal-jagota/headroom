@@ -59,6 +59,10 @@ export async function run(
         return await (
           await import('../measure_sources/cli/index.ts')
         ).run_measure_source_command(invocation);
+      case 'connection':
+        return await (
+          await import('../environments/vps_metrics/cli.ts')
+        ).run_connection_command(invocation);
       case 'preview':
         return await (await import('../previews/cli/index.ts')).run_preview_command(invocation);
       case 'dataset':

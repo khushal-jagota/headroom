@@ -1,4 +1,4 @@
-// Unpack the hosted e40325811 archive and admit it with the candidate's own release code.
+// Unpack the hosted candidate archive and admit it with the candidate's own release code.
 // Run from the candidate checkout: node unpack_and_admit.ts SERVER_DIR ARCHIVE DESTINATION SHA OUT_JSON
 import { createHash } from 'node:crypto';
 import { createReadStream, statSync, writeFileSync } from 'node:fs';

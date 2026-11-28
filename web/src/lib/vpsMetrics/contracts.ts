@@ -4,7 +4,10 @@ export type Resolution = 'raw' | 'minute' | 'coarse';
 export interface Measurement { value: number | null; unit: string; reason: string | null; sampled_at?: number; numerator?: number | null; duration?: number | null }
 export interface ProcessRecord { identity: { boot_id: string; pid: number; start_ticks: number }; parent_pid: number; uid: number | null; name: string; state: string; service: string; metrics: Record<string, Measurement> }
 export interface ServiceRecord { identity: string; name: string; kind: string; metrics: Record<string, Measurement>; state: string | null; state_reason: string | null; process_count: number }
-export interface Sample { timestamp: number; monotonic: number; boot_id: string; expected_interval: number; core_count: number; metrics: Record<string, Measurement>; services: ServiceRecord[]; processes: ProcessRecord[]; process_count: number; process_availability: Availability; process_reason: string | null; disk_total_members: string[]; network_total_members: string[] }
+export type TailnetPath = 'direct' | 'relayed' | 'idle' | 'offline';
+export interface TailnetPeer { identity: string; name: string; path: TailnetPath; endpoint: string | null; relay: string | null; last_handshake: number | null; metrics: Record<string, Measurement> }
+export interface TailnetRecord { availability: Availability; reason: string | null; home_relay: string | null; peers: TailnetPeer[] }
+export interface Sample { timestamp: number; monotonic: number; boot_id: string; expected_interval: number; core_count: number; metrics: Record<string, Measurement>; services: ServiceRecord[]; processes: ProcessRecord[]; process_count: number; process_availability: Availability; process_reason: string | null; disk_total_members: string[]; network_total_members: string[]; tailnet?: TailnetRecord }
 export interface RetentionCoverage { requested_start: number | null; retained_start: number | null; retained_end: number | null; budget_evicted: boolean; policy_seconds: number }
 export interface CollectionStatus { availability: Availability; reason: string | null; last_sample_at: number | null; last_attempt_at: number | null; cadence_seconds: number }
 export interface LatestResponse { sequence: number | null; sample: Sample | null; collection: CollectionStatus; coverage: RetentionCoverage }

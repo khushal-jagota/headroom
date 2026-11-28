@@ -199,7 +199,7 @@
 
 <div class="shell" inert={$updatePause.blocked} aria-busy={$updatePause.blocked}>
   <!-- The desktop window's top row; nothing in a browser. -->
-  <WindowTopRow {reviewCount} unreachable={update.state === "unreachable"} />
+  <WindowTopRow {reviewCount} unreachable={update.state === "unreachable" || update.state === "offline"} />
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
     <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus}
       settingsRail={route.name === "settings" ? settingsRail : undefined} settingsInSection={route.params.chosen === "true"} />

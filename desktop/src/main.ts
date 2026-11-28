@@ -40,6 +40,7 @@ import { DESKTOP_BRIDGE_VERSION } from './bridge_version';
 import { ScreenStore } from './screens/store';
 import { ScreenController } from './screens/controller';
 import { SCREEN_CHECK_INTERVAL_MS, SCREEN_READY_POLL_MS, SCREEN_START_TIMEOUT_MS } from './screens/configuration';
+import { endNetLog, netLogIsOn, resumeNetLog, startNetLogForADay, startPowerLog } from './connection_log';
 
 // Tests give each run its own data folder, so runs share no stored address or window place.
 if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PANELS_DESKTOP_USER_DATA);
@@ -317,6 +318,15 @@ function applicationMenu(): Menu {
     label: 'Try Screens Again',
     click: () => { void screens.retry(); },
   };
+  const netLogSwitch: MenuItemConstructorOptions = {
+    label: 'Record Network Log for a Day',
+    type: 'checkbox',
+    checked: netLogIsOn(),
+    click: (item) => {
+      const rebuild = () => Menu.setApplicationMenu(applicationMenu());
+      void (item.checked ? startNetLogForADay(rebuild) : endNetLog().then(rebuild));
+    },
+  };
   const template: MenuItemConstructorOptions[] =
     process.platform === 'darwin'
       ? [
@@ -327,6 +337,7 @@ function applicationMenu(): Menu {
               { type: 'separator' },
               changeServer,
               retryScreens,
+              netLogSwitch,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -343,7 +354,7 @@ function applicationMenu(): Menu {
           { role: 'windowMenu' },
         ]
       : [
-          { label: 'File', submenu: [changeServer, retryScreens, { type: 'separator' }, { role: 'quit' }] },
+          { label: 'File', submenu: [changeServer, retryScreens, netLogSwitch, { type: 'separator' }, { role: 'quit' }] },
           { role: 'editMenu' },
           { role: 'viewMenu' },
           { role: 'windowMenu' },
@@ -354,6 +365,8 @@ function applicationMenu(): Menu {
 void app.whenReady().then(async () => {
   if (!await prepareApplicationLocation()) return;
   handleAppScheme();
+  startPowerLog();
+  await resumeNetLog(() => Menu.setApplicationMenu(applicationMenu()));
   if (app.isPackaged && process.platform === 'darwin') shellUpdates = startShellUpdates(serverAddress);
   screens = new ScreenController(new ScreenStore(join(app.getPath('userData'), 'screens'), PACKED), {
     address: serverAddress,

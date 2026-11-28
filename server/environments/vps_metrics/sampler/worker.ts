@@ -40,6 +40,23 @@ port.on('message', (message: SamplerCommand) => {
     wake = undefined;
     return;
   }
+  if (message.type === 'stream_close' || message.type === 'client_events') {
+    // Nobody waits for these writes. A lost record must never disturb the stream or the request.
+    if (stopped) return;
+    try {
+      if (message.type === 'stream_close') store.add_stream_close(message.record);
+      else
+        store.add_client_events(
+          message.device_id,
+          message.client_kind,
+          message.received_at,
+          message.events,
+        );
+    } catch (error) {
+      console.warn('VPS metrics could not store a connection record: ' + reason(error));
+    }
+    return;
+  }
   if (stopped) {
     send({
       type: 'error',

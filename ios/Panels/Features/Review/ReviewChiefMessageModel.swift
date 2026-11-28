@@ -26,7 +26,7 @@ import Observation
         self.api = api
         composer.restore(owner: .chief, api: api, recoverConversationID: false)
         composer.reloadDraft()
-        composer.deliveryMode = "queue"
+        composer.deliveryMode = "steer"
         refreshAttempt()
     }
     func refreshAttempt() {
@@ -86,7 +86,7 @@ import Observation
             // or starts one. A resend with the same ID lands there once.
             let id = UUID().uuidString
             // Read position 0 marks nothing read, so Chief messages not yet opened stay in Review.
-            let message = ConversationSend(conversationId: nil, content: content, mode: "queue",
+            let message = ConversationSend(conversationId: nil, content: content, mode: "steer",
                 senderMessageId: id, sentAtUnixMilliseconds: Int64(created.timeIntervalSince1970 * 1000),
                 ownerReadThroughSequence: 0)
             let work = PendingWork(id: id, created: created, kind: .message, owner: .chief,

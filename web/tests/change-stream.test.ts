@@ -4,6 +4,7 @@ import { startChangeStream, stopChangeStream } from "../src/lib/changeStream";
 import { queryClient } from "../src/lib/queryClient";
 import { get } from "svelte/store";
 import { connectionStatus } from "../src/lib/changeStream";
+import { STREAM_SILENCE_MS } from "../src/lib/updates/config";
 
 class ControlledEventSource {
   static current: ControlledEventSource;
@@ -12,20 +13,34 @@ class ControlledEventSource {
   onerror: (() => void) | null = null;
   closed = false;
   readyState = 1;
+  private named = new Map<string, () => void>();
   constructor(readonly url: string) { ControlledEventSource.current = this; }
+  addEventListener(name: string, listener: () => void) { this.named.set(name, listener); }
+  emit(name: string) { this.named.get(name)?.(); }
   close() { this.closed = true; }
+}
+
+// The page's own window events. `window` is the test's global object, so these stand in for it.
+function stubWindowEvents() {
+  const events = new EventTarget();
+  vi.stubGlobal("addEventListener", (name: string, listener: () => void) => events.addEventListener(name, listener));
+  vi.stubGlobal("removeEventListener", (name: string, listener: () => void) => events.removeEventListener(name, listener));
+  return events;
 }
 
 afterEach(() => {
   stopChangeStream();
   queryClient.clear();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("contentless change stream refresh", () => {
   it("reconciles observer data on open and reopen, defers hidden commits, and ignores stopped source callbacks", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
     let visibilityState = "visible";
     const listeners = new Set<() => void>();
     vi.stubGlobal("document", {
@@ -51,7 +66,7 @@ describe("contentless change stream refresh", () => {
     expect(revisions.at(-1)).toBe(2);
     expect(get(connectionStatus)).toBe("connected");
     old.onerror?.();
-    expect(get(connectionStatus)).toBe("reconnecting");
+    expect(get(connectionStatus)).toBe("unreachable");
     revision = 3;
     old.onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -92,6 +107,8 @@ describe("contentless change stream refresh", () => {
   it("reopens a permanently CLOSED stream and cancels recovery on stop", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
     vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal("EventSource", ControlledEventSource);
     startChangeStream();
@@ -116,6 +133,7 @@ describe("contentless change stream refresh", () => {
   it("coalesces bursts at the first frame deadline for subscribed queries", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
     vi.stubGlobal("document", {
       visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn()
     });
@@ -142,5 +160,66 @@ describe("contentless change stream refresh", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(mountedRead).toHaveBeenCalledTimes(2);
     unsubscribe();
+  });
+
+  // Distinct risk: a stream error must show the card at once, with no waiting time, and the
+  // open must end it. The operating system's offline word must still win. No other test drives
+  // the stream through these states.
+  it("shows no card at start, then the card at once on every drop, and ends it on the next open", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const windowEvents = stubWindowEvents();
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("EventSource", ControlledEventSource);
+    const probe = vi.fn(async () => { throw new Error("no network path"); });
+    vi.stubGlobal("fetch", probe);
+    startChangeStream();
+    // Before the first open is a start, not a drop: no card.
+    expect(get(connectionStatus)).toBe("connecting");
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
+    // The error shows the card in the same tick, and the probe for the record starts at once.
+    ControlledEventSource.current.onerror?.();
+    expect(get(connectionStatus)).toBe("unreachable");
+    expect(probe).toHaveBeenCalledWith("/api/meta", expect.objectContaining({ cache: "no-store" }));
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
+    // The operating system's word that there is no network wins, and the return reopens the stream.
+    vi.stubGlobal("navigator", { onLine: false });
+    ControlledEventSource.current.onerror?.();
+    expect(get(connectionStatus)).toBe("offline");
+    const beforeReturn = ControlledEventSource.current;
+    vi.stubGlobal("navigator", { onLine: true });
+    windowEvents.dispatchEvent(new Event("online"));
+    expect(get(connectionStatus)).toBe("unreachable");
+    expect(ControlledEventSource.current).not.toBe(beforeReturn);
+  });
+
+  it("treats a stream with no heartbeat for 37.5 s as lost, but only once the server has sent one", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    stubWindowEvents();
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("EventSource", ControlledEventSource);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    startChangeStream();
+    const older = ControlledEventSource.current;
+    older.onopen?.();
+    // An older server sends only comment lines the page cannot see. Silence proves nothing there.
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS * 2);
+    expect(ControlledEventSource.current).toBe(older);
+    expect(get(connectionStatus)).toBe("connected");
+    older.emit("heartbeat");
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS - 1);
+    expect(ControlledEventSource.current).toBe(older);
+    older.emit("heartbeat");
+    await vi.advanceTimersByTimeAsync(STREAM_SILENCE_MS - 1);
+    expect(ControlledEventSource.current).toBe(older);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(older.closed).toBe(true);
+    expect(ControlledEventSource.current).not.toBe(older);
+    expect(get(connectionStatus)).toBe("unreachable");
+    ControlledEventSource.current.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
   });
 });

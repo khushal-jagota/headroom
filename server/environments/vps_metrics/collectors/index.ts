@@ -6,6 +6,7 @@ import { LinuxCollector } from './linux.ts';
 import { clock_ticks, page_size, statvfs, monotonic_seconds } from './platform.ts';
 export { monotonic_seconds } from './platform.ts';
 import { query_services } from './systemd.ts';
+import { query_tailscale } from './tailscale.ts';
 export function filesystem_evidence(): Pick<
   CollectorDependencies,
   'read_text' | 'directory' | 'exists' | 'inode'
@@ -47,6 +48,7 @@ export const build_linux_collector: BuildCollector = (raw, config) =>
       page_size,
       statvfs,
       service_query: query_services,
+      tailscale_query: query_tailscale,
     },
   );
 

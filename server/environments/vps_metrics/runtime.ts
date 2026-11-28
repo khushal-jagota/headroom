@@ -8,6 +8,12 @@ import { error_from_wire } from './errors.ts';
 import { MetricsReaders } from './readers/pool.ts';
 import type { MetricsRead } from './readers/contracts.ts';
 import type { CollectorFactory, SamplerReply } from './sampler/contracts.ts';
+import type { StreamCloseRecord } from '../../core/http/live_streams/records.ts';
+import type {
+  ClientEventRecord,
+  ConnectionRecordQuery,
+  ConnectionRecords,
+} from './connection_records.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded, type StopOptions } from '../../lifecycle/contracts.ts';
 import { begin_startup_phase } from '../../core/startup_diagnostics.ts';
@@ -123,6 +129,25 @@ export class MetricsRuntime {
     if (this.failure)
       result.collection = { ...this.failure, last_sample_at: result.collection.last_sample_at };
     return result;
+  }
+  /** Best effort and never awaited. A record sent while the runtime is down is dropped. */
+  record_stream_close(record: StreamCloseRecord): void {
+    if (!this.ready || this.stopped) return;
+    this.worker?.postMessage({ type: 'stream_close', record });
+  }
+  record_client_events(device_id: string, client_kind: string, events: ClientEventRecord[]): void {
+    if (!this.ready || this.stopped || !this.worker)
+      throw new MetricsOperationalError('VPS metrics runtime is unavailable');
+    this.worker.postMessage({
+      type: 'client_events',
+      device_id,
+      client_kind,
+      received_at: Math.round(this.wall_clock() * 1000),
+      events,
+    });
+  }
+  connection_records(query: ConnectionRecordQuery): Promise<ConnectionRecords> {
+    return this.read<ConnectionRecords>({ kind: 'connection_records', query });
   }
   renew_activity(): Promise<MetricNumber> {
     if (!this.ready || this.stopped || !this.worker)

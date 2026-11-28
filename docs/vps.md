@@ -6,6 +6,7 @@ Diagnostics shows the health of the machine that runs Headroom: CPU, memory, loa
 
 - **A sampler.** One server process at a time owns sampling, through a file lock. Other processes serve what is already stored. Sampling runs even when Worker dispatch is off.
 - **A metrics store.** A separate SQLite file beside the application database. Its writes never wake the application's change signal, so frequent samples never make open screens reload.
+- **Connection records.** The same store keeps one record for each live stream close and the connection events that clients report. They are kept for 30 days and are not host readings. `GET /api/connection-records` and `panels connection records` list them by time and device. A device may send 12 batches of client events a minute, with at most 50 events in each. See [live updates](live-updates.md).
 - **The page.** Settings → Diagnostics (`#/settings/diagnostics`; the old `#/vps` redirects there), with windows of five minutes, a day, or 30 days.
 
 ## How readings are taken
@@ -18,6 +19,10 @@ Percentages for services and processes are against the whole machine, so a row c
 
 The Mac collector uses native host and process observations through the same store and API. Process rates require the same boot UUID and exact process birth. Available memory means free plus inactive pages. Linux pressure and unproved disk, network, and process I/O measurements remain unavailable. Service grouping is unavailable on the Mac. An empty service table does not prove that launchd has no jobs.
 
+## Tailnet path
+
+Each sample also records how the machine reaches every tailnet device, so a dropped stream can be lined up with a path change. The Linux collector runs `tailscale status --json` and `tailscale debug metrics` as the server's own user, beside the other reads, with a one second limit. For each device the sample holds whether the path is direct or relayed, the peer endpoint, the last handshake, the device's home relay, and whether the path changed since the last sample. The machine's own home relay is recorded once. The debug counters are host-wide, so the sample holds three rates for the machine as a whole: path discovery attempts, relay packets, and home relay changes. A missing, slow or failing `tailscale` records the source as unavailable with a reason, and the sample is taken on time. The Diagnostics page does not show it yet. The Mac collector does not record this.
+
 ## Decisions that shape it
 
 - A separate store and no change signal, so monitoring cannot slow the workspace.
@@ -29,4 +34,4 @@ The Mac collector uses native host and process observations through the same sto
 - `server/environments/vps_metrics/`: sampler, collectors, store, and retention. Limits are in `configuration.ts`.
 - `web/src/components/vps/`: the page.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-27._

@@ -23,7 +23,6 @@ User-owned stages are marked with `*`.
 | Initiative planning | Turning a confirmed direction into a set of Tickets | Rough Split into Parts, Question Tree, Question Answers\*, Proposed Tickets |
 | Initiative review | Reviewing a delivered initiative and agreeing follow-up | Review, Feedback\*, Follow-ups |
 | New worker | Designing and landing another Worker type | Purpose and Boundaries\*, Stages, What Good Looks Like at Each Stage, Model and Effort\*, Drafting |
-| Amend worker | Changing an existing type in place | Amendment\*, Drafting |
 
 The user-owned stages are where the person's view is the product. Exploration does not race ahead of a shared picture, and does not declare its answer alone. Planning settles open questions with the owner before Tickets are proposed. On types with no user-owned stage, a person stays involved through the ceiling, for example by stopping a coding Ticket at What Changes.
 
@@ -39,7 +38,7 @@ Removing a type stops new Tickets of it. Existing Tickets keep running on their 
 
 Preset instructions sit beside their stages as structured data. Panels assembles that record into the specialist skill, so the stage editor and skill share one source. Instructions remain ordinary prose, with room for guidance across the workflow.
 
-The New worker and Amend worker types are how these changes are usually made. A Worker drafts the definition. During the last review, the owner or Chief reviews and saves the approved record. The Worker verifies the live result before that review ends. Consequences then finishes repository follow-through and records the result.
+The New worker type is how new types are made. Changes to an existing type go to the Chief. A Worker drafts the definition. During the last review, the owner or Chief reviews and saves the approved record. The Worker verifies the live result before that review ends. Consequences then finishes repository follow-through and records the result.
 
 ## Decisions that shape it
 

@@ -33,6 +33,8 @@ export type MachineService = {
   candidate: string;
   installed_app?: string;
   previous_app?: string;
+  /** Mac only: the signed Panels app executable that starts the machine's jobs. */
+  launcher?: string;
 };
 
 export async function machine_service_command(argv: string[], allow_nonzero = false) {
@@ -136,6 +138,7 @@ export async function installed_machine_service(
     path,
     previous,
     candidate,
+    launcher,
     ...(at_joined_path
       ? { installed_app: joined.app }
       : typeof previous_launcher === 'string'
@@ -214,6 +217,7 @@ export async function start_machine_coordinator(
       path,
       plist({
         Label: helper_label,
+        AssociatedBundleIdentifiers: [mac_installation_paths(userInfo().homedir).bundle_id],
         ProgramArguments: args,
         RunAtLoad: true,
         KeepAlive: { SuccessfulExit: false },
