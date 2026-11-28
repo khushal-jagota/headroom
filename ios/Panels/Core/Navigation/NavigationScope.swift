@@ -186,6 +186,7 @@ extension NavigationPresentation {
         }
         return ReviewResponse(items: items, runningWorkerCount: snapshot.content.counts.runningConversations,
                               unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0,
+                              queueTotal: window?.total ?? 0,
                               serverSkippedCount: snapshot.content.reviewSummary?.skipped,
                               holdsWholeQueue: window.map { $0.request.direction == "after" && $0.request.anchor == nil && $0.members.count >= $0.total } ?? false,
                               fromTail: window?.request.direction == "before",

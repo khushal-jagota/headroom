@@ -7,6 +7,8 @@ struct ReviewResponse: Sendable {
     let runningWorkerCount: Int
     /// Entries beyond the loaded review window still count toward the badge and the summary.
     var unloadedCount = 0
+    /// Every entry in the queue, loaded or not.
+    var queueTotal = 0
     /// The server's count of skipped entries in the whole queue, when the view carries it.
     var serverSkippedCount: Int? = nil
     /// The window read the queue from the top, and it holds every entry.

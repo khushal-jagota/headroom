@@ -52,11 +52,16 @@ message in the conversation, or the ask's time. It ends only when that part is n
   never reach the saved view. The check at the start of a run gives up after 3 seconds
   from its first fresh window, with the skips it knows. The skipped order
   (`review_priority_keys`) is fixed at those two moments only.
-- **The skipped pass reads the end.** When one window cannot hold the queue, the skipped
-  pass follows the last 60 entries of the queue instead of the first 30.
+- **The skipped pass reads the end.** When the queue holds more than 30 entries, the
+  skipped pass follows its last 60 entries instead of the first 30. The queue's size
+  decides, not what the window on screen left out. Until the window a pass asked for
+  arrives, the pass shows no card and no summary, for at most 3 seconds.
 - **Removal.** The skips of entries that left the queue go when a fresh window from the
-  top holds the whole queue. Otherwise the cap of 500 removes unseen entries first. A
-  list untouched for 30 days is removed. A saved view never changes the list.
+  top holds the whole queue and the server counted fewer skips than the phone sent.
+  Otherwise the cap of 500 removes unseen entries first. A list untouched for 30 days is
+  removed. A saved view never changes the list.
+- **Counts.** A card counts as skipped by its saved skip alone. A card skipped in this
+  pass that then gains a newer part counts as new, though the pass still hides it.
 
 ## Summary screen
 
@@ -72,7 +77,7 @@ arrives, so he stays where he was.
 
 Its counts come from the phone's own cards in the loaded window. Entries beyond the
 window count by the server's skipped count (`review_summary`), less the skipped entries
-the window holds; the rest are new. It reads, in two tones at one upper-centre baseline:
+the window holds among the keys that the view's request sent; the rest are new. It reads, in two tones at one upper-centre baseline:
 
 | State | Lines | Buttons |
 | --- | --- | --- |
@@ -243,8 +248,10 @@ Simulator.
 - `ReviewSkipsTests` checks the saved skips: a skip ends only when its card gains a
   part, the entry keys and the cap, lists per installation across a relaunch, and the
   session's reads of the end of the queue (only after a fresh window, only the skips not
-  loaded, the wait that gives up with the known skips, a new read at each pass start, and
-  the order fixed for the pass), and removal only on a read of the whole queue.
+  loaded, the wait that gives up with the known skips, a new read at each pass start, the
+  order fixed for the pass, a pass that waits for the window it asked for, and a read
+  through the real client whose answer counts only by its direction), and removal only on
+  a read of the whole queue.
 - `NavigationViewTests` checks the split against desktop's fixtures: canonical
   addresses with no fallback to a former owner, window order, the native identities,
   exclusion of backlogged, done, settled-owner and agent-held work, asks from live and

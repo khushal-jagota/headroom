@@ -105,15 +105,16 @@ final class ReviewSkipsTests: XCTestCase {
             return reads.answer
         }, entryWait: wait)
     }
-    @MainActor private func review(_ items: [ReviewItem], unloaded: Int = 0, current: Bool = true, whole: Bool = true, tail: Bool = false,
+    @MainActor private func review(_ items: [ReviewItem], unloaded: Int = 0, total: Int? = nil, current: Bool = true, whole: Bool = true, tail: Bool = false,
                                    serverSkipped: Int? = nil, sent: [RecordKey]? = nil) -> ReviewResponse {
-        ReviewResponse(items: items, runningWorkerCount: 0, unloadedCount: unloaded, serverSkippedCount: serverSkipped, holdsWholeQueue: whole,
+        ReviewResponse(items: items, runningWorkerCount: 0, unloadedCount: unloaded, queueTotal: total ?? Set(items.map(\.historyKey)).count + unloaded,
+                       serverSkippedCount: serverSkipped, holdsWholeQueue: whole,
                        fromTail: tail, installationId: "install", current: current, sentSkippedKeys: sent)
     }
-    @MainActor private func store(_ items: [ReviewItem], unloaded: Int = 0, current: Bool = true, whole: Bool = true,
+    @MainActor private func store(_ items: [ReviewItem], unloaded: Int = 0, total: Int? = nil, current: Bool = true, whole: Bool = true,
                                   serverSkipped: Int? = nil, sent: [RecordKey]? = nil) -> AppStore {
         let store = AppStore(baseURL: URL(string: "http://127.0.0.1:1")!)
-        store.review = review(items, unloaded: unloaded, current: current, whole: whole, serverSkipped: serverSkipped, sent: sent)
+        store.review = review(items, unloaded: unloaded, total: total, current: current, whole: whole, serverSkipped: serverSkipped, sent: sent)
         return store
     }
     /// Lets the session's own tasks run.
@@ -192,7 +193,8 @@ final class ReviewSkipsTests: XCTestCase {
         let far = message("far", owner: "f", since: 8, latest: 1)
         saved.lists["install"] = ReviewSkipList().skipping(proposal, at: 1, whole: true).skipping(far, at: 2, whole: true)
         let chief = message("chief", owner: "x", since: 3, latest: 1)
-        let session = session(saved, reads), app = store([chief], unloaded: 2, whole: false)
+        // 40 entries: more than one window from the top holds.
+        let session = session(saved, reads), app = store([chief], unloaded: 39, total: 40, whole: false)
         reads.answer = [proposal, far]
         session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
         await settle()
@@ -207,19 +209,25 @@ final class ReviewSkipsTests: XCTestCase {
         XCTAssertEqual(app.viewRequest.windows.first, NavigationScope.reviewTail(60))
         XCTAssertTrue(session.holding, "The top window holds no skipped card: wait for the end")
         XCTAssertNil(session.shown)
-        app.review = review([proposal, changed], unloaded: 1, whole: false, tail: true)
+        // The window from the end holds every entry, so nothing is left unloaded.
+        app.review = review([proposal, changed], unloaded: 0, total: 40, whole: false, tail: true)
         session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
         XCTAssertFalse(session.holding)
         XCTAssertEqual(session.shown?.id, proposal.id)
         session.skip(proposal, store: app)
         XCTAssertEqual(session.queue.history.priority, [ticketA])
         XCTAssertNil(session.shown, "The changed card is not part of the skipped pass")
-        XCTAssertEqual([session.summary.newCount, session.summary.skippedCount], [2, 1])
+        XCTAssertEqual([session.summary.newCount, session.summary.skippedCount], [1, 1])
+        // A second skipped pass stays on the end of the queue: the queue's size decides.
+        await session.startPass(.skipped, store: app)
+        XCTAssertEqual(app.viewRequest.windows.first, NavigationScope.reviewTail(60))
+        XCTAssertFalse(session.holding)
+        XCTAssertEqual(session.shown?.id, proposal.id)
         await session.startPass(.new, store: app)
-        XCTAssertEqual(reads.calls.count, 3)
+        XCTAssertEqual(reads.calls.count, 2, "The window from the end holds every skip: no read")
         XCTAssertEqual(app.viewRequest.windows.first, NavigationScope.baseWindows[0])
         XCTAssertTrue(session.holding)
-        app.review = review([chief], unloaded: 2, whole: false)
+        app.review = review([chief], unloaded: 39, total: 40, whole: false)
         session.update(store: app, savedWork: ReviewSavedWork(), freshSession: 1)
         XCTAssertEqual(session.shown?.id, chief.id)
     }
@@ -243,4 +251,67 @@ final class ReviewSkipsTests: XCTestCase {
         session.update(store: store([proposal], serverSkipped: 1, sent: sent), savedWork: ReviewSavedWork(), freshSession: 1)
         XCTAssertEqual(saved.lists["install"]?.keys, [ticketA])
     }
+
+    /// Risk (web fault F2): the read of the end is taken for a read of the top, or the check
+    /// tests more than the direction and refuses a good answer. Through the real client: the
+    /// request holds only Review's window from the end, with the cohort last, and an answer
+    /// whose window is not from the end is no answer.
+    @MainActor func testTheReadOfTheEndTestsOnlyTheDirection() async throws {
+        let base = URL(string: "https://tail.invalid")!
+        let store = AppStore(baseURL: base, session: TailProtocol.session)
+        TailProtocol.direction = "before"
+        let cohort = [ticketA], skipped = [RecordKey(kind: "conversation", id: "c")]
+        let items = try await store.readReviewTail(limit: 7, cohort: cohort, skipped: skipped)
+        XCTAssertEqual(items?.count, 0)
+        let sent = try XCTUnwrap(TailProtocol.lastView)
+        let windows = try XCTUnwrap(sent["windows"] as? [[String: Any]])
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows.first?["section"] as? String, "review")
+        XCTAssertEqual(windows.first?["direction"] as? String, "before")
+        XCTAssertEqual(windows.first?["limit"] as? Int, 7)
+        XCTAssertEqual((sent["review_priority_keys"] as? [[String: String]])?.first?["id"], "a")
+        XCTAssertEqual((sent["review_skipped_keys"] as? [[String: String]])?.first?["id"], "c")
+        // The server answered with its own anchor and limit: still an answer from the end.
+        TailProtocol.answerLimit = 3
+        let normalized = try await store.readReviewTail(limit: 7, cohort: cohort, skipped: skipped)
+        XCTAssertNotNil(normalized)
+        TailProtocol.direction = "after"
+        let fromTop = try await store.readReviewTail(limit: 7, cohort: cohort, skipped: skipped)
+        XCTAssertNil(fromTop)
+    }
+}
+
+/// Answers the view snapshot door with an empty queue whose Review window has the set direction.
+private final class TailProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var direction = "before"
+    nonisolated(unsafe) static var answerLimit: Int? = nil
+    nonisolated(unsafe) static var lastView: [String: Any]?
+    static var session: URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TailProtocol.self]
+        return URLSession(configuration: config)
+    }
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "tail.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value ?? "{}"
+        let view = (try? JSONSerialization.jsonObject(with: Data(query.utf8))) as? [String: Any] ?? [:]
+        Self.lastView = view
+        let window: [String: Any] = ["window_id": "review", "request": ["section": "review", "owner": NSNull(), "group": "all", "child_filter": "all",
+                                                                        "anchor": NSNull(), "direction": Self.direction, "limit": Self.answerLimit ?? 7],
+                                     "members": [], "total": 40, "previous": NSNull(), "next": NSNull(), "forward_overlap": NSNull(), "backward_overlap": NSNull()]
+        let body: [String: Any] = ["event": "snapshot", "wire_version": NavigationViewVersion.wire, "projection_version": NavigationViewVersion.projection,
+            "view_id": "v", "scope_generation": view["scope_generation"] as? Int ?? 0, "ordering_generation": "o", "mode": "current", "content_version": "c",
+            "coverage": ["scope": "s", "schema_version": 11, "semantics": "x", "epoch": "e", "revision": "1"],
+            "authority": ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()],
+                          "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]],
+            "content": ["records": [], "windows": [window], "review_context": [], "review_summary": ["skipped": 1, "new": 39],
+                        "counts": ["running_conversations": 0, "out_claims": 0, "review": 40, "unread": 0, "settled": 0]]]
+        let data = try! JSONSerialization.data(withJSONObject: body)
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

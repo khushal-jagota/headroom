@@ -321,6 +321,7 @@ struct ReviewQueue: Equatable, Sendable {
         queue.counts(cards, unloaded: unloadedCount, serverSkipped: serverSkipped, windowEntries: windowEntries, sentSkipped: sentSkipped)
     }
     @ObservationIgnored private var sentSkipped: [RecordKey]?
+    @ObservationIgnored private var queueTotal = 0
     var pass: ReviewPass { queue.pass }
     /// The window has been read at least once, so the summary's counts mean something.
     private(set) var loaded = false
@@ -342,6 +343,7 @@ struct ReviewQueue: Equatable, Sendable {
         unloadedCount = store.review?.unloadedCount ?? 0
         runningWorkerCount = store.review?.runningWorkerCount ?? 0
         serverSkipped = store.review?.serverSkippedCount
+        queueTotal = store.review?.queueTotal ?? 0
         sentSkipped = store.review?.sentSkippedKeys
         windowEntries = Set(window.map(\.historyKey))
         if holding, let wantsTail, store.review?.fromTail == wantsTail { endHold() }
@@ -462,10 +464,11 @@ struct ReviewQueue: Equatable, Sendable {
         queue.startPass(next, cohort: queue.history.skipped)
         exits += 1
         for item in cards where item.isMessage { messageDecisions.drop(item.id) }
-        // The skipped entries sit at the end of the queue. When one window cannot hold the
-        // whole queue, the skipped pass reads its end. Until the window it asks for arrives,
-        // the pass picks no card, or at most for the wait of a read.
-        let tail = next == .skipped && unloadedCount > 0
+        // The skipped entries sit at the end of the queue. When one window from the top cannot
+        // hold the whole queue, the skipped pass reads its end. The queue's size decides, not
+        // what the window on screen left out: a window from the end can hold the whole queue.
+        // Until the window it asks for arrives, the pass picks no card, at most for the wait of a read.
+        let tail = next == .skipped && queueTotal > NavigationScope.reviewWindowLimit
         store.setReviewWindow(tail ? NavigationScope.reviewTail(Self.tailRows) : nil)
         if (store.review?.fromTail ?? false) != tail {
             holding = true
