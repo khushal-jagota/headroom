@@ -653,6 +653,8 @@ export interface ReviewMessageItem {
   owner_id: string;
   title: string;
   waiting_since: number;
+  /** The newest message to the owner in this conversation. The device's skip list reads it to tell a changed card. */
+  latest_sequence?: number | null;
   recap: string;
   recap_reference: ViewContentReference | null;
 }

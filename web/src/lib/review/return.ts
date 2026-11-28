@@ -8,6 +8,7 @@ export function sameReviewHistory(left:readonly ReviewHistoryKey[],right:readonl
   const keys=new Set(left.map(key=>JSON.stringify([key.kind,key.id])));
   return keys.size===right.length && right.every(key=>keys.has(JSON.stringify([key.kind,key.id])));
 }
+export const NEW_RETURN_LABEL='Review new';
 export const SKIPPED_RETURN_LABEL='Review skipped';
 /** What the final page knows of the queue. Pending is a view that is one request behind and on its way. Unavailable is a queue that cannot load. */
 export type ReviewSummaryState={kind:'known';summary:ReviewSummary}|{kind:'pending'}|{kind:'unavailable'};

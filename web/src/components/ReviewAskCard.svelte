@@ -9,6 +9,7 @@
    */
   import { onMount, untrack, type Snippet } from "svelte";
   import Button from "./Button.svelte";
+  import ReviewPassButton from "./ReviewPassButton.svelte";
   import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ClampedText from "./ClampedText.svelte";
@@ -180,6 +181,7 @@
     <WindowPageRow>
     <div class="review-eyebrow review-eyebrow--decisions">
       <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
+        <ReviewPassButton />
         <Button variant="ghost" data-open-conversation href={reviewAskHref(item)}>Open conversation</Button>
         <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from "./Button.svelte";
+  import ReviewPassButton from "./ReviewPassButton.svelte";
   import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
@@ -120,6 +121,7 @@
   <WindowPageRow>
   <div class="review-eyebrow review-eyebrow--decisions">
     <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
+      <ReviewPassButton />
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
       <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
     </div>
