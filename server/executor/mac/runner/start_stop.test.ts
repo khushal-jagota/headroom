@@ -1,7 +1,15 @@
 /** New gap: one native start command must own bounded retries and exact failed-child cleanup.
  * Reuse the synthetic native options; no provider, command journal, or listener starts.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +27,7 @@ import { ExecutorPaths } from '../configuration.ts';
 import { native_fixture_options } from '../testing/runner_fixture.ts';
 import { MacNativeChildren } from './start_stop.ts';
 import { localize_start } from './localization.ts';
+import { agent_home_text } from '../../../agent_homes/agent_home.ts';
 import type { StartRun } from '../../wire.generated.ts';
 import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 
@@ -481,9 +490,23 @@ test('the Chief and a Manager start in their own homes, with no Ticket step or W
       'You are a Manager of one domain',
     );
     expect(existsSync(join(served_home, 'rules'))).toBe(true);
-    const { localized: chief } = await localize(shared, start([['PLAN_ACTOR', 'chief']]));
-    expect(chief.workspace_folder).toBe(join(served, 'chief'));
-    expect(existsSync(join(served, 'chief', 'artifacts'))).toBe(false);
+    // A fresh install: the first Chief starts with no home, and Panels sets one up.
+    const chief_home = join(served, 'chief');
+    const chief_start = start([['PLAN_ACTOR', 'chief']]);
+    const { localized: chief } = await localize(shared, chief_start);
+    expect(chief.workspace_folder).toBe(chief_home);
+    expect(readdirSync(chief_home).sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'logs', 'rules']);
+    for (const name of ['CLAUDE.md', 'AGENTS.md'])
+      expect(await readFile(join(chief_home, name), 'utf8')).toBe(agent_home_text('chief'));
+    // The home is the Chief's after that. A next start writes nothing, also through the link
+    // from AGENTS.md to CLAUDE.md that a Chief can choose.
+    writeFileSync(join(chief_home, 'CLAUDE.md'), 'my own router');
+    rmSync(join(chief_home, 'AGENTS.md'));
+    symlinkSync('CLAUDE.md', join(chief_home, 'AGENTS.md'));
+    await localize(shared, chief_start);
+    expect(await readFile(join(chief_home, 'CLAUDE.md'), 'utf8')).toBe('my own router');
+    expect(readlinkSync(join(chief_home, 'AGENTS.md'))).toBe('CLAUDE.md');
+    expect(readdirSync(chief_home).sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'logs', 'rules']);
     expect(existsSync(join(served, 'tickets'))).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });

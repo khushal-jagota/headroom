@@ -178,11 +178,9 @@ async function supervisor_home(
     const home =
       owner.kind === 'chief' ? options.paths.chief_home : options.paths.manager_home(owner.id);
     await create_directory(options, home);
-    if (owner.kind === 'manager') {
-      // The file sync sends this folder, and the owner sees it.
-      await create_directory(options, join(home, 'artifacts'));
-      await prepare_agent_home(home, 'manager');
-    }
+    // The file sync sends a Manager's artifacts/, and the owner sees it. The Chief has none.
+    if (owner.kind === 'manager') await create_directory(options, join(home, 'artifacts'));
+    await prepare_agent_home(home, owner.kind);
     return home;
   } catch (error) {
     if (error instanceof ServerLifecycleError) throw error;

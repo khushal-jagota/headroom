@@ -48,16 +48,23 @@ test.each(['manager', 'worker'] as const)(
   },
 );
 
-test('the Manager file is a short router that names its folders and holds no rules', () => {
-  const text = agent_home_text('manager');
-  for (const part of [
-    '`rules/`',
-    '`logs/`',
-    '`notes.md`',
-    'tell the Chief',
-    '`panels page edit`',
-    'Keep this file current',
-  ])
-    expect(text).toContain(part);
-  expect(text.split('\n').length).toBeLessThan(40);
-});
+// Distinct risk: a router copied from one install's home names that install's owner,
+// machines or projects, and every new install then starts with them.
+test.each(['manager', 'chief'] as const)(
+  'the %s file is a short router for any install that names its folders and holds no rules',
+  (role) => {
+    const text = agent_home_text(role);
+    for (const part of [
+      '`rules/`',
+      '`logs/`',
+      '`notes.md`',
+      '## Your page',
+      '`panels page edit',
+      '`panels measure-source`',
+      'Keep this file current',
+    ])
+      expect(text).toContain(part);
+    expect(text).not.toMatch(/Khushal|Wren|VPS|Mac 1/);
+    expect(text.split('\n').length).toBeLessThan(40);
+  },
+);
