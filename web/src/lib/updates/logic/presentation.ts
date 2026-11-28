@@ -40,7 +40,7 @@ export function updateConfirmationUntil(status: UpdateStatus | undefined): numbe
 export function updatePresentation({ status, connection, pageIsBehind, starting, now }: UpdatePresentationInput): UpdatePresentation {
   // The operating system has no network. The server is not at fault, and the words say so.
   if (connection === "offline") return { state: "offline", dimmed: true };
-  // A lost stream that is still recovering shows nothing and keeps saved data readable.
+  // A lost stream shows the card at once.
   if (connection === "unreachable") {
     // A restart drops the connection. Until the server's deadline that is still the update.
     const deadline = Date.parse(status?.deadline_at ?? "");

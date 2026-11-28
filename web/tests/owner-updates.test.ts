@@ -109,12 +109,11 @@ describe("the update card resolver", () => {
     expect(updatePresentation({ ...lost, status: undefined })).toEqual({ state: "unreachable", dimmed: true });
   });
 
-  it("shows no card and no dim while a lost stream recovers, and says the Mac is offline when it is", () => {
-    const recovering = { ...base, connection: "recovering" as const };
-    expect(updatePresentation({ ...recovering, status: undefined })).toEqual({ state: null, dimmed: false });
-    expect(updatePresentation({ ...recovering, status })).toEqual(updatePresentation(base));
-    // A restart during an update still reads as the update.
-    expect(updatePresentation({ ...recovering, status: at("updating") })).toEqual({ state: "updating", dimmed: false });
+  it("shows no card while the first stream is still opening", () => {
+    expect(updatePresentation({ ...base, connection: "connecting", status: undefined })).toEqual({ state: null, dimmed: false });
+  });
+
+  it("says the Mac is offline, not that Panels is unreachable, when the network is gone", () => {
     expect(updatePresentation({ ...base, connection: "offline", status: at("updating") })).toEqual({ state: "offline", dimmed: true });
     expect(updateCard("offline", undefined).word).toBe("This Mac is offline");
   });
