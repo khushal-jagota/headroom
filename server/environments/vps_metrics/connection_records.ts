@@ -14,6 +14,8 @@ export const CLIENT_EVENT_FIELDS = {
   stream: 'string',
   reason: 'string',
   open_ms: 'number',
+  close_code: 'number',
+  last_seq: 'number',
   online: 'boolean',
   visible: 'boolean',
   drift_ms: 'number',

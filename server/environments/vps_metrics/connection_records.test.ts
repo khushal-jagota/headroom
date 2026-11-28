@@ -180,7 +180,15 @@ test('client events are validated, stored beside the stream records and rate lim
   const batch = (reason: string) => ({
     version: 1,
     events: [
-      { at: 1_799_999_999_000, kind: 'stream_ended', stream: '/api/changes', reason, open_ms: 5 },
+      {
+        at: 1_799_999_999_000,
+        kind: 'stream_ended',
+        stream: '/api/changes',
+        reason,
+        open_ms: 5,
+        close_code: 1006,
+        last_seq: 41,
+      },
     ],
   });
   expect((await post(null, batch('x'))).status).toBe(400);
@@ -219,6 +227,8 @@ test('client events are validated, stored beside the stream records and rate lim
       stream: '/api/changes',
       reason: 'ERR_CONNECTION_RESET',
       open_ms: 5,
+      close_code: 1006,
+      last_seq: 41,
     },
   ]);
 });

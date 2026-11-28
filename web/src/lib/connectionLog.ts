@@ -7,12 +7,8 @@ import { clientIdentityHeaders } from "./clientIdentity";
 
 // The event shape is version 1 of `POST /api/client-events`, owned by the server's design for
 // the stream-close record. The route names a stream, and the server names the client by header.
-export type StreamName =
-  | "/api/changes"
-  | "/api/navigation/view/events"
-  | "/api/conversation/conversations/:conversation_id/tail"
-  | "/api/conversation/conversations/:conversation_id/view/tail";
-export type EndReason = "error_event" | "silence" | "probe_failure";
+export type StreamName = "/api/live";
+export type EndReason = "close" | "silence" | "sequence_gap" | "probe_failure";
 
 export type ConnectionEvent = {
   /** Epoch milliseconds on this client's clock. */
@@ -21,6 +17,10 @@ export type ConnectionEvent = {
   stream?: StreamName;
   reason?: EndReason;
   open_ms?: number;
+  /** The WebSocket close code the page saw, when it saw one. */
+  close_code?: number;
+  /** The sequence number of the last frame that arrived. */
+  last_seq?: number;
   online: boolean;
   visible: boolean;
   /** The largest gap in a 1 s timer since the last event. A large value shows sleep. */
@@ -82,22 +82,22 @@ export function stopConnectionLog(): void {
 }
 
 /** One watch for each stream the page opens. `ended` records its first call only. */
-export function watchStream(stream: StreamName): { opened(): void; ended(reason: EndReason): void } {
+export function watchStream(stream: StreamName): { opened(): void; ended(reason: EndReason, detail?: StreamEndDetail): void } {
   const created = Date.now();
   let openedAt: number | null = null;
   let done = false;
   return {
     opened: () => { openedAt = Date.now(); },
-    ended: (reason) => {
+    ended: (reason, detail) => {
       if (done) return;
       done = true;
       // The log must never break the stream handling that called it.
-      try { recordStreamEnd(stream, reason, Date.now() - (openedAt ?? created)); } catch { /* best effort */ }
+      try { recordStreamEnd(stream, reason, Date.now() - (openedAt ?? created), detail); } catch { /* best effort */ }
     },
   };
 }
 
-function record(event: Pick<ConnectionEvent, "kind" | "stream" | "reason" | "open_ms" | "probe_ms">): void {
+function record(event: Pick<ConnectionEvent, "kind" | "stream" | "reason" | "open_ms" | "probe_ms" | "close_code" | "last_seq">): void {
   const drift = Math.max(0, Math.round(largestDrift));
   largestDrift = 0;
   store([...stored(), {
@@ -109,8 +109,10 @@ function record(event: Pick<ConnectionEvent, "kind" | "stream" | "reason" | "ope
   }].slice(-CONNECTION_LOG_MAX_EVENTS));
 }
 
-function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number): void {
-  record({ kind: "stream_ended", stream, reason, open_ms: Math.round(openMs) });
+export type StreamEndDetail = { close_code?: number; last_seq?: number };
+
+function recordStreamEnd(stream: StreamName, reason: EndReason, openMs: number, detail: StreamEndDetail = {}): void {
+  record({ kind: "stream_ended", stream, reason, open_ms: Math.round(openMs), ...detail });
 }
 
 /** The probe a lost stream starts. Its round-trip time shows whether the server was slow or gone. */

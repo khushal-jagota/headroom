@@ -3,8 +3,8 @@
  *
  * The risk is the note "Conversation disconnected" staying in the composer after the reader's
  * own retry has drawn the transcript, which makes a healthy conversation look broken. Only a
- * real EventSource against a refusing server shows it: after a release the server answers the
- * tail with 409 while it upgrades a stored view. A note that came from something else, such as
+ * real live socket against a refusing server shows it: while the server upgrades a stored view it refuses
+ * the tail subscription. A note that came from something else, such as
  * a refused stop, is not the open's to clear.
  */
 import { expect, test, WAIT_MS } from './support/fixtures.ts';
@@ -21,9 +21,27 @@ for (const laterNoteDuringOutage of [false, true]) {
 
     const page = await context.newPage();
     let upgrading = true;
-    await page.route('**/view/tail?*', async (route) => {
-      if (upgrading) await route.fulfill({ status: 409, contentType: 'application/json', body: '{"detail":"Conversation view is upgrading"}' });
-      else await route.continue();
+    // The page's socket carries the view tail. While `upgrading`, answer its subscribe with a refusal
+    // instead of passing it on, and number the frames that follow so that the sequence stays whole.
+    await page.routeWebSocket(/\/api\/live$/, (socket) => {
+      const server = socket.connectToServer();
+      let injected = 0;
+      let last = 0;
+      server.onMessage((message) => {
+        const frame = JSON.parse(String(message));
+        frame.seq += injected;
+        last = frame.seq;
+        socket.send(JSON.stringify(frame));
+      });
+      socket.onMessage((message) => {
+        const frame = JSON.parse(String(message));
+        if (upgrading && frame.op === 'subscribe' && frame.kind === 'conversation_view') {
+          injected += 1;
+          socket.send(JSON.stringify({ seq: ++last, sub: frame.id, kind: 'ended', data: { status: 503, detail: 'The tail was refused.' } }));
+          return;
+        }
+        server.send(message);
+      });
     });
     await page.route('**/interrupt', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"The stop was refused."}' }));
     await page.goto(`${signalServer.base}/#/workspace/${ticket}`);

@@ -22,7 +22,7 @@ export function compareItems(a: ConversationViewItem, b: ConversationViewItem): 
 function itemBytes(item: ConversationViewItem): number { const cached = byteSizes.get(item); if (cached !== undefined)
     return cached; const count = item.kind === 'row' && item.body.kind === 'inline' ? encoder.encode(JSON.stringify(item.body.value)).byteLength : 0; byteSizes.set(item, count); return count; }
 export type { ViewReaderAnchor } from './anchorContracts';
-import { watchStream } from '../../connectionLog';
+import { subscribeLive, type LiveRefusal } from '../../liveSocket';
 import type { ViewReaderAnchor, RestorationOutcome } from './anchorContracts';
 export type HeldPage = {
     scope: ViewHistoryScope;
@@ -93,7 +93,7 @@ export class ConversationViewReader {
     }
     private rangeTimer: ReturnType<typeof setTimeout> | null = null;
     revision = $state(0);
-    private source: EventSource | null = null;
+    private source: { close(): void } | null = null;
     private releaseSource: () => void = () => { };
     private abort = new AbortController();
     private generation = 0;
@@ -425,9 +425,16 @@ export class ConversationViewReader {
         }
         return new Promise<'preparing' | 'snapshot-ready' | void>((resolve, reject) => {
             let settled = false;
-            const source = new EventSource(this.url('/tail', query));
-            const watch = watchStream('/api/conversation/conversations/:conversation_id/view/tail');
-            source.addEventListener('open', () => watch.opened());
+            // The live socket delivers parsed frames. A listener is the old stream's event handler.
+            const listeners = new Map<string, (data: unknown) => void>();
+            let onLost: (refusal: LiveRefusal) => void = () => { };
+            const source = {
+                close: subscribeLive({ kind: 'conversation_view', conversationId: this.id, params: { lens: this.lens, ...query } }, {
+                    frame: (event, data) => listeners.get(event)?.(data),
+                    lost: refusal => onLost(refusal),
+                }),
+                addEventListener: (name: string, listener: (data: unknown) => void) => { listeners.set(name, listener); },
+            };
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
             const ready = () => { this.preparingHistory = false; this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
@@ -443,11 +450,11 @@ export class ConversationViewReader {
                 settled = true;
                 reject(error);
             } this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 1500); };
-            source.addEventListener('snapshot', async (event) => {
+            source.addEventListener('snapshot', async (data) => {
                 if (!active())
                     return;
                 try {
-                    const value = JSON.parse((event as MessageEvent<string>).data) as ConversationViewSnapshot;
+                    const value = data as ConversationViewSnapshot;
                     this.checkPage(value.page);
                     // A reconnect's snapshot is the newest page of a conversation already
                     // on screen. Merge it. Nothing about identity changed.
@@ -474,11 +481,11 @@ export class ConversationViewReader {
                     fail(error);
                 }
             });
-            source.addEventListener('changes', (event) => {
+            source.addEventListener('changes', (data) => {
                 if (!active())
                     return;
                 try {
-                    const value = JSON.parse((event as MessageEvent<string>).data) as ViewTailChanges;
+                    const value = data as ViewTailChanges;
                     if (value.conversation_id !== this.id || value.lens !== this.lens || value.from_sequence !== this.coverage || value.upserts.length > 128)
                         throw new Error('Conversation view gap');
                     const epochChanged = this.status !== null && this.status.runtime_epoch !== value.status.runtime_epoch;
@@ -557,24 +564,22 @@ export class ConversationViewReader {
             });
             source.addEventListener('reset', () => { if (!active()) return; this.rereadHistory(); fail(new Error('Conversation view reset')); });
             const probe = new AbortController();
-            source.onerror = async () => {
+            onLost = async (refusal) => {
                 if (!active() || this.source !== source) return;
-                watch.ended('error_event');
                 source.close();
                 this.source = null;
                 if (!settled) {
-                    // EventSource hides the HTTP status. Only a refused stream needs a status-only read.
+                    // The server refuses a tail while it upgrades a stored view, and says so in the refusal.
+                    if (refusal?.status === 409 && refusal.detail === 'Conversation view is upgrading') {
+                        this.preparingHistory = true;
+                        this.tailTrouble = false;
+                        this.updateTrouble();
+                        this.changed();
+                        this.retry = setTimeout(() => { this.retry = null; settled = true; resolve('preparing'); }, 1500);
+                        return;
+                    }
                     try {
                         const response = await clientFetch(this.url('', { transcript: 'false' }), { signal: probe.signal });
-                        if (response.status === 409 && (await response.json()).detail === 'Conversation view is upgrading') {
-                            if (!active()) return;
-                            this.preparingHistory = true;
-                            this.tailTrouble = false;
-                            this.updateTrouble();
-                            this.changed();
-                            this.retry = setTimeout(() => { this.retry = null; settled = true; resolve('preparing'); }, 1500);
-                            return;
-                        }
                         await response.body?.cancel();
                         // Promotion can finish between the refused tail and this snapshot.
                         if (response.ok && canRetryReadySnapshot && active()) {
