@@ -7,9 +7,12 @@ import { reviewHistoryKey } from './return';
  * on the phone leaves the same card waiting on the desktop. Each entry holds what the card
  * showed when it was skipped. A card that shows something else is new again.
  */
-export type SkipList = Record<string, string>;
+export type SkipEntry = { fingerprint: string; at: number };
+export type SkipList = Record<string, SkipEntry>;
 
-const STORAGE_KEY = 'panels:review-skipped:v1';
+/** The most skips one device keeps. The oldest go first. */
+export const SKIP_LIMIT = 500;
+const STORED_VERSION = 1;
 
 export function skipKey(key: ReviewHistoryKey): string { return JSON.stringify([key.kind, key.id]); }
 export function skipHistoryKeys(list: SkipList): ReviewHistoryKey[] {
@@ -33,10 +36,16 @@ export function reviewFingerprint(item: NavigationReviewItem): string {
 }
 
 export function isSkipped(list: SkipList, item: NavigationReviewItem): boolean {
-  return list[skipKey(reviewHistoryKey(item))] === reviewFingerprint(item);
+  return list[skipKey(reviewHistoryKey(item))]?.fingerprint === reviewFingerprint(item);
 }
-export function withSkip(list: SkipList, item: NavigationReviewItem): SkipList {
-  return { ...list, [skipKey(reviewHistoryKey(item))]: reviewFingerprint(item) };
+export function withSkip(list: SkipList, item: NavigationReviewItem, at: number): SkipList {
+  return limitSkips({ ...list, [skipKey(reviewHistoryKey(item))]: { fingerprint: reviewFingerprint(item), at } });
+}
+/** Keeps the newest `limit` skips. */
+export function limitSkips(list: SkipList, limit = SKIP_LIMIT): SkipList {
+  const entries = Object.entries(list);
+  if (entries.length <= limit) return list;
+  return Object.fromEntries(entries.sort((a, b) => b[1].at - a[1].at).slice(0, limit));
 }
 
 /**
@@ -45,20 +54,30 @@ export function withSkip(list: SkipList, item: NavigationReviewItem): SkipList {
  */
 export function pruneSkips(list: SkipList, items: readonly NavigationReviewItem[], wholeQueue: boolean): SkipList {
   const current = new Map(items.map(item => [skipKey(reviewHistoryKey(item)), reviewFingerprint(item)]));
-  const kept = Object.entries(list).filter(([key, fingerprint]) => current.has(key) ? current.get(key) === fingerprint : !wholeQueue);
+  const kept = Object.entries(list).filter(([key, entry]) => current.has(key) ? current.get(key) === entry.fingerprint : !wholeQueue);
   return kept.length === Object.keys(list).length ? list : Object.fromEntries(kept);
 }
 
-export function loadSkips(): SkipList {
+/** What storage holds. Anything that is not a list this build wrote reads as no skips, and never throws. */
+export function parseSkips(raw: string | null): SkipList {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}');
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    const value: unknown = JSON.parse(raw ?? 'null');
+    if (value === null || typeof value !== 'object' || (value as { version?: unknown }).version !== STORED_VERSION) return {};
+    const entries = (value as { entries?: unknown }).entries;
+    if (entries === null || typeof entries !== 'object' || Array.isArray(entries)) return {};
+    const list: SkipList = {};
+    for (const [key, entry] of Object.entries(entries)) {
+      const fingerprint = (entry as SkipEntry | null)?.fingerprint, at = (entry as SkipEntry | null)?.at;
+      if (typeof fingerprint === 'string' && typeof at === 'number' && Number.isFinite(at) && validKey(key)) list[key] = { fingerprint, at };
+    }
+    return limitSkips(list);
   } catch { return {}; }
 }
-export function saveSkips(list: SkipList): void {
+export function stringifySkips(list: SkipList): string { return JSON.stringify({ version: STORED_VERSION, entries: list }); }
+export function sameSkips(left: SkipList, right: SkipList): boolean { return stringifySkips(left) === stringifySkips(right); }
+function validKey(key: string): boolean {
   try {
-    if (Object.keys(list).length) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-    else window.localStorage.removeItem(STORAGE_KEY);
-  } catch { /* This visit still holds the skips. */ }
+    const [kind, id] = JSON.parse(key) as [unknown, unknown];
+    return (kind === 'ticket' || kind === 'conversation') && typeof id === 'string';
+  } catch { return false; }
 }

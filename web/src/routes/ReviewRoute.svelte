@@ -22,7 +22,8 @@
   import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,currentReviewSummary,remainingReviewSummary,sameReviewHistory,NEW_RETURN_LABEL,SKIPPED_RETURN_LABEL,type ReviewSummaryState} from "../lib/review/return";
-  import {isSkipped,loadSkips,pruneSkips,saveSkips,skipHistoryKeys,skipKey,withSkip,type SkipList} from "../lib/review/skips";
+  import {isSkipped,skipHistoryKeys,skipKey} from "../lib/review/skips";
+  import {reviewSkips} from "../lib/review/skipStore.svelte";
   import {REVIEW_PASS_CONTEXT,type ReviewPassAction} from "../lib/review/pass";
   import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey,ReviewSummary} from "../lib/navigation/contracts";
@@ -51,27 +52,31 @@
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
   // Cards skipped on this visit. They stay hidden until the visit ends, even if the card changes.
   let skipped = $state<Record<string, boolean>>({});
-  // Cards this device skipped on any visit. Review shows the new cards, and "Review skipped"
-  // shows these. A skip ends when its card changes. The server never hears of it.
-  const savedSkips=loadSkips();
-  let skips=$state<SkipList>(savedSkips);
+  // Cards this device skipped on any visit, kept by the skip store for this server. Review shows the
+  // cards that are not skipped, and "Review skipped" shows these. A skip ends when its card changes.
+  const skipScope=$derived(displayed?.publication.authority.permit.installation_id ?? null);
+  const skips=$derived(reviewSkips.list(skipScope));
   let skippedHistory=$derived(skipHistoryKeys(skips));
   // The skipped cards go last in the queue. Set when a pass starts and kept, so the order does not move while you review.
-  let returnCohort=$state<ReviewHistoryKey[]>(skipHistoryKeys(savedSkips));
+  let returnCohort=$state<ReviewHistoryKey[]>([]);
+  let cohortSeeded=false;
+  $effect(()=>{
+    if(skipScope===null || cohortSeeded)return;
+    cohortSeeded=true;
+    returnCohort=untrack(()=>skipHistoryKeys(skips));
+  });
   // Which pass this is, and for the skipped pass, the cards it holds. The set stays as it was when the pass began.
   let pass=$state<'new'|'skipped'>('new');
   let passKeys=$state<ReadonlySet<string>>(new Set());
-  $effect(()=>saveSkips(skips));
   // A skip ends when the card changes. When the whole queue is in view, it also ends when the card has left.
+  // Only a queue read this session counts: a copy saved by the last session can be older than a skip.
   $effect(()=>{
     const items=review?.items;
-    if(!items || !displayed?.runtimeCurrent)return;
-    const list=skips;
+    if(!items || !displayed?.runtimeCurrent || skipScope===null)return;
     const publication=displayed.publication.view;
     const whole=Boolean(publication?.reviewSummary && publication.scopeGeneration===navigation.owner.getRequest().scope_generation
-      && queueWindow && queueWindow.request.anchor===null && !queueWindow.next && publication.reviewSummary.skipped<Object.keys(list).length);
-    const next=pruneSkips(list,items,whole);
-    if(next!==list)skips=next;
+      && queueWindow && queueWindow.request.anchor===null && !queueWindow.next && publication.reviewSummary.skipped<Object.keys(untrack(()=>skips)).length);
+    untrack(()=>reviewSkips.prune(skipScope,items,whole));
   });
   // The note and edited text of the proposal on screen. The card and the bar under its
   // artifact are one decision, so they read and write the same draft.
@@ -120,7 +125,9 @@
   /** Not part of this pass: skipped on this visit, or, in the new pass, skipped before; in the skipped pass, not skipped when the pass began. */
   function hidden(item: ReviewItem): boolean {
     if(skipped[itemKey(item)])return true;
-    return pass==='skipped' ? !passKeys.has(skipKey(reviewHistoryKey(item))) : isSkipped(skips,queueItem(item));
+    if(pass==='skipped')return !passKeys.has(skipKey(reviewHistoryKey(item)));
+    // The card on screen stays, even when another tab skipped it: it leaves when this tab acts on it.
+    return itemKey(item)!==pinnedKey && isSkipped(skips,queueItem(item));
   }
   /** One ask, not its conversation: a second ask in the same turn is a new card, not the answered one. */
   function askKey(ask: ReviewAskItem): string { return `${ask.conversation_id}:${ask.waiting_since}`; }
@@ -282,7 +289,7 @@
     // A skip made under the artifact finishes the item: the artifact goes with it.
     if (heldFile) { deck.layerExit='left'; artifact.close(); }
     advancePast(item);
-    skips=withSkip(skips,queueItem(item));
+    if(skipScope!==null)reviewSkips.skip(skipScope,queueItem(item));
     skipped = { ...skipped, [itemKey(item)]: true };
     heldCard=null;
   }

@@ -93,4 +93,15 @@ test('test_a_skip_survives_a_reload_and_is_reviewed_on_purpose', async ({ signal
   await shot('6-final-both-buttons');
   await page.locator('[data-review-return="new"]').click();
   await expect(title()).toHaveText(first);
+
+  // A second tab skips the card this tab is showing. This tab keeps the card on screen, and its count follows.
+  const other = await context.newPage();
+  await other.goto(`${server.base}/#/review`);
+  await other.locator(`${CARD} .review-ticket-title`).first().waitFor();
+  await other.waitForTimeout(500);
+  await other.keyboard.press('s');
+  await expect(other.locator('[data-review-final-status]')).toContainText('3 skipped');
+  await expect(page.locator(`${FRONT} [data-review-pass]`).first()).toHaveText('Review skipped (3)');
+  await expect(title()).toHaveText(first);
+  await shot('7-other-tab-skip-keeps-card');
 });

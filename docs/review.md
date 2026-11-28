@@ -32,11 +32,11 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 ## Skipped cards
 
-Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way.
+Skip is a decision of one device, not of the server. The browser and the desktop app each keep a skipped list in their own storage, and the server never hears of it. A skip on one device leaves the card waiting on every other device. The iPhone keeps its own list in the same way. One store owns the list on a page. It keeps a separate list for each server, so the desktop app never applies one server's skips to another. Several tabs share one list: a skip in one tab reaches the others, and the card a tab is showing stays until that tab acts on it. A list holds at most 500 skips, and the oldest go first. If storage is blocked or holds something this build did not write, the skips last for the visit only.
 
 Review then has two passes. Review shows the cards that are not skipped. "Review skipped" shows the skipped ones, so the owner goes back to them on purpose. The button stands in the top band of each card, with the count. In the skipped pass it reads "Review new". The final page offers both buttons when both kinds wait. Each pass keeps its order while the owner goes through it: a skip hides the card and moves nothing.
 
-A skip ends when the card changes: a new proposal revision, a new message, or a new ask. The card is then new again. A second message in a conversation that was already unread does not change it, until it is read. A skip also ends when the card leaves the queue.
+A skip ends when the card changes: a new proposal revision, a new message, or a new ask. The card is then new again. A second message in a conversation that was already unread does not change it, until it is read. A skip also ends when the card leaves the queue. The page checks this against the queue it read this session, never against a copy saved by an earlier session.
 
 ## Where it shows up
 
