@@ -85,7 +85,7 @@ jobs:
           (cd web && node node_modules/vite/bin/vite.js build)
           cd tests/e2e
           node_modules/.bin/playwright install --with-deps chromium
-          node_modules/.bin/playwright test conversation_send_motion review_deck --repeat-each=8
+          node_modules/.bin/playwright test
           BROWSER
       - name: Preserve browser evidence
         if: always()
