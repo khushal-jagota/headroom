@@ -71,7 +71,7 @@ for (const [name, width, answerAfterMs] of [['desktop', 1280, 0], ['390 px, slow
   });
 }
 
-type DockedFrame = { shown: boolean; top: number; fromThreadTop: number; paneHeight: number; threadTop: number; threadBottom: number; scrollTop: number };
+type DockedFrame = { time: number; shown: boolean; top: number; fromThreadTop: number; paneHeight: number; threadTop: number; threadBottom: number; scrollTop: number };
 
 for (const mode of ['idle', 'steer'] as const) {
   test(`a send from the docked composer slides up once (${mode})`, async ({ signalServer, newContext }, testInfo) => {
@@ -105,20 +105,21 @@ for (const mode of ['idle', 'steer'] as const) {
       const frames: DockedFrame[] = [];
       (window as any).__dockedFrames = frames;
       const start = performance.now();
-      const read = () => {
+      const read = (time: number) => {
         const thread = document.querySelector('[data-conversation-thread]') as HTMLElement | null;
         const pane = document.querySelector('[data-conversation-pane]') as HTMLElement | null;
         const sent = [...(thread?.querySelectorAll('[data-conversation-outgoing]') ?? [])].at(-1);
         const box = sent?.getBoundingClientRect();
         const threadTop = thread?.getBoundingClientRect().top ?? 0;
         frames.push({
+          time,
           shown: !!box && !!thread && box.top >= thread.getBoundingClientRect().top && box.top < thread.getBoundingClientRect().bottom,
           top: box ? box.top : NaN,
           fromThreadTop: box ? box.top - threadTop : NaN,
           paneHeight: pane?.getBoundingClientRect().height ?? NaN,
           threadTop, threadBottom: thread?.getBoundingClientRect().bottom ?? NaN, scrollTop: thread?.scrollTop ?? NaN,
         });
-        if (performance.now() - start < 3000) requestAnimationFrame(read);
+        if (time - start < 3000) requestAnimationFrame(read);
       };
       requestAnimationFrame(read);
     });
@@ -133,10 +134,18 @@ for (const mode of ['idle', 'steer'] as const) {
     expect(frames.length).toBeGreaterThan(10);
     // On screen, the message stays at the bottom while the pane opens, then slides up. It never
     // moves down after it first shows, except for the few pixels that the sent message's own top
-    // inset adds in the first frame of the slide (4 px measured), and no frame moves it far.
+    // inset adds in the first frame of the slide (4 px measured).
+    // The slide is a move over 240 ms, so a slow frame moves it further. A step is judged against
+    // the time it covers: at most 1.5 times the speed of the whole slide. The longer of the last two
+    // frame times counts, because the page's own move and this reader can run in either order within
+    // a frame. A slide that jumped in one frame would be many times that speed. (Over 16 runs, the
+    // fastest step was 1.02 times the speed of the whole slide, whatever the frame times.)
+    const slideSpeed = (frames[0].top - frames.at(-1)!.top) / 240;
     for (let index = 1; index < frames.length; index++) {
       expect(frames[index].top, `sent message at frame ${index}`).toBeLessThanOrEqual(frames[index - 1].top + 6);
-      expect(Math.abs(frames[index].top - frames[index - 1].top), `step at frame ${index}`).toBeLessThanOrEqual(100);
+      if (index < 2) continue;
+      const elapsed = Math.max(frames[index].time - frames[index - 1].time, frames[index - 1].time - frames[index - 2].time);
+      expect(Math.abs(frames[index].top - frames[index - 1].top), `step at frame ${index}`).toBeLessThanOrEqual(1.5 * slideSpeed * elapsed);
     }
     // No creep either: the message never ends a frame more than 8 px below where it first showed.
     expect(Math.max(...frames.map((frame) => frame.top)) - frames[0].top, 'lowest point after first showing').toBeLessThanOrEqual(8);
