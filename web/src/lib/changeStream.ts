@@ -4,7 +4,7 @@ import { queryClient } from "./queryClient";
 import { refreshScreen, stopScreenRefresh } from "./resourceVersions/refresh";
 import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
 import {
-  CONNECTION_GRACE_MS, CONNECTION_PROBE_TIMEOUT_MS, STREAM_SILENCE_MS, UPDATE_RECOVERY_POLL_MS
+  CONNECTION_PROBE_TIMEOUT_MS, STREAM_SILENCE_MS, UPDATE_RECOVERY_POLL_MS
 } from "./updates/config";
 import {
   flushConnectionEvents, recordProbe, startConnectionLog, stopConnectionLog, watchStream
@@ -14,10 +14,9 @@ import {
 // browser probes versions for mounted resources and refetches changed bodies.
 // A read with no registered revision is read again on each round. The signal stays contentless.
 //
-// A lost stream is `recovering` first: nothing dims and no card shows while the page probes the
-// server and the stream reopens. Only a grace time with no answer makes it `unreachable`. When
-// the operating system reports no network, it is `offline` at once, because the server is not at fault.
-export type ConnectionStatus = "connected" | "recovering" | "unreachable" | "offline";
+// A lost stream is `unreachable` at once and the card shows. When the operating system reports
+// no network, it is `offline` at once instead, because the server is not at fault.
+export type ConnectionStatus = "connected" | "unreachable" | "offline";
 
 // Commits inside one fixed window collapse into one round of refetches. A working agent
 // commits in bursts of dozens, and each round asks the server for everything on screen
@@ -25,20 +24,17 @@ export type ConnectionStatus = "connected" | "recovering" | "unreachable" | "off
 // screen stale. An own write starts the same refresh at once, without this delay.
 export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
 
-export const connectionStatus = writable<ConnectionStatus>("recovering");
+export const connectionStatus = writable<ConnectionStatus>("unreachable");
 
 let stream: EventSource | null = null;
 let flushTimer: number | null = null;
 let reconnectTimer: number | null = null;
-let graceTimer: number | null = null;
 let probeTimer: number | null = null;
 let probing = false;
 let silenceTimer: number | null = null;
 let started = false;
 /** The record of the open stream, so that silence can name its cause. */
 let streamWatch: ReturnType<typeof watchStream> | null = null;
-/** The server answered a probe since the stream was lost. */
-let answered = false;
 
 function reconcileResources(): Promise<void> {
   ensureDebug().flushes += 1;
@@ -68,9 +64,7 @@ export function startChangeStream(): void {
   startConnectionLog();
   window.addEventListener("offline", onNetworkOffline);
   window.addEventListener("online", onNetworkOnline);
-  // The first open is a recovery too: a server that never answers still ends in the card.
-  connectionStatus.set(navigator.onLine === false ? "offline" : "recovering");
-  if (navigator.onLine !== false) armGrace();
+  connectionStatus.set(navigator.onLine === false ? "offline" : "unreachable");
   openStream();
 }
 
@@ -137,40 +131,16 @@ function watchSilence(source: EventSource): void {
   }, STREAM_SILENCE_MS);
 }
 
-/**
- * A stream error is not yet news. The page keeps its data and its screen, asks the server at once,
- * and shows the unreachable card only if nothing answers within the grace time.
- */
+/** A lost stream shows the card at once. The page asks the server now, for the connection record. */
 function streamLost(): void {
   if (silenceTimer !== null) window.clearTimeout(silenceTimer);
   silenceTimer = null;
+  connectionStatus.set(navigator.onLine === false ? "offline" : "unreachable");
   if (navigator.onLine === false) {
     clearRecovery();
-    connectionStatus.set("offline");
     return;
   }
-  const status = get(connectionStatus);
-  if (status === "connected" || status === "offline") {
-    connectionStatus.set("recovering");
-    answered = false;
-    armGrace();
-  }
   probeServer();
-}
-
-function armGrace(): void {
-  if (graceTimer !== null) window.clearTimeout(graceTimer);
-  graceTimer = window.setTimeout(() => {
-    graceTimer = null;
-    if (get(connectionStatus) !== "recovering") return;
-    // The server answered, so the stream is on its way back. Give it one more grace time.
-    if (answered) {
-      answered = false;
-      armGrace();
-      return;
-    }
-    connectionStatus.set("unreachable");
-  }, CONNECTION_GRACE_MS);
 }
 
 /** Ask the server now and every few seconds, until the stream is live again. */
@@ -179,7 +149,7 @@ function probeServer(): void {
   probing = true;
   const sent = Date.now();
   fetch("/api/meta", { signal: AbortSignal.timeout(CONNECTION_PROBE_TIMEOUT_MS), cache: "no-store" })
-    .then(response => { if (response.ok) answered = true; recordProbe(response.ok, Date.now() - sent); },
+    .then(response => recordProbe(response.ok, Date.now() - sent),
       () => recordProbe(false, Date.now() - sent))
     .finally(() => {
       probing = false;
@@ -190,16 +160,12 @@ function probeServer(): void {
 
 /** Recovery runs while the stream is down and the network is there. */
 function recovering(): boolean {
-  const status = get(connectionStatus);
-  return started && (status === "recovering" || status === "unreachable");
+  return started && get(connectionStatus) === "unreachable";
 }
 
 function clearRecovery(): void {
-  if (graceTimer !== null) window.clearTimeout(graceTimer);
   if (probeTimer !== null) window.clearTimeout(probeTimer);
-  graceTimer = null;
   probeTimer = null;
-  answered = false;
 }
 
 /** The operating system's own word that the network went or came back. */
@@ -210,9 +176,7 @@ function onNetworkOffline(): void {
 
 function onNetworkOnline(): void {
   if (get(connectionStatus) !== "offline") return;
-  connectionStatus.set("recovering");
-  answered = false;
-  armGrace();
+  connectionStatus.set("unreachable");
   probeServer();
   retryChangeStream();
 }
@@ -249,5 +213,5 @@ export function stopChangeStream(): void {
   }
   stream?.close();
   stream = null;
-  connectionStatus.set("recovering");
+  connectionStatus.set("unreachable");
 }

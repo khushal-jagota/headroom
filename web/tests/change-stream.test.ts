@@ -4,7 +4,7 @@ import { startChangeStream, stopChangeStream } from "../src/lib/changeStream";
 import { queryClient } from "../src/lib/queryClient";
 import { get } from "svelte/store";
 import { connectionStatus } from "../src/lib/changeStream";
-import { CONNECTION_GRACE_MS, STREAM_SILENCE_MS } from "../src/lib/updates/config";
+import { STREAM_SILENCE_MS } from "../src/lib/updates/config";
 
 class ControlledEventSource {
   static current: ControlledEventSource;
@@ -66,7 +66,7 @@ describe("contentless change stream refresh", () => {
     expect(revisions.at(-1)).toBe(2);
     expect(get(connectionStatus)).toBe("connected");
     old.onerror?.();
-    expect(get(connectionStatus)).toBe("recovering");
+    expect(get(connectionStatus)).toBe("unreachable");
     revision = 3;
     old.onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -162,10 +162,10 @@ describe("contentless change stream refresh", () => {
     unsubscribe();
   });
 
-  // Distinct risk: a self-healing reset must not show the card, and a real outage must. The
-  // Brief's timings (8 s grace, 37.5 s silence) and the offline words depend on this flow, and
-  // no other test drives the stream through them.
-  it("recovers silently inside the grace time and shows the card only after it", async () => {
+  // Distinct risk: a stream error must show the card at once, with no waiting time, and the
+  // open must end it. The operating system's offline word must still win. No other test drives
+  // the stream through these states.
+  it("shows the card at once on a stream error and ends it on the next open", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     const windowEvents = stubWindowEvents();
@@ -176,29 +176,12 @@ describe("contentless change stream refresh", () => {
     startChangeStream();
     ControlledEventSource.current.onopen?.();
     expect(get(connectionStatus)).toBe("connected");
-    // A reset that heals: no card, the probe starts at once, and the open ends the recovery.
+    // The error shows the card in the same tick, and the probe for the record starts at once.
     ControlledEventSource.current.onerror?.();
-    expect(get(connectionStatus)).toBe("recovering");
-    expect(probe).toHaveBeenCalledWith("/api/meta", expect.objectContaining({ cache: "no-store" }));
-    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS - 1);
-    expect(get(connectionStatus)).toBe("recovering");
-    ControlledEventSource.current.onopen?.();
-    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS * 3);
-    expect(get(connectionStatus)).toBe("connected");
-    // An outage nothing answers: the card shows when the grace time ends.
-    ControlledEventSource.current.onerror?.();
-    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS - 1);
-    expect(get(connectionStatus)).toBe("recovering");
-    await vi.advanceTimersByTimeAsync(1);
     expect(get(connectionStatus)).toBe("unreachable");
+    expect(probe).toHaveBeenCalledWith("/api/meta", expect.objectContaining({ cache: "no-store" }));
     ControlledEventSource.current.onopen?.();
     expect(get(connectionStatus)).toBe("connected");
-    // A server that answers the probe is given one more grace time for the stream to reopen.
-    probe.mockImplementation(async () => ({ ok: true }) as unknown as never);
-    ControlledEventSource.current.onerror?.();
-    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
-    expect(get(connectionStatus)).toBe("recovering");
-    ControlledEventSource.current.onopen?.();
     // The operating system's word that there is no network wins, and the return reopens the stream.
     vi.stubGlobal("navigator", { onLine: false });
     ControlledEventSource.current.onerror?.();
@@ -206,7 +189,7 @@ describe("contentless change stream refresh", () => {
     const beforeReturn = ControlledEventSource.current;
     vi.stubGlobal("navigator", { onLine: true });
     windowEvents.dispatchEvent(new Event("online"));
-    expect(get(connectionStatus)).toBe("recovering");
+    expect(get(connectionStatus)).toBe("unreachable");
     expect(ControlledEventSource.current).not.toBe(beforeReturn);
   });
 
@@ -233,7 +216,7 @@ describe("contentless change stream refresh", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(older.closed).toBe(true);
     expect(ControlledEventSource.current).not.toBe(older);
-    expect(get(connectionStatus)).toBe("recovering");
+    expect(get(connectionStatus)).toBe("unreachable");
     ControlledEventSource.current.onopen?.();
     expect(get(connectionStatus)).toBe("connected");
   });
