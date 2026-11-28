@@ -196,7 +196,7 @@ private struct SidebarCard: View {
             .padding(.horizontal, 14).padding(.top, 11).padding(.bottom, 13)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(alignment: .top) {
-                if let tag, !selected {
+                if let tag {
                     LinearGradient(colors: [PanelsTheme.Web.goalTone(tag.status).opacity(tag.status == "good" ? 0.07 : 0.09), .clear], startPoint: .top, endPoint: .bottom)
                         .frame(height: PanelsTheme.Web.Rail.hazeHeight)
                 }
