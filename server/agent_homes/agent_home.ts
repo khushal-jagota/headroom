@@ -39,6 +39,10 @@ This folder is your home in Panels. It is your own. Panels wrote this file once,
 
 \`artifacts/\` holds the files that a reviewer needs. Panels sends everything in it to the home server. Put build output under TMPDIR, not here.
 
+## Your page
+
+Khushal sees your page. It shows your header, your recap, your Tickets, any goals that you hold, and a page document that you keep: text, checklists, tables, charts and layouts. Edit it with \`panels page show\` and \`panels page edit\`, and with \`panels goal\` for a goal that you hold. A chart can read a measure or a dataset that updates itself, fed by a measure source that you own (\`panels measure-source\`). Do not paste numbers into it. The full rules are in \`panels page schema\`, \`docs/managers.md\` and \`docs/measures.md\`.
+
 ## Read at the start of a session
 
 - \`rules/\`: how you work. The rules come from Khushal or from your own lessons. Add a rule when a lesson holds beyond one case.

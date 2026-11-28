@@ -55,6 +55,7 @@ test('the Manager file is a short router that names its folders and holds no rul
     '`logs/`',
     '`notes.md`',
     'tell the Chief',
+    '`panels page edit`',
     'Keep this file current',
   ])
     expect(text).toContain(part);
