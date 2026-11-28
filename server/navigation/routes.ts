@@ -1,7 +1,8 @@
+import type { LiveSink } from '../live_updates/contracts.ts';
 import { count_live_stream } from '../core/http/live_streams/index.ts';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import type {
   CurrentAuthority,
@@ -14,44 +15,34 @@ import { SnapshotFences } from './delivery/snapshot_fence.ts';
 import { DELIVERY } from './delivery/configuration.ts';
 import { parseView } from './logic/view.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
-import { log_server_error } from '../core/http/errors.ts';
+import { HttpError, log_server_error } from '../core/http/errors.ts';
+import { SseSink } from '../live_updates/frames.ts';
 import { scalarQueries } from '../list_reads/http.ts';
 import { validateInstallation } from './publication.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
 import { snapshot } from './data/read.ts';
-function query(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  names: string[],
-): Record<string, string> | null {
-  const values = scalarQueries(request.query as Record<string, unknown>);
+function query(values: Record<string, string>, names: string[]): Record<string, string> {
   const absent = names.filter((name) => values[name] === undefined);
-  if (absent.length) {
-    reply.code(422).send({
-      detail: absent.map((name) => ({
+  if (absent.length)
+    throw new HttpError(
+      422,
+      absent.map((name) => ({
         type: 'missing',
         loc: ['query', name],
         msg: 'Field required',
         input: null,
       })),
-    });
-    return null;
-  }
-  return values as Record<string, string>;
+    );
+  return values;
 }
-function view(request: FastifyRequest, reply: FastifyReply): ViewRequest | null {
-  const value = query(request, reply, ['view']);
-  if (!value) return null;
-  if (Buffer.byteLength(value.view) > 128 * 1024) {
-    reply.code(413).send({ detail: 'navigation view request is too large' });
-    return null;
-  }
+function view(raw: Record<string, unknown>): ViewRequest {
+  const value = query(scalarQueries(raw) as Record<string, string>, ['view']);
+  if (Buffer.byteLength(value.view) > 128 * 1024)
+    throw new HttpError(413, 'navigation view request is too large');
   try {
     return parseView(JSON.parse(value.view));
   } catch (error) {
-    const detail = (error as Error).message;
-    reply.code(400).send({ detail });
-    return null;
+    throw new HttpError(400, (error as Error).message);
   }
 }
 function expectedSnapshotFailure(error: unknown): boolean {
@@ -114,8 +105,7 @@ export function createRoutes(): PreparedAreaRoutes {
       delivery.close();
     });
     app.get('/snapshot', async (request, reply) => {
-      const value = view(request, reply);
-      if (!value) return;
+      const value = view(request.query as Record<string, unknown>);
       const authority: NavigationAuthority | undefined = services.signalAuthority;
       if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
       try {
@@ -128,21 +118,40 @@ export function createRoutes(): PreparedAreaRoutes {
         return reply.code(503).send({ detail: 'navigation view is unavailable' });
       }
     });
-    app.get('/events', async (request, reply) => {
-      const value = view(request, reply);
-      if (!value) return;
+    /** Authority comes first, before any stream header. A failure is the old route's answer. */
+    const begin_events = () => {
       const authority: NavigationAuthority | undefined = services.signalAuthority;
-      if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
-      let token: CurrentAuthority;
+      if (!authority) throw new HttpError(503, 'navigation view is unavailable');
       try {
-        token = authority.capture();
+        const token = authority.capture();
         authority.validate(token);
+        return { authority, token };
       } catch (error) {
-        log_server_error(request, 503, error);
-        return reply.code(503).send({ detail: 'navigation view is unavailable' });
+        console.error('navigation view is unavailable', error);
+        throw new HttpError(503, 'navigation view is unavailable');
       }
+    };
+    const open_events = (
+      value: ViewRequest,
+      { authority, token }: ReturnType<typeof begin_events>,
+      sink: LiveSink,
+    ) =>
       // As in Python, only authority is captured before stream headers. The initial
       // scoped read is lazy. An invalid durable view then closes the started stream.
+      delivery.open(
+        sink,
+        authority,
+        token,
+        value,
+        () => capture(authority, services, value, token).current,
+      );
+    services.live_subscriptions?.register('navigation', (request, sink) => {
+      const value = view(request.params);
+      return open_events(value, begin_events(), sink);
+    });
+    app.get('/events', async (request, reply) => {
+      const value = view(request.query as Record<string, unknown>);
+      const admitted = begin_events();
       reply.hijack();
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -150,17 +159,13 @@ export function createRoutes(): PreparedAreaRoutes {
         'X-Accel-Buffering': 'no',
       });
       count_live_stream(reply);
-      delivery.open(
-        reply.raw,
-        authority,
-        token,
-        value,
-        () => capture(authority, services, value, token).current,
-      );
+      open_events(value, admitted, new SseSink(reply.raw));
     });
     app.get('/content', async (request, reply) => {
-      const value = query(request, reply, ['kind', 'identity', 'version']);
-      if (!value) return;
+      const value = query(
+        scalarQueries(request.query as Record<string, unknown>) as Record<string, string>,
+        ['kind', 'identity', 'version'],
+      );
       if (
         !['ticket', 'manager'].includes(value.kind) ||
         [...value.identity].length > 256 ||

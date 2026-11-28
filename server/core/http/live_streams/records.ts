@@ -21,6 +21,10 @@ export interface StreamCloseRecord {
   /** Time from the last write to the close. A stream with no write counts from its open. */
   last_write_ago_ms: number;
   error_code: string | null;
+  /** A WebSocket close writes these two. An event stream leaves them out. */
+  close_code?: number | null;
+  /** The sequence number of the last frame that the server sent on the socket. */
+  last_sequence?: number | null;
 }
 export type StreamCloseSink = (record: StreamCloseRecord) => void;
 
@@ -94,11 +98,16 @@ export function track_stream_close(reply: FastifyReply, tracking: StreamCloseTra
       last_write_ago_ms: closed_at - last_write_at,
       error_code: failure,
     };
-    console.log(`stream_close ${JSON.stringify(record)}`);
-    try {
-      tracking.sink?.(record);
-    } catch (error) {
-      console.warn('stream_close record was not stored', error);
-    }
+    report_stream_close(record, tracking.sink);
   });
+}
+
+/** The journal line and the stored record. Event streams and sockets write them alike. */
+export function report_stream_close(record: StreamCloseRecord, sink?: StreamCloseSink): void {
+  console.log(`stream_close ${JSON.stringify(record)}`);
+  try {
+    sink?.(record);
+  } catch (error) {
+    console.warn('stream_close record was not stored', error);
+  }
 }

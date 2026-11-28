@@ -31,4 +31,9 @@ export function initialize_metrics_schema(tx: TransactionSql): void {
         `CREATE TRIGGER IF NOT EXISTS ${table}_${action}_bytes AFTER ${action} ON ${table} BEGIN UPDATE payload_totals SET bytes=bytes+(${expression}) WHERE kind='${kind}'; END`,
       );
   }
+  // A database made before WebSocket closes has no close columns.
+  const columns = tx.all<{ name: string }>("SELECT name FROM pragma_table_info('stream_closes')");
+  for (const column of ['close_code', 'last_sequence'])
+    if (!columns.some((existing) => existing.name === column))
+      tx.run(`ALTER TABLE stream_closes ADD COLUMN ${column} INTEGER`);
 }

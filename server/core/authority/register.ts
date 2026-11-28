@@ -8,10 +8,13 @@ import { requestAdmission } from './intake.ts';
 import type { AdmissionDependencies } from './intake.ts';
 import type { ConversationSystem } from '../../conversation/contracts.ts';
 import type { SignalNavigationAuthority } from '../../conversation/publication/authority.ts';
+import type { LiveSubscriptions } from '../../live_updates/registry.ts';
 export interface AreaServices {
   changes?: { subscribe(callback: () => void): () => void };
   conversationSystem?: ConversationSystem;
   signalAuthority?: SignalNavigationAuthority;
+  /** Where each feed registers how the live socket opens it. */
+  live_subscriptions?: LiveSubscriptions;
   database: Database;
   config: Config;
   clock: Clock;

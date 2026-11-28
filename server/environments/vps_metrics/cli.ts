@@ -30,7 +30,7 @@ export async function run_connection_command(inv: Invocation): Promise<CommandRe
   const rows = [
     ...(data.stream_closes as Record<string, any>[]).map((row) => ({
       at: n(row.closed_at),
-      text: `${clock(n(row.closed_at))}  stream closed by ${row.closed_by}  ${row.route}  ${row.client_kind}/${row.device_id ?? '-'}  open ${n(row.age_ms)} ms, ${n(row.bytes_written)} bytes, last write ${n(row.last_write_ago_ms)} ms before the close${row.error_code ? `, ${row.error_code}` : ''}`,
+      text: `${clock(n(row.closed_at))}  stream closed by ${row.closed_by}  ${row.route}  ${row.client_kind}/${row.device_id ?? '-'}  open ${n(row.age_ms)} ms, ${n(row.bytes_written)} bytes, last write ${n(row.last_write_ago_ms)} ms before the close${row.error_code ? `, ${row.error_code}` : ''}${row.close_code == null ? '' : `, close code ${n(row.close_code)}, last sequence ${n(row.last_sequence)}`}`,
     })),
     ...(data.client_events as Record<string, any>[]).map((row) => {
       const { at, received_at, device_id, client_kind, kind, ...rest } = row;

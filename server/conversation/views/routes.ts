@@ -2,6 +2,9 @@
 import { is_record as object } from '../../core/records.ts';
 import { Readable } from 'node:stream';
 import { STREAM_RETRY_FRAME } from '../../core/http/live_streams/configuration.ts';
+import { HttpError } from '../../core/http/errors.ts';
+import type { LiveFrame } from '../../live_updates/contracts.ts';
+import { pump_frames, sse_text } from '../../live_updates/frames.ts';
 import { readSync } from 'node:fs';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
@@ -427,10 +430,11 @@ export function conversation_view_changes(
   };
   return Buffer.byteLength(encode_wire(result)) <= SUBSCRIBER_BYTE_LIMIT ? result : null;
 }
-function frame(kind: string, value: unknown): string {
-  return `event: ${kind}\ndata: ${encode_wire(value)}\n\n`;
+function frame(kind: string, value: unknown): LiveFrame {
+  return { event: kind, data: encode_wire(value) };
 }
-export async function* conversation_view_tail(
+/** The frames of one view tail. A null is a quiet keep-alive. */
+export async function* conversation_view_frames(
   runtime: ConversationViewRuntime,
   conversation_id: string,
   lens: ConversationViewLens,
@@ -440,7 +444,7 @@ export async function* conversation_view_tail(
   control: {
     close?: () => void;
   } = {},
-): AsyncGenerator<string> {
+): AsyncGenerator<LiveFrame | null> {
   const turn_key = runtime.database.read(
     (sql) =>
       sql.get<{
@@ -472,7 +476,7 @@ export async function* conversation_view_tail(
     while (true) {
       const keep = await subscription.next_wake(runtime.sse_heartbeat_ms);
       if (keep === null) {
-        yield ': keep-alive\n\n';
+        yield null;
         continue;
       }
       if (!keep) {
@@ -528,11 +532,79 @@ export async function* conversation_view_tail(
     control.close = undefined;
   }
 }
+/**
+ * Opens one view tail for the event stream and for the socket. A failure is an
+ * `HttpFailure` or `ConversationViewUpgrading`, which the route answers as an HTTP status.
+ */
+async function open_view_tail(
+  runtime: ConversationViewRuntime,
+  conversation_id: string,
+  q: Record<string, string>,
+) {
+  const selected_lens = lens(q),
+    selected_transcript = transcript(q);
+  await runtime_facts(runtime, conversation_id);
+  if (number(q.projection_version, VIEW_PROJECTION_VERSION) !== VIEW_PROJECTION_VERSION) {
+    fail(409, 'Refresh required: conversation view version changed');
+  }
+  const after = q.after === undefined ? null : number(q.after, undefined, true);
+  let ranges: ViewRetainedRange[];
+  try {
+    const value: unknown = JSON.parse(bounded(q.ranges, 8192) ?? '[]');
+    if (!Array.isArray(value) || !value.every(retained)) {
+      throw new Error();
+    }
+    ranges = value.map((held) => ({
+      scope: normalized_scope(held.scope),
+      first: normalized_order(held.first),
+      last: normalized_order(held.last),
+    }));
+  } catch {
+    return fail(422, 'invalid retained ranges');
+  }
+  if (ranges.length > 20) {
+    fail(422, 'too many retained ranges');
+  }
+  runtime.database.read((sql) => view_coverage(sql, conversation_id));
+  const control: {
+    close?: () => void;
+  } = {};
+  const frames = conversation_view_frames(
+    runtime,
+    conversation_id,
+    selected_lens,
+    selected_transcript,
+    after,
+    ranges,
+    control,
+  );
+  return { frames, close: () => control.close?.() };
+}
+/** The socket answers a failed subscribe with the status that the route would send. */
+function as_http_error(runtime: ConversationViewRuntime, conversation_id: string, error: unknown) {
+  if (error instanceof HttpFailure) return new HttpError(error.status, error.message);
+  if (error instanceof ConversationViewUpgrading) {
+    runtime.prioritize_view?.(conversation_id);
+    return new HttpError(409, VIEW_UPGRADING_DETAIL);
+  }
+  return error;
+}
 export function createConversationViewRoutes(
   getRuntime: () => ConversationViewRuntime,
 ): FastifyPluginAsync<AreaServices> {
-  return async (app) => {
+  return async (app, services) => {
     const path = '/conversations/:conversation_id/view';
+    services.live_subscriptions?.register('conversation_view', async (request, sink) => {
+      const runtime = getRuntime();
+      const conversation_id = request.conversation_id;
+      if (conversation_id === null) throw new HttpError(422, 'conversation_id is required');
+      try {
+        const tail = await open_view_tail(runtime, conversation_id, request.params);
+        return pump_frames(tail.frames, tail.close, sink);
+      } catch (error) {
+        throw as_http_error(runtime, conversation_id, error);
+      }
+    });
     const id = (request: FastifyRequest) =>
       (
         request.params as {
@@ -628,55 +700,16 @@ export function createConversationViewRoutes(
       path + '/tail',
       { config: { uncompressed: true } },
       wrap(async (request, reply) => {
-        const runtime = getRuntime(),
-          conversation_id = id(request),
-          q = queries(request),
-          selected_lens = lens(q),
-          selected_transcript = transcript(q);
-        await runtime_facts(runtime, conversation_id);
-        if (number(q.projection_version, VIEW_PROJECTION_VERSION) !== VIEW_PROJECTION_VERSION) {
-          fail(409, 'Refresh required: conversation view version changed');
-        }
-        const after = q.after === undefined ? null : number(q.after, undefined, true);
-        let ranges: ViewRetainedRange[];
-        try {
-          const value: unknown = JSON.parse(bounded(q.ranges, 8192) ?? '[]');
-          if (!Array.isArray(value) || !value.every(retained)) {
-            throw new Error();
-          }
-          ranges = value.map((held) => ({
-            scope: normalized_scope(held.scope),
-            first: normalized_order(held.first),
-            last: normalized_order(held.last),
-          }));
-        } catch {
-          return fail(422, 'invalid retained ranges');
-        }
-        if (ranges.length > 20) {
-          fail(422, 'too many retained ranges');
-        }
-        runtime.database.read((sql) => view_coverage(sql, conversation_id));
-        const control: {
-          close?: () => void;
-        } = {};
-        const output = conversation_view_tail(
-          runtime,
-          conversation_id,
-          selected_lens,
-          selected_transcript,
-          after,
-          ranges,
-          control,
-        );
+        const tail = await open_view_tail(getRuntime(), id(request), queries(request));
         async function* with_retry() {
           yield STREAM_RETRY_FRAME;
-          yield* output;
+          for await (const next of tail.frames) yield next ? sse_text(next) : ': keep-alive\n\n';
         }
         const stream = Readable.from(
           request.request_lifetime?.iterator(with_retry()) ?? with_retry(),
         );
         reply.raw.once('close', () => {
-          control.close?.();
+          tail.close();
           stream.destroy();
         });
         reply.type('text/event-stream; charset=utf-8');
