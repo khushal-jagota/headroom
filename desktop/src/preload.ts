@@ -19,6 +19,7 @@ const bridge: PanelsBridge = {
   localServerAddress: () => call('localServerAddress'),
   returnToServer: () => call('returnToServer'),
   storedServerAddress: () => call('storedServerAddress'),
+  liveConnection: () => call('liveConnection'),
   useServerAddress: (address) => call('useServerAddress', address),
 };
 

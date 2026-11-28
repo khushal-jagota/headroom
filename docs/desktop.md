@@ -29,6 +29,8 @@ The forward retains Electron’s native response relay, so a stream that the pag
 
 The native probe and notification stream send the same installation identity. `desktop/src/bridge_version.ts` defines the bridge version separately from the app version. The updater reads the server's minimum bridge version through `fetchDesktopCompatibility` in `desktop/src/server_meta.ts`. This helper rejects an unavailable or invalid metadata answer. The service worker, which only serves web push, does not run in the app.
 
+A WebSocket cannot pass through the `panels://` relay, so a live socket does not use the forward. The page opens its own socket to the server, as the browser does. For this the bridge has one call, `liveConnection`. It returns the server address and the installation identity together, and the identity is the same value that the forward sends as `X-Panels-Client`. The page sends that identity in the socket's first frame. The main process holds no socket and relays no frames. The call returns null before the first server address is stored. The server accepts the `panels://app` origin on a socket as it does on a write. The screens set no content security policy, so no connection rule needs the server address.
+
 The server names the digest of its installed screens and serves that exact copy. The app checks the digest and every file before use. It also prefetches the admitted waiting release, but activates it only after the server runs that release and the installed bridge meets its requirement. The window reloads without an app restart. The app scheme uses `cache-control: no-store` so Chromium cannot mix files from different copies.
 
 The app keeps the current and previous copies, plus the bundled baseline. A failed start or a crash returns to the previous copy or baseline. The native menu can retry a rejected copy through the same verification and bridge gate. The baseline also supports first setup without a network connection. Old copies are removed after they are no longer needed. An older server gets a shell-owned “This server needs an update” page. Its update press uses the server API.
@@ -77,10 +79,10 @@ The native side holds a live stream to the server, `/api/notifications/desktop`,
 
 ## Artifacts and the bridge
 
-Artifact HTML runs at the screens' own origin, so a script in an artifact can reach the bridge. The address read is available in the app and setup. All calls that can change the server answer only a top-level page at `panels://setup`. A frame check alone does not protect them: an artifact can call `parent.panels` in the app’s top frame. The separate setup origin protects the calls. Setup serves only bundled files and never serves artifacts. New calls that act must preserve this boundary.
+Artifact HTML runs at the screens' own origin, so a script in an artifact can reach the bridge. The address read and `liveConnection` are available in the app and setup. The identity that `liveConnection` returns holds version facts, not authority, and an artifact's own requests already carry it. All calls that can change the server answer only a top-level page at `panels://setup`. A frame check alone does not protect them: an artifact can call `parent.panels` in the app’s top frame. The separate setup origin protects the calls. Setup serves only bundled files and never serves artifacts. New calls that act must preserve this boundary.
 
 ## Where the code lives
 
 `desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native updates), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), `web/src/desktop/` for setup, with the connection dialog in `web/src/components/ShellStatus.svelte`, and `web/src/components/desktopWindow/` with `web/src/lib/desktopWindow/` for the window's top row. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
-_Last verified: 2026-11-25._
+_Last verified: 2026-11-28._

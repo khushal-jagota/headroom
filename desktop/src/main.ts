@@ -37,6 +37,7 @@ import { startShellUpdates } from './updates';
 import { prepareApplicationLocation } from './application_location';
 import type { ShellUpdates } from './updates/contracts';
 import { DESKTOP_BRIDGE_VERSION } from './bridge_version';
+import { desktopIdentity } from './client_identity';
 import { ScreenStore } from './screens/store';
 import { ScreenController } from './screens/controller';
 import { SCREEN_CHECK_INTERVAL_MS, SCREEN_READY_POLL_MS, SCREEN_START_TIMEOUT_MS } from './screens/configuration';
@@ -221,6 +222,15 @@ function fromAddressPage(event: IpcMainInvokeEvent): boolean {
   return url.protocol === 'panels:' && url.host === ADDRESS_PAGE_HOST;
 }
 
+// Read-only calls answer the main frame of the app and setup. A frame check alone does not
+// keep artifacts out, but these calls give an artifact nothing that its own requests lack.
+function fromAppOrAddressPage(event: IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  if (!frame || frame !== event.sender.mainFrame) return false;
+  const url = new URL(frame.url);
+  return url.protocol === 'panels:' && [ADDRESS_PAGE_HOST, SCREENS_HOST].includes(url.host);
+}
+
 function answerBridgeCalls(): void {
   ipcMain.handle(bridgeChannel('retryScreens'), async (event) => {
     const frame = event.senderFrame;
@@ -238,11 +248,13 @@ function answerBridgeCalls(): void {
     if (serverAddress()) void event.sender.loadURL(lastScreenUrl());
   });
   ipcMain.handle(bridgeChannel('storedServerAddress'), (event) => {
-    const frame = event.senderFrame;
-    const url = frame ? new URL(frame.url) : null;
-    if (frame !== event.sender.mainFrame || url?.protocol !== 'panels:' || ![ADDRESS_PAGE_HOST, SCREENS_HOST].includes(url.host))
-      throw new Error('Only the app can read the server address.');
+    if (!fromAppOrAddressPage(event)) throw new Error('Only the app can read the server address.');
     return serverAddress();
+  });
+  ipcMain.handle(bridgeChannel('liveConnection'), (event) => {
+    if (!fromAppOrAddressPage(event)) throw new Error('Only the app can open a live connection.');
+    const address = serverAddress();
+    return address ? { address, identity: desktopIdentity() } : null;
   });
   ipcMain.handle(bridgeChannel('useServerAddress'), async (event, typed: unknown) => {
     if (!fromAddressPage(event)) throw new Error('Only the address page can change the server address.');
