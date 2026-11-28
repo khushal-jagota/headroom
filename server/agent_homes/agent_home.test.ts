@@ -14,6 +14,7 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 // writes the new router file over it. No other test covers prepare_agent_home.
 test('a Manager home gets the router and rules/ and keeps what it already holds', async () => {
   writeFileSync(join(home, 'notes.md'), 'manager notes');
+  writeFileSync(join(home, 'HOME.md'), 'my own layout');
   writeFileSync(join(home, 'CLAUDE.md'), 'old file');
   mkdirSync(join(home, 'rules'));
   writeFileSync(join(home, 'rules', 'distribution.md'), 'a rule');
@@ -22,6 +23,7 @@ test('a Manager home gets the router and rules/ and keeps what it already holds'
   await prepare_agent_home(home, 'manager');
 
   expect(readFileSync(join(home, 'notes.md'), 'utf8')).toBe('manager notes');
+  expect(readFileSync(join(home, 'HOME.md'), 'utf8')).toBe('my own layout');
   expect(readFileSync(join(home, 'rules', 'distribution.md'), 'utf8')).toBe('a rule');
   expect(readdirSync(join(home, 'logs'))).toEqual([]);
   const text = agent_home_text('manager');
@@ -29,9 +31,10 @@ test('a Manager home gets the router and rules/ and keeps what it already holds'
   expect(readFileSync(join(home, 'AGENTS.md'), 'utf8')).toBe(text);
 });
 
-test('a new Manager home gets an empty rules/ folder', async () => {
+test('a new Manager home gets an empty rules/ folder and a short HOME.md outline', async () => {
   await prepare_agent_home(home, 'manager');
   expect(readdirSync(join(home, 'rules'))).toEqual([]);
+  expect(readFileSync(join(home, 'HOME.md'), 'utf8')).toContain('The Manager fills it in');
 });
 
 test('the Manager file is a short router that names its folders and holds no rules', () => {
