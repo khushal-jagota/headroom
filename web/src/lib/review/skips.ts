@@ -88,9 +88,9 @@ export function applyingSkips(list: SkipList, items: readonly NavigationReviewIt
   return Object.fromEntries(Object.entries(list).filter(([key, entry]) => { const item = loaded.get(key); return !item || !hasNewer(entry.marks, item); }));
 }
 
-/** How many skips are for cards the page has not loaded, so that their change cannot be checked. */
-export function unloadedSkips(list: SkipList, loaded: ReadonlySet<string>): number {
-  return Object.keys(list).filter(key => !loaded.has(key)).length;
+/** The skips for cards the page has not loaded, so that their change cannot be checked. */
+export function unloadedSkipKeys(list: SkipList, loaded: ReadonlySet<string>): ReviewHistoryKey[] {
+  return skipHistoryKeys(Object.fromEntries(Object.entries(list).filter(([key]) => !loaded.has(key))));
 }
 
 /** Drops the skips of cards that left the queue: those the page never saw in any window it loaded. */

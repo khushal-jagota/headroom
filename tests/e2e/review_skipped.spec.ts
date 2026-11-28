@@ -136,8 +136,17 @@ test('test_a_changed_skipped_card_in_a_later_window_is_found_before_the_first_ca
   const changed = skipped[31];
   const number = Number(changed.replace('Ticket ', ''));
   await connectedMessage(server, `skipped-${number}`, ticketPrincipal(tickets[number - 1]), 'Again?');
+  // The queue reads travel over the live socket. Count those that ask for the tail of the queue.
+  let tailReads = 0;
+  page.on('websocket', (socket) => socket.on('framesent', (frame) => { if (String(frame.payload).includes('\\"direction\\":\\"before\\"')) tailReads += 1; }));
   await page.reload();
   // It is new: it shows in its place by age, not after the skipped cards, and the count leaves it out.
   await expect(title()).toHaveText(changed);
   await expect(band()).toHaveText('Review skipped (31)');
+
+  // Starting a pass reads the tail again, so a card that changed since the page opened is checked then.
+  const before = tailReads;
+  await band().click();
+  await expect.poll(() => tailReads).toBeGreaterThan(before);
+  await expect(band()).toHaveText('Review new');
 });
